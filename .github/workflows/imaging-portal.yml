@@ -1,0 +1,42 @@
+name: imaging-portal
+
+on:
+  push:
+    paths: ['apps/imaging-portal/**', '.github/workflows/imaging-portal.yml']
+  pull_request:
+    paths: ['apps/imaging-portal/**', '.github/workflows/imaging-portal.yml']
+  workflow_dispatch:
+
+jobs:
+  build-and-check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/imaging-portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The artifact goes onto a live clinical archive, so the committed dist/
+      # must be exactly what src/ builds -- no hand edits, no drift.
+      - name: dist/ is in step with src/
+        run: npm run check
+
+      - name: Install Playwright (Chromium only)
+        run: npm install --no-save playwright@1.56.1 && npx playwright install --with-deps chromium
+
+      - name: Browser checks against a stand-in Orthanc
+        run: node test/checks.mjs
+
+      - name: Emit the installer payload and its hash
+        run: npm run payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pmc-imaging-portal
+          path: |
+            apps/imaging-portal/dist/PMC_Imaging_Portal.html
+            apps/imaging-portal/dist/PMC_Imaging_Portal.html.sha256
+            apps/imaging-portal/dist/payload.gz.b64

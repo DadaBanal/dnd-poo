@@ -1,0 +1,65 @@
+# Path A, "engine as code" -- roadmap weeks 2-5.
+#
+# STATUS: SKELETON. Never run, never deployed, no image digest pinned.
+# It exists so the shape of the target is reviewable in a diff instead of
+# living in one person's head. Read platform/README.md before touching it.
+#
+# Gated on: ADR-001 approved (PostgreSQL index), and a Linux host existing.
+# Neither is true yet.
+
+name: pmc-imaging
+
+services:
+  orthanc-index:
+    # ADR-001 names PostgreSQL 17. Pin to a digest before this is ever run.
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${PG_DATABASE}
+      POSTGRES_USER: ${PG_USER}
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+    volumes:
+      - index:/var/lib/postgresql/data
+    # The index must not be reachable off the host: 5432 is one of the ports
+    # currently forwarded from the internet on the UDM-SE (risk R3).
+    expose: ['5432']
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  orthanc:
+    # The ops-team vehicle, 2-3 releases a month. Pin to a digest before running.
+    image: orthancteam/orthanc:latest
+    depends_on:
+      orthanc-index: { condition: service_healthy }
+    env_file: [.env]
+    volumes:
+      - ./orthanc/orthanc.json:/etc/orthanc/orthanc.json:ro
+      - studies:/var/lib/orthanc/db
+      - worklists:/var/lib/orthanc/worklists
+    ports:
+      - '${ORTHANC_DICOM_PORT}:4242'   # DIMSE from the modalities
+    expose: ['8042']                    # HTTP stays behind the front door
+
+  # OHIF as the only viewer (roadmap wk 4-7). Reaches Orthanc over DICOMweb and
+  # signs in through Keycloak, so it never holds a credential of its own.
+  ohif:
+    image: ohif/app:latest
+    depends_on: [orthanc]
+    expose: ['80']
+
+  # Keycloak brokers to Entra ID; roles come from PMC's M365 groups and there are
+  # no local accounts. Keycloak is where users are managed.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.3
+    command: ['start', '--hostname=${KEYCLOAK_HOSTNAME}']
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+    expose: ['8080']
+
+volumes:
+  index:
+  studies:
+  worklists:

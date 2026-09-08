@@ -1,0 +1,44 @@
+/* ---- 1. tokens ---------------------------------------------------------- */
+:root{
+  /* brand */
+  --blue:#0B3F8A; --blue-d:#08316d; --blue-dd:#062449; --blue-l:#1F5BB0;
+  --blue-50:#EEF3FB; --blue-100:#DBE6F6; --blue-200:#B9CDEC;
+  --green:#69B52C; --green-d:#528F22; --green-50:#F0F8E8;
+  --orange:#F06423; --orange-d:#C94D14; --orange-50:#FEF1EA;
+  --ink:#101820; --grey:#E7E9ED;
+
+  /* surfaces (light) */
+  --canvas:#F4F6FA; --paper:#FFFFFF; --paper-2:#FAFBFD;
+  --line:#E2E6EC; --line-strong:#CBD2DC;
+  --text:#101820; --text-2:#48525F; --text-3:#6B7684;
+  --accent:var(--blue); --accent-ink:#FFFFFF;
+  --shadow-1:0 1px 2px rgba(16,24,32,.06), 0 1px 3px rgba(16,24,32,.05);
+  --shadow-2:0 2px 4px rgba(16,24,32,.05), 0 8px 20px rgba(11,63,138,.08);
+  --shadow-3:0 12px 40px rgba(11,63,138,.18), 0 2px 8px rgba(16,24,32,.10);
+  --ring:0 0 0 3px rgba(31,91,176,.30);
+
+  /* type */
+  --font-display:"Aptos Display","Aptos","Segoe UI Variable Display","Segoe UI Semibold","Segoe UI",system-ui,"Open Sans",Arial,sans-serif;
+  --font-body:"Aptos","Segoe UI Variable Text","Segoe UI",system-ui,"Open Sans",Arial,sans-serif;
+  --font-mono:"Cascadia Mono","Consolas","SF Mono",ui-monospace,monospace;
+
+  /* geometry */
+  --r-sm:6px; --r:10px; --r-lg:14px; --r-xl:20px;
+  --rail:246px; --bar:64px;
+  --pad:clamp(14px,2.2vw,28px);
+  --tap:38px;
+}
+html[data-theme="dark"]{
+  --canvas:#0A0F16; --paper:#111925; --paper-2:#0E1620;
+  --line:#1F2C3B; --line-strong:#2C3D50;
+  --text:#E9EEF5; --text-2:#A9B6C6; --text-3:#7E8DA0;
+  --blue-50:#0E1E33; --blue-100:#12294A; --blue-200:#1B3B69;
+  --blue-l:#5C93E0; --accent:#5C93E0;
+  --green-50:#12210C; --orange-50:#2A1408;
+  --shadow-1:0 1px 2px rgba(0,0,0,.5);
+  --shadow-2:0 2px 4px rgba(0,0,0,.4), 0 10px 24px rgba(0,0,0,.45);
+  --shadow-3:0 18px 50px rgba(0,0,0,.6);
+  --ring:0 0 0 3px rgba(92,147,224,.38);
+  color-scheme:dark;
+}
+

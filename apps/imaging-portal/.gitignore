@@ -1,0 +1,7 @@
+node_modules/
+# The real site config lives on the server and may name hosts and ports.
+# Only the example belongs in the repo.
+pmc-portal.config.json
+# Generated on demand by `npm run payload`; large, and derived from dist/.
+dist/payload.gz.b64
+dist/installer-payload.html

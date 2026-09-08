@@ -1,0 +1,36 @@
+{
+  "artifact": "PMC_Imaging_Portal.html",
+  "reference": {
+    "bytes": 100449,
+    "sha256": "c6d21731224a0d7270955c1d1142cb5e613980c20ab1a7d1ba893b42403b30f4",
+    "source": "deliverables/PMC_Imaging_Portal_20260906.html (OneDrive, read 8 Sep 2026)"
+  },
+  "styles": [
+    "src/styles/00-banner.css",
+    "src/styles/01-tokens.css",
+    "src/styles/02-reset.css",
+    "src/styles/03-brand-devices.css",
+    "src/styles/04-shell.css",
+    "src/styles/05-content.css",
+    "src/styles/06-dialog.css",
+    "src/styles/07-responsive.css"
+  ],
+  "app": [
+    "src/app/00-preamble.js",
+    "src/app/01-config.js",
+    "src/app/02-helpers.js",
+    "src/app/03-api.js",
+    "src/app/04-demo-archive.js",
+    "src/app/05-normalise.js",
+    "src/app/06-search.js",
+    "src/app/07-thumbnails.js",
+    "src/app/08-worklist.js",
+    "src/app/09-study-sheet.js",
+    "src/app/10-devices.js",
+    "src/app/11-activity.js",
+    "src/app/12-system.js",
+    "src/app/13-navigation.js",
+    "src/app/14-boot.js"
+  ],
+  "favicon": "src/assets/favicon.png"
+}

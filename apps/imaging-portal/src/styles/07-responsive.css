@@ -1,0 +1,30 @@
+/* ---- 7. responsive ------------------------------------------------------ */
+.rail__brand .mark{display:none; width:36px}
+@media (max-width:1020px){
+  :root{--rail:64px}
+  .rail__brand .full{display:none}
+  .rail__brand .mark{display:block}
+  .rail__brand{justify-content:center; padding:16px 8px}
+  .rail__product,.rail__foot{display:none}
+  .nav__item{justify-content:center; padding:11px}
+  .nav__item span,.nav__count{display:none}
+}
+@media (max-width:720px){
+  .topbar h1,.topbar .sub,.search kbd,#kbdBtn{display:none}
+  .topbar{gap:8px; padding:0 12px}
+  .search input{padding-right:12px}
+  .content{padding:14px}
+  .toolbar{padding:10px 12px; gap:8px; flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none}
+  .toolbar::-webkit-scrollbar{display:none}
+  .chips{flex-wrap:nowrap}
+  #modChips{border-left:1px solid var(--line); padding-left:10px}
+  .toolbar .seg,.toolbar .spacer{display:none}
+  .grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px}
+  .sheet{width:100vw; max-height:100dvh; border-radius:0}
+  .sheet__hd{padding:14px 16px 12px} .sheet__bd,.sheet__ft{padding-left:16px; padding-right:16px}
+}
+@media print{
+  .rail,.topbar,.toolbar,.card__foot,.btn{display:none !important}
+  .app{display:block; height:auto} .content{overflow:visible; padding:0}
+  body{background:#fff; font-size:11pt}
+}

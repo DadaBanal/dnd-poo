@@ -1,0 +1,23 @@
+/* ---- 2. reset ----------------------------------------------------------- */
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; background:var(--canvas); color:var(--text);
+  font-family:var(--font-body); font-size:14.5px; line-height:1.5;
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+  font-variant-numeric:tabular-nums; overflow:hidden;
+}
+h1,h2,h3,h4{font-family:var(--font-display); font-weight:650; margin:0; letter-spacing:-.01em; line-height:1.22}
+button,input,select,textarea{font:inherit; color:inherit}
+a{color:var(--accent); text-underline-offset:2px}
+:focus-visible{outline:none; box-shadow:var(--ring); border-radius:var(--r-sm)}
+::selection{background:var(--blue-200); color:var(--ink)}
+search{display:block}
+[hidden]{display:none !important}
+
+/* scrollbars */
+*{scrollbar-width:thin; scrollbar-color:var(--line-strong) transparent}
+*::-webkit-scrollbar{width:10px;height:10px}
+*::-webkit-scrollbar-thumb{background:var(--line-strong); border-radius:99px; border:3px solid transparent; background-clip:content-box}
+*::-webkit-scrollbar-track{background:transparent}
+
