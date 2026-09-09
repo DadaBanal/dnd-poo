@@ -27,6 +27,22 @@
 > hospital-wide volumes in this paper are quoted to anyone. The Azure Marketplace
 > listing itself returned HTTP 403 and is NOT VERIFIED.
 >
+> **CORRECTED 9 Sep 2026 — §5.4's VERIFIED claim about ConnectWise is wrong.**
+> The paper says, marked [VERIFIED]: *"ConnectWise cannot do this natively:
+> severity, impact and priority are three independent fields with no derivation,
+> corroborated by an open product-community request for exactly this."* It can.
+> The derivation lives on the **SLA** entity, not the Priority entity, which is
+> why it is invisible from the priority screen: `SLA` carries a full three-by-three
+> matrix — `hiImpactHiUrgency` through `lowImpactLowUrgency`, nine fields, each
+> pointing at a priority. [VERIFIED from `HealthITAU/pyconnectwise` @ `5ea14c1`,
+> code-generated from ConnectWise's own OpenAPI schemas, cloned and read 9 Sep 2026.]
+>
+> The impact-by-urgency matrix is therefore **not** a differentiator and must not
+> be sold as one. What survives is the per-item catalogue floor, the clinical-impact
+> floor, enforcement at close as well as at raise, and an override that is an
+> audited event rather than a dropdown. See `WS36-psa-build-scope-20260909.md`
+> §2.2.1.
+>
 > **WS34 is the row that matters.** An exact-match filter on `variation` drops it, and that
 > row is an entire covered entity (JRBY-CI). The importer normalises it and a test asserts
 > it, so the mistake cannot recur.

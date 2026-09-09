@@ -140,22 +140,57 @@ separate stored timestamps. The three-clock SLA model in
 `WS36-psa-recommendation` §5.5 is therefore not an invention we have to defend —
 it is the shape the market leader already uses, and we are matching it.
 
-**Second, `priority`, `severity` and `impact` are three independent fields with no
-derivation between them.** A fulfiller picks a priority in ConnectWise. Nothing
-computes it.
+### 2.2.1 A correction: ConnectWise *does* compute priority from impact and urgency
 
-That was corroborated directly from ConnectWise's own documentation.
-**[VERIFIED 9 Sep 2026, Priority Setup Table, `/ConnectWise_Documentation` >
-System > Setup Tables > Service Setup Tables > Priority — relayed by Dada from an
-authenticated session]** A priority is a flat lookup row: description, colour,
-sort order, a `Default` flag meaning *"the priority will be assigned to new
-service tickets by default"*, and a `Level` of Critical, High, Medium or Low used
-only for reporting. There is no impact-by-urgency grid anywhere on that table.
-The Severity setup table is the same shape: a default that auto-populates.
+**This overturns a claim the record carries as VERIFIED, and the claim is wrong.**
 
-So the computed-priority design is not us being clever about a gap nobody noticed.
-It is a deliberate difference from how the market leader works, and the burden is
-on us to show it is better. §11 item 2 is that test.
+`WS36-psa-recommendation-20260909.md` §5.4 says, marked **[VERIFIED]**:
+*"ConnectWise cannot do this natively: severity, impact and priority are three
+independent fields with no derivation, corroborated by an open product-community
+request for exactly this."* An earlier draft of this document repeated it, on the
+strength of the Priority setup table being a flat lookup with no grid on it.
+
+**[VERIFIED 9 Sep 2026]** It is not true. The derivation is on the **SLA** entity,
+not the Priority entity, which is why it is invisible from the priority screen.
+`SLA` carries a full three-by-three matrix, one field per cell, each pointing at
+a priority:
+
+```
+hiImpactHiUrgency    hiImpactMedUrgency    hiImpactLowUrgency
+medImpactHiUrgency   medImpactMedUrgency   medImpactLowUrgency
+lowImpactHiUrgency   lowImpactMedUrgency   lowImpactLowUrgency
+```
+
+Source: `HealthITAU/pyconnectwise` at commit `5ea14c1`, cloned and read today,
+`src/pyconnectwise/models/manage/__init__.py`. That library is code-generated from
+ConnectWise's own OpenAPI schemas, so the field names are ConnectWise's.
+
+**What this costs us.** The impact-by-urgency matrix is *not* a differentiator. It
+is a feature the market leader has had all along, configured per SLA rather than
+globally. Any paper that claims otherwise will be corrected by the first person who
+looks, and that is an expensive way to lose an argument in front of PMC's board.
+
+**What is actually left, and it is still worth having.** Four things, none of which
+ConnectWise's matrix does:
+
+1. **The catalogue floor.** `catalogue_item.min_priority` raises the floor for a
+   specific service, regardless of what the requester answered. ConnectWise's
+   matrix has no per-item override.
+2. **The clinical-impact floor.** `clinical_impact = 1` forces at least P2 because
+   the work touches patient care. There is no equivalent concept in an MSP PSA.
+3. **Enforced at close, not only at raise.** A priority lowered on the way to
+   closing a ticket is how a P1 becomes a statistic.
+4. **No dropdown, ever.** ConnectWise's matrix populates a field the fulfiller can
+   then overwrite. Ours records an override as an event with a named escalation
+   role and a typed reason, and `priority_source` says which rule decided.
+
+So the honest framing is: **we match ConnectWise on the matrix and differ on the
+floors, the enforcement point and the audit trail.** §11 item 2 should be tested
+against that, not against a gap that does not exist.
+
+The Priority entity itself is confirmed flat — `name`, `color`, `sortOrder`,
+`defaultFlag`, `imageLink` — and so is `Source` (`name`, `defaultFlag`), which is
+global rather than per board.
 
 **Third, `agreement` is on the ticket.** ConnectWise does link a ticket to a
 contract — for rate and coverage. **[INFERRED]** It does not carry a variation
@@ -294,16 +329,47 @@ are the tables that make it a board:
 | `board_intake` | how tickets arrive: mailbox, portal, API, watchdog | the address is data, not code |
 | `workflow_rule` | the rules engine (§5.4) | board-scoped or global, never hard-coded |
 
-**Statuses are per board and they are typed, not free text.** Each row carries
-flags rather than the engine inferring meaning from a name:
+#### Statuses, from ConnectWise's actual schema
 
-`is_default`, `is_closed`, `stops_resolve_clock`, `customer_visible`,
-`requires_note_on_entry`, `escalates_after_minutes`, `sort_order`.
+I guessed at these flags and was close but wrong in one important way. The real
+`BoardStatus` **[VERIFIED 9 Sep 2026, `HealthITAU/pyconnectwise` @ `5ea14c1`,
+generated from ConnectWise's OpenAPI schemas]**:
 
-**[INFERRED]** This is where most home-grown desks fail. If "Waiting for parts"
-is a string, nothing knows the clock should stop. If it is a row with
-`stops_resolve_clock = 1`, the SLA engine needs no special cases and PMC can add
-"Waiting for PhilHealth" without a developer.
+| Field | What it does | Did we have it? |
+|---|---|---|
+| `board` | scopes the status to one board | yes |
+| `escalationStatus` | `NotResponded` \| `Responded` \| `ResolutionPlan` \| `Resolved` \| `NoEscalation` | **no, and theirs is better** |
+| `closedStatus` | this status closes the ticket | yes |
+| `defaultFlag` | the status new tickets land in | yes |
+| `sortOrder` | display order | yes |
+| `customerPortalFlag` | visible to the requester | yes |
+| `customerPortalDescription` | **what the requester is shown, separate from the internal name** (max 500) | **no** |
+| `timeEntryNotAllowed` | no effort may be booked in this status | **no** |
+| `displayOnBoard` | appears on the board view at all | no |
+| `emailTemplate` | per-status email template | no |
+| `inactive` | retired, not deleted | yes, once `is_inactive` is added |
+
+**`escalationStatus` is a better design than the boolean I proposed.** I had
+`stops_resolve_clock`, which needs a second flag for respond and a third for the
+resolution plan. ConnectWise makes the status declare **which SLA milestone it
+represents**, and the clock engine derives the rest: a status marked `Responded`
+stops the respond clock, `Resolved` stops the resolve clock, and `NoEscalation` is
+the pause. One field, no special cases, and adding "Waiting for PhilHealth" is a
+row with `escalationStatus = NoEscalation`. **Take it as-is.**
+
+**`customerPortalDescription` matters more here than it does for an MSP.** The
+internal status and what a nurse reads are different sentences. "Awaiting parts
+from vendor, PO raised" internally; "We are waiting on a delivery" on the portal.
+Without this you either leak internal language to 400 clinical staff or you write
+vague statuses that are useless to fulfillers.
+
+**`timeEntryNotAllowed` is a control we should use.** A status that forbids
+booking effort is how you stop time accruing against a ticket that is parked, and
+it composes with the variation gate rather than duplicating it.
+
+`BoardStatusNotification` is separate, and carries `notifyWho`, `member`, `email`
+and a **`workflowStep`** — so status notifications escalate in steps rather than
+firing once.
 
 **A board is retired, never deleted.** ConnectWise: *"A service board cannot be
 deleted once any items are tied to it"*, and *"after a service board has been
@@ -314,7 +380,9 @@ conflating them loses the distinction between *not started yet* and *closed down
 
 #### Four named roles per board, not an owner and a deputy
 
-**[VERIFIED, same page]** ConnectWise carries four notification roles on every
+**[VERIFIED, same page, and confirmed in the schema as
+`dispatchMember`, `dutyManagerMember`, `oncallMember` and `serviceManagerMember`
+on the `Board` entity]** ConnectWise carries four notification roles on every
 board, overridable per board: **Dispatch**, **Duty Manager**, **Service
 Manager**, **On-Call**. On the Duty Manager, verbatim: *"The duty manager serves
 as backup for the on-call member and is notified if the on-call member does not
@@ -407,18 +475,49 @@ the third one — an INSERT-side gate — is on the table in `WS36-sqlserver-por
 This is "it has multiple rules in it", and it is the piece most likely to be
 under-built.
 
-A rule is a row, not a function:
+**[VERIFIED 9 Sep 2026, `HealthITAU/pyconnectwise` @ `5ea14c1`]** ConnectWise
+splits this across four entities, and the split is worth copying:
+
+| Entity | Carries |
+|---|---|
+| `Workflow` | scope (`board`, `department`, `location`), `tableType` (which entity it acts on), `activateFlag`, and batch scheduling: `batchInterval`, `batchFrequencyUnit` (Minutes/Hours/Days), `batchSchedule` (`AnyTime` \| `MyCompanyOfficeHours` \| `SlaHours`) |
+| `WorkflowEvent` | `eventCondition`, and an **execution policy**: `executionTime` (`Once` \| `MultipleTimes` \| `Continuously`), `frequencyOfExecution`, `frequencyUnit`, `maxNumberOfExecution` |
+| `WorkflowAction` | ~40 typed action fields — set board, set `boardStatus`, set priority/type/subType/item, notify (`notifyType`, `notifyWho`, `notifyFrom`, cc/bcc), apply a `serviceTemplate`, send a `serviceSurvey`, run a script with success and fail statuses, `updateOwnerFlag`, note flags, `daysToExecute` |
+| `WorkflowTrigger` | **the condition vocabulary as data**: `name`, `expectedType`, `hasOperatorFlag`, `hasOptionsFlag`, optional `customField` |
+
+Three things I did not have and now would not skip.
+
+**The execution policy.** My design fired a rule once and had no way to say
+"page IT every thirty minutes until somebody owns this, up to four times". That
+is exactly the Unrouted ageing rule §5.4 calls for, and it needs
+`executionTime = MultipleTimes` with a frequency and a cap. Without it the rule
+either nags forever or fires once into an empty room.
+
+**Time-based rules are first-class.** Workflows run on a batch schedule, not only
+on events, and the schedule can be *SLA hours* rather than wall-clock. A rule that
+escalates at 80% of a target has to be evaluated on the same calendar the target
+uses, or it fires at the wrong time on a public holiday.
+
+**The trigger catalogue answers decision D5.** ConnectWise stores `eventCondition`
+as a string, but the fields available to build it are rows in `WorkflowTrigger`,
+each declaring its expected type and whether it takes an operator or an option
+list. That is the constrained middle path: the vocabulary is data, so the engine
+never evaluates an arbitrary expression, and PMC can still build a condition
+without a developer. **Adopt this shape** — it is safer than a free expression
+language and more flexible than a hard-coded field list.
+
+So the rule model becomes:
 
 ```
-workflow_rule
-  rule_id, board_id (NULL = global), name, is_active, sort_order,
-  event        ON_CREATE | ON_STATUS_CHANGE | ON_OWNER_CHANGE | ON_SCHEDULE
-             | ON_SLA_THRESHOLD | ON_NOTE_ADDED | ON_HANDOVER
-  condition    a stored expression over the ticket and its catalogue item
-  action       ASSIGN_TEAM | ASSIGN_OWNER | SET_STATUS | NOTIFY | ESCALATE
-             | ADD_NOTE | RAISE_CHILD | REQUIRE_APPROVAL | FLAG
-  parameters   the action's arguments
+workflow           scope + activation + batch schedule
+workflow_event     condition + execution policy (once | n times | continuous)
+workflow_action    typed action rows, many per event
+workflow_trigger   the condition vocabulary, as data
+workflow_run       append-only: what fired, when, against what, and what it did
 ```
+
+`workflow_run` is ours, not theirs. A rules engine you cannot audit is a system
+nobody can explain to an inspector.
 
 Four rules that must be expressible on day one, drawn from things that have
 already gone wrong **[all MEASURED in the record]**:
@@ -455,6 +554,27 @@ ticket_clock
   started_at, paused_total_minutes, stopped_at, target_minutes,
   calendar (CLINICAL_24x7 | MANILA_BUSINESS), breached (computed, never stored)
 ```
+
+**[VERIFIED 9 Sep 2026, `HealthITAU/pyconnectwise` @ `5ea14c1`]** ConnectWise's
+`SLA` entity confirms the shape almost exactly, and corrects two details:
+
+- **Three clocks, each with a target AND an attainment percent:** `respondHours` /
+  `respondPercent`, `planWithin` / `planWithinPercent`, `resolutionHours` /
+  `resolutionPercent`. Our `sla_target.target_minutes` plus `attainment_percent`
+  is the same idea, and keeping the per-ticket target and the population
+  percentile as separate columns is confirmed correct.
+- **`basedOn`: `AllHours` | `Customer` | `MyCalendar` | `Custom`**, with
+  `customCalendar` pointing at a `Calendar`. Four kinds, not two.
+- **`applicationOrder`** — SLAs are ordered and the first match wins. We need this
+  the moment more than one could apply.
+- **`SLAPriority`** overrides the three clocks per priority within one SLA. Ours is
+  keyed `(board, priority, clock)`, which is equivalent in power and better suited
+  to boards owning their own targets.
+
+And `Calendar` settles the calendar table's shape: seven pairs of
+`<day>StartTime` / `<day>EndTime`, plus a `holidayList` reference, with `Holiday`
+carrying a `date` and a `name`. A Philippine public holiday calendar is rows, not
+code, which matters because PMC's holidays are not Melbourne's.
 
 Rules, following ServiceNow's start/pause/stop shape rather than inventing one:
 
@@ -832,7 +952,7 @@ that is a conversation for the change order, not for the schema.
 | **D2** | Does the standard-library-only rule change shape as proposed in §8.3? | Decides whether Phase B is buildable at all |
 | **D3** | Identity: Entra for all, local for departmental fulfillers, or mixed | Decides ~USD 2,160/year, and the RA 10173 posture |
 | **D4** | Ticket numbering: one `PMC-` sequence across all boards, with `legacy_ref` | Cheap now, very expensive after the first thousand tickets |
-| **D5** | Rule conditions: structured field/operator/value only, no expression language | Security and testability |
+| **D5** | Rule conditions. **Largely answered by ConnectWise's `WorkflowTrigger`** — the condition vocabulary is data, each field declaring its type and whether it takes an operator or an option list. Confirm we adopt that rather than an expression language | Security and testability |
 | **D6** | Is Phase A funded as a variation, and at what number? | §1.4 — the AUD 6,500 spine line does not cover this |
 
 Three things worth doing this week regardless of any of the above, all
@@ -853,3 +973,5 @@ Three things worth doing this week regardless of any of the above, all
 - ConnectWise service board concept and setup tables — public search summaries of `docs.connectwise.com/ConnectWise_Documentation/060/020/010`, `/090/020/170` and `/090/020/070/130`. **The pages themselves are behind ConnectWise University authentication and were not read.**
 - ServiceNow Task table structure — https://www.servicenow.com/docs/r/washingtondc/application-development/table-administration-and-data-management/task-table-structure.html
 - ServiceNow REQ / RITM / SCTASK relationship — servicenow.com community threads, **community content, not product documentation**.
+- **ConnectWise PSA entity model — `HealthITAU/pyconnectwise` at commit `5ea14c1`, cloned and read 9 Sep 2026**, `src/pyconnectwise/models/manage/__init__.py`, 773 classes. The library is code-generated from ConnectWise's own OpenAPI schemas, so field names and types are ConnectWise's; the generation is a third party's. This is the strongest source used in this document and it is what corrected §2.2.1.
+- ConnectWise PSA setup tables — Service Board, Priority, and the Service Setup Tables index, relayed by Dada from an authenticated ConnectWise University session, 9 Sep 2026.

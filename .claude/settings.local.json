@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(git add *)",
-      "Bash(git -c user.email=chris@banal.com.au -c user.name=\"Chris Banal\" commit -q -F -)"
+      "Bash(git -c user.email=chris@banal.com.au -c user.name=\"Chris Banal\" commit -q -F -)",
+      "Bash(mkdir -p /tmp/claude-0/-home-user-dnd-poo/d3ad9f9b-7a30-5a2f-aee8-04986582d799/scratchpad/cw)",
+      "Bash(python3 -c ' *)"
     ]
   }
 }
