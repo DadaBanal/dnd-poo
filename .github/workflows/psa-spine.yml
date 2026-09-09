@@ -1,0 +1,43 @@
+name: psa-spine
+
+on:
+  push:
+    paths: ['platform/psa-spine/**', '.github/workflows/psa-spine.yml']
+  pull_request:
+    paths: ['platform/psa-spine/**', '.github/workflows/psa-spine.yml']
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: platform/psa-spine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Standard library only, by design — no install step.
+      - name: Tests
+        run: python3 tests/test_spine.py
+
+      # The commercial record must not lose a row. Prove the whole path runs.
+      - name: End-to-end on the synthetic register
+        run: |
+          python3 -m psaspine init /tmp/spine.db
+          python3 -m psaspine import /tmp/spine.db tests/fixtures/register-sample.csv --run-id ci --as-of 2026-09-09
+          python3 -m psaspine report /tmp/spine.db --out /tmp/out --run-id ci --as-of 2026-09-09
+          test -f /tmp/out/PMC_AnnexB_Variation_Register_20260909.md
+          test -f /tmp/out/PMC_Instrument_Exception_Report_20260909.md
+          ls /tmp/out/notices/*.md >/dev/null
+
+      # The fence: no real register, no addresses, no commercial amounts in git.
+      - name: Repository fence
+        run: |
+          if grep -rInE '\b(10|192\.168|172\.(1[6-9]|2[0-9]|3[01]))\.[0-9]{1,3}\.[0-9]{1,3}\b' \
+               --exclude-dir=.git . ; then
+            echo "FAIL: a private network address is committed under platform/psa-spine"; exit 1
+          fi
+          echo "ok: no private network addresses"

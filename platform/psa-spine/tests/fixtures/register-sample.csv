@@ -1,0 +1,16 @@
+id,name,entity,scope_item,contract_basis,status,blocked_on,next_action,next_action_by,risk,container,last_activity,evidence
+WS01,Inventory reconciliation,PMC,3,baseline,BLOCKED,Department: is 'correct qty' absolute or a delta,"Chase; post the three held lines (11111, 22222, 33333)",PMC,M,SQL01,20260904,docs/example-note-2026-09-02.md;deliverables/PMC_Example_20260904.xlsx
+WS02,Item master descriptions,PMC,VAR,variation,BLOCKED,"Department head, question 18",Chase; run the fix after her answer,PMC,M,SQL01,20260904,docs/example-prompt-2026-09-04.md
+WS05,Report templates,PMC,VAR,variation,BLOCKED,Laboratory: print run from new results,Print checklist; read-only diff,PMC,M,SQL01,20260904,docs/example-checklist-20260904.md;docs/example-rules.md
+WS07,Reporting platform,PMC+JRBY,VAR,variation,IN-PROGRESS (published),,"Long running record. Phase one done; phase two pending. Contains, commas, and semicolons; and quoted ""text"" too.",Dada,M,SQL01,2026-09-09,docs/example-readme.md;C:/EXAMPLE/dev/build;deliverables/Example-Build.zip
+WS12,Directory services health,PMC,2,baseline,IN-PROGRESS,,Rotation overdue; stand up a second controller,Dada,H,SQL01,20260901,docs/example-sweep-2026-08-30.md
+WS14,File shares and home drives,PMC,2->8,baseline,BLOCKED,Laboratory: write account,Close the open share permission,PMC,H,SQL01,20260901,docs/example-shares-2026-09-01.md
+WS15,Host backups and legacy server,PMC,3+5,baseline,IN-PROGRESS,,Run the sweep; host-level backup,Dada,H,SQL01,20260908,scripts/ps/Example-Scope.ps1
+WS17,Second-site storage,UNCLASSIFIED,?,?,IN-PROGRESS,Dada: which entity is this,Decide entity; run the remediation scripts,Dada,H,MEL,20260904,docs/example-handoff-20260902.md
+WS19,Remote reach to the database server,PMC,1/2,baseline,IN-PROGRESS,,Create the read-only login,Dada,M,SQL01,20260908,scripts/sql/Example-Login.sql
+WS20,Client access licences,PMC,9,baseline,BLOCKED,Client procurement,Purchase decision,PMC,H,,20260902,docs/example-purchasing-2026-09-02.md
+WS26,Finance governance,PMC,4/8,baseline,BUILT-NOT-RUN,Finance: tax basis,Deploy the list then the flow,Dada,H,MEL,20260908,docs/Example-BuildSteps.md;deliverables/PMC_Example_Memo.docx
+WS28,Contract and commercial governance,Dada IT,6,baseline,DONE (filed; execution unverified),,Verify the signed originals; anchor the review date,Dada,M,MEL,20260904,deliverables/PMC_Example_Contracts.zip
+WS31,Patient queuing,PMC,7,baseline,DONE (undocumented),,Write the delivery record,Dada,L,SQL01,unknown,(to be collected)
+WS34,Second entity separation,JRBY,JRBY,variation (Amendment 1),IN-PROGRESS,"Dada: which codes move",Committed one row; the rest is a judgement call,Dada,M,SQL01,20260908,C:/EXAMPLE/dev/sql/Example-Entity.sql;docs/example-plan-2026-09-08.md
+WS35,Legacy data staging,PMC,VAR,variation,BUILT-NOT-RUN,,Run the scope then stage then restore,Dada,M,SQL01,20260908,scripts/ps/Example-Legacy.ps1
