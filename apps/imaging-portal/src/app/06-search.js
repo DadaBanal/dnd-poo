@@ -44,13 +44,34 @@ async function findStudies(Query) {
   const body = { Level: 'Study', Expand: true, Query,
     RequestedTags: ['ModalitiesInStudy','NumberOfStudyRelatedSeries','NumberOfStudyRelatedInstances'],
     Limit: CFG.pageSize };
-  try { return await API.post('tools/find', body); }
+  let rows;
+  try { rows = await API.post('tools/find', body); }
   catch (e) {
-    if (!(e instanceof ApiError) || e.status !== 400) throw e;
-    // older index backends reject the optional keys — retry with the plain form
+    // The ODBC index refuses what it calls the ExtendedFind keys. It answers 400
+    // on some builds and 500 on others -- OrderBy is a MEASURED 500 here -- so
+    // both get one retry with the plain form before the error is believed.
+    if (!(e instanceof ApiError) || (e.status !== 400 && e.status !== 500)) throw e;
     const { RequestedTags, Limit, ...plain } = body;
-    return API.post('tools/find', plain);
+    rows = await API.post('tools/find', plain);
   }
+  return expandStudies(rows);
+}
+
+/**
+ * `Expand: true` is a request, not a guarantee. An index that ignores it returns
+ * bare id strings, and norm() on a string produces a row with no name, no date
+ * and no id -- a worklist that looks broken rather than one that says why.
+ * Resolve them instead, four at a time, and say so in the console.
+ */
+async function expandStudies(rows) {
+  if (!Array.isArray(rows) || !rows.length || typeof rows[0] !== 'string') return rows || [];
+  console.warn(`[PMC] the index ignored Expand and returned ${rows.length} ids; resolving them`);
+  const head = rows.slice(0, CFG.pageSize);
+  const gate4 = (() => { let n = 0; const q = [];
+    const next = () => { if (n >= 4 || !q.length) return; n++; q.shift()().finally(() => { n--; next(); }); };
+    return fn => new Promise((res, rej) => { q.push(() => fn().then(res, rej)); next(); }); })();
+  const got = await Promise.all(head.map(ID => gate4(() => API.get(`studies/${ID}`)).catch(() => null)));
+  return got.filter(Boolean);
 }
 function sortStudies() {
   const k = state.sort.key, dir = state.sort.dir;

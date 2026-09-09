@@ -154,7 +154,7 @@ const PLUGIN_INFO = {
 };
 
 export function startStandInOrthanc({ portalHtml, config = null, expandSupported = true,
-                                     childExpandSupported = true } = {}) {
+                                     childExpandSupported = true, findExpandSupported = true } = {}) {
   const studies = buildArchive();
   const requests = [];
   const json = (res, body, code = 200) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
@@ -205,7 +205,10 @@ export function startStandInOrthanc({ portalHtml, config = null, expandSupported
         return true;
       });
       if (q.Limit) out = out.slice(0, q.Limit);
-      return json(res, out.map(({ _mod, ...s }) => (q.Expand ? s : s.ID)));
+      // `Expand` is a request, not a guarantee: an index that does not implement
+      // the ExtendedFind keys answers with bare ids and no error at all.
+      const expand = q.Expand && findExpandSupported;
+      return json(res, out.map(({ _mod, ...s }) => (expand ? s : s.ID)));
     }
 
     // A child listing is only expanded when ?expand is asked for. MEASURED 9 Sep

@@ -175,6 +175,25 @@ check('a study opens with its series', async (b, s) => {
   await ctx.close();
 });
 
+check('the worklist still names patients when the index ignores Expand', async (b, s) => {
+  // Expand is a request, not a guarantee. An index that does not implement the
+  // ExtendedFind keys answers /tools/find with bare ids and no error, and norm()
+  // on a string yields a row with no name, no date and no id -- a worklist that
+  // looks broken rather than one that says why.
+  const flat = await startStandInOrthanc({ portalHtml, findExpandSupported: false });
+  try {
+    const { page, ctx, pageErrors } = await openPortal(b, flat);
+    const rows = await page.locator('#results .card, #results tbody tr').count();
+    ok(rows > 0, 'the worklist rendered nothing');
+    const text = await page.textContent('#results');
+    ok(!/\(no name\)/.test(text), 'the worklist rendered rows with no patient on them');
+    ok(/Dela Cruz|Sample|Fixture|Example|Placeholder|Test Patient/i.test(text),
+      `no study name reached the worklist: ${text.slice(0, 160)}`);
+    eq(pageErrors.length, 0, `page errors: ${pageErrors.join(' | ')}`);
+    await ctx.close();
+  } finally { await flat.close(); }
+});
+
 check('a study still opens when the archive ignores ?expand on child listings', async (b, s) => {
   // MEASURED 9 Sep 2026 on PMC's archive: a child route can answer with bare
   // ids. Reading .ID off a string yields undefined, the next request becomes
