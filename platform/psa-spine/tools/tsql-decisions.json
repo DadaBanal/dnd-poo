@@ -1,0 +1,349 @@
+{
+  "_": [
+    "Every deliberate decision the SQLite -> T-SQL port needs, one per column.",
+    "SQLite has one string type and one float type; SQL Server does not, and a",
+    "width picked by a rule is a width nobody chose. So this file is explicit and",
+    "the translator REFUSES to emit anything for a TEXT or REAL column that is not",
+    "named here. Adding a column to schema/*.sql therefore breaks the build until",
+    "somebody decides how wide it is -- which is the point.",
+    "",
+    "Reviewed 9 September 2026. NOT VERIFIED against DND-SQL01: this session has no",
+    "route to it, so no width here has been proved against real data in the target."
+  ],
+
+  "classes": {
+    "ID": {
+      "sql": "NVARCHAR(64)",
+      "why": "Keys and foreign keys. The longest in circulation is a desk reference like 'ITO-1723' and the longest catalogue id seeded is 24 characters."
+    },
+    "CODE": {
+      "sql": "NVARCHAR(32)",
+      "why": "A closed vocabulary. The longest value in any CHECK list is PAUSED_PENDING_AUTHORISATION at 28. The translator asserts this per column rather than trusting the note."
+    },
+    "NAME": {
+      "sql": "NVARCHAR(400)",
+      "why": "A name, title or heading a person reads. Scope item 3's verbatim heading is 62 characters; 400 leaves room without inviting a paragraph."
+    },
+    "PERSON": {
+      "sql": "NVARCHAR(200)",
+      "why": "A named person or a named group. Never a role alone, which is why it is not a CODE."
+    },
+    "REF": {
+      "sql": "NVARCHAR(400)",
+      "why": "A pointer to something outside the spine: a SharePoint item id, a desk reference, an evidence string kept verbatim. Long because the register's evidence cells carry absolute paths."
+    },
+    "HASH": {
+      "sql": "NVARCHAR(64)",
+      "why": "A sha256 in lower-case hex. Exactly 64."
+    },
+    "DATE_TEXT": {
+      "sql": "NVARCHAR(32)",
+      "why": "A date kept as the source wrote it. Both '20260904' and '2026-09-09' are in circulation and converting on the way in destroys which shape was used, so the text is authoritative and a parsed DATE column is added beside it."
+    },
+    "TIMESTAMP_TEXT": {
+      "sql": "NVARCHAR(64)",
+      "why": "As DATE_TEXT, but the source may carry a time and an offset. Parsed beside it as DATETIME2."
+    },
+    "FREE": {
+      "sql": "NVARCHAR(MAX)",
+      "why": "MAX only where the record says MAX: notes, details, bodies, reasons. The register's free-text cells run to thousands of characters and truncating one loses the running history of a workstream."
+    }
+  },
+
+  "decimals": {
+    "fee_line.amount": {
+      "sql": "DECIMAL(19,4)",
+      "why": "Money on an invoice line. FLOAT cannot represent a cent exactly and this number is disputed by a finance function."
+    },
+    "variation.eac_percent": {
+      "sql": "DECIMAL(9,4)",
+      "why": "The uplift multiplier: PMA = BMF x EAC%. It reaches an invoice through a multiplication, so binary float error reaches the invoice with it."
+    },
+    "time_entry.band_hours": {
+      "sql": "DECIMAL(9,2)",
+      "why": "The uplift numerator. Bands are 0.5/2/4/8/20, all exact in DECIMAL and none of them exact in binary FLOAT."
+    },
+    "capacity_declaration.hours_per_month": {
+      "sql": "DECIMAL(9,2)",
+      "why": "The uplift denominator, offered to the client for initialling. A denominator that does not compare equal to the number on the paper is indefensible."
+    },
+    "sla_target.attainment_percent": {
+      "sql": "DECIMAL(5,2)",
+      "why": "A population percentile, reported not invoiced. DECIMAL anyway, so no number in this schema is a float."
+    }
+  },
+
+  "columns": {
+    "entity.entity_id": "ID",
+    "entity.name": "NAME",
+    "entity.note": "FREE",
+
+    "site.site_id": "ID",
+    "site.entity_id": "ID",
+    "site.name": "NAME",
+
+    "instrument.instrument_id": "ID",
+    "instrument.kind": "CODE",
+    "instrument.title": "NAME",
+    "instrument.effective_from": "DATE_TEXT",
+    "instrument.effective_to": "DATE_TEXT",
+    "instrument.execution_status": "CODE",
+    "instrument.signatory_pmc": "PERSON",
+    "instrument.signatory_dadait": "PERSON",
+    "instrument.signed_on": "DATE_TEXT",
+    "instrument.prevails_over": "ID",
+    "instrument.payment_terms_basis": "CODE",
+    "instrument.source_ref": "REF",
+    "instrument.source_sha256": "HASH",
+    "instrument.note": "FREE",
+
+    "scope_item.scope_item_id": "ID",
+    "scope_item.heading": "NAME",
+
+    "instrument_scope_item.instrument_id": "ID",
+    "instrument_scope_item.scope_item_id": "ID",
+    "instrument_scope_item.clause_ref": "REF",
+
+    "fee_line.instrument_id": "ID",
+    "fee_line.entity_id": "ID",
+    "fee_line.description": "NAME",
+    "fee_line.currency": "CODE",
+    "fee_line.period": "CODE",
+    "fee_line.effective_from": "DATE_TEXT",
+    "fee_line.effective_to": "DATE_TEXT",
+    "fee_line.basis": "CODE",
+    "fee_line.variation_id": "ID",
+    "fee_line.entered_on": "DATE_TEXT",
+
+    "variation.variation_id": "ID",
+    "variation.title": "NAME",
+    "variation.entity_id": "ID",
+    "variation.category": "NAME",
+    "variation.state": "CODE",
+    "variation.pricing_method": "CODE",
+    "variation.sustained_from": "DATE_TEXT",
+    "variation.approved_on": "DATE_TEXT",
+    "variation.instrument_id": "ID",
+    "variation.note": "FREE",
+
+    "variation_event.variation_id": "ID",
+    "variation_event.from_state": "CODE",
+    "variation_event.to_state": "CODE",
+    "variation_event.occurred_on": "DATE_TEXT",
+    "variation_event.actor": "PERSON",
+    "variation_event.reason": "FREE",
+    "variation_event.evidence_ref": "REF",
+
+    "notice.notice_id": "ID",
+    "notice.kind": "CODE",
+    "notice.entity_id": "ID",
+    "notice.issued_on": "DATE_TEXT",
+    "notice.issued_to": "PERSON",
+    "notice.subject": "NAME",
+    "notice.body_ref": "REF",
+    "notice.instrument_id": "ID",
+    "notice.delivery_channel": "NAME",
+    "notice.receipt_evidence": "REF",
+    "notice.variation_id": "ID",
+    "notice.work_item_id": "ID",
+
+    "client_dependency.dependency_id": "ID",
+    "client_dependency.work_item_id": "ID",
+    "client_dependency.entity_id": "ID",
+    "client_dependency.raised_on": "DATE_TEXT",
+    "client_dependency.owner_name": "PERSON",
+    "client_dependency.owner_department": "NAME",
+    "client_dependency.description": "FREE",
+    "client_dependency.scope_item_id": "ID",
+    "client_dependency.impact": "CODE",
+    "client_dependency.notice_id": "ID",
+    "client_dependency.resolved_on": "DATE_TEXT",
+
+    "reclassification.work_item_id": "ID",
+    "reclassification.old_basis": "CODE",
+    "reclassification.new_basis": "CODE",
+    "reclassification.changed_on": "DATE_TEXT",
+    "reclassification.changed_by": "PERSON",
+    "reclassification.reason": "FREE",
+    "reclassification.instrument_id": "ID",
+    "reclassification.notice_id": "ID",
+
+    "decision_note.entity_id": "ID",
+    "decision_note.subject": "NAME",
+    "decision_note.advisory_at": "TIMESTAMP_TEXT",
+    "decision_note.decision_at": "TIMESTAMP_TEXT",
+    "decision_note.advised_by": "PERSON",
+    "decision_note.decided_by": "PERSON",
+    "decision_note.outcome": "FREE",
+    "decision_note.evidence_ref": "REF",
+
+    "work_item.work_item_id": "ID",
+    "work_item.source": "CODE",
+    "work_item.name": "NAME",
+    "work_item.entity_id": "ID",
+    "work_item.entity_raw": "NAME",
+    "work_item.contract_basis": "CODE",
+    "work_item.contract_basis_raw": "NAME",
+    "work_item.variation_id": "ID",
+    "work_item.status": "CODE",
+    "work_item.status_raw": "NAME",
+    "work_item.blocked_on": "FREE",
+    "work_item.next_action": "FREE",
+    "work_item.next_action_by": "PERSON",
+    "work_item.risk": "CODE",
+    "work_item.container": "NAME",
+    "work_item.last_activity": "DATE_TEXT",
+    "work_item.parent_id": "ID",
+    "work_item.lane": "CODE",
+
+    "work_item_scope_item.work_item_id": "ID",
+    "work_item_scope_item.scope_item_id": "ID",
+    "work_item_scope_item.relation": "CODE",
+    "work_item_scope_item.raw": "NAME",
+
+    "work_item_note.work_item_id": "ID",
+    "work_item_note.noted_on": "TIMESTAMP_TEXT",
+    "work_item_note.author": "PERSON",
+    "work_item_note.body": "FREE",
+
+    "work_item_evidence.work_item_id": "ID",
+    "work_item_evidence.raw": "REF",
+    "work_item_evidence.kind": "CODE",
+    "work_item_evidence.resolved_ref": "REF",
+
+    "time_entry.work_item_id": "ID",
+    "time_entry.entity_id": "ID",
+    "time_entry.site_id": "ID",
+    "time_entry.worked_on": "DATE_TEXT",
+    "time_entry.performed_by": "PERSON",
+    "time_entry.entered_by": "PERSON",
+    "time_entry.charge_method": "CODE",
+    "time_entry.review_category": "NAME",
+    "time_entry.authority_source": "FREE",
+    "time_entry.note": "FREE",
+
+    "capacity_declaration.effective_from": "DATE_TEXT",
+    "capacity_declaration.effective_to": "DATE_TEXT",
+    "capacity_declaration.basis": "FREE",
+    "capacity_declaration.agreed_by": "PERSON",
+    "capacity_declaration.agreed_on": "DATE_TEXT",
+
+    "document.document_id": "ID",
+    "document.title": "NAME",
+    "document.kind": "CODE",
+    "document.entity_id": "ID",
+    "document.dated": "DATE_TEXT",
+    "document.source_ref": "REF",
+    "document.sha256": "HASH",
+    "document.state": "CODE",
+    "document.supersedes": "ID",
+
+    "data_quality.run_id": "ID",
+    "data_quality.subject_kind": "CODE",
+    "data_quality.subject_id": "ID",
+    "data_quality.code": "CODE",
+    "data_quality.detail": "FREE",
+    "data_quality.severity": "CODE",
+
+    "audit_event.occurred_at": "TIMESTAMP_TEXT",
+    "audit_event.actor": "PERSON",
+    "audit_event.action": "CODE",
+    "audit_event.subject_kind": "CODE",
+    "audit_event.subject_id": "ID",
+    "audit_event.detail": "FREE",
+    "audit_event.override_reason": "FREE",
+
+    "import_run.run_id": "ID",
+    "import_run.started_at": "TIMESTAMP_TEXT",
+    "import_run.source": "NAME",
+    "import_run.source_sha256": "HASH",
+    "import_run.note": "FREE",
+
+    "board.board_id": "ID",
+    "board.display_name": "NAME",
+    "board.phase": "CODE",
+    "board.fulfiller_group": "NAME",
+    "board.owner": "PERSON",
+    "board.deputy": "PERSON",
+    "board.note": "FREE",
+
+    "service_family.family_id": "ID",
+    "service_family.display_name": "NAME",
+    "service_family.raw_name": "NAME",
+    "service_family.note": "FREE",
+
+    "service_component.component_id": "ID",
+    "service_component.family_id": "ID",
+    "service_component.display_name": "NAME",
+    "service_component.raw_name": "NAME",
+    "service_component.note": "FREE",
+
+    "service_action.action_id": "ID",
+    "service_action.display_name": "NAME",
+    "service_action.raw_name": "NAME",
+    "service_action.kind": "CODE",
+    "service_action.implies_impact": "CODE",
+    "service_action.note": "FREE",
+
+    "catalogue_item.catalogue_item_id": "ID",
+    "catalogue_item.component_id": "ID",
+    "catalogue_item.action_id": "ID",
+    "catalogue_item.default_board_id": "ID",
+    "catalogue_item.default_scope_item_id": "ID",
+    "catalogue_item.default_contract_basis": "CODE",
+    "catalogue_item.min_priority": "CODE",
+    "catalogue_item.note": "FREE",
+
+    "clinical_floor.floor_id": "ID",
+    "clinical_floor.description": "FREE",
+    "clinical_floor.priority": "CODE",
+    "clinical_floor.status": "CODE",
+    "clinical_floor.signed_off_by": "PERSON",
+    "clinical_floor.signed_off_on": "DATE_TEXT",
+
+    "sla_target.board_id": "ID",
+    "sla_target.priority": "CODE",
+    "sla_target.clock": "CODE",
+    "sla_target.calendar": "CODE",
+    "sla_target.note": "FREE",
+
+    "ticket.work_item_id": "ID",
+    "ticket.external_ref": "REF",
+    "ticket.board_id": "ID",
+    "ticket.catalogue_item_id": "ID",
+    "ticket.path": "CODE",
+    "ticket.impact": "CODE",
+    "ticket.urgency": "CODE",
+    "ticket.priority": "CODE",
+    "ticket.priority_source": "CODE",
+    "ticket.requested_by": "PERSON",
+    "ticket.requested_at": "TIMESTAMP_TEXT",
+    "ticket.owner": "PERSON",
+    "ticket.opened_at": "TIMESTAMP_TEXT",
+    "ticket.closed_at": "TIMESTAMP_TEXT",
+    "ticket.state": "CODE",
+    "ticket.source_ref": "REF",
+    "ticket.note": "FREE",
+
+    "ticket_event.work_item_id": "ID",
+    "ticket_event.occurred_at": "TIMESTAMP_TEXT",
+    "ticket_event.kind": "CODE",
+    "ticket_event.actor": "PERSON",
+    "ticket_event.detail": "FREE",
+
+    "ticket_handover.work_item_id": "ID",
+    "ticket_handover.from_board_id": "ID",
+    "ticket_handover.to_board_id": "ID",
+    "ticket_handover.handover_at": "TIMESTAMP_TEXT",
+    "ticket_handover.from_owner": "PERSON",
+    "ticket_handover.to_owner": "PERSON",
+    "ticket_handover.reason": "FREE",
+
+    "priority_override.work_item_id": "ID",
+    "priority_override.overridden_at": "TIMESTAMP_TEXT",
+    "priority_override.was_priority": "CODE",
+    "priority_override.now_priority": "CODE",
+    "priority_override.escalation_role": "CODE",
+    "priority_override.reason": "FREE"
+  }
+}

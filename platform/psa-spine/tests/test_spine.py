@@ -8,6 +8,7 @@ Run: python3 tests/test_spine.py
 """
 from __future__ import annotations
 
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -16,7 +17,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+
 from psaspine import db, register, reports  # noqa: E402
+import sqlite_to_tsql  # noqa: E402
+from sqlite_ddl import Unsupported  # noqa: E402
 
 FIXTURE = Path(__file__).parent / "fixtures" / "register-sample.csv"
 AS_OF = date(2026, 9, 9)
@@ -237,6 +242,286 @@ class GateTest(unittest.TestCase):
         self.assertEqual(self.conn.execute(
             "SELECT state FROM variation WHERE variation_id='VAR-1'").fetchone()["state"],
             "PERFORMED_WITHOUT_APPROVAL")
+
+
+class TheGateTest(unittest.TestCase):
+    """The two triggers, exercised rather than admired.
+
+    They were added with the ticket schema and never actually fired at. A gate
+    nobody has walked into is a comment, so these walk into it: a variation-path
+    ticket must not be able to consume effort, or be closed, while no variation
+    is attached.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn.execute(
+            "INSERT INTO work_item (work_item_id, source, name, entity_id, contract_basis)"
+            " VALUES ('ITO-1723','desk','MRI feed dead','PMC','VARIATION')")
+        self.conn.execute(
+            "INSERT INTO ticket (work_item_id, board_id, path, impact, urgency, priority,"
+            " priority_source, requested_at, opened_at, state)"
+            " VALUES ('ITO-1723','IT_HELP','VARIATION','I1','U1','P1','MATRIX',"
+            "'2026-09-09','2026-09-09','IN_PROGRESS')")
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _log_time(self):
+        return self.conn.execute(
+            "INSERT INTO time_entry (work_item_id, entity_id, worked_on, band_hours,"
+            " performed_by, entered_by, charge_method)"
+            " VALUES ('ITO-1723','PMC','2026-09-09',4,'K. Simon','T. Dela Cruz',"
+            "'CAPACITY_UPLIFT')")
+
+    def _attach_a_variation(self) -> None:
+        self.conn.execute(
+            "INSERT INTO variation (variation_id, title, entity_id, category, state)"
+            " VALUES ('VAR-1','Hospital-wide ticketing','PMC','OPERATIONAL_TICKETING','PRICED')")
+        self.conn.execute(
+            "UPDATE work_item SET variation_id='VAR-1' WHERE work_item_id='ITO-1723'")
+
+    def test_effort_is_refused_while_no_variation_is_attached(self):
+        with self.assertRaises(sqlite3.IntegrityError) as caught:
+            self._log_time()
+        self.assertIn("must be attached to a variation", str(caught.exception))
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) c FROM time_entry").fetchone()["c"], 0)
+
+    def test_close_is_refused_while_no_variation_is_attached(self):
+        for state in ("RESOLVED", "CLOSED"):
+            with self.assertRaises(sqlite3.IntegrityError) as caught:
+                self.conn.execute("UPDATE ticket SET state=? WHERE work_item_id='ITO-1723'",
+                                  (state,))
+            self.assertIn("cannot be closed with no variation", str(caught.exception))
+        self.assertEqual(self.conn.execute(
+            "SELECT state FROM ticket").fetchone()["state"], "IN_PROGRESS")
+
+    def test_both_are_allowed_once_a_variation_exists(self):
+        self._attach_a_variation()
+        self._log_time()
+        self.conn.execute("UPDATE ticket SET state='CLOSED' WHERE work_item_id='ITO-1723'")
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) c FROM time_entry").fetchone()["c"], 1)
+        self.assertEqual(self.conn.execute(
+            "SELECT state FROM ticket").fetchone()["state"], "CLOSED")
+
+    def test_the_gate_is_only_on_the_variation_path(self):
+        """An incident consumes the fee. It has no commercial event to wait for."""
+        self.conn.execute(
+            "INSERT INTO work_item (work_item_id, source, name, entity_id, contract_basis)"
+            " VALUES ('ITO-1724','desk','Printer re-cabled','PMC','BASELINE')")
+        self.conn.execute(
+            "INSERT INTO ticket (work_item_id, board_id, path, impact, urgency, priority,"
+            " priority_source, requested_at, opened_at, state)"
+            " VALUES ('ITO-1724','IT_HELP','INCIDENT','I3','U3','P4','MATRIX',"
+            "'2026-09-09','2026-09-09','IN_PROGRESS')")
+        self.conn.execute(
+            "INSERT INTO time_entry (work_item_id, entity_id, worked_on, band_hours,"
+            " performed_by, entered_by, charge_method)"
+            " VALUES ('ITO-1724','PMC','2026-09-09',0.5,'K. Simon','T. Dela Cruz',"
+            "'INCLUDED_IN_MONTHLY_FEE')")
+        self.conn.execute("UPDATE ticket SET state='CLOSED' WHERE work_item_id='ITO-1724'")
+        self.assertEqual(self.conn.execute(
+            "SELECT state FROM ticket WHERE work_item_id='ITO-1724'").fetchone()["state"],
+            "CLOSED")
+
+    def test_a_typed_reason_is_required_to_lower_a_priority(self):
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute(
+                "INSERT INTO priority_override (work_item_id, overridden_at, was_priority,"
+                " now_priority, escalation_role, reason)"
+                " VALUES ('ITO-1723','2026-09-09','P1','P3','DUTY_MANAGER','ok')")
+
+
+class SchemaRulesTest(unittest.TestCase):
+    """The four rules that are decisions somebody with authority has not made.
+
+    Each is enforced in the schema precisely so a port, an importer or a hurry
+    cannot relax it. These assert the seed does not quietly claim otherwise.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def test_no_board_is_live_and_none_can_go_live_without_a_named_owner(self):
+        live = self.conn.execute("SELECT COUNT(*) c FROM board WHERE is_live=1").fetchone()["c"]
+        self.assertEqual(live, 0)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute("UPDATE board SET is_live=1 WHERE board_id='IT_HELP'")
+
+    def test_a_baseline_catalogue_item_must_name_its_baseline_heading(self):
+        unknown = self.conn.execute(
+            "SELECT COUNT(*) c FROM catalogue_item WHERE default_contract_basis='UNKNOWN'"
+        ).fetchone()["c"]
+        self.assertEqual(unknown, 21)     # PACS, imaging, medical gas, patching, hardware
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute(
+                "UPDATE catalogue_item SET default_contract_basis='BASELINE',"
+                " default_scope_item_id=NULL WHERE default_contract_basis='UNKNOWN'")
+
+    def test_no_clinical_floor_is_signed_and_none_can_claim_to_be(self):
+        signed = self.conn.execute(
+            "SELECT COUNT(*) c FROM clinical_floor WHERE status='SIGNED_OFF'").fetchone()["c"]
+        self.assertEqual(signed, 0)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute("UPDATE clinical_floor SET status='SIGNED_OFF'")
+
+    def test_no_sla_target_is_enforced(self):
+        enforced = self.conn.execute(
+            "SELECT COUNT(*) c FROM sla_target WHERE enforced=1").fetchone()["c"]
+        self.assertEqual(enforced, 0)
+
+
+class PortTest(unittest.TestCase):
+    """The SQL Server port, and the drift gate that keeps the two in step.
+
+    NOT VERIFIED against DND-SQL01\\PMC_SS: no environment on this account has a
+    route to it, so nothing here has been executed by a server. These assert what
+    the translator emits, which is the part that can be checked from here.
+    """
+
+    def setUp(self) -> None:
+        self.tsql = sqlite_to_tsql.generate()
+
+    # ------------------------------------------------------------------- drift
+
+    def test_the_committed_script_is_what_the_schema_produces_today(self):
+        """The whole point of generating it: two copies cannot disagree."""
+        committed = sqlite_to_tsql.OUTPUT.read_text(encoding="utf-8")
+        self.assertEqual(committed, self.tsql,
+                         "sqlserver/ has drifted from schema/. Run "
+                         "python3 tools/sqlite_to_tsql.py --write and commit both.")
+
+    def test_every_table_and_both_triggers_are_ported(self):
+        for table in ("entity", "variation", "work_item", "time_entry", "ticket",
+                      "catalogue_item", "board", "priority_override"):
+            self.assertIn(f"CREATE TABLE psa.[{table}] (", self.tsql)
+        self.assertIn("CREATE TRIGGER psa.[time_entry_requires_a_variation]", self.tsql)
+        self.assertIn("CREATE TRIGGER psa.[ticket_close_requires_a_variation]", self.tsql)
+
+    # ------------------------------------------------------------ the decisions
+
+    def test_integer_primary_key_becomes_identity_and_a_text_key_does_not(self):
+        self.assertIn("[time_entry_id] INT IDENTITY(1,1) NOT NULL", self.tsql)
+        self.assertIn("[work_item_id] NVARCHAR(64) NOT NULL", self.tsql)
+        self.assertNotIn("NVARCHAR(64) IDENTITY", self.tsql)
+
+    def test_nothing_that_reaches_an_invoice_is_a_float(self):
+        self.assertNotIn("FLOAT", self.tsql.upper())
+        self.assertNotIn("] REAL", self.tsql)
+        self.assertIn("[band_hours] DECIMAL(9,2)", self.tsql)
+        self.assertIn("[amount] DECIMAL(19,4)", self.tsql)
+        self.assertIn("[eac_percent] DECIMAL(9,4)", self.tsql)
+
+    def test_max_is_only_where_a_note_or_a_detail_lives(self):
+        self.assertIn("[next_action] NVARCHAR(MAX)", self.tsql)   # thousands of characters
+        self.assertIn("[detail] NVARCHAR(MAX)", self.tsql)
+        self.assertIn("[name] NVARCHAR(400)", self.tsql)          # a name is not a note
+        self.assertIn("[work_item_id] NVARCHAR(64)", self.tsql)
+
+    def test_dates_stay_as_the_source_wrote_them(self):
+        """Converting on the way in loses which shape the source used."""
+        self.assertIn("[worked_on] NVARCHAR(32) NOT NULL", self.tsql)
+        self.assertIn("[worked_on_parsed] AS (CASE WHEN [worked_on] LIKE", self.tsql)
+        self.assertIn("TRY_CONVERT(DATE, [worked_on], 112)", self.tsql)   # '20260904'
+        self.assertIn("TRY_CONVERT(DATE, [worked_on], 23)", self.tsql)    # '2026-09-09'
+
+    def test_the_typed_reason_survives_the_port(self):
+        self.assertIn("CHECK (LEN(LTRIM(RTRIM(reason))) >= 15)", self.tsql)
+
+    def test_the_decision_note_ordering_check_survives_the_port(self):
+        self.assertIn("CHECK (decision_at IS NULL OR advisory_at <= decision_at)", self.tsql)
+
+    def test_a_board_still_cannot_go_live_without_an_owner(self):
+        self.assertIn("CHECK (is_live = 0 OR (owner IS NOT NULL AND deputy IS NOT NULL))",
+                      self.tsql)
+
+    # -------------------------------------------------------------- the gate
+
+    def test_the_gate_rolls_back_and_throws_with_the_same_words(self):
+        self.assertIn("IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;", self.tsql)
+        self.assertIn(
+            "THROW 50001, N''a variation-path ticket must be attached to a variation "
+            "before it can consume effort'', 1;", self.tsql)
+        self.assertIn(
+            "THROW 50002, N''a variation-path ticket cannot be closed with no variation "
+            "attached'', 1;", self.tsql)
+
+    def test_before_becomes_after_over_the_inserted_rows(self):
+        """SQL Server has no BEFORE trigger; NEW becomes a row of `inserted`."""
+        self.assertIn("AFTER INSERT", self.tsql)
+        self.assertNotIn("BEFORE INSERT\nAS", self.tsql)
+        self.assertIn("FROM inserted AS inserted_row", self.tsql)
+        self.assertNotIn("NEW.", self.tsql)
+
+    def test_the_close_gate_only_fires_when_the_state_column_moves(self):
+        self.assertIn("IF (UPDATE(state))", self.tsql)
+
+    # ---------------------------------------------------- refusing to guess
+
+    def _translate(self, schema_sql: str, decisions: dict | None = None) -> str:
+        import json
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        (root / "001.sql").write_text(schema_sql, encoding="utf-8")
+        dec_path = root / "decisions.json"
+        base = json.loads(sqlite_to_tsql.DECISIONS.read_text(encoding="utf-8"))
+        base["columns"] = (decisions or {})
+        base["decimals"] = {}
+        dec_path.write_text(json.dumps(base), encoding="utf-8")
+        return sqlite_to_tsql.generate(root, dec_path)
+
+    def test_a_column_with_no_decided_width_stops_the_build(self):
+        with self.assertRaises(Unsupported) as caught:
+            self._translate("CREATE TABLE t (a TEXT);")
+        self.assertIn("no width decided", str(caught.exception))
+
+    def test_a_float_with_no_decided_precision_stops_the_build(self):
+        with self.assertRaises(Unsupported) as caught:
+            self._translate("CREATE TABLE t (a REAL);")
+        self.assertIn("no precision decided", str(caught.exception))
+
+    def test_an_unknown_function_in_a_check_stops_the_build(self):
+        """A function quietly dropped is a constraint quietly weakened."""
+        with self.assertRaises(Unsupported) as caught:
+            self._translate("CREATE TABLE t (a TEXT CHECK (substr(a,1,2) = 'ab'));",
+                            {"t.a": "NAME"})
+        self.assertIn("substr", str(caught.exception))
+
+    def test_an_unknown_statement_stops_the_build(self):
+        with self.assertRaises(Unsupported) as caught:
+            self._translate("CREATE VIEW v AS SELECT 1;")
+        self.assertIn("not recognised", str(caught.exception))
+
+    def test_a_width_narrower_than_its_own_check_stops_the_build(self):
+        with self.assertRaises(Unsupported) as caught:
+            self._translate(
+                "CREATE TABLE t (a TEXT CHECK (a IN ('PAUSED_PENDING_AUTHORISATION_AND_THEN_SOME')));",
+                {"t.a": "CODE"})
+        self.assertIn("disagree", str(caught.exception))
+
+    def test_the_decisions_file_cannot_drift_either(self):
+        with self.assertRaises(Unsupported) as caught:
+            self._translate("CREATE TABLE t (a TEXT);", {"t.a": "NAME", "t.gone": "NAME"})
+        self.assertIn("t.gone", str(caught.exception))
+
+    def test_a_trigger_body_that_is_not_a_raise_stops_the_build(self):
+        with self.assertRaises(Unsupported) as caught:
+            self._translate(
+                "CREATE TABLE t (a TEXT);\n"
+                "CREATE TRIGGER g AFTER INSERT ON t FOR EACH ROW WHEN NEW.a = 'x'"
+                " BEGIN UPDATE t SET a = 'y'; END;",
+                {"t.a": "NAME"})
+        self.assertIn("SELECT RAISE", str(caught.exception))
 
 
 if __name__ == "__main__":

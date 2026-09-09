@@ -29,6 +29,13 @@ jobs:
       - name: Tests
         run: python3 tests/test_spine.py
 
+      # There is one schema, in schema/*.sql, and the SQL Server copy is
+      # generated from it. Two copies of a commercial rule drift, and the copy
+      # that drifts is the one nobody reads — which here would be the one on the
+      # live server. This is where that gets caught.
+      - name: sqlserver/ is in step with schema/
+        run: python3 tools/sqlite_to_tsql.py --check
+
       # The commercial record must not lose a row. Prove the whole path runs.
       - name: End-to-end on the synthetic register
         run: |
