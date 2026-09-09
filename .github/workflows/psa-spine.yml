@@ -1,7 +1,13 @@
 name: psa-spine
 
+# A branch with an open pull request would otherwise run this twice, once for the
+# push and once for the pull_request. Here that is only wasted runner time; in
+# the imaging-portal workflow the same duplication actually failed a build. So
+# push covers main, pull_request covers everything else, and each commit is
+# tested once.
 on:
   push:
+    branches: [main]
     paths: ['platform/psa-spine/**', '.github/workflows/psa-spine.yml']
   pull_request:
     paths: ['platform/psa-spine/**', '.github/workflows/psa-spine.yml']

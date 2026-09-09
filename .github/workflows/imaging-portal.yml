@@ -1,7 +1,14 @@
 name: imaging-portal
 
+# A branch with an open pull request would otherwise run this twice, once for the
+# push and once for the pull_request. That is not just wasted runner time: both
+# runs uploaded an artifact under the same name, and whichever finalised second
+# failed. MEASURED 9 Sep 2026 on adef3c2 -- one run green at 14:35:45, its twin
+# red at 14:36:04 on FinalizeArtifact. So push covers main, pull_request covers
+# everything else, and each commit is built once.
 on:
   push:
+    branches: [main]
     paths: ['apps/imaging-portal/**', '.github/workflows/imaging-portal.yml']
   pull_request:
     paths: ['apps/imaging-portal/**', '.github/workflows/imaging-portal.yml']
@@ -39,9 +46,12 @@ jobs:
       - name: Build the deployment package
         run: npm run package
 
+      # Named per run, so two runs can never collide over one artifact name, and
+      # loud if the build produced nothing to publish.
       - uses: actions/upload-artifact@v4
         with:
-          name: pmc-imaging-portal
+          name: pmc-imaging-portal-${{ github.run_id }}
+          if-no-files-found: error
           path: |
             apps/imaging-portal/dist/PMC_Imaging_Portal.html
             apps/imaging-portal/dist/PMC_Imaging_Portal.html.sha256
