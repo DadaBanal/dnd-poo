@@ -47,8 +47,13 @@ Built ${new Date().toISOString().slice(0, 10)} from source.
   sha256                    ${hash}
 
 WHAT THIS IS
-  The imaging worklist and viewer that Orthanc serves at ${'https://imaging.pmcne.ph/pmc/'}.
+  The imaging worklist and viewer that Orthanc serves at
+  https://imaging.pmcne.ph/pmc/index.html
   One self-contained HTML file. No CDN, no web font, no external request.
+
+  The address is the FILE, not the folder. ServeFolders registers /(pmc)/(.*) and
+  serves what is named, so a bare .../pmc/ gets Orthanc's own 404. Bookmark the
+  full address above.
 
 BEFORE YOU START
   Copy this whole folder to PMC-ORTHANC01 and run from there. Both scripts must

@@ -1,7 +1,7 @@
 # PMC Imaging — the portal
 
 The imaging worklist for Premiere Medical Center Nueva Ecija. Orthanc serves it
-itself, so it appears at `https://imaging.pmcne.ph/pmc/` alongside everything
+itself, so it appears at `https://imaging.pmcne.ph/pmc/index.html` alongside everything
 already there. Same origin as the archive, which is why **the page never sees,
 asks for or stores a password** — the browser reuses the sign-in the user already
 has.
@@ -138,6 +138,11 @@ roughly 100 ms. **Do not treat `data-ready` as "the worklist is on screen"** —
 in a test, or in any monitoring probe. Wait for the skeletons to clear as well.
 This is a property of the shipped artifact, not a defect, and it is not changed
 here: the artifact stays byte-identical to the one that was signed off.
+
+**The address is the file, not the folder.** ServeFolders registers
+`/(pmc)/(.*)` and serves whatever is named after the prefix; a bare `/pmc/`
+matches nothing and Orthanc answers its own `Unknown resource` 404. VERIFIED
+9 Sep 2026 from the plugin source, and MEASURED the same day by walking into it.
 
 ## Which build is running
 

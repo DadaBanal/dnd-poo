@@ -373,7 +373,7 @@ else {
       $Credential = Get-Credential -Message "Orthanc sign-in, to prove $BaseUrl/pmc/ is served"
       if ($Credential) {
         $real2 = Get-Code "$BaseUrl/pmc/index.html"
-        if ($real2 -eq 200) { Note "  $BaseUrl/pmc/ is being served." Green }
+        if ($real2 -eq 200) { Note "  $BaseUrl/pmc/index.html is being served." Green }
         elseif ($real2 -eq 404) { Note '  404. ServeFolders is not mapping /pmc. Check the Orthanc log for the plugin loading.' Red }
         elseif ($real2 -eq 401) { Note '  401 with that sign-in. The page is there; those credentials were not accepted.' Yellow }
         else { Note ("  HTTP {0} from {1}/pmc/index.html" -f $real2, $BaseUrl) Yellow }
@@ -392,7 +392,9 @@ if (-not $Apply) {
   Note ("  {0} change(s) would be made. Re-run with -Apply to make them." -f $script:Changes.Count)
 } else {
   Note ("  {0} change(s) made{1}." -f $script:Changes.Count, $(if ($script:NeedsRestart) { ', including a service restart' } else { '; no restart was needed' })) Green
-  Note '  Open it signed in as a normal user and check one study per modality:'
-  Note ("  {0}/pmc/" -f $BaseUrl) Cyan
+  Note '  Open it signed in as a normal user and check one study per modality.'
+  Note '  The address is the FILE, not the folder: ServeFolders registers /(pmc)/(.*)' DarkGray
+  Note '  and serves what is named, so a bare /pmc/ gets Orthanc''s own 404.' DarkGray
+  Note ("  {0}/pmc/index.html" -f $BaseUrl) Cyan
   Note '  To undo:  .\Install-PmcImagingPortal.ps1 -Rollback -Apply'
 }

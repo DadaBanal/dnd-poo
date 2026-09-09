@@ -2,7 +2,7 @@
   "name": "pmc-imaging-portal",
   "version": "1.0.0",
   "private": true,
-  "description": "PMC Imaging \u2014 the imaging worklist Orthanc serves at https://imaging.pmcne.ph/pmc/",
+  "description": "PMC Imaging \u2014 the imaging worklist Orthanc serves at https://imaging.pmcne.ph/pmc/index.html",
   "type": "module",
   "engines": {
     "node": ">=20"

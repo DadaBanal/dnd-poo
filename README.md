@@ -7,7 +7,7 @@ Two things live here:
 
 | Path | What it is | Status |
 |---|---|---|
-| [`apps/imaging-portal/`](apps/imaging-portal/) | **PMC Imaging** — the worklist Orthanc serves at `https://imaging.pmcne.ph/pmc/`. One self-contained HTML file, built from source, 24 browser checks. | Built and tested. **Not yet installed on the server** (WS23). |
+| [`apps/imaging-portal/`](apps/imaging-portal/) | **PMC Imaging** — the worklist and DICOM viewer Orthanc serves at `https://imaging.pmcne.ph/pmc/index.html`. One self-contained HTML file, built from source, 45 browser checks. | Installed 9 Sep 2026 (WS23). The address is the file, not the folder. |
 | [`platform/imaging/`](platform/) | Path A "engine as code": Orthanc + PostgreSQL index + OHIF + Keycloak as versioned config. | **Skeleton. Never run.** Gated on ADR-001 and a Linux host. |
 | [`platform/psa-spine/`](platform/psa-spine/) | The commercial half of a PSA — agreements, the nine scope items, the Annex B variation register, notices, client dependencies. Produces the variation register, the dependency notices and the instrument exception report. | Built and tested (21 tests). Measured against the real register: 35 rows in, 35 out. |
 
