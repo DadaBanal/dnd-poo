@@ -23,7 +23,10 @@ function pixelValue(pane, ix, iy) {
   if (x < 0 || y < 0 || x >= f.w || y >= f.h) return null;
   const g = pane.serie.geom;
   const stored = f.ch >= 3 ? f.data[(y * f.w + x) * f.ch] : f.data[y * f.w + x];
-  return { stored, value: stored * g.slope + g.intercept, unit: g.unit };
+  // x and y travel with the value: the readout used to round the cursor for
+  // display and floor it for sampling, so on a pixel boundary it named one
+  // pixel and reported its neighbour's number.
+  return { x, y, stored, value: stored * g.slope + g.intercept, unit: g.unit };
 }
 
 /** Millimetres between two image-space points, or null when uncalibrated. */

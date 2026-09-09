@@ -218,6 +218,7 @@
         <dt><kbd>l</kbd> <kbd>a</kbd> <kbd>o</kbd> <kbd>b</kbd></dt><dd>Length, angle, elliptical and rectangular region</dd>
         <dt><kbd>0</kbd> <kbd>1</kbd> <kbd>9</kbd></dt><dd>Fit, 1:1, true size</dd>
         <dt><kbd>i</kbd> <kbd>r</kbd> <kbd>h</kbd> <kbd>v</kbd></dt><dd>Invert, rotate, flip across, flip down</dd>
+        <dt><kbd>k</kbd></dt><dd>Crosshair — drive every reconstructed plane from one point</dd>
         <dt><kbd>c</kbd> · <kbd>g</kbd> · <kbd>e</kbd></dt><dd>Cine · overlay · reset the pane</dd>
         <dt><kbd>Del</kbd></dt><dd>Remove the last measurement</dd>
       </dl>
@@ -244,6 +245,7 @@
       <button class="vb" data-tool="ellipse" aria-pressed="false" title="Elliptical region (O)"><svg><use href="#i-roi"/></svg></button>
       <button class="vb" data-tool="rect" aria-pressed="false" title="Rectangular region (B)"><svg><use href="#i-rect"/></svg></button>
       <button class="vb" data-tool="arrow" aria-pressed="false" title="Arrow"><svg><use href="#i-send"/></svg></button>
+      <button class="vb" data-tool="cross" aria-pressed="false" title="Crosshair — move every reconstructed plane to one point (K)"><svg><use href="#i-probe"/></svg></button>
     </div>
 
     <div class="vwr__group" id="vwrActions" role="group" aria-label="Image">
@@ -265,6 +267,7 @@
     </div>
 
     <div class="vwr__group">
+      <button class="vb" id="vwrMpr" aria-pressed="false" title="Reconstruct coronal and sagittal planes from the stack">MPR</button>
       <button class="vb" id="vwrCine" aria-pressed="false" title="Cine (C)"><svg><use href="#i-play"/></svg></button>
       <label class="vwr__cine"><input type="range" id="vwrFps" min="1" max="60" value="12" aria-label="Cine rate"><span id="vwrFpsOut">12 fps</span></label>
       <label class="vwr__check"><input type="checkbox" id="vwrBounce">bounce</label>

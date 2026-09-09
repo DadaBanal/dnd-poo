@@ -187,15 +187,35 @@ check('viewer buttons are built from the server\'s own plugin list', async (b, s
   await ctx.close();
 });
 
-check('the OHIF link carries the Orthanc study id, the Stone link the StudyInstanceUID', async (b, s) => {
+check('the OHIF and Stone links carry the identifier each one actually takes', async (b, s) => {
   const { page, ctx } = await openPortal(b, s);
   await page.locator('#results .card, #results tbody tr').first().click();
   await page.waitForSelector('#sheet[open]');
   const hrefs = await page.locator('#sheetFoot a').evaluateAll(as => as.map(a => a.href));
   const ohif = hrefs.find(h => /ohif/i.test(h)), stone = hrefs.find(h => /stone/i.test(h));
-  ok(/study-\d{3}/.test(ohif), `OHIF href lacks the Orthanc study id: ${ohif}`);
-  ok(/1\.2\.826\.0\.1\.3680043\.8\.498\.\d+/.test(decodeURIComponent(stone)), `Stone href lacks the StudyInstanceUID: ${stone}`);
+  const uid = /1\.2\.826\.0\.1\.3680043\.8\.498\.\d+/;
+  // PMC-ORTHANC01 runs the OHIF plugin with DataSource = dicom-web (MEASURED),
+  // whose route takes the StudyInstanceUID. The dicom-json route takes a URL to
+  // the plugin's JSON instead; pointing one at the other opens an empty viewer.
+  ok(/StudyInstanceUIDs=/.test(decodeURIComponent(ohif)), `OHIF href is not the DICOMweb route: ${ohif}`);
+  ok(uid.test(decodeURIComponent(ohif)), `OHIF href lacks the StudyInstanceUID: ${ohif}`);
+  ok(uid.test(decodeURIComponent(stone)), `Stone href lacks the StudyInstanceUID: ${stone}`);
   await ctx.close();
+});
+
+check('a server configured for dicom-json gets the other OHIF route from its config', async (b, s) => {
+  const cfg = await startStandInOrthanc({ portalHtml, config: {
+    viewers: { ohif: 'ohif/viewer/dicomjson?url=../studies/{orthancId}/ohif-dicom-json' } } });
+  try {
+    const { page, ctx } = await openPortal(b, cfg);
+    await page.locator('#results .card, #results tbody tr').first().click();
+    await page.waitForSelector('#sheet[open]');
+    const hrefs = await page.locator('#sheetFoot a').evaluateAll(as => as.map(a => a.href));
+    const ohif = hrefs.find(h => /ohif/i.test(h));
+    ok(/ohif-dicom-json/.test(decodeURIComponent(ohif)), `the config override did not reach the OHIF link: ${ohif}`);
+    ok(/study-\d{3}/.test(ohif), `the dicom-json route needs the Orthanc study id: ${ohif}`);
+    await ctx.close();
+  } finally { await cfg.close(); }
 });
 
 check('Devices reports one modality answering and one silent', async (b, s) => {
@@ -605,6 +625,63 @@ check('the sample dataset drives the same viewer, and says it is a sample', asyn
   ok((await page.textContent('#vwrFoot')).includes('SAMPLE DATA'),
     'the sample dataset does not announce itself in the viewer');
   eq(pageErrors.length, 0, `page errors: ${pageErrors.join(' | ')}`);
+  await ctx.close();
+});
+
+
+check('MPR reslices the stack, and the reconstructed planes carry the same values', async (b, s) => {
+  const { page, ctx, pageErrors } = await openViewer(b, s);          // study 001, CT, 40 frames
+  await page.click('#vwrMpr');
+  await page.waitForFunction(() => document.querySelectorAll('.pane[data-serie]').length === 3, null, { timeout: 30000 });
+  const ids = await page.$$eval('.pane[data-serie]', els => els.map(e => e.dataset.serie));
+  ok(ids[1].endsWith(':coronal'), `second pane is ${ids[1]}`);
+  ok(ids[2].endsWith(':sagittal'), `third pane is ${ids[2]}`);
+  // The phantom's disc steps 40 HU per slice from -100, so slice 20 is 700 HU.
+  // Both reslices pass through it, and both must read the same number as the
+  // axial does -- that is the whole claim a reconstruction makes.
+  eq(await page.getAttribute('.pane', 'data-index'), '20', 'axial slice under the crosshair');
+  // A reslice puts slice 20 at the vertical centre of the pane, which is the
+  // boundary between rows 19 and 20 -- probe a few pixels into row 20 rather
+  // than exactly on the edge of it.
+  for (const [n, dy] of [[0, 0], [1, 4], [2, 4]]) {
+    const text = await probe(page, 0, dy, n);
+    ok(/700 HU/.test(text), `pane ${n} probed "${text}", expected 700 HU`);
+  }
+  // Reconstructed spacing is not the file's spacing, and the footer must say so.
+  await page.locator('.pane').nth(1).click();
+  ok((await page.textContent('#vwrFoot')).includes('reconstructed'),
+    'the footer does not say the spacing is reconstructed');
+  eq(pageErrors.length, 0, `page errors: ${pageErrors.join(' | ')}`);
+  await ctx.close();
+});
+
+check('the crosshair drives every plane from one point', async (b, s) => {
+  const { page, ctx } = await openViewer(b, s);
+  await page.click('#vwrMpr');
+  await page.waitForFunction(() => document.querySelectorAll('.pane[data-serie]').length === 3, null, { timeout: 30000 });
+  const before = await page.$$eval('.pane[data-index]', els => els.map(e => e.dataset.index));
+  await page.click('#vwrTools [data-tool="cross"]');
+  const c = await paneCentre(page, 0);
+  await page.mouse.click(c.x + 24, c.y - 18);                        // a different point in the axial plane
+  await page.waitForTimeout(500);
+  const after = await page.$$eval('.pane[data-index]', els => els.map(e => e.dataset.index));
+  ok(after[1] !== before[1] && after[2] !== before[2],
+    `coronal and sagittal did not follow the crosshair (${before.join(',')} -> ${after.join(',')})`);
+  await ctx.close();
+});
+
+check('MPR refuses a series it cannot honestly reconstruct', async (b, s) => {
+  // Series 3 of study 003 answers 415 on /numpy, so there are no stored values
+  // to stack. A reconstruction built from 8-bit PNGs would look plausible and
+  // measure wrong, so the viewer must decline rather than draw one.
+  const { page, ctx } = await openViewer(b, s, 'ACC100003');
+  await page.locator('#vwrSeries .vseries').nth(2).click();
+  await page.waitForFunction(() => document.querySelector('#vwrFoot')?.textContent.includes('server rendered'),
+    null, { timeout: 10000 });
+  await page.click('#vwrMpr');
+  await page.waitForTimeout(700);
+  eq(await page.locator('.pane[data-serie]').count(), 1, 'a reconstruction was built anyway');
+  ok(/pixel-data path/.test(await page.textContent('#toasts')), 'the refusal did not say why');
   await ctx.close();
 });
 

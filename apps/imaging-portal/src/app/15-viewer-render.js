@@ -154,6 +154,7 @@ function paintPane(pane) {
   ctx.restore();
 
   drawAnnotations(pane, ctx);
+  drawCrosshair(pane, ctx, cw, ch);
   if (pane.loupe) drawLoupe(pane, ctx, src, cw, ch);
   drawPaneChrome(pane, ctx, cw, ch);
 }

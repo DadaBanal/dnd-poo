@@ -3,8 +3,9 @@
   "siteName": "PMC Imaging",
   "environment": "Diagnostic archive",
   "pageSize": 300,
+  "_ohif": "OHIF's route follows the plugin's OHIF.DataSource. dicom-web (what PMC-ORTHANC01 is set to) needs 'ohif/viewer?StudyInstanceUIDs={studyUid}'; dicom-json needs 'ohif/viewer/dicomjson?url=../studies/{orthancId}/ohif-dicom-json'.",
   "viewers": {
-    "ohif": "ohif/viewer/dicomjson?url=../studies/{orthancId}/ohif-dicom-json",
+    "ohif": "ohif/viewer?StudyInstanceUIDs={studyUid}",
     "stone": "stone-webviewer/index.html?study={studyUid}",
     "osimis": "osimis-viewer/app/index.html?study={orthancId}",
     "explorer": "ui/app/index.html"

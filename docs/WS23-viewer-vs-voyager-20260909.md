@@ -54,6 +54,7 @@ and it is the tier this portal competes in.
 | Advanced comparison mode — side by side | **Yes** | Priors listed from the archive by `PatientID`; open one into the second pane. |
 | — auto position matching | **Yes** | Linked scroll follows `ImagePositionPatient` projected on the slice normal, not the frame index. |
 | — sheet mode | **No** | Named as a gap. |
+| *(not offered — Voyager launches a third-party 3D application)* | **MPR** | Coronal and sagittal reslices of a CT or MR stack, with a crosshair that drives all three planes from one point. |
 | Cine, Tile or Stack | **Yes** | Cine with an fps control and bounce; tile layouts 1×1 / 1×2 / 2×2 / 2×3; stack on the wheel. |
 | Multiple enhancement tools | **Partly** | Sharpen and smooth, on the rendered picture only — never on the values the measurements read. |
 | Preemptive / prefetching | **Yes** | Frames either side of the current one are fetched ahead, four at a time. |
@@ -91,14 +92,33 @@ and it is the tier this portal competes in.
    More Tools. For coronary runs — PMC's highest-volume study — that is the
    first thing a reader needs.
 
-## Where it is behind, plainly
+## Multiplanar reconstruction
 
-- **No MPR, MIP or 3D.** Competitors in this class advertise them
-  (MedDream, PostDICOM, DICOM Vision, evoViewer — **VERIFIED** 9 Sep 2026 from
-  their product pages). Voyager's own answer is to launch a third-party 3D
-  application from the workstation, and the handoff records that OHIF's volume
-  tools are greyed for XA by design because they need a stack. `/series/{id}/numpy`
-  would make MPR feasible; it is not built.
+Competitors in the zero-footprint class advertise MPR (MedDream, PostDICOM,
+DICOM Vision, evoViewer — **VERIFIED** 9 Sep 2026 from their product pages).
+Voyager's own answer on the workstation is to *launch a third-party 3D
+application*. This viewer reslices in the browser.
+
+The volume is stacked from the same per-frame `numpy` fetches the axial view
+already uses, in the order this viewer sorted the instances — **not** from
+`/series/{id}/numpy` in one request. The series route returns frames in an order
+Orthanc chooses, and a coronal image built on a wrong slice order does not look
+wrong on screen. Slower, and right.
+
+Each reslice is presented as an ordinary series carrying its own pixel spacing
+(column spacing across, measured slice spacing down), so window/level, the
+Hounsfield probe, regions and length measurements all run unchanged on it. A
+test asserts that all three planes report the same 700 HU at the crosshair.
+
+It refuses rather than guesses: a series that is not on the pixel-data path, a
+colour series, a stack under eight images, or a volume over 512 MB gets a
+reason, not a picture. A reconstruction built from 8-bit PNGs would look
+plausible and measure wrong.
+
+No MIP, no volume rendering, no fusion.
+
+## Where it is behind, plainly
+- **No MIP, volume rendering or PET-CT fusion.**
 - **No sheet mode, no configurable toolbar, no pane pop-out.**
 - **No reporting, dictation or key-image flagging.**
 - **Not a regulated device.** Voyager is a listed medical device in Australia.

@@ -129,6 +129,10 @@ function loadImageEl(src) {
 async function loadFrame(serie, i) {
   const f = serie.frames[i];
   if (!f) return null;
+  // A reconstructed plane is cut out of a volume already in memory. It never
+  // touches the network, and it must not touch the shared frame cache either --
+  // its "instance" is not an instance.
+  if (serie.volume) return sliceVolume(serie, i);
   const hit = FrameCache.get(f.instance, f.frame);
   if (hit) return hit;
   const framePath = `instances/${f.instance}/frames/${f.frame}`;

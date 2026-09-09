@@ -120,7 +120,7 @@ const activePane = () => V.panes[V.active] || V.panes[0];
 /* ------------------------------------------------------------- interaction */
 
 const TOOL_CURSOR = { pan: 'grab', zoom: 'zoom-in', wl: 'crosshair', stack: 'ns-resize',
-  probe: 'crosshair', magnify: 'zoom-in' };
+  probe: 'crosshair', magnify: 'zoom-in', cross: 'crosshair' };
 
 function setTool(t) {
   V.tool = t;
@@ -131,8 +131,13 @@ function setTool(t) {
 const SHAPE_TOOLS = { length: 2, angle: 3, rect: 2, ellipse: 2, arrow: 2 };
 
 function onPointerDown(pane, e) {
+  // Making a pane active changes what the footer, the measurement list and the
+  // series highlight are about. They used not to follow, so a four-up layout
+  // could describe one pane while you worked in another.
+  const changed = V.active !== pane.i;
   V.active = pane.i;
   paintAll();
+  if (changed) { updateFoot(); refreshNotes(); markSeriesList(); buildPresets(); }
   const rect = pane.el.getBoundingClientRect();
   const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
   // Right button is window/level and middle is pan, on every tool — the binding
@@ -143,6 +148,7 @@ function onPointerDown(pane, e) {
 
   if (tool === 'probe') { probeAt(pane, sx, sy); }
   if (tool === 'magnify') { pane.loupe = { x: sx, y: sy }; paint(pane); }
+  if (tool === 'cross') { const q = screenToImage(pane, sx, sy); crosshairFrom(pane, q.x, q.y); }
 
   if (SHAPE_TOOLS[tool]) {
     const p = screenToImage(pane, sx, sy);
@@ -175,6 +181,9 @@ function onPointerDown(pane, e) {
       probeAt(pane, ev.clientX - rect.left, ev.clientY - rect.top);
     } else if (tool === 'magnify') {
       pane.loupe = { x: ev.clientX - rect.left, y: ev.clientY - rect.top }; paint(pane);
+    } else if (tool === 'cross') {
+      const q = screenToImage(pane, ev.clientX - rect.left, ev.clientY - rect.top);
+      crosshairFrom(pane, q.x, q.y);
     } else if (pane.draft) {
       pane.draft.pts[pane.draft.pts.length - 1] = screenToImage(pane, ev.clientX - rect.left, ev.clientY - rect.top);
       paint(pane);
@@ -210,8 +219,8 @@ function probeAt(pane, sx, sy) {
   box.hidden = false;
   box.style.left = `${sx + 14}px`; box.style.top = `${sy + 14}px`;
   box.textContent = v
-    ? `${Math.round(p.x)}, ${Math.round(p.y)}   ${fmt(v.value)} ${v.unit || ''}`.trim()
-    : `${Math.round(p.x)}, ${Math.round(p.y)}   no pixel data on this path`;
+    ? `${v.x}, ${v.y}   ${fmt(v.value)} ${v.unit || ''}`.trim()
+    : `${Math.floor(p.x)}, ${Math.floor(p.y)}   no pixel data on this path`;
 }
 
 function setWindow(pane, wc, ww) {
@@ -348,7 +357,9 @@ function buildSeriesList() {
     </button>`).join('');
   $$('#vwrSeries .vseries').forEach(btn => btn.onclick = () => {
     const se = V.series.find(s => s.id === btn.dataset.serie);
-    if (se) assignSeries(activePane(), se);
+    if (!se) return;
+    if (MPR.on) closeMpr();
+    assignSeries(activePane(), se);
   });
   markSeriesList();
 }
@@ -498,6 +509,8 @@ function hangByModality() {
 
 function closeViewer() {
   cine(false);
+  MPR.on = false; MPR.axial = MPR.coronal = MPR.sagittal = null;
+  vq('#vwrMpr').setAttribute('aria-pressed', 'false');
   V.open = false;
   vq('#viewer').hidden = true;
   vq('#viewer').setAttribute('aria-hidden', 'true');
@@ -543,7 +556,7 @@ function viewerKey(e) {
   if (K === '1') { stop(); p.zoom = 1; p.fitted = false; paint(p); return true; }
   if (K === '9') { stop(); trueSize(p); return true; }
   const tools = { w: 'wl', p: 'pan', z: 'zoom', s: 'stack', x: 'probe', l: 'length',
-    a: 'angle', o: 'ellipse', b: 'rect', m: 'magnify' };
+    a: 'angle', o: 'ellipse', b: 'rect', m: 'magnify', k: 'cross' };
   if (tools[K]) { stop(); setTool(tools[K]); return true; }
   if (K === 'i') { stop(); p.invert = !p.invert; paint(p); return true; }
   if (K === 'r') { stop(); p.rot = (p.rot + 90) % 360; p.fitted = true; paint(p); return true; }
@@ -601,6 +614,7 @@ function wireViewer() {
        clear:  () => { V.notes.set(noteKey(p), []); V.selected = null; paint(p); refreshNotes(); }
     }[b.dataset.act] || (() => {}))();
   });
+  vq('#vwrMpr').onclick = () => (MPR.on ? closeMpr() : openMpr());
   vq('#vwrCine').onclick = () => cine();
   vq('#vwrFps').oninput = e => { V.cine.fps = +e.target.value; vq('#vwrFpsOut').textContent = `${V.cine.fps} fps`; };
   vq('#vwrBounce').onchange = e => { V.cine.bounce = e.target.checked; };

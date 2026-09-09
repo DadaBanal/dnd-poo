@@ -40,9 +40,17 @@ fps and bounce · tile layouts · stack on the wheel · prior studies side by si
 with position-matched linked scroll · modality-defined opening layout · every
 DICOM tag on the frame · PNG export with the overlay burned in.
 
+**MPR.** A CT or MR stack reslices into coronal and sagittal planes, with a
+crosshair that drives all three from one point. The volume is stacked from the
+same per-frame fetches the axial view uses, in this viewer's own sorted order,
+because `/series/{id}/numpy` returns frames in an order Orthanc chooses and a
+wrong slice order does not look wrong. Each reslice carries its own pixel
+spacing, so measurements and the Hounsfield probe are correct on it.
+
 Statistics are **refused, not invented**, when the pane is on the rendered or
-preview path: an 8-bit PNG has no Hounsfield units in it. What this viewer does
-*not* do — MPR, MIP, 3D, reporting — is named in
+preview path: an 8-bit PNG has no Hounsfield units in it, and neither does a
+volume stacked out of one. What this viewer does *not* do — MIP, volume
+rendering, fusion, reporting — is named in
 `docs/WS23-viewer-vs-voyager-20260909.md`, next to what Voyager does.
 
 ## The two constraints that shape everything
@@ -137,6 +145,19 @@ key overrides a built-in default. See `config/pmc-portal.config.example.json`.
 handles one. The real file is git-ignored.
 
 Viewer buttons are built from the server's own `/plugins` list, so the page never
-offers a viewer that is not installed. The OHIF launch URL is the one part that
-is **INFERRED, not measured**: the installer resolves it per server, and the
-System screen carries a one-click Test.
+offers a viewer that is not installed.
+
+The OHIF launch URL was **INFERRED**; it is now **MEASURED and VERIFIED**. OHIF's
+route follows the plugin's `OHIF.DataSource`, and pointing one route at the other
+opens an empty viewer:
+
+| `OHIF.DataSource` | Route |
+|---|---|
+| `dicom-web` — what PMC-ORTHANC01 is set to (MEASURED, cutover handoff 2 Sep 2026) | `ohif/viewer?StudyInstanceUIDs={studyUid}` |
+| `dicom-json` | `ohif/viewer/dicomjson?url=../studies/{orthancId}/ohif-dicom-json` |
+
+Both routes **VERIFIED 9 Sep 2026** against OHIF's own documentation
+(<https://docs.ohif.org/configuration/url/>, <https://v3-docs.ohif.org/configuration/datasources/dicom-json/>);
+`RouterBasename` defaults to `/ohif/` (<https://orthanc.uclouvain.be/book/plugins/ohif.html>).
+The first is the built-in default; a server configured the other way sets it in
+`pmc-portal.config.json`, and a check covers that.
