@@ -360,6 +360,26 @@ check('g-then-number jumps between screens', async (b, s) => {
   await ctx.close();
 });
 
+check('no horizontal overflow on a desktop, on any screen', async (b, s) => {
+  // The phone check below has always been here. This one exists because a live
+  // screenshot looked clipped at the edges and there was no measurement either
+  // way; it turned out to be the screenshot's crop, and now that is on record.
+  const { page, ctx } = await openPortal(b, s, { viewport: { width: 1920, height: 1080 } });
+  for (const view of ['worklist', 'devices', 'activity', 'system']) {
+    await page.click(`.nav [data-view="${view}"]`);
+    await page.waitForTimeout(700);
+    const r = await page.evaluate(() => ({
+      scrollW: document.documentElement.scrollWidth,
+      clientW: document.documentElement.clientWidth
+    }));
+    ok(r.scrollW <= r.clientW, `${view} scrolls sideways at 1920: ${r.scrollW} > ${r.clientW}`);
+  }
+  // The index is reported as a DLL path, which has nowhere to wrap.
+  const idx = await page.textContent('#sysKv');
+  ok(!/Program Files/.test(idx), 'the System screen prints a whole file path where a name would do');
+  await ctx.close();
+});
+
 check('no horizontal overflow on a phone', async (b, s) => {
   const { page, ctx } = await openPortal(b, s, { viewport: { width: 390, height: 844 } });
   await page.waitForTimeout(800);
