@@ -363,9 +363,25 @@ else {
   elseif ($real -eq 404) { Note '  404. ServeFolders is not mapping /pmc. Check the Orthanc log for the plugin loading.' Red }
   elseif ($real -eq 0) { Note "  No answer from $BaseUrl. Check DNS and the firewall rule." Red }
   elseif ($real -eq $control) {
-    Note ("  HTTP {0} for the page AND for a path that cannot exist, so this proves nothing." -f $real) Yellow
-    Note '  Orthanc answers 401 to any unauthenticated request. Re-run the proof with a credential:' Yellow
-    Note ("  .\Install-PmcImagingPortal.ps1 -Apply -Credential (Get-Credential)") Cyan
+    Note ("  HTTP {0} for the page and for a path that cannot exist, so that proves nothing:" -f $real) Yellow
+    Note '  Orthanc answers 401 to any unauthenticated request, present or absent.' Yellow
+    # Ask for a credential here rather than sending the operator away to re-run
+    # the whole thing. Declining just leaves the proof unproven; it changes
+    # nothing either way, and the work above is already done.
+    if ([Environment]::UserInteractive) {
+      Note '  Sign in and it can be proven now. Cancel to skip; nothing further will change.' Cyan
+      $Credential = Get-Credential -Message "Orthanc sign-in, to prove $BaseUrl/pmc/ is served"
+      if ($Credential) {
+        $real2 = Get-Code "$BaseUrl/pmc/index.html"
+        if ($real2 -eq 200) { Note "  $BaseUrl/pmc/ is being served." Green }
+        elseif ($real2 -eq 404) { Note '  404. ServeFolders is not mapping /pmc. Check the Orthanc log for the plugin loading.' Red }
+        elseif ($real2 -eq 401) { Note '  401 with that sign-in. The page is there; those credentials were not accepted.' Yellow }
+        else { Note ("  HTTP {0} from {1}/pmc/index.html" -f $real2, $BaseUrl) Yellow }
+      } else { Note '  Skipped. Open the page in a browser to see for yourself.' DarkGray }
+    } else {
+      Note '  Re-run the proof with a credential:' Yellow
+      Note '  .\Install-PmcImagingPortal.ps1 -Apply -Credential (Get-Credential)' Cyan
+    }
   }
   else { Note ("  HTTP {0} for the page, {1} for a path that cannot exist -- it is being served." -f $real, $control) Green }
 }
