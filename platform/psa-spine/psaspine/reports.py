@@ -135,11 +135,17 @@ def dependency_notices(conn: sqlite3.Connection, *, as_of: date) -> dict[str, st
             "",
             "## Effect",
             "",
-            f"This workstream has been unable to progress"
-            + (f" for approximately **{days} days**" if days is not None else "")
-            + ". The next action cannot be taken by the supplier:",
+            "The next action on this workstream cannot be taken by the supplier:",
             "",
             f"> {r['next_action'] or 'Awaiting the client.'}",
+            "",
+            # State only what the register supports. last_activity is when the row
+            # was last touched, not when the dependency was raised, so the letter
+            # says exactly that rather than claiming a longer delay it cannot prove.
+            (f"The register records no activity on this workstream for **{days} days** "
+             f"(last activity {r['last_activity']})."
+             if days is not None else
+             "The register records no date of last activity for this workstream."),
             "",
             "## Purpose of this notice",
             "",
