@@ -1,0 +1,21 @@
+family_id,display_name,raw_name,note
+SERVERS_STORAGE,Servers and storage,On prem / hosted infrastucture,"Two families in the workbook with identical twelve-child lists [MEASURED]. Hosting location is an attribute of the configuration item, not a branch."
+NETWORKING,Networking,Networking,RADIUS lives here. It is network access control.
+IDENTITY_ACCESS,Identity and access,,
+END_USER,End user computing,,
+APPLICATIONS,Applications,,"Applications become CMDB items a ticket links to. The workbook's Sheet2 picklist was a 2020-era patch inventory and is discarded."
+CERTIFICATES,Certificates and SSL,Certifcates/SSL,Misspelt in the source workbook.
+BACKUP,Backup and recovery,,
+EMAIL_COLLAB,Email and collaboration,,
+TELEPHONY,IP telephony,,"Everything below Handset in the workbook is marked DRAFT: it was never worked through."
+SECURITY_PRIVACY,Security and privacy,SECURITY???,"The workbook family had RADIUS as its only child. Deleted and replaced with a real one."
+AGREEMENT_VAR,Agreement and variation,Administration > Agreement,Rescued from Sheet1. The only catalogue hook for the commercial path.
+IMAGING,Modality and imaging,,Missing entirely from the workbook.
+HIS,HIS and BizBox,,Missing entirely from the workbook.
+PACS,PACS,,Missing entirely from the workbook.
+PHILHEALTH_F,PhilHealth,,Missing entirely from the workbook.
+BIOMED,Biomedical equipment,,Missing entirely from the workbook.
+MEDICAL_GAS,Medical gas,,Missing entirely from the workbook.
+FACILITIES_F,Facilities,,Missing entirely from the workbook.
+HOUSEKEEPING_F,Housekeeping,,Missing entirely from the workbook.
+DIETARY_F,Dietary,,Missing entirely from the workbook.

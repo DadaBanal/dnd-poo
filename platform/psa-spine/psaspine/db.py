@@ -64,7 +64,75 @@ def seed(conn: sqlite3.Connection) -> None:
                 row["note"],
             ),
         )
+    seed_catalogue(conn)
     conn.commit()
+
+
+def seed_catalogue(conn: sqlite3.Connection) -> None:
+    """Load the service catalogue.
+
+    No board is seeded live and no clinical floor is seeded signed off. That is
+    not caution, it is the rule: "one accountable fulfiller group, one named
+    owner, one named deputy" -- and the floor list is signed by the Chief of
+    Hospital, the Chief Nurse and the Quality officer, not by Dada IT. Seeding
+    either as done would put a name in the database that nobody has agreed to.
+    """
+    def blank(v):
+        return v if (v or "").strip() else None
+
+    for row in _seed_rows("boards.csv"):
+        conn.execute(
+            "INSERT OR REPLACE INTO board (board_id, display_name, phase, fulfiller_group,"
+            " owner, deputy, restricted, is_live, is_unrouted, note)"
+            " VALUES (?,?,?,?,NULL,NULL,?,0,?,?)",
+            (row["board_id"], row["display_name"], row["phase"], row["fulfiller_group"],
+             int(row["restricted"]), int(row["is_unrouted"]), blank(row["note"])),
+        )
+    for row in _seed_rows("service_actions.csv"):
+        conn.execute(
+            "INSERT OR REPLACE INTO service_action"
+            " (action_id, display_name, raw_name, kind, implies_impact, note) VALUES (?,?,?,?,?,?)",
+            (row["action_id"], row["display_name"], blank(row["raw_name"]), row["kind"],
+             blank(row["implies_impact"]), blank(row["note"])),
+        )
+    for row in _seed_rows("service_families.csv"):
+        conn.execute(
+            "INSERT OR REPLACE INTO service_family (family_id, display_name, raw_name, note)"
+            " VALUES (?,?,?,?)",
+            (row["family_id"], row["display_name"], blank(row["raw_name"]), blank(row["note"])),
+        )
+    for row in _seed_rows("service_components.csv"):
+        conn.execute(
+            "INSERT OR REPLACE INTO service_component"
+            " (component_id, family_id, display_name, raw_name, is_draft, note) VALUES (?,?,?,?,?,?)",
+            (row["component_id"], row["family_id"], row["display_name"], blank(row["raw_name"]),
+             int(row["is_draft"]), blank(row["note"])),
+        )
+    for row in _seed_rows("catalogue_items.csv"):
+        conn.execute(
+            "INSERT OR REPLACE INTO catalogue_item (catalogue_item_id, component_id, action_id,"
+            " default_board_id, default_scope_item_id, default_contract_basis, clinical_impact,"
+            " min_priority, restricted, is_draft, note) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (row["catalogue_item_id"], row["component_id"], row["action_id"], row["default_board_id"],
+             blank(row["default_scope_item_id"]), row["default_contract_basis"],
+             int(row["clinical_impact"]), blank(row["min_priority"]),
+             int(row["restricted"]), int(row["is_draft"]), blank(row["note"])),
+        )
+    for row in _seed_rows("clinical_floors.csv"):
+        conn.execute(
+            "INSERT OR REPLACE INTO clinical_floor"
+            " (floor_id, description, priority, status, signed_off_by, signed_off_on) VALUES (?,?,?,?,?,?)",
+            (row["floor_id"], row["description"], row["priority"], row["status"],
+             blank(row["signed_off_by"]), blank(row["signed_off_on"])),
+        )
+    for row in _seed_rows("sla_targets.csv"):
+        conn.execute(
+            "INSERT OR REPLACE INTO sla_target (board_id, priority, clock, target_minutes,"
+            " calendar, attainment_percent, enforced, note) VALUES (?,?,?,?,?,?,?,?)",
+            (row["board_id"], row["priority"], row["clock"], int(row["target_minutes"]),
+             row["calendar"], float(row["attainment_percent"]) if row["attainment_percent"] else None,
+             int(row["enforced"]), blank(row["note"])),
+        )
 
 
 def init(path: str | Path) -> sqlite3.Connection:

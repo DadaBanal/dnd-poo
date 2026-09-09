@@ -1,0 +1,8 @@
+action_id,display_name,kind,implies_impact,raw_name,note
+INSTALL,Install,REQUEST,,Install,
+MODIFY,Modify,REQUEST,,Modify,
+ACCESS,Access controls,REQUEST,,Access Controls,
+DECOMMISSION,Decommission,REQUEST,,Decomission,Misspelt in the source workbook.
+DEGRADATION,Degradation,FAULT,I2,Degredation,Misspelt in the source workbook.
+OUTAGE,Outage,FAULT,I1,Outage,"A shared service or a clinical service is down. The workbook's own margin note, kept."
+FAILURE,Failure,FAULT,I3,Failure,"One device or one user. The workbook's own margin note, kept."
