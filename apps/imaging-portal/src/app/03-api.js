@@ -27,13 +27,14 @@ const Live = {
 /**
  * List child resources as OBJECTS, whatever shape the server answers with.
  *
- * MEASURED 9 Sep 2026 against PMC's cathlab archive: a bare GET of a child
- * route can come back as an array of bare id STRINGS rather than expanded
- * objects. Code that then reads `.ID` off a string gets undefined and asks for
+ * VERIFIED 9 Sep 2026 from Orthanc's own OpenAPI: on the child routes, `expand`
+ * is documented as "If false or missing, only retrieve the list of child
+ * resources" — so a bare GET is entitled to return an array of bare id STRINGS.
+ * Code that then reads `.ID` off a string gets undefined and asks for
  * `series//instances`, which is a 404 carrying no clue about what went wrong.
- * Asking for ?expand settles it on every build that honours the parameter; the
+ * So ?expand is always asked for. PMC's archive honours it (MEASURED), but the
  * string form is still handled, because a listing that silently yields nothing
- * is the worst of the three outcomes.
+ * is the worst of the three outcomes and costs nothing to guard against.
  */
 async function listChildren(path) {
   const rows = await API.get(`${path}?expand`);

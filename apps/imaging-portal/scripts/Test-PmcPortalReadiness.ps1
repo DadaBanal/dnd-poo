@@ -69,7 +69,28 @@ function Invoke-Orthanc {
 # asks for `series//instances`, and reports a 404 that explains nothing.
 # These live here, not in the loop that uses them -- PowerShell reads a script
 # top to bottom, so a function defined after its first call does not exist yet.
-function Get-Id { param($Item) if ($Item -is [string]) { $Item } else { $Item.ID } }
+<#
+  Windows PowerShell 5.1's ConvertFrom-Json does NOT enumerate. It hands an
+  array back as ONE object, so `@($text | ConvertFrom-Json)` wraps the array
+  instead of unwrapping it: an empty result reads as Count 1, and $rows[0] is
+  the whole array rather than its first element. Every 404 this probe reported
+  on 9 Sep came from that, not from the archive. Calling it without a pipeline
+  and letting @() flatten once is the fix, and it behaves the same on
+  PowerShell 7, which does enumerate.
+#>
+function FromJson {
+  param([string]$Text)
+  if ([string]::IsNullOrWhiteSpace($Text)) { return @() }
+  return @(ConvertFrom-Json -InputObject $Text)
+}
+function Get-Id {
+  param($Item)
+  $id = if ($Item -is [string]) { $Item } else { $Item.ID }
+  # An id that is not one string means the parse went wrong upstream. Say that,
+  # rather than building `series/System.Object[]/instances` and blaming a 404.
+  if ($id -isnot [string] -or -not $id) { throw "expected one id, got '$id'" }
+  return $id
+}
 function Shape  { param($Arr) if (-not @($Arr).Count) { 'empty' }
                   elseif ($Arr[0] -is [string]) { 'ids only' } else { 'expanded' } }
 function Say { param($Text, $Colour = 'Gray') Write-Host $Text -ForegroundColor $Colour }
@@ -150,28 +171,28 @@ foreach ($mod in $Modalities) {
     else { Say ("  {0}: /tools/find failed ({1})" -f $mod, $find.status) Yellow }
     continue
   }
-  $studies = @($find.content | ConvertFrom-Json)
+  $studies = FromJson $find.content
   if (-not @($studies).Count) { Say ("  {0}: no study in the last {1} days" -f $mod, $DaysBack) DarkGray; continue }
   Say ("  {0}: /tools/find returned {1} study(s), {2}" -f $mod, @($studies).Count, (Shape $studies)) DarkGray
   $study = $studies[0]
 
-  if (-not $study.ID) {
+  if (-not $study.ID -or $study.ID -isnot [string]) {
     Say ("  {0}: /tools/find returned {1} -- no study id to follow." -f $mod, (Shape $studies)) Red
     Say ("       raw: {0}" -f $find.content.Substring(0, [Math]::Min(220, $find.content.Length))) DarkGray
     Say '       The portal sends Expand and needs the id. This is the first thing to fix.' Red
     continue
   }
 
-  $ser = Invoke-Orthanc "studies/$($study.ID)/series?expand"
+  $ser = Invoke-Orthanc "studies/$(Get-Id $study)/series?expand"
   if (-not $ser.ok) { Say ("  {0}: series listing failed ({1})" -f $mod, $ser.status) Yellow; continue }
-  $series = @($ser.content | ConvertFrom-Json)
+  $series = FromJson $ser.content
   if (-not $series.Count) { Say ("  {0}: study has no series" -f $mod) Yellow; continue }
   $serShape = Shape $series
   $sid = Get-Id $series[0]
 
   $inst = Invoke-Orthanc "series/$sid/instances?expand"
   if (-not $inst.ok) { Say ("  {0}: instance listing failed ({1}) for series {2}" -f $mod, $inst.status, $sid) Yellow; continue }
-  $instances = @($inst.content | ConvertFrom-Json)
+  $instances = FromJson $inst.content
   if (-not $instances.Count) { Say ("  {0}: series has no instances" -f $mod) Yellow; continue }
   $instShape = Shape $instances
   $iid = Get-Id $instances[[int]($instances.Count / 2)]

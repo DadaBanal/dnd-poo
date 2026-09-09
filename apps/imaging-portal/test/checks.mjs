@@ -195,9 +195,9 @@ check('the worklist still names patients when the index ignores Expand', async (
 });
 
 check('a study still opens when the archive ignores ?expand on child listings', async (b, s) => {
-  // MEASURED 9 Sep 2026 on PMC's archive: a child route can answer with bare
-  // ids. Reading .ID off a string yields undefined, the next request becomes
-  // `series//instances`, and the 404 that comes back says nothing about why.
+  // Orthanc's OpenAPI says the bare child routes return ids, not objects
+  // (VERIFIED 9 Sep 2026). Reading .ID off a string yields undefined, the next
+  // request becomes `series//instances`, and the 404 says nothing about why.
   // Here the server ignores ?expand outright, which is the worst case.
   const flat = await startStandInOrthanc({ portalHtml, childExpandSupported: false });
   try {

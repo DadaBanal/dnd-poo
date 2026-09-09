@@ -62,6 +62,10 @@ async function findStudies(Query) {
  * bare id strings, and norm() on a string produces a row with no name, no date
  * and no id -- a worklist that looks broken rather than one that says why.
  * Resolve them instead, four at a time, and say so in the console.
+ *
+ * PMC's ODBC index DOES honour it (MEASURED 9 Sep 2026 on the cathlab archive:
+ * /tools/find with Expand and Limit returned expanded objects), so this path
+ * costs nothing there. It exists for the next index, not this one.
  */
 async function expandStudies(rows) {
   if (!Array.isArray(rows) || !rows.length || typeof rows[0] !== 'string') return rows || [];

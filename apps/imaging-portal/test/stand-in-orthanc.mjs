@@ -211,11 +211,11 @@ export function startStandInOrthanc({ portalHtml, config = null, expandSupported
       return json(res, out.map(({ _mod, ...s }) => (expand ? s : s.ID)));
     }
 
-    // A child listing is only expanded when ?expand is asked for. MEASURED 9 Sep
-    // 2026: PMC's archive answers the bare form with ids, and code that reads
-    // .ID off a string then requests `series//instances` and gets a bare 404.
-    // `childExpandSupported: false` goes one worse and ignores ?expand entirely,
-    // which is the shape the portal still has to survive.
+    // A child listing is only expanded when ?expand is asked for, which is what
+    // Orthanc's OpenAPI says the bare form does (VERIFIED 9 Sep 2026). Code that
+    // reads .ID off a string then requests `series//instances` and gets a bare
+    // 404. `childExpandSupported: false` goes one worse and ignores ?expand
+    // entirely, which is the shape the portal still has to survive.
     const expanded = () => childExpandSupported && url.searchParams.has('expand');
 
     let m;
