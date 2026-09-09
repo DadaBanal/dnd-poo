@@ -33,6 +33,12 @@ jobs:
       - name: Emit the installer payload and its hash
         run: npm run payload
 
+      # The one-shot installer carries the hash it will accept. If a re-baseline
+      # moves the artifact and leaves that constant behind, the package ships a
+      # script that rejects its own payload. This is where that gets caught.
+      - name: Build the deployment package
+        run: npm run package
+
       - uses: actions/upload-artifact@v4
         with:
           name: pmc-imaging-portal
@@ -40,3 +46,4 @@ jobs:
             apps/imaging-portal/dist/PMC_Imaging_Portal.html
             apps/imaging-portal/dist/PMC_Imaging_Portal.html.sha256
             apps/imaging-portal/dist/payload.gz.b64
+            apps/imaging-portal/dist/PMC_Imaging_Portal_Deploy_*.zip
