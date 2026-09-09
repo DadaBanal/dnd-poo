@@ -16,12 +16,15 @@ Carried from the record's own PHI and credential fence:
 - **Not here either**: internal IP addresses and network topology. New code must
   add none. The portal needs none — it speaks only relative paths to the archive
   that serves it, and reads device addresses from Orthanc at runtime.
-  *One inherited exception:* the sample-data fallback in
-  `src/app/04-demo-archive.js` carries three placeholder hosts (`10.2.2.60/.61/.77`).
-  They match no real device (MEASURED against the record) but they do sit inside
-  PMC's subnet range. They are not changed here, because that would break the
-  artifact's byte-identity with the build that was tested and is about to be
-  installed. Change them in the same commit as the next deliberate re-baseline.
+  *The inherited exception is discharged.* The sample-data fallback in
+  `src/app/04-demo-archive.js` carried three placeholder hosts inside PMC's own
+  subnet range — matching no real device (MEASURED against the record), but
+  indistinguishable from an inventory to anyone reading later. They were left
+  alone while the artifact had to stay byte-identical to the build that was
+  signed off. That build has now been deliberately re-baselined, so they were
+  replaced with RFC 5737 documentation addresses (`192.0.2.x`) in the same
+  commit, as this rule required. There is no longer any exception, and no file
+  here carries an internal address — including this one.
 - **Fine**: hostnames and service names (`PMC-ORTHANC01`, `imaging.pmcne.ph`),
   AE titles, plugin and version numbers, counts and dates.
 

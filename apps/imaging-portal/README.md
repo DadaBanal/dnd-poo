@@ -6,11 +6,44 @@ already there. Same origin as the archive, which is why **the page never sees,
 asks for or stores a password** — the browser reuses the sign-in the user already
 has.
 
-Four screens: **Worklist**, **Study**, **Devices**, **Activity / System**.
-It speaks only Orthanc's published REST API — `/tools/find`, `/studies/…`,
-`/instances/…/preview`, `/modalities`, `/changes`, `/jobs`, `/statistics`,
-`/plugins`, `/system` — so when the engine underneath is replaced, the front end
-keeps working.
+Four screens — **Worklist**, **Study**, **Devices**, **Activity / System** — and
+a **viewer**. It speaks only Orthanc's published REST API: `/tools/find`,
+`/studies/…`, `/series/…/instances`, `/instances/…/simplified-tags`,
+`/instances/…/frames/…/{numpy,rendered,preview}`, `/modalities`, `/changes`,
+`/jobs`, `/statistics`, `/plugins`, `/system`. When the engine underneath is
+replaced, the front end keeps working.
+
+## The viewer
+
+Built in, so it needs no plugin: on the day OHIF or Stone fails to load, the
+portal still shows images. The plugin viewers are still offered, detected from
+the server's own `/plugins` list, listed after it.
+
+It asks Orthanc for the frame in the best form the archive can give, and says on
+screen which one it got:
+
+| Path | Endpoint | What it buys |
+|---|---|---|
+| **pixel data** | `/instances/{id}/frames/{f}/numpy?rescale=0` | The stored values. Window/level is then a local lookup table and costs no network at all; the probe reports true Hounsfield units; region statistics are real. |
+| **server rendered** | `/instances/{id}/frames/{f}/rendered?window-center=&window-width=` | Orthanc applies the rescale and the window. Accurate, one round trip per window change. |
+| **preview only** | `/instances/{id}/preview` | Full range stretched to 8 bits. No windowing. The last resort, and it is labelled. |
+
+Endpoints and parameter names **VERIFIED 9 Sep 2026** against Orthanc's own
+OpenAPI (<https://orthanc.uclouvain.be/api/orthanc-openapi.json>). `/numpy`
+needs Orthanc 1.11.0+; PMC-ORTHANC01 runs **1.13.0** (MEASURED, cutover handoff
+2 Sep 2026).
+
+Window/level with presets · magnifier · zoom, pan, fit, 1:1 and calibrated true
+size · invert, rotate, flip · sharpen and smooth · length, angle, rectangular and
+elliptical regions with mean ± SD · pixel probe in Hounsfield units · cine with
+fps and bounce · tile layouts · stack on the wheel · prior studies side by side
+with position-matched linked scroll · modality-defined opening layout · every
+DICOM tag on the frame · PNG export with the overlay burned in.
+
+Statistics are **refused, not invented**, when the pane is on the rendered or
+preview path: an 8-bit PNG has no Hounsfield units in it. What this viewer does
+*not* do — MPR, MIP, 3D, reporting — is named in
+`docs/WS23-viewer-vs-voyager-20260909.md`, next to what Voyager does.
 
 ## The two constraints that shape everything
 
@@ -36,6 +69,7 @@ src/assets/favicon.png  inlined as a data: URI at build time
 build/manifest.json     the assembly order and the reference hash
 build/build.mjs         assemble + verify
 build/payload.mjs       installer payload + hash; also verifies an installer
+build/oneliner.mjs      one-line PowerShell deployer, hash-gated
 build/baseline.mjs      deliberately move the reference hash
 test/stand-in-orthanc.mjs  a fake Orthanc that refuses OrderBy, like the real one
 test/checks.mjs         24 checks driven through Chromium

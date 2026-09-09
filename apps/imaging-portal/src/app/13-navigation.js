@@ -61,10 +61,13 @@ function markCursor() {
 let gKey = false;
 document.addEventListener('keydown', e => {
   const typingNow = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
+  // The viewer takes the keyboard while it is open: its bindings are the ones a
+  // radiographer expects, and half of them (v, r, t) mean something else here.
+  if (!typingNow && typeof viewerKey === 'function' && viewerKey(e)) return;
   if (e.key === '/' && !typingNow) { e.preventDefault(); $('#q').focus(); $('#q').select(); return; }
   if (typingNow) { if (e.key === 'Escape') e.target.blur(); return; }
   if (sheet.open) {
-    if (e.key === 'v') { e.preventDefault(); $('#sheetFoot a')?.click(); }
+    if (e.key === 'v') { e.preventDefault(); $('#openViewer')?.click(); }
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); openStudy(Math.min(openIndex + 1, state.studies.length - 1)); }
     if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); openStudy(Math.max(openIndex - 1, 0)); }
     return;
@@ -78,7 +81,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); state.cursor = Math.min(state.cursor + 1, state.studies.length - 1); markCursor(); }
   if (e.key === 'k' || e.key === 'ArrowUp')   { e.preventDefault(); state.cursor = Math.max(state.cursor - 1, 0); markCursor(); }
   if (e.key === 'Enter' && state.cursor >= 0) { e.preventDefault(); openStudy(state.cursor); }
-  if (e.key === 'v' && state.cursor >= 0) { const s = state.studies[state.cursor]; const l = viewerLinks(s)[0]; if (l) window.open(l.href, '_blank', 'noopener'); }
+  if (e.key === 'v' && state.cursor >= 0) { openViewer(state.studies[state.cursor]); }
   if (e.key === 'd' && state.cursor >= 0) location.href = API.url(`studies/${state.studies[state.cursor].id}/archive`);
 });
 

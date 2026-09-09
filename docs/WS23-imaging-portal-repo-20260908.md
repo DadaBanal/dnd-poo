@@ -106,18 +106,28 @@ must do the same.
 
 ## 3a. Finding — the artifact's sample data carries PMC-range addresses
 
+> **Redacted 9 Sep 2026.** This section originally printed three placeholder
+> addresses and, to show they were fabricated, the host part and subnet of three
+> real devices. That is exactly the internal topology the repository fence
+> forbids, and stating it to prove a negative was a mistake. The addresses are
+> removed; the finding is unchanged. **RESOLVED** — see the closing note below.
+
 **MEASURED.** The sample-data fallback baked into the artifact
-(`src/app/04-demo-archive.js`) lists three devices at `10.2.2.60`, `10.2.2.61`
-and `10.2.2.77`. Every LAN browser that loads the page with the archive
-unreachable renders them.
+(`src/app/04-demo-archive.js`) listed three devices on addresses inside PMC's own
+subnet range. Every LAN browser that loaded the page with the archive unreachable
+rendered them.
 
-**MEASURED.** None of the three matches a device in the record — Orthanc is
-`.240` on 10.2.3, the Azurion `.251` on 10.2.3, Voyager `.193` on 10.2.2. So they
-are fabricated placeholders, not a disclosure of real infrastructure.
+**MEASURED.** None of the three matched a device in the record (checked against
+the inventory, not repeated here). They were fabricated placeholders, not a
+disclosure of real infrastructure.
 
-**INFERRED.** They were chosen to look plausible. The cost is that they sit inside
-PMC's own subnet range, so a reader cannot tell at a glance that they are fake,
-and a future reader may take them for an inventory.
+**INFERRED.** They were chosen to look plausible. The cost was that they sat
+inside PMC's own subnet range, so a reader could not tell at a glance that they
+were fake, and a future reader might take them for an inventory.
+
+**RESOLVED 9 Sep 2026.** Replaced with RFC 5737 documentation addresses
+(`192.0.2.x`) in the same commit as the viewer re-baseline, which is what
+`CLAUDE.md` required. No file in this repository now carries an internal address.
 
 **Not changed**, for the same reason as §3: it would break byte-identity with the
 build that was tested and is queued for installation. Worth folding into the next

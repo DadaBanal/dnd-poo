@@ -9,6 +9,13 @@
  * It refuses to write unless the decoded payload hashes to the expected value,
  * so a truncated paste writes nothing rather than half a page.
  *
+ * It also LOOKS before it prints the ServeFolders advice. MEASURED 9 Sep 2026
+ * from the cutover handoff (`docs/orthanc-cutover-handoff-20260902.md`): the
+ * 2 Sep HTTPS cutover kept 8 plugins and dropped 23, and ServeFolders is on the
+ * dropped list. So on PMC-ORTHANC01 as it stands, writing the file is not
+ * enough -- nothing would serve it. The line now says which of the two states
+ * the server is actually in, instead of assuming the happy one.
+ *
  *   node build/oneliner.mjs [targetDir]     default C:\PMC\portal
  */
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -43,9 +50,20 @@ const ps = [
     `Write-Host "OK  $($by.Length) bytes  sha256 $h" -ForegroundColor Green;` +
     `Write-Host "wrote $d\\index.html";` +
     `Write-Host "";` +
-    `Write-Host "Orthanc is NOT changed. To serve it, add to the ServeFolders section:";` +
-    `Write-Host '    "/pmc": "${dir.replace(/\\/g, '/')}"' -ForegroundColor Cyan;` +
-    `Write-Host "then restart the Orthanc service in a quiet window."}`,
+    // Read-only look at the server's own state. No credentials needed, and
+    // nothing is changed either way.
+    `$pl=@(Get-ChildItem 'C:\\Program Files\\Orthanc Server\\Plugins' -Filter '*ServeFolders*' -EA 0).Count;` +
+    `$cf='C:\\Program Files\\Orthanc Server\\Configuration\\orthanc.json';` +
+    `$cfg=if(Test-Path $cf){Get-Content $cf -Raw -EA 0}else{''};` +
+    `$hasCfg=$cfg -match '\"ServeFolders\"';` +
+    `if($pl -eq 0){Write-Warning 'ServeFolders.dll is NOT in the Plugins folder. The 2 Sep cutover dropped it, so nothing will serve this file yet.';` +
+    `Write-Host 'Restore it from the Orthanc install media (or Configuration.bak) into the Plugins folder first.' -ForegroundColor Yellow}` +
+    `elseif(-not $hasCfg){Write-Host 'ServeFolders.dll is present but orthanc.json has no ServeFolders section.' -ForegroundColor Yellow}` +
+    `else{Write-Host 'ServeFolders is loaded and configured.' -ForegroundColor Green};` +
+    `Write-Host "";` +
+    `Write-Host "Orthanc is NOT changed. To serve it, orthanc.json needs:";` +
+    `Write-Host '    \"ServeFolders\": { \"Folders\": { \"/pmc\": \"${dir.replace(/\\/g, '/')}\" } }' -ForegroundColor Cyan;` +
+    `Write-Host "then restart the Orthanc service in a quiet window (it drained in 6.9 s on 2 Sep)."}`,
 ].join(';');
 
 const out = join(ROOT, 'dist', 'Deploy-PmcImagingPortal-OneLine.ps1');

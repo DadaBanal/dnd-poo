@@ -23,6 +23,7 @@ function resolveViewers() {
 }
 async function boot() {
   setTheme(store.get('theme', matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+  wireViewer();
   $$('#scopeChips .chip').forEach(c => c.setAttribute('aria-pressed', String(c.dataset.scope === state.scope)));
   setLayout(state.layout);
   // optional site config written by the installer

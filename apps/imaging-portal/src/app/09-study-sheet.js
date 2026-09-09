@@ -14,9 +14,13 @@ async function openStudy(i) {
     ${s.nSeries ? `<span class="badge badge--soft">${s.nSeries} series</span>` : ''}
     ${s.nInst ? `<span class="badge badge--soft">${s.nInst} images</span>` : ''}`;
   const links = viewerLinks(s).filter(v => v.rank < 9);   // clinical viewers only; the admin UI lives under System
+  // The built-in viewer is first because it is the only one that needs nothing
+  // installed on the server: on the day a viewer plugin fails to load, this is
+  // still there. The plugin viewers stay, listed after it, unchanged.
   $('#sheetFoot').innerHTML = `
-    ${links.map((v, k) => `<a class="btn ${k === 0 ? 'btn--primary' : ''}" href="${esc(v.href)}" target="_blank" rel="noopener">
-        <svg><use href="#i-eye"/></svg>${esc(v.label)}</a>`).join('')}
+    <button class="btn btn--primary" id="openViewer"><svg><use href="#i-eye"/></svg>Open in PMC Viewer</button>
+    ${links.map(v => `<a class="btn" href="${esc(v.href)}" target="_blank" rel="noopener">
+        <svg><use href="#i-open"/></svg>${esc(v.label)}</a>`).join('')}
     ${CFG.features.download ? `<a class="btn" href="${esc(API.url(`studies/${s.id}/archive`))}" download>
         <svg><use href="#i-download"/></svg>DICOM (.zip)</a>` : ''}
     <div class="spacer"></div>
@@ -37,6 +41,7 @@ async function openStudy(i) {
           .map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}
         <tr><td>OrthancID</td><td>${esc(s.id)}</td></tr>
       </tbody></table></div></details>`;
+  $('#openViewer').onclick = () => { sheet.close(); openViewer(s); };
   $('#copyUid').onclick = async () => {
     try { await navigator.clipboard.writeText(s.uid); toast('Study UID copied', 'ok'); }
     catch { toast('Copy is blocked in this browser', 'warn'); }

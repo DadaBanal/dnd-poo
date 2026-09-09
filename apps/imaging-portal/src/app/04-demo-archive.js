@@ -79,9 +79,46 @@ const Demo = (() => {
     x.font = '600 13px system-ui'; x.fillStyle = 'rgba(255,255,255,.55)'; x.fillText('SAMPLE', 12, 226);
     const url = c.toDataURL('image/jpeg', .72); cache.set(key, url); return url;
   }
+
+  /* A synthetic 16-bit slice. The sample dataset is not a picture of an image:
+     it is stored values with a rescale, so the viewer's window/level, region
+     statistics and pixel probe run down exactly the same code path they will on
+     a real archive -- and every number on screen is arithmetic on invented data. */
+  const frameCacheDemo = new Map();
+  function demoPixels(seriesId, index, mod) {
+    const key = `${seriesId}#${index}`;
+    if (frameCacheDemo.has(key)) return frameCacheDemo.get(key);
+    const w = 256, h = 256, data = new Int16Array(w * h);
+    const INTERCEPT = -1024;
+    let s = (index + 1) * 7919 + seriesId.length * 104729;
+    const r = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const cx = 128, cy = 132, bodyRx = 104, bodyRy = 88;
+    const nodX = 92 + index * 1.4, nodY = 104 + Math.sin(index / 3) * 8;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const e = ((x - cx) / bodyRx) ** 2 + ((y - cy) / bodyRy) ** 2;
+      let hu;
+      if (e > 1) hu = -1000;                                              // air
+      else if (e > 0.86) hu = 380 + r() * 120;                            // body wall and ribs
+      else if (mod === 'CT' || mod === 'NM' || mod === 'MR') {
+        const lungL = ((x - 88) / 42) ** 2 + ((y - 120) / 56) ** 2;
+        const lungR = ((x - 170) / 42) ** 2 + ((y - 120) / 56) ** 2;
+        hu = (lungL < 1 || lungR < 1) ? -780 + r() * 90 : 42 + r() * 22;
+        if ((x - 128) ** 2 / 400 + (y - 178) ** 2 / 260 < 1) hu = 130;    // spine
+        if ((x - nodX) ** 2 + (y - nodY) ** 2 < 46) hu = 60 + index * 6;  // the thing that moves
+      } else {
+        hu = 30 + r() * 40 + Math.sin(y / 9 + index / 4) * 55;            // soft, layered
+        if (Math.abs(x - 128) < 4) hu = 300;
+      }
+      data[y * w + x] = Math.round(hu) - INTERCEPT;
+    }
+    const out = { kind: 'pixels', data, w, h, ch: 1, dtype: '<i2' };
+    if (frameCacheDemo.size > 90) frameCacheDemo.clear();
+    frameCacheDemo.set(key, out);
+    return out;
+  }
   return {
     base: 'demo://', url: () => '',
-    studies, thumb,
+    studies, thumb, pixels: demoPixels,
     async req(path, opts = {}) {
       await new Promise(r => setTimeout(r, 70 + Math.random() * 120));
       const p = String(path).replace(/^\//, '');
@@ -95,10 +132,15 @@ const Demo = (() => {
       }
       if (p === 'statistics') return { CountPatients: 41, CountStudies: studies.length, CountSeries: 214,
         CountInstances: 18422, TotalDiskSize: String(96 * 1024 ** 3), TotalDiskSizeMB: 98304 };
+      // RFC 5737 documentation addresses. They matched no real device even
+      // before, but they sat inside PMC's own subnet range; the repository fence
+      // says new code carries no internal topology, and a sample dataset is new
+      // code every time it is read. The real addresses come from Orthanc at
+      // runtime and are never written down here.
       if (p === 'modalities?expand' || p === 'modalities') return {
-        azurion:  { AET: 'AZURION',  Host: '10.2.2.61', Port: 104, Manufacturer: 'Generic' },
-        voyager:  { AET: 'VOYAGER',  Host: '10.2.2.60', Port: 104, Manufacturer: 'Generic' },
-        pacsview: { AET: 'PMCVIEW1', Host: '10.2.2.77', Port: 11112, Manufacturer: 'Generic' }
+        azurion:  { AET: 'AZURION',  Host: '192.0.2.61', Port: 104, Manufacturer: 'Generic' },
+        voyager:  { AET: 'VOYAGER',  Host: '192.0.2.60', Port: 104, Manufacturer: 'Generic' },
+        pacsview: { AET: 'PMCVIEW1', Host: '192.0.2.77', Port: 11112, Manufacturer: 'Generic' }
       };
       if (/^modalities\/.+\/echo$/.test(p)) { if (p.includes('azurion')) throw new ApiError(500, 'no answer', p); return null; }
       if (p.startsWith('changes')) return { Changes: studies.slice(0, 12).map((s, i) => ({
@@ -126,6 +168,21 @@ const Demo = (() => {
           SeriesDescription: i === 0 ? 'Scout / survey' : `Acquisition ${i}`,
           Modality: st.RequestedTags.ModalitiesInStudy },
           Instances: Array.from({ length: 3 }, (_, k) => `${sid}-i${k}`) })); }
+      const mi = p.match(/^series\/([^/]+)\/instances$/);
+      if (mi) return Array.from({ length: 24 }, (_, k) => ({ ID: `${mi[1]}-i${k}`, IndexInSeries: k + 1,
+        MainDicomTags: { InstanceNumber: String(k + 1), NumberOfFrames: '1',
+          SOPInstanceUID: `1.2.826.0.1.3680043.10.999.${mi[1].length}.${k}` } }));
+      const mt = p.match(/^instances\/(.+?)-i(\d+)\/(?:simplified-)?tags$/);
+      if (mt) { const st = studies.find(x => mt[1].startsWith(x.ID));
+        const mod = st?.RequestedTags.ModalitiesInStudy || 'CT';
+        return { Modality: mod, Rows: '256', Columns: '256', PixelSpacing: '0.72\\0.72',
+          SliceThickness: '2.5', NumberOfFrames: '1', WindowCenter: '40', WindowWidth: '400',
+          RescaleSlope: '1', RescaleIntercept: '-1024', PhotometricInterpretation: 'MONOCHROME2',
+          BitsAllocated: '16', BitsStored: '16', PixelRepresentation: '1', SamplesPerPixel: '1',
+          ImageOrientationPatient: '1\\0\\0\\0\\1\\0',
+          ImagePositionPatient: `0\\0\\${(+mt[2] * 2.5).toFixed(1)}`,
+          SeriesDescription: 'Sample acquisition', StudyDescription: st?.MainDicomTags.StudyDescription || '',
+          PatientName: st?.PatientMainDicomTags.PatientName || '', KVP: '120', XRayTubeCurrent: '180' }; }
       const m2 = p.match(/^studies\/([^/]+)$/);
       if (m2) { const st = studies.find(s => s.ID === m2[1]); if (!st) throw new ApiError(404, '', p); return st; }
       throw new ApiError(404, 'not in the sample dataset', p);

@@ -354,6 +354,260 @@ check('no page errors and nothing unexpected on the wire, across a full walk-thr
   await ctx.close();
 });
 
+
+/* ----------------------------------------------------------- the viewer ---
+   The portal now carries its own DICOM viewer, so these checks are about the
+   things a viewer can get quietly wrong: reading a pixel as the wrong number,
+   measuring in the wrong units, showing a stale frame after a scroll, or
+   claiming Hounsfield units on a path that cannot produce them.              */
+
+/** Open the portal, find one study by accession, and open it in the viewer. */
+async function openViewer(browser, server, accession = 'ACC100001') {
+  const opened = await openPortal(browser, server);
+  const { page } = opened;
+  await page.fill('#q', accession);
+  await page.waitForFunction(() => document.querySelectorAll('#results .card, #results tbody tr').length === 1,
+    null, { timeout: 15000 });
+  await page.locator('#results .card, #results tbody tr').first().click();
+  await page.waitForSelector('#sheet[open]');
+  await page.click('#openViewer');
+  await page.waitForFunction(() => document.querySelector('#viewer')?.dataset.ready === '1', null, { timeout: 20000 });
+  await page.waitForFunction(() => document.querySelector('.pane')?.dataset.index !== undefined, null, { timeout: 20000 });
+  await page.waitForTimeout(250);
+  return opened;
+}
+/** Centre of the first pane, in page coordinates. */
+async function paneCentre(page, n = 0) {
+  const box = await page.locator('.pane').nth(n).boundingBox();
+  return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2), box };
+}
+/** Read the probe readout while the button is held — it hides on release. */
+async function probe(page, dx = 0, dy = 0, n = 0) {
+  await page.click('#vwrTools [data-tool="probe"]');
+  const c = await paneCentre(page, n);
+  await page.mouse.move(c.x + dx, c.y + dy);
+  await page.mouse.down();
+  await page.waitForTimeout(80);
+  const text = await page.locator('.pane').nth(n).locator('.pane__probe').innerText();
+  await page.mouse.up();
+  return text;
+}
+
+check('the viewer opens over the worklist and paints the frame', async (b, s) => {
+  const { page, ctx, pageErrors } = await openViewer(b, s);
+  ok(await page.isVisible('#viewer'), 'the viewer is not visible');
+  // Study 001 is a CT with two series, so the modality layout opens it side by
+  // side rather than in one pane. A single pane here would mean the hanging
+  // rule silently stopped running.
+  eq(await page.locator('.pane').count(), 2, 'pane count for a two-series CT');
+  // A blank canvas would also "render". Assert the pixels are not all one value.
+  const spread = await page.evaluate(() => {
+    const c = document.querySelector('.pane canvas');
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let min = 255, max = 0;
+    for (let i = 0; i < d.length; i += 4) { if (d[i] < min) min = d[i]; if (d[i] > max) max = d[i]; }
+    return max - min;
+  });
+  ok(spread > 40, `the canvas is nearly uniform (spread ${spread}) — nothing was drawn`);
+  eq(pageErrors.length, 0, `page errors: ${pageErrors.join(' | ')}`);
+  await ctx.close();
+});
+
+check('it asks for the stored pixel values, and says so on screen', async (b, s) => {
+  const { page, ctx } = await openViewer(b, s);
+  ok(s.requests.some(r => /\/numpy$/.test(r.path)), 'the viewer never asked for the pixel array');
+  ok((await page.textContent('#vwrFoot')).includes('pixel data'), 'the footer does not report the pixel-data path');
+  await ctx.close();
+});
+
+check('the pixel probe reports Hounsfield units, not the stored number', async (b, s) => {
+  const { page, ctx } = await openViewer(b, s);
+  // The phantom's central disc is -100 HU on the first frame. Stored, it is 924.
+  // Reporting 924 would be the classic rescale mistake, so assert on the HU.
+  const text = await probe(page);
+  ok(/-100 HU/.test(text), `probe read "${text}", expected -100 HU`);
+  ok(!/924/.test(text), `probe reported the stored value, not the rescaled one: "${text}"`);
+  await ctx.close();
+});
+
+check('the wheel moves the stack, and the new frame is really new data', async (b, s) => {
+  const { page, ctx } = await openViewer(b, s);
+  const centre = await paneCentre(page);
+  await page.mouse.move(centre.x, centre.y);
+  await page.mouse.wheel(0, 120);
+  await page.waitForFunction(() => document.querySelector('.pane').dataset.index === '1', null, { timeout: 8000 });
+  // Frame 1's disc is -60 HU. If the viewer had merely repainted the old buffer
+  // the probe would still read -100, and no pixel comparison would notice.
+  const text = await probe(page);
+  ok(/-60 HU/.test(text), `after one step the probe read "${text}", expected -60 HU`);
+  await ctx.close();
+});
+
+check('window and level change the image without going back to the archive', async (b, s) => {
+  const { page, ctx } = await openViewer(b, s);
+  const before = await page.evaluate(() => document.querySelector('.pane canvas').toDataURL().length);
+  const sig = () => page.evaluate(() => {
+    const c = document.querySelector('.pane canvas');
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let sum = 0; for (let i = 0; i < d.length; i += 4) sum += d[i];
+    return Math.round(sum / (d.length / 4));
+  });
+  const meanBefore = await sig();
+  const n = s.requests.length;
+  const c = await paneCentre(page);
+  await page.mouse.move(c.x, c.y);
+  await page.mouse.down({ button: 'right' });
+  await page.mouse.move(c.x + 160, c.y + 90, { steps: 8 });
+  await page.mouse.up({ button: 'right' });
+  await page.waitForTimeout(150);
+  const meanAfter = await sig();
+  ok(Math.abs(meanAfter - meanBefore) > 4, `window/level did not change the image (${meanBefore} → ${meanAfter})`);
+  eq(s.requests.length, n, 'window/level went back to the server — it should be local on the pixel path');
+  ok(before > 0, 'canvas produced no data');
+  await ctx.close();
+});
+
+check('a series the archive cannot decode falls back to the rendered path', async (b, s) => {
+  // Study 003 has four series; the stand-in refuses /numpy on the third, the way
+  // Orthanc does for a transfer syntax it cannot turn into an array.
+  const { page, ctx } = await openViewer(b, s, 'ACC100003');
+  await page.locator('#vwrSeries .vseries').nth(2).click();
+  await page.waitForFunction(() => document.querySelector('#vwrFoot')?.textContent.includes('server rendered'),
+    null, { timeout: 10000 });
+  ok(s.requests.some(r => /\/rendered$/.test(r.path)), 'no frame was fetched from /rendered');
+  // On that path the ARCHIVE does the windowing, so a window change has to travel
+  // with the request. If it did not, the W/L drag would silently do nothing here.
+  const box = await page.locator('.pane').first().boundingBox();
+  const cx = Math.round(box.x + box.width / 2), cy = Math.round(box.y + box.height / 2);
+  await page.mouse.move(cx, cy);
+  await page.mouse.down({ button: 'right' });
+  await page.mouse.move(cx + 120, cy + 70, { steps: 6 });
+  await page.mouse.up({ button: 'right' });
+  await page.waitForTimeout(600);
+  const windowed = s.requests.filter(r => /\/rendered$/.test(r.path)
+    && /window-center=/.test(r.search) && !/window-center=40&/.test(r.search));
+  ok(windowed.length > 0, 'the new window never reached the archive on the rendered path');
+  await ctx.close();
+});
+
+check('a length is measured in millimetres, and twice the line is twice the length', async (b, s) => {
+  const { page, ctx } = await openViewer(b, s);
+  await page.click('#viewer [data-act="one"]');            // 1:1, so screen px = image px
+  await page.click('#vwrTools [data-tool="length"]');
+  const c = await paneCentre(page);
+  const draw = async (len) => {
+    await page.click('#viewer [data-act="clear"]');
+    await page.mouse.move(c.x - len / 2, c.y + 20);
+    await page.mouse.down();
+    await page.mouse.move(c.x + len / 2, c.y + 20, { steps: 6 });
+    await page.mouse.up();
+    await page.waitForTimeout(120);
+    const t = await page.textContent('#vwrNotes');
+    const m = /([\d.]+)\s*(mm|cm)/.exec(t);
+    ok(m, `no measurement was listed, got "${t}"`);
+    return +m[1] * (m[2] === 'cm' ? 10 : 1);
+  };
+  const short = await draw(20), long = await draw(40);
+  // PixelSpacing is 0.6 mm, so 20 image pixels is 12 mm.
+  ok(Math.abs(short - 12) < 0.6, `20 px at 0.6 mm/px should read 12 mm, read ${short}`);
+  ok(Math.abs(long / short - 2) < 0.06, `doubling the line did not double the length (${short} → ${long})`);
+  await ctx.close();
+});
+
+check('a region reports the mean of the values inside it, in the modality units', async (b, s) => {
+  const { page, ctx } = await openViewer(b, s);
+  await page.click('#viewer [data-act="one"]');
+  await page.click('#vwrTools [data-tool="ellipse"]');
+  const c = await paneCentre(page);
+  // Image (38,58) to (58,78): entirely inside the phantom's soft tissue, 40 HU flat.
+  await page.mouse.move(c.x - 10, c.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(c.x + 10, c.y + 30, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+  const text = await page.textContent('#vwrNotes');
+  ok(/40 ± 0 HU/.test(text), `region statistics read "${text}", expected a flat 40 HU`);
+  ok(/cm²/.test(text), `region did not report an area in cm²: "${text}"`);
+  await ctx.close();
+});
+
+check('a study opens in the layout its modality is read in', async (b, s) => {
+  // ACC100000 is an XA run: angiography is read one pane at a time and played,
+  // not tiled. ACC100003 is an ultrasound with four series, same rule.
+  const xa = await openViewer(b, s, 'ACC100000');
+  eq(await xa.page.locator('.pane').count(), 1, 'XA should open in a single pane');
+  await xa.ctx.close();
+  const us = await openViewer(b, s, 'ACC100003');
+  eq(await us.page.locator('.pane').count(), 1, 'US should open in a single pane');
+  await us.ctx.close();
+});
+
+check('layouts, linked scroll and cine behave', async (b, s) => {
+  const { page, ctx } = await openViewer(b, s, 'ACC100003');
+  await page.click('#vwrLayouts [data-layout="2x2"]');
+  await page.waitForTimeout(400);
+  eq(await page.locator('.pane').count(), 4, 'pane count after 2x2');
+  await page.waitForFunction(() => document.querySelectorAll('.pane[data-serie]').length >= 2, null, { timeout: 10000 });
+  await page.check('#vwrLinkScroll');
+  const before = await page.$$eval('.pane[data-index]', els => els.map(e => e.dataset.index));
+  const c = await paneCentre(page);
+  await page.mouse.move(c.x, c.y);
+  await page.mouse.wheel(0, 120);
+  await page.waitForTimeout(500);
+  const after = await page.$$eval('.pane[data-index]', els => els.map(e => e.dataset.index));
+  ok(after.filter((v, i) => v !== before[i]).length >= 2, `linked scroll moved ${after.filter((v, i) => v !== before[i]).length} pane(s)`);
+  await page.click('#vwrLayouts [data-layout="1x1"]');
+  await page.click('#vwrCine');
+  await page.waitForTimeout(700);
+  const moved = await page.getAttribute('.pane', 'data-index');
+  await page.click('#vwrCine');
+  await page.waitForTimeout(400);
+  const stopped = await page.getAttribute('.pane', 'data-index');
+  ok(+moved > 0, 'cine did not advance');
+  await page.waitForTimeout(400);
+  eq(await page.getAttribute('.pane', 'data-index'), stopped, 'cine kept running after being stopped');
+  await ctx.close();
+});
+
+check('the viewer saves a PNG and closes on Escape', async (b, s) => {
+  const { page, ctx } = await openViewer(b, s);
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('#vwrExport')]);
+  ok(/\.png$/.test(download.suggestedFilename()), `export filename was ${download.suggestedFilename()}`);
+  ok(/PID700001/.test(download.suggestedFilename()), `the export does not name the patient id: ${download.suggestedFilename()}`);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+  ok(!(await page.isVisible('#viewer')), 'Escape did not close the viewer');
+  await ctx.close();
+});
+
+check('the viewer reaches no origin but the archive it was served from', async (b, s) => {
+  const { page, ctx, pageErrors, consoleErrors } = await openViewer(b, s, 'ACC100003');
+  const seen = new Set();
+  page.on('request', r => seen.add(new URL(r.url()).origin));
+  await page.locator('#vwrSeries .vseries').nth(2).click();
+  await page.waitForTimeout(600);
+  await page.mouse.wheel(0, 240);
+  await page.waitForTimeout(600);
+  const foreign = [...seen].filter(o => o !== s.origin && o !== 'null');
+  eq(foreign.length, 0, `the viewer reached ${foreign.join(', ')}`);
+  eq(pageErrors.length, 0, `page errors: ${pageErrors.join(' | ')}`);
+  eq(consoleErrors.length, 0, `console errors: ${consoleErrors.join(' | ')}`);
+  await ctx.close();
+});
+
+check('the sample dataset drives the same viewer, and says it is a sample', async (b, s) => {
+  const { page, ctx, pageErrors } = await openPortal(b, s, { url: s.portalUrl + '?demo=1' });
+  await page.locator('#results .card, #results tbody tr').first().click();
+  await page.waitForSelector('#sheet[open]');
+  await page.click('#openViewer');
+  await page.waitForFunction(() => document.querySelector('#viewer')?.dataset.ready === '1', null, { timeout: 20000 });
+  await page.waitForFunction(() => document.querySelector('.pane')?.dataset.index !== undefined, null, { timeout: 20000 });
+  ok((await page.textContent('#vwrFoot')).includes('SAMPLE DATA'),
+    'the sample dataset does not announce itself in the viewer');
+  eq(pageErrors.length, 0, `page errors: ${pageErrors.join(' | ')}`);
+  await ctx.close();
+});
+
 // ---------------------------------------------------------------- the runner
 const browser = await chromium.launch();
 let pass = 0, fail = 0;

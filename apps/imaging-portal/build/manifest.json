@@ -1,12 +1,12 @@
 {
   "artifact": "PMC_Imaging_Portal.html",
   "reference": {
-    "bytes": 101154,
-    "sha256": "439667d3c3bcead904717f9b341ae6904e87fbb86cd7d4e81f6fb3e1de9d6f13",
+    "bytes": 182503,
+    "sha256": "c59f3ebbd01a91fd55196a0b7f2c01cb9a37e19f72c16170c868d0c9f39d0e0f",
     "source": "re-baselined from src/ on 2026-09-09",
     "previous": {
-      "bytes": 100449,
-      "sha256": "c6d21731224a0d7270955c1d1142cb5e613980c20ab1a7d1ba893b42403b30f4"
+      "bytes": 182134,
+      "sha256": "43b80702444b1705d2307cb8462987c4eeefacc83cf4b3fea3194784aa67993d"
     }
   },
   "styles": [
@@ -17,7 +17,8 @@
     "src/styles/04-shell.css",
     "src/styles/05-content.css",
     "src/styles/06-dialog.css",
-    "src/styles/07-responsive.css"
+    "src/styles/07-responsive.css",
+    "src/styles/08-viewer.css"
   ],
   "app": [
     "src/app/00-preamble.js",
@@ -34,7 +35,11 @@
     "src/app/11-activity.js",
     "src/app/12-system.js",
     "src/app/13-navigation.js",
-    "src/app/14-boot.js"
+    "src/app/14-viewer-data.js",
+    "src/app/15-viewer-render.js",
+    "src/app/16-viewer-tools.js",
+    "src/app/17-viewer-ui.js",
+    "src/app/20-boot.js"
   ],
   "favicon": "src/assets/favicon.png"
 }

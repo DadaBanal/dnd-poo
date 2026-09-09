@@ -88,10 +88,21 @@ if (process.argv.includes('--check')) {
   if (!existsSync(outPath)) { console.error(`FAIL: ${outPath} is missing — run the build.`); process.exit(1); }
   const onDisk = readFileSync(outPath, 'utf8');
   if (onDisk !== html) { console.error('FAIL: dist/ is stale — it does not match a build of src/.'); process.exit(1); }
+  const sidecar = existsSync(`${outPath}.sha256`) ? readFileSync(`${outPath}.sha256`, 'utf8').trim() : '';
+  if (sidecar !== `${hash}  ${manifest.artifact}`) {
+    console.error(`FAIL: dist/${manifest.artifact}.sha256 does not match the artifact beside it.`);
+    console.error(`  expected ${hash}  ${manifest.artifact}`);
+    console.error(`  found    ${sidecar || '(missing)'}`);
+    process.exit(1);
+  }
   console.log(`OK  dist/ is in step with src/  ${bytes} bytes  sha256 ${hash}`);
 } else {
   mkdirSync(join(ROOT, 'dist'), { recursive: true });
   writeFileSync(outPath, html);
+  // The sidecar is what an operator checks the pasted file against, so it is
+  // written by the same step that writes the file. It had gone stale twice by
+  // being a separate command someone had to remember.
+  writeFileSync(`${outPath}.sha256`, `${hash}  ${manifest.artifact}\n`);
   console.log(`built dist/${manifest.artifact}`);
   console.log(`  ${bytes} bytes  sha256 ${hash}`);
   console.log(`  self-contained: no external script, style, font or image`);
