@@ -568,6 +568,45 @@ uses. This is deliberate: the record's base rate is designs that are never run.
 | **C. Requester intake** | Portal, email intake with the duplicate guard, machine API. PHI controls of §6.1. | The hospital-wide case becomes evidenceable. |
 | **D. Modules** | CMDB/configurations, contacts and companies, procurement, invoicing. | Each is a table extending `work_item`, per §5.1. |
 
+### 10.1 The module map, checked against ConnectWise
+
+**[VERIFIED 9 Sep 2026, `university.connectwise.com/University/PageView.aspx?short_name=partner-kit-library`
+— read from an authenticated session and relayed by Dada, not read directly]**
+
+ConnectWise PSA's own module set, from its Partner Kit Library index:
+
+| Area | Modules it ships |
+|---|---|
+| Service delivery | Help Desk, PSA End User Portal, Chat, StreamlineIT |
+| Project | Project Management |
+| Operations | **Procurement**, Onboarding, Offboarding, Human Resources, Report Writer, QBR |
+| Finance and billing | Collections, **UserCentric** (per-user billing), **Unified Billing Intake** |
+| Adjacent products | CPQ (quoting, multi-level approvals), Automate (RMM), SIEM |
+
+Three things follow.
+
+**Procurement and finance are first-class PSA modules, not afterthoughts.** The
+market leader ships purchasing, receiving and inventory as a module of the same
+product. That is the shape Dada asked for, and §5.1's base class is what makes it
+reachable — a `purchase_request` extending `work_item` inherits assignment,
+status, notes, audit and effort for the cost of one table.
+
+**StreamlineIT is worth reading properly before Phase B.** ConnectWise describes
+it as becoming *"an extension of your clients' internal support"* and
+*"co-manage alongside a client"*. **[INFERRED]** That is precisely the PMC shape:
+of the ~40 fulfillers, most are PMC's own departmental staff — biomedical,
+facilities, housekeeping, dietary, nursing — not Dada IT's. A co-management model
+is not the same as an MSP servicing a customer, and it changes who owns a board,
+who sees a restricted ticket, and who the SLA is between. It bears directly on
+decisions **D3** (identity) and §5.6 (roles).
+
+**QBR maps to an obligation we already have.** The agreement's six-monthly review
+is the same object. The uplift evidence report of §7 is what it should be built
+on.
+
+**Not to copy, at least not now:** Equipment Rental, Campaign, Chat, CPQ. Each is
+a real module and none of them is PMC's problem this year.
+
 **Phase A first, and measured against the estimate.** If Phase A is not running
 and tested by its own date, the scope reduces rather than the date moving — the
 same discipline the record applied to the spine.
