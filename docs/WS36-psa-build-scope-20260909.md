@@ -62,12 +62,15 @@ weight the recommendation did not carry:
   migration paper goes to PMC's board, **send that email** — the board may
   reasonably ask why the incumbent was never held to its own SLA first. It costs
   an hour and it is the difference between a considered migration and a whim.
-- **Being a Teams app is itself the cost.** ~30 fulfiller identities at ~USD
-  6/user/month ≈ **USD 2,160/year**, which is more than the Kitameraki licence.
-  Housekeeping, dietary and nursing supervisors do not have M365 licences and
-  should not need one to close a ticket about a trolley. A build that does **not**
-  use Entra for departmental fulfillers is the only option on the table that
-  removes this line rather than moving it. See §8.5 — it is not free either.
+- ~~**Being a Teams app is itself the cost.**~~ **WITHDRAWN.** This said ~30
+  fulfiller identities at ~USD 6/user/month ≈ USD 2,160/year, resting on the
+  record's INFERRED figure that ~30 of the 40 target fulfillers hold no tenant
+  identity. **[MEASURED — Dada, CIO, 9 Sep 2026]** Every staff member already has
+  an M365 licence; it is a business and that is a given. So the line is zero, the
+  identity-cost argument for building disappears, and so does the argument against
+  Entra. Nothing here should be designed around avoiding a licence PMC already
+  owns. The record's own ~100-of-~400 count is either stale or was counting
+  something else, and it should not be cited again without being re-measured.
 - **Retention and export fidelity are NOT VERIFIED.** Whether the vendor returns
   full note threads, internal comments and attachments is unknown, and
   attachments are what an inspector asks for.
@@ -839,16 +842,17 @@ Decision **D2**, and it needs Dada's explicit sign-off because it edits a rule i
 
 ### 8.4 Identity
 
-**[MEASURED]** ~30 of 40 fulfillers would need a new M365 licence for a
-Teams-native desk, ~USD 2,160/year. A build can avoid that — but the record is
-right that *"a seat is an Entra group membership" is true for the licence and
-false for the seat*: local accounts mean password resets, MFA and offboarding
-handled by a 2–3 person team, in a hospital, under RA 10173.
+**SETTLED. [MEASURED — Dada, CIO, 9 Sep 2026]** Every staff member already holds
+an M365 licence. The earlier ~30-of-40 figure and its ~USD 2,160/year were built
+on the record's INFERRED count and are withdrawn — see §1.3.
 
-Honest options: Entra SSO for everyone (costs the licences, best control); local
-accounts for departmental fulfillers only, Entra for IT (saves the money, adds the
-burden); or Entra for fulfillers and an unauthenticated-but-attributed intake form
-for requesters. Decision **D3**. **I do not think this should be decided on cost.**
+So **Entra SSO for everyone**, and there is nothing to trade off. This was the
+one option that was previously argued against on cost, and the cost is not real.
+It is also the best of the three on control: no local accounts, so no password
+resets, MFA enrolment or offboarding carried by a two-to-three person team.
+
+**D3 is closed.** It should not be reopened on cost, and no part of the build
+should be shaped around avoiding a licence PMC already owns.
 
 ---
 
@@ -998,7 +1002,7 @@ that is a conversation for the change order, not for the schema.
 |---|---|---|
 | **D1** | Where the primary runs — A, B or C in §8.1, and confirmation it is **not** on `DND-HOST1` | Changes the deployment, the backup design and the offline story |
 | **D2** | Does the standard-library-only rule change shape as proposed in §8.3? | Decides whether Phase B is buildable at all |
-| **D3** | Identity: Entra for all, local for departmental fulfillers, or mixed | Decides ~USD 2,160/year, and the RA 10173 posture |
+| ~~**D3**~~ | ~~Identity~~ **CLOSED 9 Sep** — Entra for all. Every staff member already has an M365 licence [MEASURED, Dada] | Was costed at ~USD 2,160/year on an INFERRED count that is wrong. No cost, no trade-off, §8.4 |
 | **D4** | Ticket numbering: one `PMC-` sequence across all boards, with `legacy_ref` | Cheap now, very expensive after the first thousand tickets |
 | **D5** | Rule conditions. **Largely answered by ConnectWise's `WorkflowTrigger`** — the condition vocabulary is data, each field declaring its type and whether it takes an operator or an option list. Confirm we adopt that rather than an expression language | Security and testability |
 | **D6** | Is Phase A funded as a variation, and at what number? | §1.4 — the AUD 6,500 spine line does not cover this |
