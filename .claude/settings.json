@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__Microsoft_365__read_resource",
+      "mcp__Microsoft_365__sharepoint_search",
+      "mcp__Microsoft_365__sharepoint_folder_search",
+      "mcp__Microsoft_365__search_people",
+      "mcp__Microsoft_365__chat_message_search",
+      "mcp__Microsoft_365__outlook_email_search",
+      "mcp__github__pull_request_read",
+      "mcp__github__get_file_contents",
+      "mcp__github__get_commit",
+      "mcp__github__get_job_logs",
+      "mcp__github__list_branches",
+      "Bash(npm run check)"
+    ]
+  }
+}
