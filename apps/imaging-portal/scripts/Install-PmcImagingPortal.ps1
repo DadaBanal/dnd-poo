@@ -216,7 +216,7 @@ $mapPath  = $PortalDir -replace '\\','/'
 $dropFile = if ($configIsDir) { Join-Path $configTarget 'pmc-portal-servefolders.json' } else { $null }
 $mapJson  = @"
 {
-  "_comment": "Added by Install-PmcImagingPortal.ps1 on $Stamp. Serves the PMC Imaging Portal at /pmc/. Delete this file and restart Orthanc to remove it.",
+  "_comment": "Added by Install-PmcImagingPortal.ps1 on $Stamp. Serves the PMC Imaging Portal at /pmc/index.html (ServeFolders registers /(pmc)/(.*), so the bare folder is not a URL). Delete this file and restart Orthanc to remove it.",
   "ServeFolders": {
     "AllowCache": false,
     "GenerateETag": true,
@@ -346,12 +346,40 @@ else {
 
 # --------------------------------------------------------------------- proof
 Head '7. Proof'
+$script:LastLength = -1
 function Get-Code {
   param([string]$Url)
   $a = @{ Uri = $Url; UseBasicParsing = $true; TimeoutSec = 15; ErrorAction = 'Stop' }
   if ($Credential) { $a.Credential = $Credential }
-  try { return [int](Invoke-WebRequest @a).StatusCode }
+  $script:LastLength = -1
+  try {
+    $r = Invoke-WebRequest @a
+    $script:LastLength = $r.RawContentLength
+    return [int]$r.StatusCode
+  }
   catch { if ($_.Exception.Response) { return [int]$_.Exception.Response.StatusCode }; return 0 }
+}
+<#
+  A 200 is not by itself proof that the PAGE is being served. ServeFolders
+  synthesises a directory listing when the URI ends in index.html and no such
+  file exists (VERIFIED 9 Sep 2026 from the plugin source), and that listing is
+  also a 200. Comparing the length settles which one came back.
+#>
+function Confirm-Served {
+  param([int]$Code)
+  if ($Code -ne 200) { return $false }
+  $want = if (Test-Path $PortalFile) { (Get-Item $PortalFile).Length } else { -1 }
+  if ($want -lt 0 -or $script:LastLength -lt 0) {
+    Note "  $BaseUrl/pmc/index.html answered 200." Green; return $true
+  }
+  if ($script:LastLength -eq $want) {
+    Note ("  {0}/pmc/index.html is being served, all {1:N0} bytes of it." -f $BaseUrl, $want) Green
+    return $true
+  }
+  Note ("  200, but {0:N0} bytes rather than {1:N0}. That is not the page." -f $script:LastLength, $want) Red
+  Note '  ServeFolders answers index.html with a generated directory listing when the' Yellow
+  Note '  file is missing, and that is also a 200. Check the portal folder.' Yellow
+  return $false
 }
 if (-not $Apply) { Note '  nothing to prove in a preview' DarkGray }
 else {
@@ -359,7 +387,7 @@ else {
   # A control path that cannot exist. If it answers the same as the real one,
   # the answer is about authentication, not about whether the page is served.
   $control = Get-Code ("$BaseUrl/pmc/__not-here-" + [guid]::NewGuid().ToString('N') + '.html')
-  if ($real -eq 200) { Note "  $BaseUrl/pmc/ is being served." Green }
+  if ($real -eq 200) { Confirm-Served $real | Out-Null }
   elseif ($real -eq 404) { Note '  404. ServeFolders is not mapping /pmc. Check the Orthanc log for the plugin loading.' Red }
   elseif ($real -eq 0) { Note "  No answer from $BaseUrl. Check DNS and the firewall rule." Red }
   elseif ($real -eq $control) {
@@ -370,10 +398,10 @@ else {
     # nothing either way, and the work above is already done.
     if ([Environment]::UserInteractive) {
       Note '  Sign in and it can be proven now. Cancel to skip; nothing further will change.' Cyan
-      $Credential = Get-Credential -Message "Orthanc sign-in, to prove $BaseUrl/pmc/ is served"
+      $Credential = Get-Credential -Message "Orthanc sign-in, to prove $BaseUrl/pmc/index.html is served"
       if ($Credential) {
         $real2 = Get-Code "$BaseUrl/pmc/index.html"
-        if ($real2 -eq 200) { Note "  $BaseUrl/pmc/index.html is being served." Green }
+        if ($real2 -eq 200) { Confirm-Served $real2 | Out-Null }
         elseif ($real2 -eq 404) { Note '  404. ServeFolders is not mapping /pmc. Check the Orthanc log for the plugin loading.' Red }
         elseif ($real2 -eq 401) { Note '  401 with that sign-in. The page is there; those credentials were not accepted.' Yellow }
         else { Note ("  HTTP {0} from {1}/pmc/index.html" -f $real2, $BaseUrl) Yellow }
@@ -383,7 +411,10 @@ else {
       Note '  .\Install-PmcImagingPortal.ps1 -Apply -Credential (Get-Credential)' Cyan
     }
   }
-  else { Note ("  HTTP {0} for the page, {1} for a path that cannot exist -- it is being served." -f $real, $control) Green }
+  else {
+    Note ("  HTTP {0} for the page, {1} for a path that cannot exist." -f $real, $control) Green
+    Confirm-Served $real | Out-Null
+  }
 }
 
 Head 'Summary'
