@@ -7,7 +7,8 @@ UNROUTED,Unrouted,2,PMO coordinator,Dela Cruz,Dada Banal,1,0,1,Default queue wit
 BIOMEDICAL,Biomedical & Clinical Equipment,3a,Biomedical technician (vendor-escalated),,,0,0,0,Not live because phase 3a has not opened. Name an owner when it does.
 FACILITIES,Facilities & Engineering,3a,Facilities/Engineering supervisor,,,0,0,0,Not live because phase 3a has not opened. Name an owner when it does.
 HOUSEKEEPING,Housekeeping & Environmental Services,3a,Housekeeping supervisor,,,0,0,0,Not live because phase 3a has not opened. Name an owner when it does.
-FINANCE,Finance & Purchasing,3a,Finance/Purchasing officer,,,0,0,0,Not live because phase 3a has not opened. Name an owner when it does.
+FINANCE,Finance,3a,Finance officer,,,0,0,0,Split from purchasing at Dada's direction 9 Sep 2026.
+PROCUREMENT,Procurement,3a,Purchasing officer,,,0,0,0,"Its own board at Dada's direction 9 Sep 2026, following the module shape he named. A purchase request extends work_item and inherits assignment, status, notes and effort."
 HR,HR,3a,HR officer,,,0,0,0,Partially restricted; the restriction is per catalogue item. Not live because phase 3a has not opened.
 PHYSICAL_SECURITY,Physical Security & Safety,3b,Security supervisor,,,0,0,0,Incidents on this board are restricted; the board is not. Not live because phase 3b has not opened.
 MEDICAL_RECORDS,Medical Records / HIMS,3b,Medical records officer,,,0,1,0,Not live because phase 3b has not opened. Name an owner when it does.
