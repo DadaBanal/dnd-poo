@@ -141,8 +141,21 @@ separate stored timestamps. The three-clock SLA model in
 it is the shape the market leader already uses, and we are matching it.
 
 **Second, `priority`, `severity` and `impact` are three independent fields with no
-derivation between them.** This corroborates §5.4's claim from a second source.
-A fulfiller picks a priority in ConnectWise. Nothing computes it.
+derivation between them.** A fulfiller picks a priority in ConnectWise. Nothing
+computes it.
+
+That was corroborated directly from ConnectWise's own documentation.
+**[VERIFIED 9 Sep 2026, Priority Setup Table, `/ConnectWise_Documentation` >
+System > Setup Tables > Service Setup Tables > Priority — relayed by Dada from an
+authenticated session]** A priority is a flat lookup row: description, colour,
+sort order, a `Default` flag meaning *"the priority will be assigned to new
+service tickets by default"*, and a `Level` of Critical, High, Medium or Low used
+only for reporting. There is no impact-by-urgency grid anywhere on that table.
+The Severity setup table is the same shape: a default that auto-populates.
+
+So the computed-priority design is not us being clever about a gap nobody noticed.
+It is a deliberate difference from how the market leader works, and the burden is
+on us to show it is better. §11 item 2 is that test.
 
 **Third, `agreement` is on the ticket.** ConnectWise does link a ticket to a
 contract — for rate and coverage. **[INFERRED]** It does not carry a variation
@@ -250,17 +263,34 @@ things must be got right **now**, because they are expensive to retrofit:
 
 ### 5.2 The board, properly
 
-The current `board` table is seven columns and a note. That is a *label*. A board
-in the ConnectWise sense owns its vocabulary, and these are the tables that makes
-true:
+**[VERIFIED 9 Sep 2026, `docs.connectwise.com/ConnectWise_Documentation/090/020/170`,
+Service Board Setup Table, last updated 20 Aug 2026 — read from an authenticated
+session and relayed by Dada, not read directly]**
+
+ConnectWise's own words: service boards *"are like buckets that hold all of your
+service tickets"*, they *"specify the types, subtypes, items, and statuses
+available on a service ticket"*, and — the line worth pinning up — *"Any area of
+your organization can use a board; do not just think of it as a help desk
+function."* Their own examples are Operations, Sales and Renewals. Fourteen
+hospital boards is not an abuse of the model; it is the model.
+
+The setup table carries **eleven tabs**: Board, Statuses, Types, Subtypes, Items,
+Skill Mapping, Auto Templates, Auto Assign, Teams, Standard Notes, Member Access.
+
+The current `board` table is seven columns and a note. That is a *label*. These
+are the tables that make it a board:
 
 | Table | Holds | Rule it carries |
 |---|---|---|
-| `board` (exists) | identity, phase, fulfiller group, owner, deputy, restricted | **no named owner, no live board** — already enforced |
-| `board_status` | the status list for this board, ordered | one default status; at least one closed status; a closed status may not also be a default |
+| `board` (exists) | identity, phase, fulfiller group, restricted, location and entity | see `board_role` — owner/deputy is too thin |
+| `board_status` | the status list for this board, ordered and typed | one default status; at least one closed status; a closed status may not also be a default |
+| `board_role` | **the four named roles below** | a board is not live until Service Manager and Dispatch are filled |
 | `board_team` | teams within a board | a board has at least one team before it goes live |
-| `board_member` | person → team → role (LEAD, MEMBER, DISPATCH, READ_ONLY) | a restricted board's membership is the access control |
-| `board_sla` | which SLA target set applies | every target still ships `enforced = 0` |
+| `board_member` | person → team → access | a restricted board's membership is the access control |
+| `board_finance_default` | default work role, work type and billing treatment | **may never override the agreement** — see §5.2.1 |
+| `board_template` | ticket templates applied on creation | the fan-out of §3, without a second parent mechanism |
+| `board_skill` | skills this board's work needs, for routing | biomedical is not IT and must not be routed as if it were |
+| `board_standard_note` | canned notes | keeps a nurse from retyping the same triage question |
 | `board_intake` | how tickets arrive: mailbox, portal, API, watchdog | the address is data, not code |
 | `workflow_rule` | the rules engine (§5.4) | board-scoped or global, never hard-coded |
 
@@ -274,6 +304,87 @@ flags rather than the engine inferring meaning from a name:
 is a string, nothing knows the clock should stop. If it is a row with
 `stops_resolve_clock = 1`, the SLA engine needs no special cases and PMC can add
 "Waiting for PhilHealth" without a developer.
+
+**A board is retired, never deleted.** ConnectWise: *"A service board cannot be
+deleted once any items are tied to it"*, and *"after a service board has been
+used, it is very difficult to delete it or change the location or business unit
+originally set. At that point, your best option is to mark it as inactive."*
+So `board` needs `is_inactive` as well as `is_live`; they are different states and
+conflating them loses the distinction between *not started yet* and *closed down*.
+
+#### Four named roles per board, not an owner and a deputy
+
+**[VERIFIED, same page]** ConnectWise carries four notification roles on every
+board, overridable per board: **Dispatch**, **Duty Manager**, **Service
+Manager**, **On-Call**. On the Duty Manager, verbatim: *"The duty manager serves
+as backup for the on-call member and is notified if the on-call member does not
+respond to the ticket within the specified time."*
+
+That is a better answer than owner-and-deputy and it should replace it.
+
+| Role | Answers for |
+|---|---|
+| Service Manager | the board itself, its rules and its targets. The accountable name. |
+| Dispatch | triage and routing. Today at PMC this is one person, with a personal Teams chat to another country as the fallback [MEASURED]. |
+| On-Call | out of hours, per the roster |
+| Duty Manager | backup when On-Call does not answer inside the window |
+
+Two things fall out. **`DUTY_MANAGER` is already in our schema** as a clinical
+escalation role on `priority_override`, so the vocabularies converge for free.
+And it directly answers the finding raised on this branch that one person is
+currently owner of four of the five live boards: with four roles the concentration
+is visible rather than hidden behind a single `owner` column, and the Duty Manager
+row is the thing that stops an unanswered P1 at 02:00 from going nowhere.
+
+#### Closed Loop, which may be the most useful thing on the page
+
+**[VERIFIED, same page]** ConnectWise ties the client-facing note and the time
+entry together. A board can set *"Time Entry options cannot be changed"*, which
+*"indicates a time record will always be created … all emails to the client will
+include a time entry and the Enter Time Record checkbox … will be disabled."*
+
+**[INFERRED, and this matters more here than it does for an MSP.]** The spine's
+central weakness is that effort is not banded, so the uplift claim has no
+numerator — the uplift report currently prints "no banded effort in this
+database" and says so as a finding. Closed Loop solves that not by discipline but
+by construction: writing to the client and recording the effort become one
+action, and the board can make it non-optional. A fulfiller who answers a nurse
+has banded the time whether or not they remembered to.
+
+This should be in Phase B, and it is the single feature most likely to make the
+capacity evidence real.
+
+#### One documented ConnectWise limitation we must not reproduce
+
+**[VERIFIED, same page]** On the Auto Assign tab: *"Warning: Auto Assign only
+works on new tickets created on this board. It does not function on a ticket moved
+from a different board."*
+
+A ticket that moves boards loses its auto-assignment. Cross-board handover on one
+ticket id is our headline differentiator, so assignment must survive the move.
+That is an explicit acceptance test, not an implementation detail.
+
+### 5.2.1 Where a commercial decision comes from, and in what order
+
+**[VERIFIED, same page]** ConnectWise documents an explicit precedence chain for
+billing treatment, most specific first: the Finance tab on the ticket, then
+Agreement Custom Work Type, then Agreement Type Custom Work Type, then the Bill
+Time drop-down on the Agreement, then **the Service Board setup table**, then
+Company Finance Custom Work Type, then the Work Type setup table.
+
+**The agreement outranks the board.** That is the market leader arriving at the
+same conclusion this spine already enforces, from the other direction, and it is
+worth citing when the design is challenged.
+
+Ours, most specific first, and it must be written down exactly once:
+
+1. An explicit `reclassification` event on the work item, with a reason.
+2. The `variation` attached to the work item.
+3. The `catalogue_item` default basis and scope item.
+4. The board's own default — **advisory only, and never able to move a basis
+   from BASELINE to VARIATION or back.**
+
+A board may default a work type. A board may not decide whether PMC is billed.
 
 ### 5.3 The ticket
 
@@ -383,6 +494,53 @@ effort, the data-quality discipline, the SQL Server port, the drift gate, and th
 uplift evidence report. **83 tests** [MEASURED, `python3 tests/test_spine.py`].
 
 The board engine is built *on* that, not beside it.
+
+### 5.8 Setup tables we would otherwise have missed
+
+**[VERIFIED 9 Sep 2026, ConnectWise PSA > System > Setup Tables > Service Setup
+Tables index — relayed by Dada from an authenticated session]** Six of these
+change the design and none was in the plan an hour ago.
+
+**SLA calendars are a table, not an enum.** ConnectWise lets an SLA run on *"your
+company calendar, your customer's site calendar, 24 hours/7 day a week, or a
+custom calendar."* We proposed two fixed values, `CLINICAL_24x7` and
+`MANILA_BUSINESS`. That is wrong the first time a board needs a ward roster or a
+supplier's support window. **`calendar` becomes a table with working periods and
+holidays**, and `sla_target.calendar` becomes a foreign key. Cheap now, painful
+after the first thousand clocks.
+
+**Ticket templates create recurring tickets.** ConnectWise: templates *"can also
+be used to create recurring service tickets for a specific company or
+agreement."* That is preventive maintenance, and for PMC it is the mechanism
+behind a DOH-inspectable per-asset maintenance record — the export the record
+already promises and has nowhere to get. Biomedical equipment PM schedules are
+recurring tickets against a configuration item. This belongs with the CMDB module
+in Phase D, and knowing it lands there changes nothing today except that
+`board_template` should carry a schedule from the start.
+
+**Ticket source is global, not per board.** *"The Source setup table is used to
+define the source of your service tickets (for example, call, email, website).
+This is a global setting for all service boards."* We need this and do not have
+it: `ticket.intake_source` recording call, email, portal, watchdog or walk-up.
+Note it is a different axis from `work_item.source`, which records register
+versus desk versus manual. **[INFERRED]** For PMC the phone and walk-up counts
+are the interesting ones, because they are the work that currently leaves no
+trace at all.
+
+**Service sign-off is evidence.** A printed form carrying the ticket's time and
+expenses for a client to sign after on-site work. **[INFERRED]** That is
+corroboration a finance function can check independently of Dada's own bands,
+which is exactly what §4.5 of the recommendation says an uplift claim needs.
+Worth having before the first uplift invoice, not after.
+
+**Surveys attach to a status email.** CSAT as a link on a service status
+notification. Not Phase A, but the hook belongs in the notification design rather
+than being retrofitted.
+
+**Severity is another default, not a derivation.** *"You select the default from
+this screen that will auto-populate on new service tickets."* Third independent
+corroboration that ConnectWise defaults these axes and never computes across
+them.
 
 ---
 
