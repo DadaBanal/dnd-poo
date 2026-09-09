@@ -717,6 +717,54 @@ All four seed PROPOSED. The engine reads them; none binds. Unchanged.
 
 ---
 
+## 6.5 The capacity denominator has a market-standard shape, and nobody knew
+
+**[VERIFIED 9 Sep 2026, `HealthITAU/pyconnectwise` @ `5ea14c1`]** This is the most
+commercially useful thing in the whole extraction, and it changes a negotiating
+position rather than a table.
+
+`Agreement` carries a complete capacity model:
+
+| Field | Values |
+|---|---|
+| `applicationUnits` | `Amount` · **`Hours`** · `Incidents` |
+| `applicationLimit` | a number |
+| `applicationCycle` | `CalendarWeek` · `CalendarMonth` · `CalendarQuarter` · `CalendarYear` · `Contract2Weeks` · `Contract4Weeks` · `ContractQuarter` · `ContractYear` |
+| `applicationUnlimitedFlag` | unlimited, explicitly |
+| `carryOverUnused` | does an unused hour roll forward? |
+| `prorateFirstBill` | the part-period at the start |
+
+**What this does to the uplift argument.** `WS36-psa-recommendation` §4.5 says *"No
+instrument defines the denominator"*, and that a self-declared one *"is rejected in
+one question"* by PMC's finance function. That is still true of PMC's agreement.
+But it was written as though declaring a denominator were Dada inventing something
+convenient. It is not. **"N hours per calendar month, carried over or not" is the
+standard shape of a managed-services agreement**, shipped as first-class fields by
+the market leader, and any MSP or finance person will recognise it immediately.
+
+So the Available Capacity constant stops being an awkward ask and becomes the
+normal thing that is missing from this contract. That is a much better position to
+negotiate from, and it costs nothing to adopt: our `capacity_declaration` already
+has `hours_per_month`, `effective_from`, `agreed_by` and `agreed_on`.
+
+**Three questions it raises that nobody has asked, and all three move money:**
+
+1. **Does unused capacity carry over?** If PMC buys 160 hours a month and Dada
+   uses 120, do 40 roll forward? `carryOverUnused` exists because the answer is
+   contested often enough to need a field. Our `capacity_declaration` cannot
+   express either answer today.
+2. **Calendar month or contract period?** PMC's agreement runs 1 July to 30 June.
+   Our EAC% is per calendar month. ConnectWise distinguishes `CalendarMonth` from
+   `ContractYear` precisely because they differ, and a retrospective pro-rate under
+   cl.6 lands differently depending on which was meant.
+3. **Hours or incidents?** `applicationUnits` allows a ticket count as the
+   denominator. **[INFERRED]** For a hospital-wide desk, an incident count is far
+   easier for PMC to verify independently than Dada's own effort bands — it can be
+   counted off the boards. Worth pricing both ways before the uplift paper.
+
+Add `carry_over_unused` and `cycle` to `capacity_declaration` in Phase A. They are
+two columns now and a renegotiation later.
+
 ## 7. What is different because of the agreement
 
 Every ticket carries `contract_basis`, defaulted from the catalogue, and the
