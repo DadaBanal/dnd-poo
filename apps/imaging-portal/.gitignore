@@ -5,3 +5,4 @@ pmc-portal.config.json
 # Generated on demand by `npm run payload`; large, and derived from dist/.
 dist/payload.gz.b64
 dist/installer-payload.html
+dist/Deploy-PmcImagingPortal-OneLine.ps1
