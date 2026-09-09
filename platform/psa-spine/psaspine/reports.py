@@ -414,3 +414,303 @@ def variation_paper(conn: sqlite3.Connection, *, as_of: date,
         "date and change as the register changes._",
     ]
     return "\n".join(out) + "\n"
+
+
+# ---------------------------------------------------------- uplift evidence
+
+def _month(value: str | None) -> str:
+    """'20260904' and '2026-09-09' both become '2026-09'. Anything else is
+    'unknown' — a bucket, never a discard."""
+    parsed = _d(value)
+    return parsed.strftime("%Y-%m") if parsed else "unknown"
+
+
+def round_down_to_5(percent: float) -> int:
+    """Round to the nearest 5, downward.
+
+    Not free precision: 5 points is a material monthly sum, so the arithmetic is
+    made conservative against Dada IT and unarguable against PMC. A number
+    rounded up in the supplier's favour is the first thing a finance function
+    strikes out.
+    """
+    return int(percent // 5) * 5
+
+
+def effort_by_basis(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Banded effort, grouped the three ways an uplift claim has to be defended.
+
+    contract_basis is inherited from the work item and never set per entry, so
+    this reads the commercial classification of the work rather than an opinion
+    typed by whoever logged the time.
+    """
+    return conn.execute(
+        "SELECT w.entity_id,"
+        "       w.contract_basis,"
+        "       COALESCE(t.path, 'WORKSTREAM') AS path,"
+        "       te.worked_on,"
+        "       te.band_hours,"
+        "       te.counts_to_capacity"
+        "  FROM time_entry te"
+        "  JOIN work_item w ON w.work_item_id = te.work_item_id"
+        "  LEFT JOIN ticket t ON t.work_item_id = te.work_item_id"
+    ).fetchall()
+
+
+def decisions_owed(conn: sqlite3.Connection) -> dict[str, list[sqlite3.Row]]:
+    """Everything on the ticket estate that nobody has ruled on.
+
+    Three separate questions, kept separate because they have three different
+    answers and three different people who can give them.
+    """
+    unknown_basis = conn.execute(
+        "SELECT t.work_item_id, t.external_ref, t.board_id, t.priority, t.state,"
+        "       t.catalogue_item_id, w.name, w.entity_id"
+        "  FROM ticket t JOIN work_item w ON w.work_item_id = t.work_item_id"
+        " WHERE w.contract_basis = 'UNKNOWN' ORDER BY t.work_item_id"
+    ).fetchall()
+    closed_unattached = conn.execute(
+        "SELECT t.work_item_id, t.external_ref, t.board_id, t.state, w.name, w.entity_id"
+        "  FROM ticket t JOIN work_item w ON w.work_item_id = t.work_item_id"
+        " WHERE t.path = 'VARIATION' AND t.state IN ('RESOLVED','CLOSED')"
+        "   AND w.variation_id IS NULL ORDER BY t.work_item_id"
+    ).fetchall()
+    open_unattached = conn.execute(
+        "SELECT t.work_item_id, t.external_ref, t.board_id, t.state, w.name, w.entity_id"
+        "  FROM ticket t JOIN work_item w ON w.work_item_id = t.work_item_id"
+        " WHERE t.path = 'VARIATION' AND t.state NOT IN ('RESOLVED','CLOSED','CANCELLED')"
+        "   AND w.variation_id IS NULL ORDER BY t.work_item_id"
+    ).fetchall()
+    return {"unknown_basis": unknown_basis,
+            "closed_unattached": closed_unattached,
+            "open_unattached": open_unattached}
+
+
+def uplift_evidence(conn: sqlite3.Connection, *, as_of: date,
+                    capacity_hours: float | None = None) -> str:
+    """The report the whole spine exists to produce.
+
+    Effort by contract basis, per entity, per month, with variation-path effort
+    kept separate and every UNKNOWN-basis ticket named as a decision somebody
+    owes. It is deliberately unflattering in three places:
+
+      * It prints no uplift percentage until a capacity denominator is supplied.
+        An undisclosed denominator is the single easiest way for a finance
+        function to reject an uplift invoice, and inventing one here would put
+        the supplier's own software in charge of both halves of the fraction.
+
+      * It prints the baseline hours next to the variation hours. Those are the
+        denominator of any capacity argument and cannot be left out of the
+        evidence — but see the note at the foot about publishing them.
+
+      * It counts what is not classified rather than reporting around it. A
+        report that quietly drops the UNKNOWN rows shows a cleaner picture of a
+        smaller claim.
+    """
+    rows = effort_by_basis(conn)
+    owed = decisions_owed(conn)
+
+    totals: dict[tuple[str, str, str], float] = {}
+    variation_path: dict[tuple[str, str], float] = {}
+    excluded = 0.0
+    for r in rows:
+        month = _month(r["worked_on"])
+        hours = float(r["band_hours"] or 0)
+        if not r["counts_to_capacity"]:
+            excluded += hours
+            continue
+        totals[(r["entity_id"] or "UNCLASSIFIED", month, r["contract_basis"])] = (
+            totals.get((r["entity_id"] or "UNCLASSIFIED", month, r["contract_basis"]), 0) + hours)
+        if r["path"] == "VARIATION":
+            key = (r["entity_id"] or "UNCLASSIFIED", month)
+            variation_path[key] = variation_path.get(key, 0) + hours
+
+    declared = conn.execute(
+        "SELECT hours_per_month, basis, agreed_by, agreed_on FROM capacity_declaration"
+        " ORDER BY effective_from DESC").fetchone()
+    denominator = capacity_hours if capacity_hours is not None else (
+        declared["hours_per_month"] if declared else None)
+
+    out = [
+        "# Uplift Evidence — effort by contract basis",
+        "",
+        f"Generated {as_of.isoformat()} from banded effort in the spine.",
+        "",
+        "This is the evidence behind a capacity uplift claim, and it is the reason the "
+        "spine exists. Nothing here is an invoice. It is the arithmetic and the narrative "
+        "that have to survive a finance function reading them side by side.",
+        "",
+    ]
+
+    # ------------------------------------------------------------ the numerator
+    if not rows:
+        out += [
+            "## No effort is banded",
+            "",
+            "**There is no banded effort in this database, so there is no claim to make "
+            "from it yet.** That is a finding, not an error. Effort is banded by a person — "
+            "`time_entry` requires a performer, an enterer, a charge method and an authority "
+            "source, and a desk export carries none of them reliably — and it is banded "
+            "**monthly, including for open items**. Banding only at close means the blocked "
+            "and the long-running contribute zero, which structurally under-counts exactly "
+            "the work that best evidences a capacity claim.",
+            "",
+            "The decisions owed below stand regardless: they are about classification, not "
+            "about hours.",
+            "",
+        ]
+    else:
+        out += [
+            "## Effort by entity, month and contract basis",
+            "",
+            "| Entity | Month | Basis | Hours |",
+            "|---|---|---|---|",
+        ]
+        for (entity, month, basis) in sorted(totals):
+            out.append(f"| {entity} | {month} | {basis} | {totals[(entity, month, basis)]:.1f} |")
+        if excluded:
+            out += [
+                "",
+                f"**{excluded:.1f} hours are recorded and excluded** from every figure above. "
+                "Only hours performed by Dada IT personnel count toward capacity; "
+                "client-employed fulfiller effort is recorded so it is visible, and excluded "
+                "so it is never claimed.",
+            ]
+
+        out += ["", "## Variation-path effort, separated", ""]
+        if variation_path:
+            out += ["| Entity | Month | Variation-path hours | All hours | Share |",
+                    "|---|---|---|---|---|"]
+            for (entity, month) in sorted(variation_path):
+                var = variation_path[(entity, month)]
+                allh = sum(v for (e, m, _b), v in totals.items() if e == entity and m == month)
+                share = f"{(var / allh * 100):.0f}%" if allh else "—"
+                out.append(f"| {entity} | {month} | {var:.1f} | {allh:.1f} | {share} |")
+        else:
+            out.append(
+                "No effort is banded against a variation-path ticket. Either none has been "
+                "done, or it has been done and banded against something else — and the "
+                "second is what this report exists to make visible."
+            )
+
+        # ---------------------------------------------------------- denominator
+        out += ["", "## The denominator", ""]
+        if denominator is None:
+            out += [
+                "**Not stated, so no uplift percentage is printed.**",
+                "",
+                "EAC% is variation hours divided by available capacity, and no instrument "
+                "defines available capacity. Without a declared and dated denominator, an "
+                "uplift percentage is a self-reported numerator over a self-declared "
+                "denominator computed by software written by the party being paid. It gets "
+                "rejected in one question, and it deserves to be.",
+                "",
+                "Declare one with `--capacity-hours`, or record it in `capacity_declaration` "
+                "and offer it to the client for initialling. It is a decision, not a "
+                "measurement, and it should be signed as one.",
+            ]
+        else:
+            source = (f"declared in the spine as {declared['basis']}"
+                      if capacity_hours is None and declared else "supplied for this run")
+            agreed = (f"agreed by {declared['agreed_by']} on {declared['agreed_on']}"
+                      if declared and declared["agreed_by"] else
+                      "**not yet agreed by the client**")
+            out += [
+                f"Available capacity is taken as **{denominator:g} hours per calendar "
+                f"month** ({source}), {agreed}.",
+                "",
+                "| Entity | Month | Variation hours | EAC% (rounded down to 5) |",
+                "|---|---|---|---|",
+            ]
+            for (entity, month) in sorted(variation_path):
+                raw = variation_path[(entity, month)] / denominator * 100
+                out.append(f"| {entity} | {month} | {variation_path[(entity, month)]:.1f} | "
+                           f"{round_down_to_5(raw)}% |")
+            out += [
+                "",
+                "Rounded to the nearest 5 **downward**, so the arithmetic is conservative "
+                "against Dada IT. No monetary amount is printed here: the base monthly fee "
+                "is a commercial figure held outside this repository, and the execution gate "
+                "has to pass before any fee line is invoiceable at all.",
+            ]
+
+    # ------------------------------------------------------- decisions owed
+    unknown = owed["unknown_basis"]
+    out += ["", f"## Decisions somebody owes — {len(unknown)} tickets with no contract basis", ""]
+    if unknown:
+        out += [
+            "Each of these is work that has been done or is being done, which is neither "
+            "claimable as a variation nor absorbed as baseline, because nobody has ruled "
+            "which it is. Twenty-one catalogue items seed UNKNOWN for the same reason: none "
+            "of the nine baseline headings covers PACS, imaging, medical gas, patching or "
+            "end-user hardware. Forcing them into the nearest heading is the quiet "
+            "reclassification this spine exists to prevent, so they are listed instead.",
+            "",
+            "| Ticket | Desk ref | Entity | Board | Priority | State | Summary |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for t in unknown:
+            out.append(
+                f"| {t['work_item_id']} | {t['external_ref'] or '—'} | {t['entity_id']} | "
+                f"{t['board_id']} | {t['priority']} | {t['state']} | {t['name']} |")
+        out += ["", "**Who owes it:** whether PACS, imaging and medical gas sit inside any "
+                "baseline heading is a ruling for the parties to the agreement, not for "
+                "Dada IT and not for this software."]
+    else:
+        out.append("None. Every ticket carries a contract basis.")
+
+    closed = owed["closed_unattached"]
+    out += ["", f"## Closed on the variation path with no variation — {len(closed)}", ""]
+    if closed:
+        out += [
+            "These arrived from the desk already closed. The close gate guards an update, "
+            "not an insert, so history imports as it was rather than being refused at the "
+            "door — but the effort on them cannot reach an uplift claim until a variation "
+            "exists to carry it. That is work already given away unless somebody raises one.",
+            "",
+            "| Ticket | Desk ref | Entity | Board | State | Summary |",
+            "|---|---|---|---|---|---|",
+        ]
+        for t in closed:
+            out.append(f"| {t['work_item_id']} | {t['external_ref'] or '—'} | {t['entity_id']} | "
+                       f"{t['board_id']} | {t['state']} | {t['name']} |")
+    else:
+        out.append("None.")
+
+    open_ = owed["open_unattached"]
+    out += ["", f"## Open on the variation path with no variation — {len(open_)}", ""]
+    if open_:
+        out += [
+            "These cannot consume effort at all: the database refuses a time entry against "
+            "them until a variation is attached. That is the gate working. Each one is a "
+            "variation waiting to be raised, and every day it is not raised is effort that "
+            "either goes unrecorded or goes somewhere it does not belong.",
+            "",
+            "| Ticket | Desk ref | Entity | Board | State | Summary |",
+            "|---|---|---|---|---|---|",
+        ]
+        for t in open_:
+            out.append(f"| {t['work_item_id']} | {t['external_ref'] or '—'} | {t['entity_id']} | "
+                       f"{t['board_id']} | {t['state']} | {t['name']} |")
+    else:
+        out.append("None.")
+
+    out += [
+        "",
+        "---",
+        "",
+        "**On publishing the baseline hours.** They are in the table above because they are "
+        "the denominator of any capacity argument and the evidence is incomplete without "
+        "them. They are not for the client's copy until the available-capacity constant is "
+        "initialled: an hours record against a fixed fee with no hours cap invites the "
+        "question *what does the monthly fee actually buy*, and that question is much easier "
+        "to answer once both parties have signed what a month of capacity is.",
+        "",
+        "**The narrative is the defence; the band is only the arithmetic.** A percentage "
+        "should be corroborated by things PMC can check without trusting Dada's bands: "
+        "ticket counts on the variation's boards, dated notices, days a client dependency "
+        "stood outstanding, and delivered items with dates.",
+        "",
+        "_Generated from the spine. Every figure is banded effort against work items whose "
+        "contract basis is inherited, never typed per entry._",
+    ]
+    return "\n".join(out) + "\n"

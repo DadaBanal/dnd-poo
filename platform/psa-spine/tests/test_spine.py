@@ -450,6 +450,143 @@ class DeskImportTest(unittest.TestCase):
             self.assertNotIn(word.lower(), source.lower(), f"{word} appears in tickets.py")
 
 
+class UpliftEvidenceTest(unittest.TestCase):
+    """The report the whole spine exists to produce.
+
+    Its job is to be defensible, which mostly means being unflattering: it prints
+    no percentage without a declared denominator, it counts what nobody has
+    classified rather than reporting around it, and it rounds against the party
+    being paid.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        tickets.import_tickets(self.conn, DESK, run_id="d1", at=AS_OF.isoformat())
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _band(self, work_item_id: str, worked_on: str, hours: float,
+              counts: int = 1) -> None:
+        self.conn.execute(
+            "INSERT INTO time_entry (work_item_id, entity_id, worked_on, band_hours,"
+            " performed_by, entered_by, charge_method, counts_to_capacity)"
+            " VALUES (?, (SELECT entity_id FROM work_item WHERE work_item_id = ?),"
+            " ?,?,'K. Simon','T. Dela Cruz','CAPACITY_UPLIFT',?)",
+            (work_item_id, work_item_id, worked_on, hours, counts))
+
+    def _attach_a_variation(self, work_item_id: str) -> None:
+        self.conn.execute(
+            "INSERT OR IGNORE INTO variation (variation_id, title, entity_id, category, state)"
+            " VALUES ('VAR-1','Hospital-wide ticketing','JRBY-CI','OPERATIONAL_TICKETING',"
+            "'PRICED')")
+        self.conn.execute("UPDATE work_item SET variation_id='VAR-1' WHERE work_item_id=?",
+                          (work_item_id,))
+
+    def _with_effort(self) -> None:
+        self._attach_a_variation("ITO-1811")
+        self._band("ITO-1811", "2026-09-02", 8)
+        self._band("ITO-1811", "20260903", 4)      # the other date shape, same month
+        self._band("ITO-1801", "2026-09-02", 4)    # baseline
+        self._band("ITO-1803", "2026-08-30", 8)    # UNKNOWN basis, an earlier month
+        self._band("ITO-1801", "2026-09-04", 2, counts=0)   # excluded from capacity
+        self.conn.commit()
+
+    # ------------------------------------------------------- refusing to guess
+
+    def test_it_prints_no_percentage_without_a_declared_denominator(self):
+        """An undisclosed denominator is how an uplift invoice gets rejected."""
+        self._with_effort()
+        text = reports.uplift_evidence(self.conn, as_of=AS_OF)
+        self.assertIn("**Not stated, so no uplift percentage is printed.**", text)
+        self.assertNotIn("EAC% (rounded down to 5)", text)     # no column, no number
+        self.assertNotIn("%) |", text)
+
+    def test_it_says_so_plainly_when_no_effort_is_banded(self):
+        text = reports.uplift_evidence(self.conn, as_of=AS_OF, capacity_hours=160)
+        self.assertIn("There is no banded effort in this database", text)
+
+    def test_the_rounding_runs_against_the_party_being_paid(self):
+        self.assertEqual(reports.round_down_to_5(7.5), 5)
+        self.assertEqual(reports.round_down_to_5(24.9), 20)
+        self.assertEqual(reports.round_down_to_5(25.0), 25)
+        self.assertEqual(reports.round_down_to_5(4.9), 0)
+
+    # ---------------------------------------------------------- the arithmetic
+
+    def test_effort_is_grouped_by_entity_month_and_basis(self):
+        self._with_effort()
+        text = reports.uplift_evidence(self.conn, as_of=AS_OF)
+        self.assertIn("| JRBY-CI | 2026-09 | VARIATION | 12.0 |", text)
+        self.assertIn("| PMC | 2026-09 | BASELINE | 4.0 |", text)
+        self.assertIn("| PMC | 2026-08 | UNKNOWN | 8.0 |", text)
+
+    def test_both_date_shapes_fall_in_the_same_month(self):
+        """'20260903' and '2026-09-02' are both September, and both are kept."""
+        self._with_effort()
+        self.assertEqual(reports._month("20260903"), "2026-09")
+        self.assertEqual(reports._month("2026-09-02"), "2026-09")
+        self.assertEqual(reports._month("some time in August"), "unknown")
+
+    def test_effort_that_does_not_count_to_capacity_is_shown_and_excluded(self):
+        self._with_effort()
+        text = reports.uplift_evidence(self.conn, as_of=AS_OF)
+        self.assertIn("**2.0 hours are recorded and excluded**", text)
+        self.assertIn("| PMC | 2026-09 | BASELINE | 4.0 |", text)   # not 6.0
+
+    def test_variation_path_effort_is_separated(self):
+        self._with_effort()
+        text = reports.uplift_evidence(self.conn, as_of=AS_OF)
+        section = text[text.index("## Variation-path effort"):text.index("## The denominator")]
+        self.assertIn("| JRBY-CI | 2026-09 | 12.0 |", section)
+        self.assertNotIn("PMC", section)
+
+    def test_the_percentage_when_a_denominator_is_supplied(self):
+        self._with_effort()
+        text = reports.uplift_evidence(self.conn, as_of=AS_OF, capacity_hours=160)
+        self.assertIn("**160 hours per calendar month**", text)
+        self.assertIn("**not yet agreed by the client**", text)
+        self.assertIn("| JRBY-CI | 2026-09 | 12.0 | 5% |", text)    # 7.5% rounded down
+
+    def test_a_declared_capacity_is_used_and_its_agreement_reported(self):
+        self._with_effort()
+        self.conn.execute(
+            "INSERT INTO capacity_declaration (effective_from, hours_per_month, basis,"
+            " agreed_by, agreed_on) VALUES ('2026-07-01', 160, 'one CIO-equivalent',"
+            " 'PMC Finance', '2026-08-01')")
+        self.conn.commit()
+        text = reports.uplift_evidence(self.conn, as_of=AS_OF)
+        self.assertIn("declared in the spine as one CIO-equivalent", text)
+        self.assertIn("agreed by PMC Finance on 2026-08-01", text)
+
+    # --------------------------------------------------------- decisions owed
+
+    def test_every_unknown_basis_ticket_is_listed_as_a_decision_somebody_owes(self):
+        text = reports.uplift_evidence(self.conn, as_of=AS_OF)
+        self.assertIn("Decisions somebody owes — 3 tickets with no contract basis", text)
+        for ticket in ("ITO-1803", "ITO-1806", "ITO-1812"):     # PACS, medical gas, lift
+            self.assertIn(ticket, text)
+        self.assertIn("not for Dada IT and not for this software", text)
+
+    def test_variation_tickets_with_no_variation_are_split_open_from_closed(self):
+        text = reports.uplift_evidence(self.conn, as_of=AS_OF)
+        closed = text[text.index("## Closed on the variation path"):
+                      text.index("## Open on the variation path")]
+        open_ = text[text.index("## Open on the variation path"):]
+        self.assertIn("ITO-1805", closed)      # arrived closed; effort can never reach a claim
+        self.assertNotIn("ITO-1811", closed)
+        self.assertIn("ITO-1811", open_)       # cannot consume effort until one is raised
+        self.assertNotIn("ITO-1805", open_)
+
+    def test_attaching_a_variation_clears_the_decision(self):
+        self._attach_a_variation("ITO-1811")
+        self.conn.commit()
+        text = reports.uplift_evidence(self.conn, as_of=AS_OF)
+        self.assertIn("## Open on the variation path with no variation — 0", text)
+
+
 class TheGateTest(unittest.TestCase):
     """The two triggers, exercised rather than admired.
 

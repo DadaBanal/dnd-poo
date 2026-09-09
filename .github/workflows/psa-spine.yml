@@ -41,9 +41,11 @@ jobs:
         run: |
           python3 -m psaspine init /tmp/spine.db
           python3 -m psaspine import /tmp/spine.db tests/fixtures/register-sample.csv --run-id ci --as-of 2026-09-09
-          python3 -m psaspine report /tmp/spine.db --out /tmp/out --run-id ci --as-of 2026-09-09
+          python3 -m psaspine import-tickets /tmp/spine.db tests/fixtures/desk-export-sample.csv --run-id desk --as-of 2026-09-09
+          python3 -m psaspine report /tmp/spine.db --out /tmp/out --run-id desk --as-of 2026-09-09
           test -f /tmp/out/PMC_AnnexB_Variation_Register_20260909.md
           test -f /tmp/out/PMC_Instrument_Exception_Report_20260909.md
+          test -f /tmp/out/PMC_Uplift_Evidence_20260909.md
           ls /tmp/out/notices/*.md >/dev/null
 
       # The fence: no real register, no addresses, no commercial amounts in git.

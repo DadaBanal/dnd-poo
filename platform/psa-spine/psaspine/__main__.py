@@ -80,13 +80,16 @@ def main(argv: list[str] | None = None) -> int:
             reports.instrument_exceptions(conn, as_of=as_of), encoding="utf-8")
         (out / f"PMC_Import_DataQuality_{stamp}.md").write_text(
             reports.data_quality_summary(conn, a.run_id), encoding="utf-8")
+        (out / f"PMC_Uplift_Evidence_{stamp}.md").write_text(
+            reports.uplift_evidence(conn, as_of=as_of, capacity_hours=a.capacity_hours),
+            encoding="utf-8")
         (out / f"PMC_Variation_Paper_{stamp}.md").write_text(
             reports.variation_paper(conn, as_of=as_of, eac_percent=a.eac_percent,
                                     capacity_hours=a.capacity_hours), encoding="utf-8")
         notices = reports.dependency_notices(conn, as_of=as_of)
         for name, body in notices.items():
             (out / "notices" / f"{name}.md").write_text(body, encoding="utf-8")
-        print(f"wrote 4 reports and {len(notices)} dependency notices to {out}")
+        print(f"wrote 5 reports and {len(notices)} dependency notices to {out}")
         return 0
     return 2
 
