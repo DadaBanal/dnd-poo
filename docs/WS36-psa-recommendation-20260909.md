@@ -15,6 +15,18 @@
 > | "eleven client-dependency notices" | **10.** 11 rows are BLOCKED, but **WS18**'s next action is Dada's own ("Dada to execute Phase 1"), so it is not a client dependency and must not receive a notice | `reports.blocked_on_client` |
 > | (not stated) | 35 rows: **17 variation · 17 baseline · 1 unknown (WS17)**. 4 compound scope links. 6 data-quality findings. | same |
 >
+> **VERIFIED 9 Sep, and it puts a condition on the recommendation.** The paper's
+> case that the incumbent stays cheapest up to ~4,000 tickets/month rests on the
+> USD 24 per 100 extra tickets overage. That rate belongs to **"Leader Flex", and
+> the vendor's own pricing page states it is available via **Azure Marketplace
+> only** (teamswork.app/products/microsoft-teams-ticketing). PMC's admin screen
+> reads plan **"Leader"**, not Leader Flex. So unless PMC's subscription is on the
+> Azure Marketplace channel, **the overage cannot be bought at all** and every
+> figure above 1,000 tickets/month in §2.3 and §11.1 is unavailable rather than
+> merely expensive. Confirm the purchasing channel with the vendor before the
+> hospital-wide volumes in this paper are quoted to anyone. The Azure Marketplace
+> listing itself returned HTTP 403 and is NOT VERIFIED.
+>
 > **WS34 is the row that matters.** An exact-match filter on `variation` drops it, and that
 > row is an entire covered entity (JRBY-CI). The importer normalises it and a test asserts
 > it, so the mistake cannot recur.

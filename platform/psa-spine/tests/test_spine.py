@@ -177,6 +177,25 @@ class SpineTest(unittest.TestCase):
         self.assertEqual(run["rows_in"], 15)
         self.assertEqual(len(run["source_sha256"]), 64)
 
+    def test_variation_paper_counts_from_data_not_prose(self):
+        text = reports.variation_paper(self.conn, as_of=AS_OF)
+        self.assertIn("**5 workstreams** are already recorded as variations", text)
+        self.assertIn("**5 workstreams** are blocked on the client with no notice", text)
+        self.assertIn("WS34", text)                      # the qualified variation is listed
+        self.assertIn("AMEND-1", text)                   # unexecuted instruments named
+        self.assertIn("JRBY-CI", text)                   # the uncovered entity named
+
+    def test_variation_paper_refuses_to_invent_a_price(self):
+        """Unpriced by default: no rate card exists, so a number would be fiction."""
+        unpriced = reports.variation_paper(self.conn, as_of=AS_OF)
+        self.assertIn("**Not yet priced.**", unpriced)
+        self.assertIn("no rate card exists", unpriced)
+        priced = reports.variation_paper(self.conn, as_of=AS_OF, eac_percent=20, capacity_hours=160)
+        self.assertIn("Capacity uplift of **20%**", priced)
+        self.assertIn("**160 hours per calendar month**", priced)
+        self.assertIn("offered for initialling", priced)
+        self.assertNotIn("**Not yet priced.**", priced)
+
     def test_days_outstanding_handles_both_date_shapes_and_unknown(self):
         self.assertEqual(reports.days_outstanding("20260902", AS_OF), 7)
         self.assertEqual(reports.days_outstanding("2026-09-09", AS_OF), 0)

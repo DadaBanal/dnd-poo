@@ -256,3 +256,161 @@ def data_quality_summary(conn: sqlite3.Connection, run_id: str) -> str:
         out.append("| — | nothing flagged | 0 |")
     out += ["", "Findings are counted, never filtered. Every input row was imported."]
     return "\n".join(out) + "\n"
+
+
+# --------------------------------------------------------- the variation paper
+
+def variation_paper(conn: sqlite3.Connection, *, as_of: date,
+                    category: str = "OPERATIONAL_TICKETING",
+                    eac_percent: float | None = None,
+                    capacity_hours: float | None = None) -> str:
+    """The paper that asks the client to fund the work, built from the register.
+
+    Every number in it is counted from data rather than typed, because the one
+    thing that reliably sinks an uplift claim is a figure the client's finance
+    function can question and the supplier cannot source.
+    """
+    variations = conn.execute(
+        "SELECT work_item_id, name, entity_id, status FROM work_item"
+        " WHERE contract_basis = 'VARIATION' ORDER BY work_item_id").fetchall()
+    deps = blocked_on_client(conn)
+    unexecuted = conn.execute(
+        "SELECT instrument_id, title, execution_status FROM instrument"
+        " WHERE execution_status <> 'EXECUTED' ORDER BY instrument_id").fetchall()
+    uncovered = conn.execute(
+        "SELECT entity_id, name FROM entity"
+        " WHERE is_covered = 0 AND entity_id <> 'DADA-IT'").fetchall()
+    unknown = conn.execute(
+        "SELECT COUNT(*) c FROM work_item WHERE contract_basis = 'UNKNOWN'").fetchone()["c"]
+    cat = next((c for c in db.annex_b_categories() if c["category"] == category), None)
+
+    out = [
+        "# Variation Paper — service management platform",
+        "",
+        f"**Date:** {as_of.isoformat()}  ",
+        f"**Annex B category:** {category}"
+        + (f" — {cat['description']}" if cat else " — *(category not found in the seed list)*"),
+        "",
+        "## 1. What is being asked for",
+        "",
+        "Funding for the commercial half of a service-management platform: the register of "
+        "agreements, scope items and variations, the notices that condition every commercial "
+        "right under this agreement, and the evidence pack the periodic review requires.",
+        "",
+        "**No new ticketing licence is being requested.** The existing ticket desk is retained. "
+        "That is a deliberate saving and it is the reason this paper is small.",
+        "",
+        "## 2. Why it is a variation and not baseline",
+        "",
+        f"Annex B already names *{cat['description'].lower()}* as a variation category"
+        if cat else "This falls outside the numbered baseline scope items.",
+        "",
+        "The evidence is the register itself, counted at the date above:",
+        "",
+        f"- **{len(variations)} workstreams** are already recorded as variations.",
+        f"- **{len(deps)} workstreams** are blocked on the client with no notice on file.",
+        f"- **{unknown} workstream** carries no contract basis at all."
+        if unknown == 1 else
+        f"- **{unknown} workstreams** carry no contract basis at all.",
+        "",
+        "## 3. Work already performed and not billed as a variation",
+        "",
+        "| Ref | Workstream | Entity | Status |",
+        "|---|---|---|---|",
+    ]
+    for v in variations:
+        out.append(f"| {v['work_item_id']} | {v['name']} | {v['entity_id']} | {v['status']} |")
+
+    out += [
+        "",
+        "Listing is not a claim. Each row above is offered as the basis for classification, "
+        "not as an invoice; the ones already delivered are raised so the position is on the "
+        "record rather than to be charged retrospectively.",
+        "",
+        "## 4. The commercial basis",
+        "",
+    ]
+    if eac_percent is not None and capacity_hours is not None:
+        out += [
+            f"Capacity uplift of **{eac_percent:g}%**, computed against a declared capacity of "
+            f"**{capacity_hours:g} hours per calendar month**.",
+            "",
+            "The denominator is stated here deliberately and is offered for initialling before "
+            "the first uplift invoice. An uplift computed against an undisclosed capacity is an "
+            "assertion, and it is rejected in one question.",
+        ]
+    else:
+        out += [
+            "**Not yet priced.** Two figures have to be set by the supplier and agreed by the "
+            "client before this paper can be issued:",
+            "",
+            "1. the capacity uplift percentage claimed; and",
+            "2. **the denominator it is computed against** — the declared available capacity in "
+            "hours per calendar month.",
+            "",
+            "Neither is inferable from the agreement: no rate card exists in any instrument. "
+            "Until the denominator is agreed, only a capacity uplift is expressible; a separate "
+            "charge has no rate behind it.",
+        ]
+
+    out += [
+        "",
+        "## 5. Ownership, exit and data",
+        "",
+        "Because the client funds the platform, the following are conditions of this variation "
+        "rather than matters to be settled later:",
+        "",
+        "- the tenancy and subscription are held **in the client's name**, with the client "
+        "holding the break-glass credential and the supplier holding administrator access;",
+        "- the ticket and register data is **the client's property**;",
+        "- a scheduled export in a defined format to client-controlled storage is a contractual "
+        "deliverable, not a courtesy;",
+        "- return-and-delete applies on termination, and the platform term does not outlast the "
+        "agreement.",
+        "",
+        "A platform the supplier owns and the client pays for is a concentration risk on the "
+        "client's side. Naming it here is deliberate.",
+        "",
+        "## 6. Data protection",
+        "",
+        "A ticket raised by clinical staff will contain patient information regardless of policy. "
+        "A processing schedule naming the client as controller and the supplier as processor is "
+        "attached to this variation and is a condition of it, not a follow-up action.",
+        "",
+        "## 7. Instruments this paper depends on",
+        "",
+    ]
+    if unexecuted:
+        out.append("The following are **not executed**. Nothing below is a binding basis for "
+                   "invoicing or for treating an entity as covered:")
+        out.append("")
+        for i in unexecuted:
+            out.append(f"- **{i['instrument_id']}** — {i['title']} (`{i['execution_status']}`)")
+        if uncovered:
+            out.append("")
+            out.append("Consequently these entities are not covered by an executed instrument: "
+                       + ", ".join(f"**{e['entity_id']}**" for e in uncovered) + ".")
+        out += [
+            "",
+            "**This should be resolved before the variation is issued, not alongside it.** "
+            "A variation priced against an unexecuted instrument inherits its weakness.",
+        ]
+    else:
+        out.append("All instruments are executed.")
+
+    out += [
+        "",
+        "## 8. What the client is asked to do",
+        "",
+        "1. Confirm which instrument is operative, and execute the outstanding one.",
+        "2. Agree the Annex B category and the classification of the rows in section 3.",
+        "3. Initial the capacity denominator in section 4.",
+        "4. Accept the ownership and exit conditions in section 5.",
+        "5. Countersign the processing schedule in section 6.",
+        "",
+        "---",
+        "",
+        f"_Generated {as_of.isoformat()} from the workstream register. Counts are as at that "
+        "date and change as the register changes._",
+    ]
+    return "\n".join(out) + "\n"
