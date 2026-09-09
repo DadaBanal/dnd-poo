@@ -43,16 +43,39 @@ marked **BLOCKING**, all **[MEASURED]**:
    control is the specific thing the paper says prevents another 25-day MRI
    outage.
 
-And the migration gate the paper itself set is **already satisfied**: trigger (d)
+~~And the migration gate the paper itself set is already satisfied: trigger (d)
 fires when more than 25 departmental fulfillers need a new M365 licence, and the
-paper's own figure is that **~30 of the 40 do**.
+paper's own figure is that ~30 of the 40 do.~~
+
+**WITHDRAWN, 9 Sep 2026, and it was my argument that broke.** **[MEASURED —
+Dada, CIO]** every staff member already holds an M365 licence, so the number of
+departmental fulfillers who *need a new one* is **zero**. Trigger (d) is not
+satisfied. It is not close to satisfied, and it never was.
+
+This is the same wrong premise that withdrew the identity-cost bullet in §1.3,
+and it took a second argument down with it. Saying so here rather than quietly
+deleting the sentence, because the sentence has been in front of a reader.
+
+**What survives, and it is enough.** The three BLOCKING findings above are about
+capability, not about the gate, and none of them depends on a licence count. The
+uplift claim still cannot be evidenced through the incumbent. The incumbent still
+was never assessed against the design. One ticket id across a handover is still
+structurally impossible in it. Those are the case.
+
+**What does not survive is the tidy claim that the record's own gate has already
+fired.** Trigger (a), sustained volume above 3,500 tickets a month, has not been
+measured — and the record says the ticket count itself rests on a number nobody
+has cleaned, because two addresses were double-creating. So the honest position is
+that the gate is **unmeasured**, not fired.
 
 ### 1.3 What is actually being decided now
 
 So this is not an overruling of the record on capability — the record's own review
-says the capability case is unmade and the gate has fired. **The genuine
-departure is choosing to build rather than to buy Jira**, and that is Dada's call
-to make. It should be recorded as one.
+says the capability case is unmade. It **is** a departure on timing: the paper
+said wait for a dated gate, and the decision is to start now on the strength of
+the BLOCKING findings instead. **That, plus choosing to build rather than to buy
+Jira, is what Dada is deciding**, and both should be recorded as decisions rather
+than as things the record already implied.
 
 Three further facts, both **[MEASURED]** in the record, bear on it and are new
 weight the recommendation did not carry:
