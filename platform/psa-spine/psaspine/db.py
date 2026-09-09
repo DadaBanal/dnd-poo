@@ -71,11 +71,19 @@ def seed(conn: sqlite3.Connection) -> None:
 def seed_catalogue(conn: sqlite3.Connection) -> None:
     """Load the service catalogue.
 
-    No board is seeded live and no clinical floor is seeded signed off. That is
-    not caution, it is the rule: "one accountable fulfiller group, one named
-    owner, one named deputy" -- and the floor list is signed by the Chief of
-    Hospital, the Chief Nurse and the Quality officer, not by Dada IT. Seeding
-    either as done would put a name in the database that nobody has agreed to.
+    The five phase 2 boards seed LIVE, with an owner and a deputy, because they
+    are Dada IT's and the PMO's own work and nobody else has to agree to them.
+    The names are defaults taken from the fulfiller groups the record already
+    states; they are in a CSV precisely so correcting one costs five seconds.
+
+    The ten departmental boards seed not-live and unowned -- but the reason is
+    sequencing, not a signature. Phase 3a and 3b have not opened, so there is no
+    department to name an owner in yet. The CHECK still holds when they do.
+
+    Clinical floors are the one thing seeded unsigned on purpose: that list is
+    signed by the Chief of Hospital, the Chief Nurse and the Quality officer,
+    and it changes no behaviour today because the catalogue items that matter
+    carry their own P1 floor regardless.
     """
     def blank(v):
         return v if (v or "").strip() else None
@@ -84,9 +92,10 @@ def seed_catalogue(conn: sqlite3.Connection) -> None:
         conn.execute(
             "INSERT OR REPLACE INTO board (board_id, display_name, phase, fulfiller_group,"
             " owner, deputy, restricted, is_live, is_unrouted, note)"
-            " VALUES (?,?,?,?,NULL,NULL,?,0,?,?)",
+            " VALUES (?,?,?,?,?,?,?,?,?,?)",
             (row["board_id"], row["display_name"], row["phase"], row["fulfiller_group"],
-             int(row["restricted"]), int(row["is_unrouted"]), blank(row["note"])),
+             blank(row["owner"]), blank(row["deputy"]), int(row["restricted"]),
+             int(row["is_live"]), int(row["is_unrouted"]), blank(row["note"])),
         )
     for row in _seed_rows("service_actions.csv"):
         conn.execute(

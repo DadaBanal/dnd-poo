@@ -1,16 +1,16 @@
-board_id,display_name,phase,fulfiller_group,restricted,is_unrouted,note
-IT_HELP,IT Help,2,Dada IT + on-site Windows team,0,0,Incident path. Restore service.
-IT_REQUEST,IT Service Request,2,Dada IT + on-site Windows team,0,0,In-baseline fulfilment. No fee. Still scope-mapped.
-AGREEMENT,Agreement & Variation,2,Dada IT / PMO,1,0,Rescued from the workbook's Administration > Agreement. No resolve clock.
-SECURITY,Security & Privacy,2,Dada IT + DPO,1,0,Replaces the workbook's SECURITY??? family. First backlog is the 173 open findings.
-UNROUTED,Unrouted,2,PMO coordinator,0,1,Default queue with an ageing rule that pages IT.
-BIOMEDICAL,Biomedical & Clinical Equipment,3a,Biomedical technician (vendor-escalated),0,0,
-FACILITIES,Facilities & Engineering,3a,Facilities/Engineering supervisor,0,0,
-HOUSEKEEPING,Housekeeping & Environmental Services,3a,Housekeeping supervisor,0,0,
-FINANCE,Finance & Purchasing,3a,Finance/Purchasing officer,0,0,
-HR,HR,3a,HR officer,0,0,Partially restricted; the restriction is per catalogue item.
-PHYSICAL_SECURITY,Physical Security & Safety,3b,Security supervisor,0,0,Incidents on this board are restricted; the board is not.
-MEDICAL_RECORDS,Medical Records / HIMS,3b,Medical records officer,1,0,
-PHILHEALTH,PhilHealth Claims,3b,PHIC unit,1,0,
-DIETARY,Dietary / Nutrition,3b,Dietary supervisor,1,0,
-NURSING,Nursing / Ward Services,3b,Nursing supervisor,1,0,
+board_id,display_name,phase,fulfiller_group,owner,deputy,is_live,restricted,is_unrouted,note
+IT_HELP,IT Help,2,Dada IT + on-site Windows team,Dada Banal,Cadano,1,0,0,Incident path. Restore service. Owner and deputy are defaults; correct the row.
+IT_REQUEST,IT Service Request,2,Dada IT + on-site Windows team,Dada Banal,Gabelo,1,0,0,In-baseline fulfilment. No fee. Still scope-mapped. Owner and deputy are defaults; correct the row.
+AGREEMENT,Agreement & Variation,2,Dada IT / PMO,Dada Banal,Dela Cruz,1,1,0,Rescued from the workbook's Administration > Agreement. No resolve clock. Owner and deputy are defaults; correct the row.
+SECURITY,Security & Privacy,2,Dada IT + DPO,Dada Banal,Dela Cruz,1,1,0,Replaces the workbook's SECURITY??? family. First backlog is the 173 open findings. Substitute the DPO as deputy when one is named.
+UNROUTED,Unrouted,2,PMO coordinator,Dela Cruz,Dada Banal,1,0,1,Default queue with an ageing rule that pages IT. Dela Cruz is the triage path today [MEASURED].
+BIOMEDICAL,Biomedical & Clinical Equipment,3a,Biomedical technician (vendor-escalated),,,0,0,0,Not live because phase 3a has not opened. Name an owner when it does.
+FACILITIES,Facilities & Engineering,3a,Facilities/Engineering supervisor,,,0,0,0,Not live because phase 3a has not opened. Name an owner when it does.
+HOUSEKEEPING,Housekeeping & Environmental Services,3a,Housekeeping supervisor,,,0,0,0,Not live because phase 3a has not opened. Name an owner when it does.
+FINANCE,Finance & Purchasing,3a,Finance/Purchasing officer,,,0,0,0,Not live because phase 3a has not opened. Name an owner when it does.
+HR,HR,3a,HR officer,,,0,0,0,Partially restricted; the restriction is per catalogue item. Not live because phase 3a has not opened.
+PHYSICAL_SECURITY,Physical Security & Safety,3b,Security supervisor,,,0,0,0,Incidents on this board are restricted; the board is not. Not live because phase 3b has not opened.
+MEDICAL_RECORDS,Medical Records / HIMS,3b,Medical records officer,,,0,1,0,Not live because phase 3b has not opened. Name an owner when it does.
+PHILHEALTH,PhilHealth Claims,3b,PHIC unit,,,0,1,0,Not live because phase 3b has not opened. Name an owner when it does.
+DIETARY,Dietary / Nutrition,3b,Dietary supervisor,,,0,1,0,Not live because phase 3b has not opened. Name an owner when it does.
+NURSING,Nursing / Ward Services,3b,Nursing supervisor,,,0,1,0,Not live because phase 3b has not opened. Name an owner when it does.

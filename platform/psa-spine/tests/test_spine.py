@@ -694,11 +694,22 @@ class SchemaRulesTest(unittest.TestCase):
         self.conn.close()
         self.tmp.cleanup()
 
-    def test_no_board_is_live_and_none_can_go_live_without_a_named_owner(self):
-        live = self.conn.execute("SELECT COUNT(*) c FROM board WHERE is_live=1").fetchone()["c"]
-        self.assertEqual(live, 0)
+    def test_the_phase_2_boards_are_live_and_every_live_board_is_owned(self):
+        # A desk nobody can file on is not a foot in the door. The five phase 2
+        # boards are Dada IT's and the PMO's own work, so they seed live.
+        live = [r["board_id"] for r in self.conn.execute(
+            "SELECT board_id FROM board WHERE is_live=1 ORDER BY board_id")]
+        self.assertEqual(live, ["AGREEMENT", "IT_HELP", "IT_REQUEST", "SECURITY", "UNROUTED"])
+        unowned = self.conn.execute(
+            "SELECT COUNT(*) c FROM board WHERE is_live=1"
+            " AND (owner IS NULL OR deputy IS NULL)").fetchone()["c"]
+        self.assertEqual(unowned, 0)
+
+    def test_a_departmental_board_still_cannot_go_live_unowned(self):
+        # Not a signature: phase 3a has not opened, so there is nobody to name.
+        # The rule still bites the moment somebody tries to skip that.
         with self.assertRaises(sqlite3.IntegrityError):
-            self.conn.execute("UPDATE board SET is_live=1 WHERE board_id='IT_HELP'")
+            self.conn.execute("UPDATE board SET is_live=1 WHERE board_id='NURSING'")
 
     def test_a_baseline_catalogue_item_must_name_its_baseline_heading(self):
         unknown = self.conn.execute(
