@@ -32,7 +32,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT.parent.parent / "docs" / "WS36-connectwise-model-20260909.md"
 
-MODELS = "src/pyconnectwise/models/manage/__init__.py"
+MODELS = "src/pyconnectwise/models/{module}/__init__.py"
 
 # Our grouping, not ConnectWise's. Ordered: the first pattern that matches wins,
 # so put the specific before the general.
@@ -197,7 +197,7 @@ IN_FULL = {
 }
 
 
-def render(entities: list[Entity], upstream: str, source: Path) -> str:
+def render(entities: list[Entity], upstream: str, module: str) -> str:
     by_domain: dict[str, list[Entity]] = {}
     for e in entities:
         by_domain.setdefault(e.domain, []).append(e)
@@ -222,7 +222,7 @@ def render(entities: list[Entity], upstream: str, source: Path) -> str:
     w("```")
     w("")
     w(f"**[VERIFIED 9 Sep 2026]** Extracted from `HealthITAU/pyconnectwise` at "
-      f"commit `{upstream}`, file `{MODELS}`.")
+      f"commit `{upstream}`, file `{MODELS.format(module=module)}`.")
     w("")
     w(f"**{len(real)} entities and {total_fields} fields**, once the "
       f"{len(entities) - len(real)} `Reference`/`Info`/transport wrappers are set "
@@ -246,6 +246,25 @@ def render(entities: list[Entity], upstream: str, source: Path) -> str:
       "priority from impact and urgency. It can; the matrix is on `SLA`, not on "
       "`Priority`. See `WS36-psa-build-scope-20260909.md` §2.2.1 and the "
       "correction block in `WS36-psa-recommendation-20260909.md`.")
+    w("")
+    w("## A licence point, because this work becomes PMC's on payment")
+    w("")
+    w("**`pyconnectwise` is GPL-3.0.** That is a real constraint and it is worth "
+      "being precise about which side of it we are on.")
+    w("")
+    w("- **Reading it to learn that ConnectWise names a field `escalationStatus` "
+      "with five given values is fine.** Field names, types and enumerations are "
+      "ConnectWise's factual interface, restated by a generator; they are not the "
+      "library author's creative expression, and nothing of theirs is copied here.")
+    w("- **Importing, vendoring or copying `pyconnectwise` code into the build is "
+      "not fine.** GPL-3 is viral, and a deliverable that becomes PMC's property "
+      "on payment must not carry a copyleft obligation nobody told PMC about.")
+    w("")
+    w("So: this clone is a **reference**, it stays outside the build, and no line "
+      "of it is imported. If a ConnectWise API client is ever needed, that is a "
+      "separate decision with a separate licence review. **[NOT VERIFIED]** "
+      "Nobody has run a licence review over this programme's dependencies; the "
+      "spine has none, which is the easiest possible answer and worth keeping.")
     w("")
     w("**There is no drift gate on this file.** It is generated from an external "
       "clone that CI does not have, unlike `sqlserver/`, which is generated from "
@@ -334,12 +353,13 @@ def render(entities: list[Entity], upstream: str, source: Path) -> str:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--source", required=True, help="path to a pyconnectwise clone")
+    p.add_argument("--module", default="manage", choices=["manage", "automate"])
     p.add_argument("--write", action="store_true")
     p.add_argument("--out", default=str(OUTPUT))
     a = p.parse_args(argv)
 
     source = Path(a.source)
-    models = source / MODELS
+    models = source / MODELS.format(module=a.module)
     if not models.exists():
         print(f"REFUSED: {models} not found. Clone pyconnectwise first.", file=sys.stderr)
         return 2
@@ -349,7 +369,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         upstream = "unknown"
 
-    text = render(parse(models), upstream, source)
+    text = render(parse(models), upstream, a.module)
     if a.write:
         Path(a.out).write_text(text, encoding="utf-8")
         print(f"wrote {a.out} from pyconnectwise@{upstream}")

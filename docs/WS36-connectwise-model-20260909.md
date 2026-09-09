@@ -19,6 +19,15 @@ ConnectWise's own documentation is behind ConnectWise University authentication 
 
 **It has already earned its place.** Reading it falsified a claim this programme had recorded as VERIFIED — that ConnectWise cannot derive priority from impact and urgency. It can; the matrix is on `SLA`, not on `Priority`. See `WS36-psa-build-scope-20260909.md` §2.2.1 and the correction block in `WS36-psa-recommendation-20260909.md`.
 
+## A licence point, because this work becomes PMC's on payment
+
+**`pyconnectwise` is GPL-3.0.** That is a real constraint and it is worth being precise about which side of it we are on.
+
+- **Reading it to learn that ConnectWise names a field `escalationStatus` with five given values is fine.** Field names, types and enumerations are ConnectWise's factual interface, restated by a generator; they are not the library author's creative expression, and nothing of theirs is copied here.
+- **Importing, vendoring or copying `pyconnectwise` code into the build is not fine.** GPL-3 is viral, and a deliverable that becomes PMC's property on payment must not carry a copyleft obligation nobody told PMC about.
+
+So: this clone is a **reference**, it stays outside the build, and no line of it is imported. If a ConnectWise API client is ever needed, that is a separate decision with a separate licence review. **[NOT VERIFIED]** Nobody has run a licence review over this programme's dependencies; the spine has none, which is the easiest possible answer and worth keeping.
+
 **There is no drift gate on this file.** It is generated from an external clone that CI does not have, unlike `sqlserver/`, which is generated from this repository and is gated. Regenerate deliberately and name the upstream commit when you do.
 
 ## The shape of a complete PSA
