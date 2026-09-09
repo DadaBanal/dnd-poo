@@ -78,6 +78,8 @@ build/manifest.json     the assembly order and the reference hash
 build/build.mjs         assemble + verify
 build/payload.mjs       installer payload + hash; also verifies an installer
 build/oneliner.mjs      one-line PowerShell deployer, hash-gated
+build/package.mjs       the deployment zip: page, installer, probe, instructions
+scripts/*.ps1           what an operator runs on PMC-ORTHANC01
 build/baseline.mjs      deliberately move the reference hash
 test/stand-in-orthanc.mjs  a fake Orthanc that refuses OrderBy, like the real one
 test/checks.mjs         24 checks driven through Chromium

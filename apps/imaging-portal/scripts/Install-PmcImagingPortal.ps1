@@ -1,0 +1,302 @@
+<#
+.SYNOPSIS
+  One-shot install of the PMC Imaging Portal onto PMC-ORTHANC01.
+
+.DESCRIPTION
+  Does the whole job in one run: verifies the page, restores the ServeFolders
+  plugin if the 2 Sep cutover dropped it, maps /pmc to it, restarts Orthanc
+  safely, and proves the page is being served.
+
+  IT PREVIEWS BY DEFAULT. Nothing is changed until you add -Apply. That is the
+  discipline this programme uses for anything touching a live clinical archive,
+  and this restarts one.
+
+  What -Apply changes, and nothing else:
+    1. writes <PortalDir>\index.html          a new folder, one file in it
+    2. adds a ServeFolders mapping            a NEW config file where the service
+                                              reads a directory, so orthanc.json
+                                              is not touched at all; a backed-up
+                                              edit only if it reads a single file
+    3. restores ServeFolders.dll              only if a copy is already on this
+                                              machine; it never downloads one
+    4. restarts the Orthanc service           drained in 6.9 s on 2 Sep
+
+  If Orthanc does not answer by name within the timeout, the configuration change
+  is reversed and the service restarted again, without being asked.
+
+.PARAMETER Apply     Make the changes. Without it you get the plan and nothing else.
+.PARAMETER Rollback  Remove the mapping this script added, and restart.
+.PARAMETER PortalDir Where the page goes. Default C:\PMC\portal
+.PARAMETER BaseUrl   The archive, by name, for the proof. Default https://imaging.pmcne.ph
+
+.EXAMPLE
+  .\Install-PmcImagingPortal.ps1                    # preview
+  .\Install-PmcImagingPortal.ps1 -Apply             # do it
+  .\Install-PmcImagingPortal.ps1 -Rollback -Apply   # undo it
+#>
+[CmdletBinding()]
+param(
+  [switch] $Apply,
+  [switch] $Rollback,
+  [string] $PortalDir   = 'C:\PMC\portal',
+  [string] $BaseUrl     = 'https://imaging.pmcne.ph',
+  [string] $ServiceName = 'Orthanc',
+  [int]    $UpTimeoutSeconds = 90
+)
+
+$ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$BaseUrl = $BaseUrl.TrimEnd('/')
+$Here    = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Stamp   = Get-Date -Format 'yyyyMMdd-HHmmss'
+
+# The page this script installs, and the only bytes it will accept.
+$PortalFile   = Join-Path $Here 'PMC_Imaging_Portal.html'
+$ExpectedHash = 'd760ddd63282be00a62d09441f829c9be8656b79661718577637f3b7d0558208'
+
+$script:Changes = @()
+function Note { param($T, $C = 'Gray') Write-Host $T -ForegroundColor $C }
+function Head { param($T) Write-Host ''; Write-Host $T -ForegroundColor Cyan
+                Write-Host ('-' * $T.Length) -ForegroundColor DarkGray }
+function Plan { param($T) $script:Changes += $T; Note ("  WOULD: {0}" -f $T) Yellow }
+function Did  { param($T) $script:Changes += $T; Note ("  DID:   {0}" -f $T) Green }
+function Die  { param($T) Write-Host ''; Note "STOPPED: $T" Red
+                if (-not $Apply) { Note 'This was a preview; nothing was changed.' DarkGray }
+                exit 1 }
+
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+      ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+  Die 'Run this in an elevated PowerShell. It edits a service configuration and restarts a service.'
+}
+
+Head 'PMC Imaging Portal - one-shot install'
+Note ("  mode        : {0}" -f $(if ($Rollback) { 'ROLLBACK' } elseif ($Apply) { 'APPLY' } else { 'PREVIEW - nothing will be changed' })) `
+     $(if ($Apply) { 'Yellow' } else { 'Green' })
+Note ("  portal dir  : {0}" -f $PortalDir)
+Note ("  archive     : {0}" -f $BaseUrl)
+
+# ---------------------------------------------------------------- the service
+Head '1. The Orthanc service'
+$svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+if (-not $svc) { Die "No service called '$ServiceName'. Pass -ServiceName with the real one." }
+Note ("  {0} is {1}" -f $svc.Name, $svc.Status)
+
+$imagePath = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName" -Name ImagePath -ErrorAction SilentlyContinue).ImagePath
+if (-not $imagePath) { Die "Cannot read the service's ImagePath, so the configuration cannot be located safely." }
+Note ("  command     : {0}" -f $imagePath) DarkGray
+
+# The last real path on the service command line is Orthanc's configuration target.
+$configTarget = $null
+foreach ($m in [regex]::Matches($imagePath, '"([^"]+)"|(\S+)')) {
+  $tok = if ($m.Groups[1].Success) { $m.Groups[1].Value } else { $m.Groups[2].Value }
+  if ($tok -match '\.exe"?$' -or $tok -match '^(/|--)') { continue }
+  if (Test-Path $tok) { $configTarget = $tok }
+}
+if (-not $configTarget) {
+  foreach ($guess in @('C:\Program Files\Orthanc Server\Configuration',
+                       'C:\Program Files\Orthanc Server\Configuration\orthanc.json')) {
+    if (Test-Path $guess) { $configTarget = $guess; break }
+  }
+}
+if (-not $configTarget) { Die 'Could not find the Orthanc configuration from the service command line or the usual places.' }
+
+$configIsDir = (Get-Item $configTarget).PSIsContainer
+Note ("  config      : {0}" -f $configTarget)
+Note ("                [{0}]" -f $(if ($configIsDir) { 'a directory, so a new file merges in and orthanc.json is left alone' } else { 'a single file, so it must be edited, with a backup' })) DarkGray
+
+$configDir   = if ($configIsDir) { $configTarget } else { Split-Path -Parent $configTarget }
+$orthancRoot = Split-Path -Parent $configDir
+$pluginDir   = Join-Path $orthancRoot 'Plugins'
+if (-not (Test-Path $pluginDir)) {
+  $found = Get-ChildItem 'C:\Program Files' -Directory -Filter 'Orthanc*' -ErrorAction SilentlyContinue |
+           ForEach-Object { Join-Path $_.FullName 'Plugins' } | Where-Object { Test-Path $_ } | Select-Object -First 1
+  if ($found) { $pluginDir = $found }
+}
+Note ("  plugins     : {0}" -f $pluginDir)
+
+# ------------------------------------------------------------------ the page
+Head '2. The page'
+if ($Rollback) { Note '  skipped in rollback' DarkGray }
+else {
+  if (-not (Test-Path $PortalFile)) { Die 'PMC_Imaging_Portal.html is not next to this script. Unzip the whole package and run it from there.' }
+  $actual = (Get-FileHash $PortalFile -Algorithm SHA256).Hash.ToLower()
+  if ($actual -ne $ExpectedHash) {
+    Note ("  expected {0}" -f $ExpectedHash) DarkGray
+    Note ("  found    {0}" -f $actual) DarkGray
+    Die 'The page does not hash to the build this script was made for. Do not install it.'
+  }
+  Note ("  {0:N0} bytes, sha256 verified" -f (Get-Item $PortalFile).Length) Green
+}
+
+# ---------------------------------------------------------- ServeFolders plugin
+Head '3. ServeFolders'
+$dll = @(Get-ChildItem $pluginDir -Filter '*ServeFolders*.dll' -ErrorAction SilentlyContinue)
+$restoreFrom = $null
+if ($dll.Count) { Note ("  present: {0}" -f $dll[0].Name) Green }
+elseif ($Rollback) { Note '  not present; nothing to do in rollback' DarkGray }
+else {
+  Note '  NOT in the Plugins folder. The 2 Sep cutover dropped it.' Yellow
+  foreach ($root in @($orthancRoot, 'C:\PMC') | Where-Object { Test-Path $_ }) {
+    $hit = Get-ChildItem $root -Recurse -Filter '*ServeFolders*.dll' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($hit) { $restoreFrom = $hit.FullName; break }
+  }
+  if ($restoreFrom) { Note ("  a copy is already on this machine: {0}" -f $restoreFrom) Green }
+  else {
+    Note '  No copy on this machine.' Red
+    Note '  Take ServeFolders.dll from the Orthanc install media this server was built from,' Yellow
+    Note '  put it in the Plugins folder, and run this again. This script will not download a' Yellow
+    Note '  plugin onto a clinical box.' Yellow
+    Die 'ServeFolders.dll is missing and cannot be restored from anything already here.'
+  }
+}
+
+# ------------------------------------------------------------ the config change
+Head '4. The /pmc mapping'
+$mapPath  = $PortalDir -replace '\\','/'
+$dropFile = if ($configIsDir) { Join-Path $configTarget 'pmc-portal-servefolders.json' } else { $null }
+$mapJson  = @"
+{
+  "_comment": "Added by Install-PmcImagingPortal.ps1 on $Stamp. Serves the PMC Imaging Portal at /pmc/. Delete this file and restart Orthanc to remove it.",
+  "ServeFolders": {
+    "AllowCache": false,
+    "GenerateETag": true,
+    "Folders": { "/pmc": "$mapPath" }
+  }
+}
+"@
+
+$existingText = ''
+if ($configIsDir) {
+  foreach ($f in Get-ChildItem $configTarget -Filter '*.json' -ErrorAction SilentlyContinue) {
+    $existingText += (Get-Content $f.FullName -Raw)
+  }
+} else { $existingText = Get-Content $configTarget -Raw }
+$alreadyMapped   = $existingText -match '"/pmc"'
+$hasServeSection = $existingText -match '"ServeFolders"'
+
+if ($Rollback) {
+  if ($dropFile -and (Test-Path $dropFile)) {
+    if ($Apply) { Remove-Item $dropFile -Force; Did "removed $dropFile" } else { Plan "remove $dropFile" }
+  } elseif (-not $configIsDir) {
+    $backups = @(Get-ChildItem $configDir -Filter 'orthanc.json.pmcportal-*' -ErrorAction SilentlyContinue |
+                 Sort-Object LastWriteTime -Descending)
+    if ($backups.Count) {
+      if ($Apply) { Copy-Item $backups[0].FullName $configTarget -Force; Did ("restored {0}" -f $backups[0].Name) }
+      else { Plan ("restore {0} over orthanc.json" -f $backups[0].Name) }
+    } else { Note '  no backup from this script to restore' Yellow }
+  } else { Note '  nothing this script added is present' DarkGray }
+}
+elseif ($alreadyMapped) { Note '  /pmc is already mapped. Leaving the configuration alone.' Green }
+elseif ($hasServeSection) {
+  Note '  ServeFolders is already declared somewhere. Two declarations do not merge cleanly,' Yellow
+  Note '  so this script will not add a second one.' Yellow
+  Note ('  Add   "/pmc": "' + $mapPath + '"   to the existing Folders block, then re-run.') Cyan
+  Die 'The existing ServeFolders block needs one line added by hand.'
+}
+elseif ($configIsDir) {
+  if ($Apply) { Set-Content -Path $dropFile -Value $mapJson -Encoding UTF8; Did "wrote $dropFile" }
+  else { Plan "write $dropFile, a NEW file; orthanc.json is not touched" }
+}
+else {
+  $backup = "$configTarget.pmcportal-$Stamp"
+  $insert = '  "ServeFolders": { "AllowCache": false, "GenerateETag": true, "Folders": { "/pmc": "' + $mapPath + '" } },'
+  if ($Apply) {
+    # Splice after the opening brace by index. [regex]::Replace has no static
+    # overload that takes a count -- passing 1 there binds to RegexOptions and
+    # rewrites EVERY brace in the file, which on a live archive's config is the
+    # kind of mistake you only get to make once.
+    $idx = $existingText.IndexOf('{')
+    if ($idx -lt 0) { Die 'orthanc.json does not start with a JSON object; not editing it.' }
+    Copy-Item $configTarget $backup -Force; Did ("backed up orthanc.json to {0}" -f (Split-Path -Leaf $backup))
+    Set-Content -Path $configTarget -Value ($existingText.Insert($idx + 1, "`r`n$insert")) -Encoding UTF8
+    Did 'added the ServeFolders section to orthanc.json'
+  } else {
+    Plan ("back up orthanc.json to {0}" -f (Split-Path -Leaf $backup))
+    Plan 'insert a ServeFolders section at the top of orthanc.json'
+  }
+}
+
+# --------------------------------------------------------------- write the page
+Head '5. Write the page'
+if ($Rollback) { Note "  left in place at $PortalDir; it serves nothing on its own" DarkGray }
+elseif ($Apply) {
+  New-Item $PortalDir -ItemType Directory -Force | Out-Null
+  Copy-Item $PortalFile (Join-Path $PortalDir 'index.html') -Force
+  Did "wrote $PortalDir\index.html"
+  Note '  no pmc-portal.config.json written: the built-in defaults are right for this server' DarkGray
+} else { Plan "write $PortalDir\index.html" }
+
+if ($restoreFrom) {
+  if ($Apply) { Copy-Item $restoreFrom (Join-Path $pluginDir (Split-Path -Leaf $restoreFrom)) -Force
+                Did ("restored {0} to the Plugins folder" -f (Split-Path -Leaf $restoreFrom)) }
+  else { Plan "copy $restoreFrom into $pluginDir" }
+}
+
+# ------------------------------------------------------------------- restart
+function Test-ArchiveUp {
+  try {
+    $r = Invoke-WebRequest -Uri "$BaseUrl/system" -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+    return ([int]$r.StatusCode -lt 500)
+  } catch {
+    # 401 or 403 is the archive answering and asking who you are. That is up.
+    if ($_.Exception.Response) { return (([int]$_.Exception.Response.StatusCode) -in @(401,403)) }
+    return $false
+  }
+}
+function Restart-OrthancSafely {
+  Note '  stopping, and waiting for it to drain'
+  Stop-Service -Name $ServiceName -Force
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+  while ((Get-Service $ServiceName).Status -ne 'Stopped' -and $sw.Elapsed.TotalSeconds -lt 60) { Start-Sleep -Milliseconds 300 }
+  Note ("  drained in {0:N1} s" -f $sw.Elapsed.TotalSeconds)
+  Start-Service -Name $ServiceName
+  $sw.Restart()
+  while ($sw.Elapsed.TotalSeconds -lt $UpTimeoutSeconds) {
+    if (Test-ArchiveUp) { Note ("  answering by name after {0:N1} s" -f $sw.Elapsed.TotalSeconds) Green; return $true }
+    Start-Sleep -Seconds 2
+  }
+  return $false
+}
+
+Head '6. Restart'
+if (-not $Apply) { Plan "restart $ServiceName and prove $BaseUrl/system answers by name" }
+else {
+  if (-not (Restart-OrthancSafely)) {
+    Note '  Orthanc did not answer in time. Reversing the configuration change.' Red
+    if ($dropFile -and (Test-Path $dropFile)) { Remove-Item $dropFile -Force; Note '  removed the mapping file' Yellow }
+    elseif (-not $configIsDir) {
+      $b = @(Get-ChildItem $configDir -Filter "orthanc.json.pmcportal-$Stamp" -ErrorAction SilentlyContinue)
+      if ($b.Count) { Copy-Item $b[0].FullName $configTarget -Force; Note '  restored orthanc.json' Yellow }
+    }
+    Restart-OrthancSafely | Out-Null
+    Die 'Rolled back. The archive matters more than the portal; read the Orthanc log before trying again.'
+  }
+}
+
+# --------------------------------------------------------------------- proof
+Head '7. Proof'
+if (-not $Apply) { Note '  nothing to prove in a preview' DarkGray }
+else {
+  $code = 0
+  try { $code = [int](Invoke-WebRequest "$BaseUrl/pmc/index.html" -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop).StatusCode }
+  catch { if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode } }
+  switch ($code) {
+    200 { Note "  $BaseUrl/pmc/ is being served." Green }
+    401 { Note "  $BaseUrl/pmc/ is served, behind the archive's sign-in. That is what it should be." Green }
+    403 { Note "  $BaseUrl/pmc/ is served, behind the archive's sign-in. That is what it should be." Green }
+    404 { Note '  404. ServeFolders is not mapping /pmc; check the Orthanc log for the plugin loading.' Red }
+    0   { Note "  No answer from $BaseUrl. Check DNS and the firewall rule." Red }
+    default { Note ("  HTTP {0} from {1}/pmc/index.html" -f $code, $BaseUrl) Yellow }
+  }
+}
+
+Head 'Summary'
+if (-not $Apply) {
+  Note '  This was a preview. Nothing was changed.' Green
+  Note ("  {0} change(s) would be made. Re-run with -Apply to make them." -f $script:Changes.Count)
+} else {
+  Note ("  {0} change(s) made." -f $script:Changes.Count) Green
+  Note '  Open it signed in as a normal user and check one study per modality:'
+  Note ("  {0}/pmc/" -f $BaseUrl) Cyan
+  Note '  To undo:  .\Install-PmcImagingPortal.ps1 -Rollback -Apply'
+}

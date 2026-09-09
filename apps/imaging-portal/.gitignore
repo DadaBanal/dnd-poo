@@ -6,3 +6,5 @@ pmc-portal.config.json
 dist/payload.gz.b64
 dist/installer-payload.html
 dist/Deploy-PmcImagingPortal-OneLine.ps1
+# The deployment package is derived from dist/ and rebuilt by `npm run package`.
+dist/*.zip
