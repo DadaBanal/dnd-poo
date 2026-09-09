@@ -1,12 +1,12 @@
 {
   "artifact": "PMC_Imaging_Portal.html",
   "reference": {
-    "bytes": 193577,
-    "sha256": "d760ddd63282be00a62d09441f829c9be8656b79661718577637f3b7d0558208",
+    "bytes": 194106,
+    "sha256": "778e297e51fc50774d3a9f48932ed77fe3ea6fd0a817b9b83bbe80e642217e79",
     "source": "re-baselined from src/ on 2026-09-09",
     "previous": {
-      "bytes": 193022,
-      "sha256": "f155dd3679745af71cf892e9283a0074cf3bdc20752196beafb92eea75408508"
+      "bytes": 193577,
+      "sha256": "d760ddd63282be00a62d09441f829c9be8656b79661718577637f3b7d0558208"
     }
   },
   "styles": [
@@ -42,5 +42,8 @@
     "src/app/18-viewer-mpr.js",
     "src/app/20-boot.js"
   ],
-  "favicon": "src/assets/favicon.png"
+  "favicon": "src/assets/favicon.png",
+  "build": {
+    "date": "2026-09-09"
+  }
 }

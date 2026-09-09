@@ -267,6 +267,19 @@ check('System names the index and explains the ordering limitation', async (b, s
   await ctx.close();
 });
 
+check('the System screen names which build of the portal is running', async (b, s) => {
+  // After an update the only honest way to know the new file landed is for the
+  // page to say so. Nothing else on this screen is about the page itself.
+  const { page, ctx } = await openPortal(b, s);
+  await page.click('.nav [data-view="system"]');
+  await page.waitForTimeout(600);
+  const kv = await page.textContent('#sysKv');
+  ok(/Portal/.test(kv), 'the System screen does not name the portal build');
+  ok(/\d{4}-\d{2}-\d{2}\s*·\s*[0-9a-f]{12}/.test(kv),
+    `the build stamp is missing or malformed: ${kv.slice(0, 200)}`);
+  await ctx.close();
+});
+
 check('System publishes the DICOMweb address other systems would use', async (b, s) => {
   const { page, ctx } = await openPortal(b, s);
   await page.click('.nav a[data-view="system"], .nav [data-view="system"]');

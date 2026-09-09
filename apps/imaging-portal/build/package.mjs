@@ -83,6 +83,21 @@ BEFORE YOU START
 
      .\\Install-PmcImagingPortal.ps1 -Rollback -Apply
 
+UPDATING LATER
+  Nothing here updates itself, on purpose. The page makes no external request of
+  any kind, so it cannot fetch a new version, and nothing on the server polls for
+  one. A change to what clinicians see is always something a person decided to do.
+
+  To update: take the newer zip, unzip it over a copy of this folder, and run
+  step 3 again. The installer notices the /pmc mapping is already there and
+  DOES NOT restart Orthanc -- ServeFolders reads the page off disk on every
+  request, so replacing the file is the whole update. That makes an update safe
+  outside a change window.
+
+  To check which build is live, open the portal, go to System, and read the
+  Portal row. It shows the build date and a short source id, and it will match
+  the line at the top of this file.
+
 KNOWN BEFORE YOU RUN IT
   The 2 Sep HTTPS cutover kept 8 plugins and dropped 23, and ServeFolders was
   one of the 23. If its DLL is still somewhere on the machine the installer puts

@@ -19,7 +19,9 @@
                                               edit only if it reads a single file
     3. restores ServeFolders.dll              only if a copy is already on this
                                               machine; it never downloads one
-    4. restarts the Orthanc service           drained in 6.9 s on 2 Sep
+    4. restarts the Orthanc service           ONLY if 2 or 3 happened. Replacing
+                                              the page alone needs no restart, so
+                                              an update costs the archive nothing.
 
   If Orthanc does not answer by name within the timeout, the configuration change
   is reversed and the service restarted again, without being asked.
@@ -52,9 +54,13 @@ $Stamp   = Get-Date -Format 'yyyyMMdd-HHmmss'
 
 # The page this script installs, and the only bytes it will accept.
 $PortalFile   = Join-Path $Here 'PMC_Imaging_Portal.html'
-$ExpectedHash = 'd760ddd63282be00a62d09441f829c9be8656b79661718577637f3b7d0558208'
+$ExpectedHash = '778e297e51fc50774d3a9f48932ed77fe3ea6fd0a817b9b83bbe80e642217e79'
 
 $script:Changes = @()
+# ServeFolders reads the page off disk on every request, so replacing the file
+# needs no restart. Only a configuration or plugin change does. An update should
+# not cost a clinical archive a restart it does not need.
+$script:NeedsRestart = $false
 function Note { param($T, $C = 'Gray') Write-Host $T -ForegroundColor $C }
 function Head { param($T) Write-Host ''; Write-Host $T -ForegroundColor Cyan
                 Write-Host ('-' * $T.Length) -ForegroundColor DarkGray }
@@ -176,11 +182,13 @@ $hasServeSection = $existingText -match '"ServeFolders"'
 
 if ($Rollback) {
   if ($dropFile -and (Test-Path $dropFile)) {
+    $script:NeedsRestart = $true
     if ($Apply) { Remove-Item $dropFile -Force; Did "removed $dropFile" } else { Plan "remove $dropFile" }
   } elseif (-not $configIsDir) {
     $backups = @(Get-ChildItem $configDir -Filter 'orthanc.json.pmcportal-*' -ErrorAction SilentlyContinue |
                  Sort-Object LastWriteTime -Descending)
     if ($backups.Count) {
+      $script:NeedsRestart = $true
       if ($Apply) { Copy-Item $backups[0].FullName $configTarget -Force; Did ("restored {0}" -f $backups[0].Name) }
       else { Plan ("restore {0} over orthanc.json" -f $backups[0].Name) }
     } else { Note '  no backup from this script to restore' Yellow }
@@ -194,10 +202,12 @@ elseif ($hasServeSection) {
   Die 'The existing ServeFolders block needs one line added by hand.'
 }
 elseif ($configIsDir) {
+  $script:NeedsRestart = $true
   if ($Apply) { Set-Content -Path $dropFile -Value $mapJson -Encoding UTF8; Did "wrote $dropFile" }
   else { Plan "write $dropFile, a NEW file; orthanc.json is not touched" }
 }
 else {
+  $script:NeedsRestart = $true
   $backup = "$configTarget.pmcportal-$Stamp"
   $insert = '  "ServeFolders": { "AllowCache": false, "GenerateETag": true, "Folders": { "/pmc": "' + $mapPath + '" } },'
   if ($Apply) {
@@ -227,6 +237,7 @@ elseif ($Apply) {
 } else { Plan "write $PortalDir\index.html" }
 
 if ($restoreFrom) {
+  $script:NeedsRestart = $true
   if ($Apply) { Copy-Item $restoreFrom (Join-Path $pluginDir (Split-Path -Leaf $restoreFrom)) -Force
                 Did ("restored {0} to the Plugins folder" -f (Split-Path -Leaf $restoreFrom)) }
   else { Plan "copy $restoreFrom into $pluginDir" }
@@ -259,7 +270,11 @@ function Restart-OrthancSafely {
 }
 
 Head '6. Restart'
-if (-not $Apply) { Plan "restart $ServiceName and prove $BaseUrl/system answers by name" }
+if (-not $script:NeedsRestart) {
+  Note '  Not needed. Nothing changed that Orthanc reads at start-up, and ServeFolders' Green
+  Note '  serves the page off disk on every request, so the new file is already live.' Green
+}
+elseif (-not $Apply) { Plan "restart $ServiceName and prove $BaseUrl/system answers by name" }
 else {
   if (-not (Restart-OrthancSafely)) {
     Note '  Orthanc did not answer in time. Reversing the configuration change.' Red
@@ -295,7 +310,7 @@ if (-not $Apply) {
   Note '  This was a preview. Nothing was changed.' Green
   Note ("  {0} change(s) would be made. Re-run with -Apply to make them." -f $script:Changes.Count)
 } else {
-  Note ("  {0} change(s) made." -f $script:Changes.Count) Green
+  Note ("  {0} change(s) made{1}." -f $script:Changes.Count, $(if ($script:NeedsRestart) { ', including a service restart' } else { '; no restart was needed' })) Green
   Note '  Open it signed in as a normal user and check one study per modality:'
   Note ("  {0}/pmc/" -f $BaseUrl) Cyan
   Note '  To undo:  .\Install-PmcImagingPortal.ps1 -Rollback -Apply'

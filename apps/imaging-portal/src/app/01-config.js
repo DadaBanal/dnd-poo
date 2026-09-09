@@ -24,3 +24,9 @@ const DEFAULTS = {
 };
 let CFG = structuredClone(DEFAULTS);
 
+// Which build of this page you are looking at. Filled in at build time; the date
+// is the baseline date, not the day it was assembled, so the artifact stays
+// reproducible. It is on the System screen because after an update the only
+// honest way to know the new file landed is for the page to say so itself.
+const PORTAL_BUILD = document.querySelector('meta[name="pmc-build"]')?.content || 'unknown';
+

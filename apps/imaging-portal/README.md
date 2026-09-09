@@ -139,6 +139,20 @@ in a test, or in any monitoring probe. Wait for the skeletons to clear as well.
 This is a property of the shipped artifact, not a defect, and it is not changed
 here: the artifact stays byte-identical to the one that was signed off.
 
+## Which build is running
+
+The page carries its own identity: a `pmc-build` meta tag holding the baseline
+date and a twelve-character hash of the source fragments, shown on the System
+screen. The date is the **baseline** date, not the day someone ran the build, so
+the artifact stays byte-reproducible from the manifest alone. It is there because
+after an update the only honest way to know the new file landed is for the page
+to say so.
+
+Nothing updates itself. The page makes no external request, and nothing on the
+server polls for a new version. An update is a person running the installer
+again; it replaces one file and, because ServeFolders reads that file on every
+request, needs no service restart.
+
 ## Configuration
 
 Optional. The installer writes `pmc-portal.config.json` next to the page; every

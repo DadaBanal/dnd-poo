@@ -3,6 +3,7 @@ async function loadSystem() {
   const s = state.system || {};
   const idx = s.DatabaseBackendPlugin || 'built-in SQLite';
   $('#sysKv').innerHTML = `
+    <dt>Portal</dt><dd class="mono">${esc(PORTAL_BUILD)}</dd>
     <dt>Server</dt><dd>${esc(s.Name || '—')}</dd>
     <dt>Orthanc</dt><dd>${esc(s.Version || '—')} <span style="color:var(--text-3)">· REST API v${esc(s.ApiVersion ?? '—')}</span></dd>
     <dt>Index</dt><dd>${esc(idx)} ${/odbc/i.test(idx) ? '<span class="badge badge--orange" style="margin-left:6px">no server-side ordering</span>' : ''}</dd>

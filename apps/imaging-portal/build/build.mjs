@@ -20,14 +20,27 @@ const manifest = JSON.parse(readFileSync(join(ROOT, 'build/manifest.json'), 'utf
 const read = p => readFileSync(join(ROOT, p), 'utf8');
 const sha256 = s => createHash('sha256').update(s, 'utf8').digest('hex');
 
-/** Concatenate the ordered fragments back into the single-file artifact. */
-export function assemble() {
+/**
+ * Concatenate the ordered fragments back into the single-file artifact.
+ *
+ * `buildDate` is the BASELINE date from the manifest, not today's, so the same
+ * source always produces the same bytes. Passing one is how baseline.mjs moves
+ * it deliberately.
+ */
+export function assemble(buildDate = manifest.build?.date ?? 'unbaselined') {
   const styles = manifest.styles.map(read).join('');
   const app = manifest.app.map(read).join('');
   const favicon = readFileSync(join(ROOT, manifest.favicon)).toString('base64');
+  const shell = read('src/index.html');
+  // An identity for the SOURCE, not the output, so it can be stamped into the
+  // output without chasing its own tail. Twelve hex is plenty to tell two
+  // builds apart by eye on a System screen.
+  const sourceId = sha256([shell, styles, app].join('\u0000')).slice(0, 12);
 
-  let html = read('src/index.html');
-  for (const [token, value] of [['/*@STYLES@*/\n', styles], ['/*@APP@*/\n', app], ['@FAVICON_BASE64@', favicon]]) {
+  let html = shell;
+  for (const [token, value] of [['/*@STYLES@*/\n', styles], ['/*@APP@*/\n', app],
+                                ['@FAVICON_BASE64@', favicon],
+                                ['@BUILD@', `${buildDate} · ${sourceId}`]]) {
     if (!html.includes(token)) throw new Error(`index.html is missing the ${token.trim()} token`);
     html = html.replace(token, () => value);   // function form: no $& substitution
   }
