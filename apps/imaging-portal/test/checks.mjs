@@ -457,6 +457,15 @@ async function paneCentre(page, n = 0) {
   const box = await page.locator('.pane').nth(n).boundingBox();
   return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2), box };
 }
+/** The picture paints first and the stored values follow, so a test that asserts
+    on values has to wait for the upgrade rather than assume it already happened. */
+async function awaitPixels(page, n = 0) {
+  await page.waitForFunction(i => document.querySelectorAll('.pane')[i]?.dataset.index !== undefined,
+    n, { timeout: 20000 });
+  await page.waitForFunction(() => /pixel data/.test(document.querySelector('#vwrFoot')?.textContent || ''),
+    null, { timeout: 25000 });
+}
+
 /** Read the probe readout while the button is held — it hides on release. */
 async function probe(page, dx = 0, dy = 0, n = 0) {
   await page.click('#vwrTools [data-tool="probe"]');
@@ -492,12 +501,14 @@ check('the viewer opens over the worklist and paints the frame', async (b, s) =>
 check('it asks for the stored pixel values, and says so on screen', async (b, s) => {
   const { page, ctx } = await openViewer(b, s);
   ok(s.requests.some(r => /\/numpy$/.test(r.path)), 'the viewer never asked for the pixel array');
-  ok((await page.textContent('#vwrFoot')).includes('pixel data'), 'the footer does not report the pixel-data path');
+  await page.waitForFunction(() => document.querySelector('#vwrFoot')?.textContent.includes('pixel data'),
+    null, { timeout: 20000 });
   await ctx.close();
 });
 
 check('the pixel probe reports Hounsfield units, not the stored number', async (b, s) => {
   const { page, ctx } = await openViewer(b, s);
+  await awaitPixels(page);
   // The phantom's central disc is -100 HU on the first frame. Stored, it is 924.
   // Reporting 924 would be the classic rescale mistake, so assert on the HU.
   const text = await probe(page);
@@ -508,6 +519,7 @@ check('the pixel probe reports Hounsfield units, not the stored number', async (
 
 check('the wheel moves the stack, and the new frame is really new data', async (b, s) => {
   const { page, ctx } = await openViewer(b, s);
+  await awaitPixels(page);
   const centre = await paneCentre(page);
   await page.mouse.move(centre.x, centre.y);
   await page.mouse.wheel(0, 120);
@@ -521,6 +533,8 @@ check('the wheel moves the stack, and the new frame is really new data', async (
 
 check('window and level change the image without going back to the archive', async (b, s) => {
   const { page, ctx } = await openViewer(b, s);
+  await awaitPixels(page);
+  await page.waitForTimeout(400);          // let any trailing prefetch settle
   const before = await page.evaluate(() => document.querySelector('.pane canvas').toDataURL().length);
   const sig = () => page.evaluate(() => {
     const c = document.querySelector('.pane canvas');
@@ -548,8 +562,8 @@ check('a series the archive cannot decode falls back to the rendered path', asyn
   // Orthanc does for a transfer syntax it cannot turn into an array.
   const { page, ctx } = await openViewer(b, s, 'ACC100003');
   await page.locator('#vwrSeries .vseries').nth(2).click();
-  await page.waitForFunction(() => document.querySelector('#vwrFoot')?.textContent.includes('server rendered'),
-    null, { timeout: 10000 });
+  await page.waitForFunction(() => /server rendered(?! · reading)/.test(document.querySelector('#vwrFoot')?.textContent || ''),
+    null, { timeout: 20000 });
   ok(s.requests.some(r => /\/rendered$/.test(r.path)), 'no frame was fetched from /rendered');
   // On that path the ARCHIVE does the windowing, so a window change has to travel
   // with the request. If it did not, the W/L drag would silently do nothing here.
@@ -568,6 +582,7 @@ check('a series the archive cannot decode falls back to the rendered path', asyn
 
 check('a length is measured in millimetres, and twice the line is twice the length', async (b, s) => {
   const { page, ctx } = await openViewer(b, s);
+  await awaitPixels(page);                 // the spacing comes with the tags
   await page.click('#viewer [data-act="one"]');            // 1:1, so screen px = image px
   await page.click('#vwrTools [data-tool="length"]');
   const c = await paneCentre(page);
@@ -592,6 +607,7 @@ check('a length is measured in millimetres, and twice the line is twice the leng
 
 check('a region reports the mean of the values inside it, in the modality units', async (b, s) => {
   const { page, ctx } = await openViewer(b, s);
+  await awaitPixels(page);
   await page.click('#viewer [data-act="one"]');
   await page.click('#vwrTools [data-tool="ellipse"]');
   const c = await paneCentre(page);
@@ -687,6 +703,7 @@ check('the sample dataset drives the same viewer, and says it is a sample', asyn
 
 check('MPR reslices the stack, and the reconstructed planes carry the same values', async (b, s) => {
   const { page, ctx, pageErrors } = await openViewer(b, s);          // study 001, CT, 40 frames
+  await awaitPixels(page);
   await page.click('#vwrMpr');
   await page.waitForFunction(() => document.querySelectorAll('.pane[data-serie]').length === 3, null, { timeout: 30000 });
   const ids = await page.$$eval('.pane[data-serie]', els => els.map(e => e.dataset.serie));
@@ -713,6 +730,7 @@ check('MPR reslices the stack, and the reconstructed planes carry the same value
 
 check('the crosshair drives every plane from one point', async (b, s) => {
   const { page, ctx } = await openViewer(b, s);
+  await awaitPixels(page);
   await page.click('#vwrMpr');
   await page.waitForFunction(() => document.querySelectorAll('.pane[data-serie]').length === 3, null, { timeout: 30000 });
   const before = await page.$$eval('.pane[data-index]', els => els.map(e => e.dataset.index));
@@ -732,8 +750,8 @@ check('MPR refuses a series it cannot honestly reconstruct', async (b, s) => {
   // measure wrong, so the viewer must decline rather than draw one.
   const { page, ctx } = await openViewer(b, s, 'ACC100003');
   await page.locator('#vwrSeries .vseries').nth(2).click();
-  await page.waitForFunction(() => document.querySelector('#vwrFoot')?.textContent.includes('server rendered'),
-    null, { timeout: 10000 });
+  await page.waitForFunction(() => /server rendered(?! · reading)/.test(document.querySelector('#vwrFoot')?.textContent || ''),
+    null, { timeout: 20000 });
   await page.click('#vwrMpr');
   await page.waitForTimeout(700);
   eq(await page.locator('.pane[data-serie]').count(), 1, 'a reconstruction was built anyway');

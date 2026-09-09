@@ -197,10 +197,10 @@ function drawPaneChrome(pane, ctx, cw, ch) {
       `Im ${pane.index + 1} / ${n}`,
       [g.thickness ? `${g.thickness} mm` : '', g.kvp ? `${g.kvp} kV` : '', g.mas ? `${g.mas} mA` : ''].filter(Boolean).join('  ')]
       .filter(Boolean);
-    const wl = pane.frame?.kind === 'pixels' || pane.serie?.mode === 'rendered'
-      ? `W ${Math.round(pane.ww)}  L ${Math.round(pane.wc)}` : 'W/L fixed (preview)';
+    const wl = pane.frame?.flat ? 'W/L fixed (preview)'
+      : `W ${Math.round(pane.ww)}  L ${Math.round(pane.wc)}`;
     const br = [wl, `Zoom ${Math.round(pane.zoom * 100)}%`,
-      `${pane.serie?.modality || ''} · ${MODE_LABEL[pane.serie?.mode] || pane.serie?.mode || ''}`].filter(Boolean);
+      `${pane.serie?.modality || ''} · ${frameLabel(pane)}`].filter(Boolean);
 
     ctx.fillStyle = 'rgba(255,255,255,.92)';
     tl.forEach((t, i) => line(t, 10, 8 + i * 15, 'left'));
@@ -222,8 +222,21 @@ function drawPaneChrome(pane, ctx, cw, ch) {
     ctx.restore();
   }
 }
-const MODE_LABEL = { pixels: 'pixel data', rendered: 'server rendered', preview: 'preview only',
-  sample: 'SAMPLE DATA — not a patient', auto: '…' };
+/** What the pane is actually showing, right now. The label follows the FRAME,
+    not the series: a pane can be showing the archive's picture while the stored
+    values are still on their way, and saying "pixel data" before they land
+    would be a claim about numbers nobody can read yet. */
+function frameLabel(pane) {
+  const f = pane.frame, se = pane.serie;
+  if (se?.pixelMode === 'sample') return 'SAMPLE DATA — not a patient';
+  if (se?.volume) return 'reconstructed';
+  if (!f) return '…';
+  if (f.kind === 'pixels') return 'pixel data';
+  if (f.flat) return 'preview only';
+  if (se?.pixelMode === 'no') return 'server rendered';
+  if (se?.pixelFailed) return 'server rendered · values unavailable';
+  return se?.pixelInFlight?.size ? 'server rendered · reading values' : 'server rendered';
+}
 
 /** L/R/A/P/H/F at the edges, derived from ImageOrientationPatient. */
 function drawOrientation(pane, ctx, cw, ch, g) {

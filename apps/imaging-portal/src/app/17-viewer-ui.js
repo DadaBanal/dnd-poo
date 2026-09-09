@@ -65,12 +65,21 @@ function fitPane(p) { p.fitted = true; p.panX = 0; p.panY = 0; p.zoom = null; }
 async function assignSeries(pane, serie) {
   pane.serie = serie;
   pane.index = Math.min(pane.index, serie.frames.length - 1);
+  pane.wlTouched = false;
   const g = serie.geom;
   pane.wc = g.wc ?? 40; pane.ww = g.ww ?? 400;
-  g.wcNow = pane.wc; g.wwNow = pane.ww;
   fitPane(pane);
-  await showFrame(pane, pane.index);
+  // Nothing is awaited here except the picture. The series' tags took 3.9 s on
+  // the cathlab archive (MEASURED), and waiting for them would mean a blank pane
+  // for that long -- with no window sent, the archive applies the file's own.
+  const painting = showFrame(pane, pane.index);
   markSeriesList();
+  ensureGeometry(serie).then(fresh => {
+    if (pane.serie !== serie) return;
+    if (!pane.wlTouched && fresh.wc != null) { pane.wc = fresh.wc; pane.ww = fresh.ww ?? pane.ww; }
+    paint(pane); updateFoot();
+  }).catch(() => {});
+  await painting;
 }
 
 /** Load and paint one frame. Late answers are dropped, so fast scrolling
@@ -80,16 +89,31 @@ async function showFrame(pane, index) {
   const n = pane.serie.frames.length;
   pane.index = Math.max(0, Math.min(n - 1, index));
   const token = ++pane.token;
+  const serie = pane.serie;
   V.busy++;
   try {
-    const frame = await loadFrame(pane.serie, pane.index);
+    const frame = await loadFrame(serie, pane.index);
     if (token !== pane.token) return;
-    const f = pane.serie.frames[pane.index];
+    const f = serie.frames[pane.index];
     pane.frame = frame; pane.error = null; pane.frameKey = `${f.instance}#${f.frame}`;
   } catch (e) {
     if (token !== pane.token) return;
     pane.frame = null; pane.error = `frame unavailable (${e.status || e.message})`;
   } finally { V.busy--; }
+
+  // The stored values follow the picture rather than gating it. When they land
+  // the pane upgrades in place: the probe starts reporting real units, regions
+  // become measurable, and window/level stops costing a round trip.
+  if (pane.frame && pane.frame.kind !== 'pixels' && serie.pixelMode !== 'no' && !serie.volume) {
+    const at = pane.index;
+    ensurePixels(serie, at).then(px => {
+      if (pane.serie !== serie || pane.index !== at || token !== pane.token) return;
+      if (px) { pane.frame = px; pane.offKey = null; }
+      // Repaint either way. A refusal is an answer, and the overlay has been
+      // saying "reading values" since the picture appeared.
+      paint(pane); updateFoot();
+    }).catch(() => { if (pane.serie === serie) { paint(pane); updateFoot(); } });
+  }
   // The pane says where it is, for a screen reader and for anything automating
   // this page -- the position is otherwise only painted into the canvas.
   pane.el.dataset.index = String(pane.index);
@@ -203,7 +227,7 @@ function onPointerDown(pane, e) {
         paint(pane); refreshNotes();
       }
     }
-    if (tool === 'wl' && pane.serie?.mode === 'rendered') reloadForWindow(pane);
+    if (tool === 'wl' && pane.frame?.kind !== 'pixels') reloadForWindow(pane);
     if (pane.loupe) { pane.loupe = null; paint(pane); }
     pane.el.querySelector('.pane__probe').hidden = true;
   };
@@ -225,14 +249,14 @@ function probeAt(pane, sx, sy) {
 
 function setWindow(pane, wc, ww) {
   const targets = V.link.wl ? V.panes.filter(p => p.serie) : [pane];
-  for (const p of targets) { p.wc = wc; p.ww = ww; if (p.serie) { p.serie.geom.wcNow = Math.round(wc); p.serie.geom.wwNow = Math.round(ww); } }
+  for (const p of targets) { p.wc = wc; p.ww = ww; p.wlTouched = true; if (p.serie) { p.serie.geom.wcNow = Math.round(wc); p.serie.geom.wwNow = Math.round(ww); } }
   targets.forEach(paint);
   updateFoot();
 }
 
 /** A pane on the server-rendered path has to ask again for a new window. */
 function reloadForWindow(pane) {
-  const targets = V.link.wl ? V.panes.filter(p => p.serie?.mode === 'rendered') : [pane];
+  const targets = V.link.wl ? V.panes.filter(p => p.frame && p.frame.kind !== 'pixels') : [pane];
   for (const p of targets) {
     for (const f of p.serie.frames) FrameCache.map.delete(FrameCache.key(f.instance, f.frame));
     showFrame(p, p.index);
@@ -344,7 +368,7 @@ function updateFoot() {
     `${p.index + 1} / ${p.serie.frames.length}`,
     `${p.serie.modality || ''} ${p.serie.desc}`.trim(),
     g.spacing ? `${fmt(g.spacing[1], 3)} × ${fmt(g.spacing[0], 3)} mm/px (${g.spacingFrom})` : 'no pixel spacing — measurements in pixels',
-    MODE_LABEL[p.serie.mode] || p.serie.mode
+    frameLabel(p)
   ];
   vq('#vwrFoot').innerHTML = bits.map(b => `<span>${esc(b)}</span>`).join('');
 }
@@ -376,7 +400,7 @@ function buildPresets() {
   $$('#vwrPresetList button').forEach(b => b.onclick = () => {
     const p = activePane(); if (!p) return;
     if (b.dataset.auto) autoWindow(p); else setWindow(p, +b.dataset.wc, +b.dataset.ww);
-    if (p.serie?.mode === 'rendered') reloadForWindow(p);
+    if (p.frame?.kind !== 'pixels') reloadForWindow(p);
     vq('#vwrPresetPop').hidden = true;
   });
 }

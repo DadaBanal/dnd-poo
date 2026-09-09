@@ -122,9 +122,8 @@ function loadImageEl(src) {
 
 /**
  * Fetch one frame in the best form this series allows.
- * `serie.mode` is 'auto' until the first answer settles it, and is then never
- * re-probed — an archive that cannot decode one frame of a series cannot decode
- * the next one either, and retrying 40 times per scroll is how a viewer stalls.
+ * The picture comes first and is never gated on the stored values; see
+ * loadRendered and ensurePixels below for why, and for what it measured.
  */
 async function loadFrame(serie, i) {
   const f = serie.frames[i];
@@ -135,38 +134,77 @@ async function loadFrame(serie, i) {
   if (serie.volume) return sliceVolume(serie, i);
   const hit = FrameCache.get(f.instance, f.frame);
   if (hit) return hit;
-  const framePath = `instances/${f.instance}/frames/${f.frame}`;
 
   // The sample dataset has no server behind it. It still produces stored values
   // rather than a picture, so nothing below this line behaves differently.
   if (state.demo) {
-    serie.mode = 'sample';
+    serie.pixelMode = 'sample';
     const m = /^(.*)-i(\d+)$/.exec(f.instance) || [, f.instance, '0'];
     return FrameCache.put(f.instance, f.frame, Demo.pixels(m[1], +m[2], serie.modality));
   }
+  return loadRendered(serie, i);
+}
 
-  if (serie.mode === 'auto' || serie.mode === 'pixels') {
-    try {
-      const buf = await frameGate(() => fetchArrayBuffer(`${framePath}/numpy?rescale=0&compress=0`));
-      const px = parseNpy(buf);
-      serie.mode = 'pixels';
-      return FrameCache.put(f.instance, f.frame, { kind: 'pixels', ...px });
-    } catch (e) {
-      if (serie.mode === 'pixels') throw e;      // settled path failing is a real fault
-      serie.mode = 'rendered';                   // 415/404: this series is not decodable to an array
-    }
-  }
-  if (serie.mode === 'rendered') {
-    try {
-      const q = serie.geom.wcNow != null && serie.geom.wwNow != null
-        ? `?window-center=${serie.geom.wcNow}&window-width=${serie.geom.wwNow}` : '';
-      const img = await frameGate(() => loadImageEl(API.url(`${framePath}/rendered${q}`)));
-      return FrameCache.put(f.instance, f.frame, { kind: 'image', img, w: img.naturalWidth, h: img.naturalHeight });
-    } catch { serie.mode = 'preview'; }
-  }
+/**
+ * The fast path: a picture, windowed by the archive.
+ *
+ * MEASURED 9 Sep 2026 on PMC's cathlab archive, one XA frame: /rendered
+ * answered in 2.3 s and /numpy in 24.6 s. Whatever the split between decode and
+ * disk, asking for the array first means nothing is on screen for half a minute.
+ * So the picture comes first, always, and the array arrives behind it.
+ */
+async function loadRendered(serie, i) {
+  const f = serie.frames[i];
+  const framePath = `instances/${f.instance}/frames/${f.frame}`;
+  try {
+    const q = serie.geom.wcNow != null && serie.geom.wwNow != null
+      ? `?window-center=${serie.geom.wcNow}&window-width=${serie.geom.wwNow}` : '';
+    const img = await frameGate(() => loadImageEl(API.url(`${framePath}/rendered${q}`)));
+    return FrameCache.put(f.instance, f.frame, { kind: 'image', img, w: img.naturalWidth, h: img.naturalHeight });
+  } catch { /* fall through to the preview */ }
   const img = await frameGate(() => loadImageEl(API.url(`instances/${f.instance}/preview`))
     .catch(() => loadImageEl(API.url(`${framePath}/preview`))));
   return FrameCache.put(f.instance, f.frame, { kind: 'image', img, w: img.naturalWidth, h: img.naturalHeight, flat: true });
+}
+
+/**
+ * The slow path, fetched behind the picture: the stored pixel values.
+ *
+ * This is what makes the Hounsfield probe, region statistics and a window/level
+ * drag that costs no network possible. It is never waited on to put an image on
+ * screen, never prefetched for frames nobody is looking at, and asked for once
+ * per series before giving up -- a series the archive cannot decode to an array
+ * will not start being able to on the next frame.
+ */
+async function ensurePixels(serie, i) {
+  const f = serie.frames[i];
+  if (!f || serie.volume || state.demo) return null;
+  if (serie.pixelMode === 'no') return null;
+  const hit = FrameCache.get(f.instance, f.frame);
+  if (hit?.kind === 'pixels') return hit;
+  const key = `${f.instance}#${f.frame}`;
+  if (serie.pixelInFlight?.has(key)) return serie.pixelInFlight.get(key);
+  if (!serie.pixelInFlight) serie.pixelInFlight = new Map();
+
+  const job = (async () => {
+    try {
+      const buf = await frameGate(() =>
+        fetchArrayBuffer(`instances/${f.instance}/frames/${f.frame}/numpy?rescale=0&compress=0`));
+      const px = parseNpy(buf);
+      serie.pixelMode = 'yes';
+      // Do not let a picture already in the cache displace the values.
+      return FrameCache.put(f.instance, f.frame, { kind: 'pixels', ...px });
+    } catch (e) {
+      // 415 and 404 mean this series is not decodable to an array, and settle it
+      // for the whole series. Anything else might be transient, so the next
+      // frame may still try -- but this frame stops claiming to be reading.
+      if (e.status === 415 || e.status === 404) serie.pixelMode = 'no';
+      else serie.pixelFailed = true;
+      return null;
+    } finally { serie.pixelInFlight.delete(key); }
+  })();
+  serie.pixelInFlight.set(key, job);
+  return job;
 }
 
 /**
@@ -192,16 +230,30 @@ async function buildSeries(seriesRow) {
     const n = Math.max(1, +inst.MainDicomTags?.NumberOfFrames || 1);
     for (let f = 0; f < n; f++) frames.push({ instance: inst.ID, frame: f, inst });
   }
-  // The geometry is read once, from the first instance. Within a series these
-  // tags are constant in every archive PMC sends to; if that ever stops being
-  // true the overlay will say so, because the per-frame tag panel reads its own.
-  let tags = {};
-  if (frames.length) tags = await API.get(`instances/${frames[0].instance}/simplified-tags`).catch(() => ({}));
-  const geom = seriesGeometry(tags, seriesRow.MainDicomTags || {});
+  // The tags are NOT read here. MEASURED 9 Sep 2026: simplified-tags took 3.9 s
+  // on one cathlab instance, and a study with eight runs would spend half a
+  // minute on them before showing anything. The series list needs none of it, so
+  // geometry loads when a series is actually put in a pane. See ensureGeometry.
+  const geom = seriesGeometry({}, seriesRow.MainDicomTags || {});
   return {
-    id, row: seriesRow, frames, geom, mode: 'auto',
+    id, row: seriesRow, frames, geom, pixelMode: 'unknown', tagsLoaded: false,
     number: +seriesRow.MainDicomTags?.SeriesNumber || 0,
     desc: seriesRow.MainDicomTags?.SeriesDescription || geom.seriesDesc || `Series ${seriesRow.MainDicomTags?.SeriesNumber || ''}`.trim(),
     modality: seriesRow.MainDicomTags?.Modality || geom.modality || ''
   };
+}
+
+/** Read the series' geometry once, when something actually needs it. */
+async function ensureGeometry(serie) {
+  if (serie.tagsLoaded || !serie.frames.length) return serie.geom;
+  serie.tagsLoaded = true;
+  const first = serie.frames[0];
+  const tags = state.demo
+    ? await API.get(`instances/${first.instance}/simplified-tags`).catch(() => ({}))
+    : await API.get(`instances/${first.instance}/simplified-tags`).catch(() => ({}));
+  const fresh = seriesGeometry(tags, serie.row.MainDicomTags || {});
+  // Keep any window the user has already dialled in on this series.
+  fresh.wcNow = serie.geom.wcNow; fresh.wwNow = serie.geom.wwNow;
+  serie.geom = fresh;
+  return fresh;
 }

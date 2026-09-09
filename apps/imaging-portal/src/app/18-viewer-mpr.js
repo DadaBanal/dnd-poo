@@ -36,7 +36,8 @@ function sliceSpacing(serie) {
 /** Fetch every frame and stack it into one array, in this viewer's own order. */
 async function buildVolume(serie, onProgress) {
   const n = serie.frames.length;
-  const first = await loadFrame(serie, 0);
+  await ensureGeometry(serie);
+  const first = await ensurePixels(serie, 0);
   if (!first || first.kind !== 'pixels') throw new Error('this series is not on the pixel-data path');
   if (first.ch > 1) throw new Error('a colour series has no meaningful reslice');
   const { w, h } = first;
@@ -44,7 +45,7 @@ async function buildVolume(serie, onProgress) {
   if (need > MPR_MAX_BYTES) throw new Error(`the volume would be ${bytes(need)} — too large to hold in a browser tab`);
   const vol = new Int16Array(n * h * w);
   for (let i = 0; i < n; i++) {
-    const f = await loadFrame(serie, i);
+    const f = await ensurePixels(serie, i);
     if (!f || f.kind !== 'pixels' || f.w !== w || f.h !== h) {
       throw new Error(`frame ${i + 1} does not match the first frame — this stack is not a volume`);
     }
@@ -66,7 +67,7 @@ function planeSeries(source, volume, plane) {
     frames: Array.from({ length: count }, (_, i) => ({ instance: `${source.id}:${plane}`, frame: i, inst: {} })),
     volume, plane, source,
     sliceCache: new Map(),
-    mode: 'pixels',
+    pixelMode: 'yes', tagsLoaded: true,
     number: source.number,
     desc: `${source.desc} — ${plane}`,
     modality: source.modality,
@@ -106,7 +107,7 @@ async function openMpr() {
   if (!src) return;
   if (src.plane) { toast('Already showing a reconstruction'); return; }
   if (src.frames.length < 8) { toast('A reconstruction needs a stack, not a handful of images', 'warn'); return; }
-  if (src.mode !== 'pixels') { toast('Reconstruction needs the pixel-data path — this series is not on it', 'warn'); return; }
+  if (src.pixelMode === 'no') { toast('Reconstruction needs the pixel-data path — this series is not on it', 'warn'); return; }
   const est = src.frames.length * (src.geom.rows || 512) * (src.geom.cols || 512) * 2;
   if (est > MPR_WARN_BYTES) toast(`Reading ${bytes(est)} of pixel data — this will take a moment`);
   vq('#vwrMpr').setAttribute('aria-pressed', 'true');

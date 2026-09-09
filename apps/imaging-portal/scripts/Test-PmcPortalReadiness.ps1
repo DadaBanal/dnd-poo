@@ -198,29 +198,47 @@ foreach ($mod in $Modalities) {
   $iid = Get-Id $instances[[int]($instances.Count / 2)]
 
   $tags     = Invoke-Orthanc "instances/$iid/simplified-tags"
-  $numpy    = Invoke-Orthanc "instances/$iid/frames/0/numpy?rescale=0&compress=0"
+  # Rendered FIRST this time. On the 9 Sep run numpy went first and took 24.6 s
+  # against rendered's 2.3 s, and with one sample there was no telling how much
+  # of that was decoding and how much was the first read of a large file off
+  # disk. Each is now timed twice, in both orders, so cold and warm separate.
   $rendered = Invoke-Orthanc "instances/$iid/frames/0/rendered"
+  $numpy    = Invoke-Orthanc "instances/$iid/frames/0/numpy?rescale=0&compress=0"
+  $rendered2 = Invoke-Orthanc "instances/$iid/frames/0/rendered"
+  $numpy2    = Invoke-Orthanc "instances/$iid/frames/0/numpy?rescale=0&compress=0"
   $preview  = Invoke-Orthanc "instances/$iid/preview"
 
   $path = if ($numpy.ok) { 'pixel data' } elseif ($rendered.ok) { 'server rendered' } elseif ($preview.ok) { 'preview only' } else { 'NOTHING WORKS' }
   $colour = switch ($path) { 'pixel data' { 'Green' } 'server rendered' { 'Yellow' } 'preview only' { 'Yellow' } default { 'Red' } }
 
   $spacing = '-'
+  $nFrames = $instances.Count
   if ($tags.ok) {
     $t = $tags.content | ConvertFrom-Json
     if ($t.PixelSpacing) { $spacing = $t.PixelSpacing }
     elseif ($t.ImagerPixelSpacing) { $spacing = "$($t.ImagerPixelSpacing) (detector)" }
+    # An XA run is one instance holding many frames. Counting instances alone
+    # reports a 90-frame acquisition as "1", which is not what a reader scrolls.
+    if ($t.NumberOfFrames) { $nFrames = [int]$t.NumberOfFrames * $instances.Count }
   }
 
-  Say ("  {0,-3}  series {1,4} inst   viewer path: {2}   listings: {3}/{4}" -f `
-       $mod, $instances.Count, $path, $serShape, $instShape) $colour
-  Say ("       list {0,5} ms   tags {1,4} ms   numpy {2,5} ms/{3}   rendered {4,4} ms/{5}   spacing {6}" -f `
-       $inst.ms, $tags.ms, $numpy.ms, $(if($numpy.ok){"$([int]($numpy.bytes/1024)) KB"}else{"HTTP $($numpy.status)"}), `
-       $rendered.ms, $(if($rendered.ok){"$([int]($rendered.bytes/1024)) KB"}else{"HTTP $($rendered.status)"}), $spacing) DarkGray
+  Say ("  {0,-3}  {1} inst / {2} frames   viewer path: {3}   listings: {4}/{5}" -f `
+       $mod, $instances.Count, $nFrames, $path, $serShape, $instShape) $colour
+  Say ("       list {0,5} ms   tags {1,5} ms   spacing {2}" -f $inst.ms, $tags.ms, $spacing) DarkGray
+  Say ("       rendered {0,6} ms then {1,6} ms   {2}" -f $rendered.ms, $rendered2.ms,
+       $(if($rendered.ok){"$([int]($rendered.bytes/1024)) KB"}else{"HTTP $($rendered.status)"})) DarkGray
+  Say ("       numpy    {0,6} ms then {1,6} ms   {2}" -f $numpy.ms, $numpy2.ms,
+       $(if($numpy.ok){"$([int]($numpy.bytes/1024)) KB"}else{"HTTP $($numpy.status)"})) DarkGray
+  if ($numpy.ok -and $numpy2.ms -gt 0 -and ($numpy.ms / [Math]::Max(1, $numpy2.ms)) -gt 3) {
+    Say '       The second numpy was far quicker, so most of the first was reading the file,' DarkGray
+    Say '       not decoding it. The viewer pays that once per instance, in the background.' DarkGray
+  }
 
-  $rows += [pscustomobject]@{ Modality = $mod; Instances = $instances.Count; Path = $path
+  $rows += [pscustomobject]@{ Modality = $mod; Instances = $instances.Count; Frames = $nFrames; Path = $path
                               Series = $serShape; Inst = $instShape
-                              ListMs = $inst.ms; NumpyMs = $numpy.ms; RenderedMs = $rendered.ms
+                              ListMs = $inst.ms; TagsMs = $tags.ms
+                              NumpyMs = $numpy.ms; NumpyWarmMs = $numpy2.ms
+                              RenderedMs = $rendered.ms; RenderedWarmMs = $rendered2.ms
                               PixelSpacing = $spacing }
  } catch {
    # One modality failing is a finding about that modality, not a reason to end
