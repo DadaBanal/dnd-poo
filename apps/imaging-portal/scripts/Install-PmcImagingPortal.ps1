@@ -310,8 +310,10 @@ function Test-ArchiveUp {
 }
 function Restart-OrthancSafely {
   Note '  stopping, and waiting for it to drain'
-  Stop-Service -Name $ServiceName -Force
+  # Started BEFORE the stop: Stop-Service blocks until the service reports
+  # stopped, so a stopwatch begun after it always reads 0.0 s.
   $sw = [Diagnostics.Stopwatch]::StartNew()
+  Stop-Service -Name $ServiceName -Force
   while ((Get-Service $ServiceName).Status -ne 'Stopped' -and $sw.Elapsed.TotalSeconds -lt 60) { Start-Sleep -Milliseconds 300 }
   Note ("  drained in {0:N1} s" -f $sw.Elapsed.TotalSeconds)
   Start-Service -Name $ServiceName

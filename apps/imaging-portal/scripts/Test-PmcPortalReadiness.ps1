@@ -64,6 +64,14 @@ function Invoke-Orthanc {
   }
 }
 
+# A listing can come back as objects or as bare id strings. Take the id either
+# way, and SAY which shape it was: code that reads .ID off a string gets $null,
+# asks for `series//instances`, and reports a 404 that explains nothing.
+# These live here, not in the loop that uses them -- PowerShell reads a script
+# top to bottom, so a function defined after its first call does not exist yet.
+function Get-Id { param($Item) if ($Item -is [string]) { $Item } else { $Item.ID } }
+function Shape  { param($Arr) if (-not @($Arr).Count) { 'empty' }
+                  elseif ($Arr[0] -is [string]) { 'ids only' } else { 'expanded' } }
 function Say { param($Text, $Colour = 'Gray') Write-Host $Text -ForegroundColor $Colour }
 function Head { param($Text) Write-Host ''; Write-Host $Text -ForegroundColor Cyan
                 Write-Host ('-' * $Text.Length) -ForegroundColor DarkGray }
@@ -131,6 +139,7 @@ $from = (Get-Date).AddDays(-$DaysBack).ToString('yyyyMMdd')
 $to   = (Get-Date).ToString('yyyyMMdd')
 $rows = @()
 foreach ($mod in $Modalities) {
+ try {
   # Exactly the query shape the portal sends. No OrderBy, ever.
   $find = Invoke-Orthanc 'tools/find' 'POST' @{
     Level = 'Study'; Expand = $true; Limit = 1
@@ -145,13 +154,6 @@ foreach ($mod in $Modalities) {
   if (-not @($studies).Count) { Say ("  {0}: no study in the last {1} days" -f $mod, $DaysBack) DarkGray; continue }
   Say ("  {0}: /tools/find returned {1} study(s), {2}" -f $mod, @($studies).Count, (Shape $studies)) DarkGray
   $study = $studies[0]
-
-  # A listing can come back as objects or as bare id strings. Take the id either
-  # way, and SAY which shape it was -- a script that reads .ID off a string gets
-  # $null, asks for `series//instances`, and reports a 404 that explains nothing.
-  function Get-Id { param($Item) if ($Item -is [string]) { $Item } else { $Item.ID } }
-  function Shape  { param($Arr) if (-not @($Arr).Count) { 'empty' }
-                    elseif ($Arr[0] -is [string]) { 'ids only' } else { 'expanded' } }
 
   if (-not $study.ID) {
     Say ("  {0}: /tools/find returned {1} -- no study id to follow." -f $mod, (Shape $studies)) Red
@@ -199,6 +201,11 @@ foreach ($mod in $Modalities) {
                               Series = $serShape; Inst = $instShape
                               ListMs = $inst.ms; NumpyMs = $numpy.ms; RenderedMs = $rendered.ms
                               PixelSpacing = $spacing }
+ } catch {
+   # One modality failing is a finding about that modality, not a reason to end
+   # the run and report "nothing could be probed" about all six.
+   Say ("  {0}: probe aborted -- {1}" -f $mod, $_.Exception.Message) Red
+ }
 }
 
 Head "5. Verdict"
