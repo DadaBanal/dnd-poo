@@ -19,11 +19,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
-from psaspine import db, register, reports  # noqa: E402
+from psaspine import db, register, reports, tickets  # noqa: E402
 import sqlite_to_tsql  # noqa: E402
 from sqlite_ddl import Unsupported  # noqa: E402
 
 FIXTURE = Path(__file__).parent / "fixtures" / "register-sample.csv"
+DESK = Path(__file__).parent / "fixtures" / "desk-export-sample.csv"
 AS_OF = date(2026, 9, 9)
 
 
@@ -242,6 +243,211 @@ class GateTest(unittest.TestCase):
         self.assertEqual(self.conn.execute(
             "SELECT state FROM variation WHERE variation_id='VAR-1'").fetchone()["state"],
             "PERFORMED_WITHOUT_APPROVAL")
+
+
+class DeskImportTest(unittest.TestCase):
+    """The desk export, imported losslessly.
+
+    The synthetic export carries the shapes a real one carries: a row with no
+    reference, the same reference twice, a company that is not a covered entity,
+    a status nobody has heard of, a component spelt the way the workbook misspells
+    it, a desk priority that disagrees with the matrix, and a variation-path
+    ticket that arrived already closed.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.summary = tickets.import_tickets(
+            self.conn, DESK, run_id="d1", at=AS_OF.isoformat())
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _flags(self, code: str) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM data_quality WHERE code = ? ORDER BY finding_id", (code,)).fetchall()
+
+    # ------------------------------------------------------------ losslessness
+
+    def test_every_row_becomes_one_work_item_and_one_ticket(self):
+        self.assertEqual(self.summary["rows_in"], self.summary["rows_out"])
+        self.assertEqual(self.summary["rows_in"], 13)
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) c FROM work_item WHERE source='desk'").fetchone()["c"], 13)
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) c FROM ticket").fetchone()["c"], 13)
+
+    def test_a_row_with_no_reference_is_still_a_row(self):
+        row = self.conn.execute(
+            "SELECT * FROM ticket WHERE work_item_id LIKE 'DESK-d1-%'").fetchone()
+        self.assertIsNotNone(row)
+        self.assertIsNone(row["external_ref"])
+        self.assertEqual(len(self._flags("NO_TICKET_REFERENCE")), 1)
+
+    def test_the_same_reference_twice_does_not_overwrite_the_first(self):
+        """INSERT OR REPLACE on a repeated key is how a row disappears silently."""
+        both = self.conn.execute(
+            "SELECT work_item_id, external_ref FROM ticket WHERE external_ref='ITO-1802'"
+            " ORDER BY work_item_id").fetchall()
+        self.assertEqual([r["work_item_id"] for r in both], ["ITO-1802", "ITO-1802#2"])
+        self.assertEqual(len(self._flags("DUPLICATE_REFERENCE")), 1)
+
+    def test_an_unclassifiable_row_is_imported_and_flagged_not_dropped(self):
+        """Medical gas matches no curated triple. It must not be forced into one.
+
+        The board the export named is still honoured — a board is a queue, not a
+        commercial classification — but nothing is defaulted from a catalogue
+        item that does not exist.
+        """
+        row = self.conn.execute(
+            "SELECT t.board_id, t.catalogue_item_id, w.contract_basis FROM ticket t"
+            " JOIN work_item w USING(work_item_id) WHERE t.work_item_id='ITO-1806'"
+        ).fetchone()
+        self.assertEqual(row["board_id"], "FACILITIES")
+        self.assertIsNone(row["catalogue_item_id"])
+        self.assertEqual(row["contract_basis"], "UNKNOWN")
+        self.assertEqual(len(self._flags("UNKNOWN_CATALOGUE_ITEM")), 2)
+
+    def test_a_row_with_no_board_at_all_lands_on_the_unrouted_queue(self):
+        row = self.conn.execute(
+            "SELECT board_id, catalogue_item_id FROM ticket WHERE work_item_id='ITO-1812'"
+        ).fetchone()
+        self.assertEqual(row["board_id"], "UNROUTED")
+        self.assertIsNone(row["catalogue_item_id"])
+
+    def test_a_status_nobody_knows_is_kept_verbatim_on_the_event_log(self):
+        self.assertEqual(self.conn.execute(
+            "SELECT state FROM ticket WHERE work_item_id='ITO-1809'").fetchone()["state"], "NEW")
+        self.assertEqual(self.conn.execute(
+            "SELECT status_raw FROM work_item WHERE work_item_id='ITO-1809'"
+        ).fetchone()["status_raw"], "Parked pending parts")
+        detail = self.conn.execute(
+            "SELECT detail FROM ticket_event WHERE work_item_id='ITO-1809'").fetchone()["detail"]
+        self.assertIn("Parked pending parts", detail)
+        self.assertEqual(len(self._flags("UNKNOWN_STATUS")), 1)
+
+    def test_embedded_commas_and_quotes_survive(self):
+        note = self.conn.execute(
+            "SELECT body FROM work_item_note WHERE work_item_id='ITO-1801'").fetchone()["body"]
+        self.assertIn("Escalated by phone, then by ticket.", note)
+
+    # ----------------------------------------------- defaults from the catalogue
+
+    def test_the_scope_item_and_basis_come_from_the_catalogue(self):
+        """A nurse files a ticket without ever seeing a commercial field."""
+        row = self.conn.execute(
+            "SELECT contract_basis, contract_basis_raw FROM work_item"
+            " WHERE work_item_id='ITO-1802'").fetchone()
+        self.assertEqual(row["contract_basis"], "BASELINE")
+        self.assertIn("CI_USER_NEW", row["contract_basis_raw"])
+        scope = self.conn.execute(
+            "SELECT scope_item_id FROM work_item_scope_item WHERE work_item_id='ITO-1802'"
+        ).fetchone()
+        self.assertEqual(scope["scope_item_id"], "2")     # Active Directory
+
+    def test_a_component_spelt_the_way_the_workbook_misspells_it_still_lands(self):
+        """'Distrubution List'. Ten misspellings shipped; the raw name is indexed."""
+        self.assertEqual(self.conn.execute(
+            "SELECT catalogue_item_id FROM ticket WHERE work_item_id='ITO-1804'"
+        ).fetchone()["catalogue_item_id"], "CI_MAIL_DL")
+
+    def test_pacs_stays_unknown_rather_than_being_filed_under_the_nearest_heading(self):
+        """The quiet reclassification the spine exists to prevent."""
+        row = self.conn.execute(
+            "SELECT contract_basis FROM work_item WHERE work_item_id='ITO-1803'").fetchone()
+        self.assertEqual(row["contract_basis"], "UNKNOWN")
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) c FROM work_item_scope_item WHERE work_item_id='ITO-1803'"
+        ).fetchone()["c"], 0)
+        self.assertIn("ITO-1803", [f["subject_id"] for f in self._flags("UNKNOWN_BASIS")])
+
+    def test_a_variation_catalogue_item_puts_the_ticket_on_the_variation_path(self):
+        self.assertEqual(self.conn.execute(
+            "SELECT path FROM ticket WHERE work_item_id='ITO-1811'").fetchone()["path"],
+            "VARIATION")
+        self.assertEqual(self.conn.execute(
+            "SELECT path FROM ticket WHERE work_item_id='ITO-1801'").fetchone()["path"],
+            "INCIDENT")
+        self.assertEqual(self.conn.execute(
+            "SELECT path FROM ticket WHERE work_item_id='ITO-1802'").fetchone()["path"],
+            "SERVICE_REQUEST")
+
+    # -------------------------------------------------- priority is computed
+
+    def test_the_matrix(self):
+        self.assertEqual(tickets.compute_priority("I1", "U1"), ("P1", "MATRIX"))
+        self.assertEqual(tickets.compute_priority("I2", "U2"), ("P3", "MATRIX"))
+        self.assertEqual(tickets.compute_priority("I3", "U3"), ("P4", "MATRIX"))
+
+    def test_a_catalogue_floor_and_a_clinical_item_can_only_raise_a_priority(self):
+        self.assertEqual(tickets.compute_priority("I3", "U3", min_priority="P2"),
+                         ("P2", "CATALOGUE_FLOOR"))
+        self.assertEqual(tickets.compute_priority("I3", "U3", clinical_impact=1),
+                         ("P2", "CLINICAL_IMPACT"))
+        # A floor below the matrix result never lowers it, and never takes credit.
+        self.assertEqual(tickets.compute_priority("I1", "U1", min_priority="P4"),
+                         ("P1", "MATRIX"))
+        self.assertEqual(tickets.compute_priority("I1", "U1", clinical_impact=1),
+                         ("P1", "MATRIX"))
+
+    def test_the_desk_priority_is_evidence_not_input(self):
+        """ITO-1808 is filed P4 at the desk and is a switch outage in the catalogue."""
+        row = self.conn.execute(
+            "SELECT priority, priority_source FROM ticket WHERE work_item_id='ITO-1808'"
+        ).fetchone()
+        self.assertEqual(row["priority"], "P2")
+        self.assertEqual(row["priority_source"], "CATALOGUE_FLOOR")
+        disagreements = [f["subject_id"] for f in self._flags("PRIORITY_DISAGREES")]
+        self.assertIn("ITO-1808", disagreements)
+
+    def test_no_unsigned_clinical_floor_was_applied(self):
+        """All four floors seed PROPOSED. An unsigned floor does not bind."""
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) c FROM ticket WHERE priority_source='CLINICAL_FLOOR'"
+        ).fetchone()["c"], 0)
+        self.assertEqual(len(self._flags("FLOOR_NOT_SIGNED")), 1)
+
+    def test_a_missing_urgency_is_taken_low_and_said_out_loud(self):
+        """Nobody asked the requester whether a patient was waiting."""
+        self.assertEqual(self.conn.execute(
+            "SELECT urgency FROM ticket WHERE work_item_id='ITO-1804'").fetchone()["urgency"],
+            "U3")
+        self.assertEqual(len(self._flags("URGENCY_NOT_STATED")), 1)
+
+    # -------------------------------------------------------------- the gate
+
+    def test_a_ticket_closed_on_the_variation_path_is_imported_and_owed_a_decision(self):
+        """The close trigger guards an UPDATE, so history imports as it was.
+
+        That is deliberate — a desk export is full of already-closed work — and
+        the gap is carried as an ERROR finding rather than left silent.
+        """
+        self.assertEqual(self.conn.execute(
+            "SELECT state FROM ticket WHERE work_item_id='ITO-1805'").fetchone()["state"],
+            "CLOSED")
+        flagged = [f["subject_id"] for f in self._flags("CLOSED_WITH_NO_VARIATION")]
+        self.assertEqual(flagged, ["ITO-1805"])
+
+    def test_an_imported_ticket_still_cannot_be_closed_without_a_variation(self):
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute("UPDATE ticket SET state='CLOSED' WHERE work_item_id='ITO-1811'")
+
+    # ------------------------------------------------------------- the record
+
+    def test_the_run_is_recorded_with_a_source_hash(self):
+        run = self.conn.execute("SELECT * FROM import_run WHERE run_id='d1'").fetchone()
+        self.assertEqual(run["rows_in"], 13)
+        self.assertEqual(run["rows_out"], 13)
+        self.assertEqual(len(run["source_sha256"]), 64)
+
+    def test_no_api_key_is_read_or_recorded(self):
+        """The keys were exposed in a screenshot. This path reads a file."""
+        source = Path(tickets.__file__).read_text(encoding="utf-8")
+        for word in ("api_key", "apikey", "public_key", "private_key", "Authorization",
+                     "bearer", "requests.get", "urlopen"):
+            self.assertNotIn(word.lower(), source.lower(), f"{word} appears in tickets.py")
 
 
 class TheGateTest(unittest.TestCase):

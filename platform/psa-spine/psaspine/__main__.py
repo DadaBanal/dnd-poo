@@ -6,7 +6,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import db, register, reports
+from . import db, register, reports, tickets
 
 
 def _as_of(value: str | None) -> date:
@@ -25,6 +25,12 @@ def main(argv: list[str] | None = None) -> int:
     pm.add_argument("register_csv")
     pm.add_argument("--run-id", default="run-1")
     pm.add_argument("--as-of")
+
+    pt = sub.add_parser("import-tickets", help="import a desk export CSV")
+    pt.add_argument("database")
+    pt.add_argument("export_csv")
+    pt.add_argument("--run-id", default="desk-1")
+    pt.add_argument("--as-of")
 
     pr = sub.add_parser("report", help="write Annex B, dependency notices and the exception report")
     pr.add_argument("database")
@@ -50,6 +56,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{s['rows_in']} rows in, {s['rows_out']} work items out, {s['findings']} findings")
         if s["rows_in"] != s["rows_out"]:
             print("REFUSED: row count does not match — nothing may be silently dropped", file=sys.stderr)
+            return 1
+        return 0
+
+    if a.cmd == "import-tickets":
+        as_of = _as_of(a.as_of)
+        s = tickets.import_tickets(conn, a.export_csv, run_id=a.run_id, at=as_of.isoformat())
+        print(f"{s['rows_in']} rows in, {s['rows_out']} tickets out, {s['findings']} findings")
+        if s["rows_in"] != s["rows_out"]:
+            print("REFUSED: row count does not match — nothing may be silently dropped",
+                  file=sys.stderr)
             return 1
         return 0
 
