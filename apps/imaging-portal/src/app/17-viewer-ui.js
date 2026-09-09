@@ -454,7 +454,7 @@ async function openPrior(studyId) {
   V.active = target.i;
   target.el.classList.add('is-loading');
   try {
-    const rows = await API.get(`studies/${studyId}/series`);
+    const rows = await listChildren(`studies/${studyId}/series`);
     rows.sort((a, b) => (+a.MainDicomTags?.SeriesNumber || 0) - (+b.MainDicomTags?.SeriesNumber || 0));
     const built = await buildSeries(rows[0]);
     built.priorOf = prior;
@@ -480,7 +480,7 @@ async function openViewer(study) {
   setLayoutGrid(1, 1);
   setTool(V.tool);
   try {
-    const rows = await API.get(`studies/${study.id}/series`);
+    const rows = await listChildren(`studies/${study.id}/series`);
     rows.sort((a, b) => (+a.MainDicomTags?.SeriesNumber || 0) - (+b.MainDicomTags?.SeriesNumber || 0));
     V.series = await Promise.all(rows.map(buildSeries));
     buildSeriesList();

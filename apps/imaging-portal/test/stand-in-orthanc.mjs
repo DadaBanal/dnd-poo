@@ -153,7 +153,8 @@ const PLUGIN_INFO = {
   transfers: { Version: '1.7', Description: 'Transfers accelerator' }
 };
 
-export function startStandInOrthanc({ portalHtml, config = null, expandSupported = true } = {}) {
+export function startStandInOrthanc({ portalHtml, config = null, expandSupported = true,
+                                     childExpandSupported = true } = {}) {
   const studies = buildArchive();
   const requests = [];
   const json = (res, body, code = 200) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
@@ -207,12 +208,33 @@ export function startStandInOrthanc({ portalHtml, config = null, expandSupported
       return json(res, out.map(({ _mod, ...s }) => (q.Expand ? s : s.ID)));
     }
 
+    // A child listing is only expanded when ?expand is asked for. MEASURED 9 Sep
+    // 2026: PMC's archive answers the bare form with ids, and code that reads
+    // .ID off a string then requests `series//instances` and gets a bare 404.
+    // `childExpandSupported: false` goes one worse and ignores ?expand entirely,
+    // which is the shape the portal still has to survive.
+    const expanded = () => childExpandSupported && url.searchParams.has('expand');
+
     let m;
     if ((m = path.match(/^studies\/([^/]+)\/series$/))) {
       const st = studies.find(s => s.ID === m[1]); if (!st) { res.writeHead(404); return res.end(); }
+      if (!expanded()) return json(res, st.Series);
       return json(res, st.Series.map((sid, k) => ({ ID: sid, MainDicomTags: { SeriesNumber: String(k + 1),
         SeriesDescription: `${st._mod} series ${k + 1}`, Modality: st._mod },
         Instances: Array.from({ length: 40 }, (_, i) => `${sid}-inst-${i}`) })));
+    }
+    // Resolving one child by id, which is what the portal falls back to.
+    if ((m = path.match(/^series\/(study-\d+-series-\d+)$/))) {
+      const q = /^(study-\d+)-series-(\d+)$/.exec(m[1]);
+      const st = studies.find(s => s.ID === q[1]); if (!st) { res.writeHead(404); return res.end(); }
+      return json(res, { ID: m[1], MainDicomTags: { SeriesNumber: String(+q[2] + 1),
+        SeriesDescription: `${st._mod} series ${+q[2] + 1}`, Modality: st._mod },
+        Instances: Array.from({ length: 40 }, (_, i) => `${m[1]}-inst-${i}`) });
+    }
+    if ((m = path.match(/^instances\/(study-\d+-series-\d+-inst-\d+)$/))) {
+      const q = /-inst-(\d+)$/.exec(m[1]);
+      return json(res, { ID: m[1], IndexInSeries: +q[1] + 1,
+        MainDicomTags: { InstanceNumber: String(+q[1] + 1) } });
     }
     // Every instance id carries its own coordinates: <study>-series-<k>-inst-<i>.
     const parseInst = id => { const q = /^(study-\d+)-series-(\d+)-inst-(\d+)$/.exec(id || '');
@@ -220,6 +242,7 @@ export function startStandInOrthanc({ portalHtml, config = null, expandSupported
     if ((m = path.match(/^series\/([^/]+)\/instances$/))) {
       const q = /^(study-\d+)-series-(\d+)$/.exec(m[1]); if (!q) { res.writeHead(404); return res.end(); }
       const st = studies.find(s => s.ID === q[1]); if (!st) { res.writeHead(404); return res.end(); }
+      if (!expanded()) return json(res, Array.from({ length: 40 }, (_, i) => `${m[1]}-inst-${i}`));
       return json(res, Array.from({ length: 40 }, (_, i) => ({
         ID: `${m[1]}-inst-${i}`, IndexInSeries: i + 1,
         MainDicomTags: { InstanceNumber: String(i + 1), SOPInstanceUID: `1.2.826.0.1.3680043.8.498.9${q[2]}${String(i).padStart(3, '0')}`,

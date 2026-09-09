@@ -43,7 +43,11 @@ param(
   [string] $PortalDir   = 'C:\PMC\portal',
   [string] $BaseUrl     = 'https://imaging.pmcne.ph',
   [string] $ServiceName = 'Orthanc',
-  [int]    $UpTimeoutSeconds = 90
+  [int]    $UpTimeoutSeconds = 90,
+  # Orthanc answers 401 to an unauthenticated request for ANY path, present or
+  # not, so without a credential the final proof cannot tell "served" from
+  # "not mapped". Supply one and the proof is real.
+  [pscredential] $Credential
 )
 
 $ErrorActionPreference = 'Stop'
@@ -54,7 +58,7 @@ $Stamp   = Get-Date -Format 'yyyyMMdd-HHmmss'
 
 # The page this script installs, and the only bytes it will accept.
 $PortalFile   = Join-Path $Here 'PMC_Imaging_Portal.html'
-$ExpectedHash = '778e297e51fc50774d3a9f48932ed77fe3ea6fd0a817b9b83bbe80e642217e79'
+$ExpectedHash = '04f4a9fef470a70241badae1e932c46d43b48acb45b901f8df8fd573a960b564'
 
 $script:Changes = @()
 # ServeFolders reads the page off disk on every request, so replacing the file
@@ -138,7 +142,9 @@ else {
 Head '3. ServeFolders'
 $dll = @(Get-ChildItem $pluginDir -Filter '*ServeFolders*.dll' -ErrorAction SilentlyContinue)
 $restoreFrom = $null
-if ($dll.Count) { Note ("  present: {0}" -f $dll[0].Name) Green }
+$pluginsFile = $null      # the config file that defines the Plugins list
+$pluginsNeedsEntry = $false
+if ($dll.Count) { Note ("  on disk: {0}" -f $dll[0].Name) Green }
 elseif ($Rollback) { Note '  not present; nothing to do in rollback' DarkGray }
 else {
   Note '  NOT in the Plugins folder. The 2 Sep cutover dropped it.' Yellow
@@ -153,6 +159,54 @@ else {
     Note '  put it in the Plugins folder, and run this again. This script will not download a' Yellow
     Note '  plugin onto a clinical box.' Yellow
     Die 'ServeFolders.dll is missing and cannot be restored from anything already here.'
+  }
+}
+
+# Being in the Plugins folder is not the same as being loaded. Orthanc loads what
+# its `Plugins` setting names, and the 2 Sep cutover rewrote that list to 8
+# entries. MEASURED 9 Sep 2026: ServeFolders.dll is on this disk and is NOT in
+# the loaded set, which is what that looks like from outside.
+if ($dll.Count -and -not $Rollback) {
+  $dllPath = $dll[0].FullName
+  $cfgFiles = if ($configIsDir) { @(Get-ChildItem $configTarget -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object FullName) }
+              else { @($configTarget) }
+  foreach ($f in $cfgFiles) {
+    $t = Get-Content $f -Raw
+    if ($t -notmatch '"Plugins"\s*:') { continue }
+    $pluginsFile = $f
+    if ($t -match [regex]::Escape((Split-Path -Leaf $dllPath))) {
+      Note ("  named in the Plugins list of {0}" -f (Split-Path -Leaf $f)) Green
+    } else {
+      $pluginsNeedsEntry = $true
+      Note ("  NOT named in the Plugins list of {0} -- Orthanc will not load it." -f (Split-Path -Leaf $f)) Yellow
+    }
+    break
+  }
+  if (-not $pluginsFile) {
+    Note '  No "Plugins" setting found in the configuration. Orthanc loads nothing by default,' Yellow
+    Note '  yet plugins are running, so this script is reading the wrong configuration.' Yellow
+    Die 'Could not find the Plugins setting; not guessing at a live archive.'
+  }
+}
+
+if ($pluginsNeedsEntry) {
+  $entry = ($dll[0].FullName -replace '\\','/')
+  $backupP = "$pluginsFile.pmcportal-$Stamp"
+  $script:NeedsRestart = $true
+  if ($Apply) {
+    $t = Get-Content $pluginsFile -Raw
+    $open = $t.IndexOf('[', $t.IndexOf('"Plugins"'))
+    $close = $t.IndexOf(']', $open)
+    if ($open -lt 0 -or $close -lt 0) { Die 'The Plugins setting is not a simple array; add ServeFolders.dll to it by hand.' }
+    $inner = $t.Substring($open + 1, $close - $open - 1)
+    $sep = if ($inner.Trim().Length) { ',' } else { '' }
+    Copy-Item $pluginsFile $backupP -Force
+    Did ("backed up {0} to {1}" -f (Split-Path -Leaf $pluginsFile), (Split-Path -Leaf $backupP))
+    Set-Content -Path $pluginsFile -Value ($t.Insert($close, "$sep`r`n    `"$entry`"`r`n  ")) -Encoding UTF8
+    Did ("added ServeFolders.dll to the Plugins list in {0}" -f (Split-Path -Leaf $pluginsFile))
+  } else {
+    Plan ("back up {0}" -f (Split-Path -Leaf $pluginsFile))
+    Plan ("add `"$entry`" to its Plugins list, so Orthanc actually loads ServeFolders")
   }
 }
 
@@ -290,19 +344,28 @@ else {
 
 # --------------------------------------------------------------------- proof
 Head '7. Proof'
+function Get-Code {
+  param([string]$Url)
+  $a = @{ Uri = $Url; UseBasicParsing = $true; TimeoutSec = 15; ErrorAction = 'Stop' }
+  if ($Credential) { $a.Credential = $Credential }
+  try { return [int](Invoke-WebRequest @a).StatusCode }
+  catch { if ($_.Exception.Response) { return [int]$_.Exception.Response.StatusCode }; return 0 }
+}
 if (-not $Apply) { Note '  nothing to prove in a preview' DarkGray }
 else {
-  $code = 0
-  try { $code = [int](Invoke-WebRequest "$BaseUrl/pmc/index.html" -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop).StatusCode }
-  catch { if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode } }
-  switch ($code) {
-    200 { Note "  $BaseUrl/pmc/ is being served." Green }
-    401 { Note "  $BaseUrl/pmc/ is served, behind the archive's sign-in. That is what it should be." Green }
-    403 { Note "  $BaseUrl/pmc/ is served, behind the archive's sign-in. That is what it should be." Green }
-    404 { Note '  404. ServeFolders is not mapping /pmc; check the Orthanc log for the plugin loading.' Red }
-    0   { Note "  No answer from $BaseUrl. Check DNS and the firewall rule." Red }
-    default { Note ("  HTTP {0} from {1}/pmc/index.html" -f $code, $BaseUrl) Yellow }
+  $real = Get-Code "$BaseUrl/pmc/index.html"
+  # A control path that cannot exist. If it answers the same as the real one,
+  # the answer is about authentication, not about whether the page is served.
+  $control = Get-Code ("$BaseUrl/pmc/__not-here-" + [guid]::NewGuid().ToString('N') + '.html')
+  if ($real -eq 200) { Note "  $BaseUrl/pmc/ is being served." Green }
+  elseif ($real -eq 404) { Note '  404. ServeFolders is not mapping /pmc. Check the Orthanc log for the plugin loading.' Red }
+  elseif ($real -eq 0) { Note "  No answer from $BaseUrl. Check DNS and the firewall rule." Red }
+  elseif ($real -eq $control) {
+    Note ("  HTTP {0} for the page AND for a path that cannot exist, so this proves nothing." -f $real) Yellow
+    Note '  Orthanc answers 401 to any unauthenticated request. Re-run the proof with a credential:' Yellow
+    Note ("  .\Install-PmcImagingPortal.ps1 -Apply -Credential (Get-Credential)") Cyan
   }
+  else { Note ("  HTTP {0} for the page, {1} for a path that cannot exist -- it is being served." -f $real, $control) Green }
 }
 
 Head 'Summary'

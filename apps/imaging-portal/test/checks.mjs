@@ -175,6 +175,30 @@ check('a study opens with its series', async (b, s) => {
   await ctx.close();
 });
 
+check('a study still opens when the archive ignores ?expand on child listings', async (b, s) => {
+  // MEASURED 9 Sep 2026 on PMC's archive: a child route can answer with bare
+  // ids. Reading .ID off a string yields undefined, the next request becomes
+  // `series//instances`, and the 404 that comes back says nothing about why.
+  // Here the server ignores ?expand outright, which is the worst case.
+  const flat = await startStandInOrthanc({ portalHtml, childExpandSupported: false });
+  try {
+    const { page, ctx, pageErrors } = await openPortal(b, flat);
+    await page.locator('#results .card, #results tbody tr').first().click();
+    await page.waitForSelector('#sheet[open]');
+    await page.waitForFunction(() => document.querySelectorAll('#seriesWrap .serie').length > 0,
+      null, { timeout: 20000 });
+    const first = await page.textContent('#seriesWrap .serie b');
+    ok(/series/i.test(first), `the series list fell back to something unusable: "${first}"`);
+    // and the viewer, which needs the instance list, still opens on it
+    await page.click('#openViewer');
+    await page.waitForFunction(() => document.querySelector('#viewer')?.dataset.ready === '1', null, { timeout: 30000 });
+    await page.waitForFunction(() => document.querySelector('.pane')?.dataset.index !== undefined, null, { timeout: 30000 });
+    ok(!/ \/ 0$/.test(await page.textContent('#vwrFoot')), 'the viewer found no frames');
+    eq(pageErrors.length, 0, `page errors: ${pageErrors.join(' | ')}`);
+    await ctx.close();
+  } finally { await flat.close(); }
+});
+
 check('viewer buttons are built from the server\'s own plugin list', async (b, s) => {
   const { page, ctx } = await openPortal(b, s);
   await page.locator('#results .card, #results tbody tr').first().click();

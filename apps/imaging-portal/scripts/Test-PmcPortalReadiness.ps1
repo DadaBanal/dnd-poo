@@ -89,8 +89,9 @@ if ($pl.ok) { $plugins = $pl.content | ConvertFrom-Json; Say ("  loaded: {0}" -f
 $serve = $plugins -contains 'serve-folders'
 if ($serve) { Say "  ServeFolders IS loaded -- the portal can be served." Green }
 else {
-  Say "  ServeFolders is NOT loaded. The 2 Sep cutover dropped it." Yellow
-  Say "  Until it is back, writing the portal file serves nothing. This is the deployment blocker." Yellow
+  Say "  ServeFolders is NOT loaded. Until it is, writing the portal file serves nothing." Yellow
+  Say "  Note this is about the Plugins LIST, not the folder: Orthanc loads what its" Yellow
+  Say "  `"Plugins`" setting names, and the 2 Sep cutover rewrote that list to 8 entries." Yellow
 }
 foreach ($want in @('dicom-web','ohif','stone-webviewer','gdcm')) {
   if ($plugins -contains $want) { Say ("  {0}: present" -f $want) }
@@ -109,6 +110,14 @@ if (Test-Path $cfgPath) {
   $raw = Get-Content $cfgPath -Raw
   if ($raw -match '"ServeFolders"') { Say "  orthanc.json has a ServeFolders section." Green }
   else { Say "  orthanc.json has NO ServeFolders section." Yellow }
+  if ($raw -match '(?s)"Plugins"\s*:\s*\[(.*?)\]') {
+    $listed = @([regex]::Matches($Matches[1], '"([^"]+)"') | ForEach-Object { Split-Path -Leaf $_.Groups[1].Value })
+    Say ("  Plugins list names {0}: {1}" -f $listed.Count, ($listed -join ', '))
+    if ($listed -notcontains 'ServeFolders.dll') {
+      Say '  ServeFolders.dll is NOT in that list, which is exactly why it is not loaded.' Yellow
+      Say '  The installer adds it, with a backup of the file it edits.' Cyan
+    }
+  } else { Say '  No "Plugins" array found in orthanc.json (it may live in another file in the directory).' DarkGray }
   if ($raw -match '"DataSource"\s*:\s*"([^"]+)"') {
     Say ("  OHIF.DataSource = {0}" -f $Matches[1])
     if ($Matches[1] -eq 'dicom-web') { Say "    -> the portal's default OHIF route is correct for this server." Green }
@@ -133,20 +142,37 @@ foreach ($mod in $Modalities) {
     continue
   }
   $studies = @($find.content | ConvertFrom-Json)
-  if (-not $studies.Count) { Say ("  {0}: no study in the last {1} days" -f $mod, $DaysBack) DarkGray; continue }
+  if (-not @($studies).Count) { Say ("  {0}: no study in the last {1} days" -f $mod, $DaysBack) DarkGray; continue }
+  Say ("  {0}: /tools/find returned {1} study(s), {2}" -f $mod, @($studies).Count, (Shape $studies)) DarkGray
   $study = $studies[0]
 
-  $ser = Invoke-Orthanc "studies/$($study.ID)/series"
+  # A listing can come back as objects or as bare id strings. Take the id either
+  # way, and SAY which shape it was -- a script that reads .ID off a string gets
+  # $null, asks for `series//instances`, and reports a 404 that explains nothing.
+  function Get-Id { param($Item) if ($Item -is [string]) { $Item } else { $Item.ID } }
+  function Shape  { param($Arr) if (-not @($Arr).Count) { 'empty' }
+                    elseif ($Arr[0] -is [string]) { 'ids only' } else { 'expanded' } }
+
+  if (-not $study.ID) {
+    Say ("  {0}: /tools/find returned {1} -- no study id to follow." -f $mod, (Shape $studies)) Red
+    Say ("       raw: {0}" -f $find.content.Substring(0, [Math]::Min(220, $find.content.Length))) DarkGray
+    Say '       The portal sends Expand and needs the id. This is the first thing to fix.' Red
+    continue
+  }
+
+  $ser = Invoke-Orthanc "studies/$($study.ID)/series?expand"
   if (-not $ser.ok) { Say ("  {0}: series listing failed ({1})" -f $mod, $ser.status) Yellow; continue }
   $series = @($ser.content | ConvertFrom-Json)
   if (-not $series.Count) { Say ("  {0}: study has no series" -f $mod) Yellow; continue }
-  $sid = $series[0].ID
+  $serShape = Shape $series
+  $sid = Get-Id $series[0]
 
-  $inst = Invoke-Orthanc "series/$sid/instances"
-  if (-not $inst.ok) { Say ("  {0}: instance listing failed ({1})" -f $mod, $inst.status) Yellow; continue }
+  $inst = Invoke-Orthanc "series/$sid/instances?expand"
+  if (-not $inst.ok) { Say ("  {0}: instance listing failed ({1}) for series {2}" -f $mod, $inst.status, $sid) Yellow; continue }
   $instances = @($inst.content | ConvertFrom-Json)
   if (-not $instances.Count) { Say ("  {0}: series has no instances" -f $mod) Yellow; continue }
-  $iid = $instances[[int]($instances.Count / 2)].ID
+  $instShape = Shape $instances
+  $iid = Get-Id $instances[[int]($instances.Count / 2)]
 
   $tags     = Invoke-Orthanc "instances/$iid/simplified-tags"
   $numpy    = Invoke-Orthanc "instances/$iid/frames/0/numpy?rescale=0&compress=0"
@@ -163,12 +189,14 @@ foreach ($mod in $Modalities) {
     elseif ($t.ImagerPixelSpacing) { $spacing = "$($t.ImagerPixelSpacing) (detector)" }
   }
 
-  Say ("  {0,-3}  series {1,4} inst   viewer path: {2}" -f $mod, $instances.Count, $path) $colour
+  Say ("  {0,-3}  series {1,4} inst   viewer path: {2}   listings: {3}/{4}" -f `
+       $mod, $instances.Count, $path, $serShape, $instShape) $colour
   Say ("       list {0,5} ms   tags {1,4} ms   numpy {2,5} ms/{3}   rendered {4,4} ms/{5}   spacing {6}" -f `
        $inst.ms, $tags.ms, $numpy.ms, $(if($numpy.ok){"$([int]($numpy.bytes/1024)) KB"}else{"HTTP $($numpy.status)"}), `
        $rendered.ms, $(if($rendered.ok){"$([int]($rendered.bytes/1024)) KB"}else{"HTTP $($rendered.status)"}), $spacing) DarkGray
 
   $rows += [pscustomobject]@{ Modality = $mod; Instances = $instances.Count; Path = $path
+                              Series = $serShape; Inst = $instShape
                               ListMs = $inst.ms; NumpyMs = $numpy.ms; RenderedMs = $rendered.ms
                               PixelSpacing = $spacing }
 }
@@ -181,7 +209,13 @@ $none = @($rows | Where-Object { $_.Path -eq 'NOTHING WORKS' })
 if ($none.Count) { Say ("  NO path works for: {0}. Investigate before deploying." -f (($none.Modality) -join ', ')) Red }
 $slow = @($rows | Where-Object { $_.NumpyMs -gt 1500 })
 if ($slow.Count) { Say ("  Slow pixel fetch (>1.5 s) for: {0}. Cine and MPR will feel it." -f (($slow.Modality) -join ', ')) Yellow }
-if (-not $serve) { Say "  BLOCKER: ServeFolders is not loaded. Restore it before writing the portal file." Yellow }
+if (-not $serve) { Say '  BLOCKER: ServeFolders is not loaded. The installer fixes this; it is not fatal.' Yellow }
+$flat = @($rows | Where-Object { $_.Series -eq 'ids only' -or $_.Inst -eq 'ids only' })
+if ($flat.Count) {
+  Say ('  This archive returns id-only listings even for ?expand on: {0}.' -f (($flat.Modality) -join ', ')) Yellow
+  Say '  The portal handles that, at the cost of one request per child. Expect the study' Yellow
+  Say '  sheet and the viewer to open more slowly on large series.' Yellow
+}
 Write-Host ''
 $rows | Format-Table -AutoSize
 Write-Host ''

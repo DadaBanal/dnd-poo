@@ -48,7 +48,7 @@ async function openStudy(i) {
   };
   if (!sheet.open) sheet.showModal();
   try {
-    const series = await API.get(`studies/${s.id}/series`);
+    const series = await listChildren(`studies/${s.id}/series`);
     series.sort((a, b) => (+a.MainDicomTags?.SeriesNumber || 0) - (+b.MainDicomTags?.SeriesNumber || 0));
     $('#seriesWrap').innerHTML = series.map((se, k) => `
       <div class="serie">

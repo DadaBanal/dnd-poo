@@ -180,7 +180,7 @@ async function buildSeries(seriesRow) {
   const id = seriesRow.ID;
   let instances = [];
   try {
-    instances = await API.get(`series/${id}/instances`);
+    instances = await listChildren(`series/${id}/instances`);
   } catch {
     instances = (seriesRow.Instances || []).map((iid, k) => ({ ID: iid, MainDicomTags: { InstanceNumber: String(k + 1) } }));
   }

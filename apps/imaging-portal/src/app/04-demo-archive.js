@@ -162,13 +162,13 @@ const Demo = (() => {
         }
         return out;
       }
-      const m = p.match(/^studies\/([^/]+)\/series$/);
+      const m = p.match(/^studies\/([^/]+)\/series(?:\?.*)?$/);
       if (m) { const st = studies.find(s => s.ID === m[1]); if (!st) throw new ApiError(404, '', p);
         return st.Series.map((sid, i) => ({ ID: sid, MainDicomTags: { SeriesNumber: String(i + 1),
           SeriesDescription: i === 0 ? 'Scout / survey' : `Acquisition ${i}`,
           Modality: st.RequestedTags.ModalitiesInStudy },
           Instances: Array.from({ length: 3 }, (_, k) => `${sid}-i${k}`) })); }
-      const mi = p.match(/^series\/([^/]+)\/instances$/);
+      const mi = p.match(/^series\/([^/]+)\/instances(?:\?.*)?$/);
       if (mi) return Array.from({ length: 24 }, (_, k) => ({ ID: `${mi[1]}-i${k}`, IndexInSeries: k + 1,
         MainDicomTags: { InstanceNumber: String(k + 1), NumberOfFrames: '1',
           SOPInstanceUID: `1.2.826.0.1.3680043.10.999.${mi[1].length}.${k}` } }));

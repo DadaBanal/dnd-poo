@@ -14,7 +14,7 @@ async function fillThumb(box) {
   const show = src => { img.onerror = () => { img.remove(); }; img.onload = () => img.classList.add('ready'); img.src = src; };
   if (state.demo) { show(Demo.thumb(mod || 'CR', box.dataset.seed || 1)); return; }
   try {
-    const series = await gate(() => API.get(`studies/${id}/series`));
+    const series = await gate(() => listChildren(`studies/${id}/series`));
     const withInst = series.find(s => s.Instances?.length);
     if (!withInst) return;
     const iid = withInst.Instances[Math.floor(withInst.Instances.length / 2)] || withInst.Instances[0];

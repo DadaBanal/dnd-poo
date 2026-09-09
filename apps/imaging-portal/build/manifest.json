@@ -1,12 +1,12 @@
 {
   "artifact": "PMC_Imaging_Portal.html",
   "reference": {
-    "bytes": 194106,
-    "sha256": "778e297e51fc50774d3a9f48932ed77fe3ea6fd0a817b9b83bbe80e642217e79",
+    "bytes": 195789,
+    "sha256": "04f4a9fef470a70241badae1e932c46d43b48acb45b901f8df8fd573a960b564",
     "source": "re-baselined from src/ on 2026-09-09",
     "previous": {
-      "bytes": 193577,
-      "sha256": "d760ddd63282be00a62d09441f829c9be8656b79661718577637f3b7d0558208"
+      "bytes": 194106,
+      "sha256": "778e297e51fc50774d3a9f48932ed77fe3ea6fd0a817b9b83bbe80e642217e79"
     }
   },
   "styles": [
