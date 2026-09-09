@@ -32,6 +32,9 @@ class SpineTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        # The catalogue is no longer seeded by default — one board is. These
+        # tests exercise the importer and the reports, so they load the sample.
+        db.seed_sample(self.conn)
         self.summary = register.import_register(
             self.conn, FIXTURE, run_id="t1", at=AS_OF.isoformat())
 
@@ -215,6 +218,9 @@ class GateTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        # The catalogue is no longer seeded by default — one board is. These
+        # tests exercise the importer and the reports, so they load the sample.
+        db.seed_sample(self.conn)
 
     def tearDown(self) -> None:
         self.conn.close()
@@ -258,6 +264,9 @@ class DeskImportTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        # The catalogue is no longer seeded by default — one board is. These
+        # tests exercise the importer and the reports, so they load the sample.
+        db.seed_sample(self.conn)
         self.summary = tickets.import_tickets(
             self.conn, DESK, run_id="d1", at=AS_OF.isoformat())
 
@@ -462,6 +471,9 @@ class UpliftEvidenceTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        # The catalogue is no longer seeded by default — one board is. These
+        # tests exercise the importer and the reports, so they load the sample.
+        db.seed_sample(self.conn)
         tickets.import_tickets(self.conn, DESK, run_id="d1", at=AS_OF.isoformat())
 
     def tearDown(self) -> None:
@@ -599,6 +611,9 @@ class TheGateTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        # The catalogue is no longer seeded by default — one board is. These
+        # tests exercise the importer and the reports, so they load the sample.
+        db.seed_sample(self.conn)
         self.conn.execute(
             "INSERT INTO work_item (work_item_id, source, name, entity_id, contract_basis)"
             " VALUES ('ITO-1723','desk','MRI feed dead','PMC','VARIATION')")
@@ -680,10 +695,10 @@ class TheGateTest(unittest.TestCase):
 
 
 class SchemaRulesTest(unittest.TestCase):
-    """The four rules that are decisions somebody with authority has not made.
+    """What a fresh database actually contains, and the rules it still enforces.
 
-    Each is enforced in the schema precisely so a port, an importer or a hurry
-    cannot relax it. These assert the seed does not quietly claim otherwise.
+    Deliberately does NOT load seed/sample/. The whole point is that a new spine
+    arrives nearly empty and PMC fills it, so these assert on the real default.
     """
 
     def setUp(self) -> None:
@@ -694,24 +709,52 @@ class SchemaRulesTest(unittest.TestCase):
         self.conn.close()
         self.tmp.cleanup()
 
-    def test_the_phase_2_boards_are_live_and_every_live_board_is_owned(self):
-        # A desk nobody can file on is not a foot in the door. The five phase 2
-        # boards are Dada IT's and the PMO's own work, so they seed live.
-        live = [r["board_id"] for r in self.conn.execute(
-            "SELECT board_id FROM board WHERE is_live=1 ORDER BY board_id")]
-        self.assertEqual(live, ["AGREEMENT", "IT_HELP", "IT_REQUEST", "SECURITY", "UNROUTED"])
+    def test_a_new_spine_has_the_first_board_and_the_unrouted_queue(self):
+        """A PSA does not arrive with boards in it. You create the one you run.
+
+        Two seed, not one: the first real board, and the queue an unclassifiable
+        row lands on. Without the second a lossless import is impossible -- the
+        importer falls back to it by foreign key and fails outright when it is
+        missing, which is how this was found.
+        """
+        boards = [(r["board_id"], r["is_live"], r["is_unrouted"])
+                  for r in self.conn.execute(
+                      "SELECT board_id, is_live, is_unrouted FROM board ORDER BY board_id")]
+        self.assertEqual(boards, [("IT_HELP", 1, 0), ("UNROUTED", 1, 1)])
         unowned = self.conn.execute(
             "SELECT COUNT(*) c FROM board WHERE is_live=1"
             " AND (owner IS NULL OR deputy IS NULL)").fetchone()["c"]
         self.assertEqual(unowned, 0)
 
-    def test_a_departmental_board_still_cannot_go_live_unowned(self):
-        # Not a signature: phase 3a has not opened, so there is nobody to name.
-        # The rule still bites the moment somebody tries to skip that.
+    def test_a_desk_import_survives_an_empty_catalogue(self):
+        """The clean slate must not cost losslessness. Every row still lands."""
+        summary = tickets.import_tickets(
+            self.conn, DESK, run_id="clean", at=AS_OF.isoformat())
+        self.assertEqual(summary["rows_in"], summary["rows_out"])
+        placed = self.conn.execute(
+            "SELECT COUNT(*) c FROM ticket WHERE board_id IS NOT NULL").fetchone()["c"]
+        self.assertEqual(placed, summary["rows_out"])
+
+    def test_the_catalogue_starts_empty_rather_than_guessed(self):
+        """Sixteen boards and fifty-one items used to seed here, reverse-engineered
+        from a workbook out of the desk in use today. That is a sample of how a
+        different system was once configured, not PMC's decisions, and shipping it
+        as the default made somebody else's guesses look authoritative."""
+        for table in ("catalogue_item", "service_component", "service_family",
+                      "service_action", "clinical_floor", "sla_target"):
+            n = self.conn.execute(f"SELECT COUNT(*) c FROM {table}").fetchone()["c"]
+            self.assertEqual(n, 0, f"{table} should start empty")
+
+    def test_a_new_board_still_cannot_go_live_unowned(self):
+        """The rule holds on boards PMC creates, which is where it now matters."""
+        self.conn.execute(
+            "INSERT INTO board (board_id, display_name, phase, fulfiller_group, is_live)"
+            " VALUES ('NURSING', 'Nursing', '3b', 'Nursing supervisor', 0)")
         with self.assertRaises(sqlite3.IntegrityError):
             self.conn.execute("UPDATE board SET is_live=1 WHERE board_id='NURSING'")
 
     def test_a_baseline_catalogue_item_must_name_its_baseline_heading(self):
+        db.seed_sample(self.conn)         # needs items to test the rule against
         unknown = self.conn.execute(
             "SELECT COUNT(*) c FROM catalogue_item WHERE default_contract_basis='UNKNOWN'"
         ).fetchone()["c"]
@@ -722,6 +765,7 @@ class SchemaRulesTest(unittest.TestCase):
                 " default_scope_item_id=NULL WHERE default_contract_basis='UNKNOWN'")
 
     def test_no_clinical_floor_is_signed_and_none_can_claim_to_be(self):
+        db.seed_sample(self.conn)         # needs floors to test the rule against
         signed = self.conn.execute(
             "SELECT COUNT(*) c FROM clinical_floor WHERE status='SIGNED_OFF'").fetchone()["c"]
         self.assertEqual(signed, 0)
@@ -729,6 +773,7 @@ class SchemaRulesTest(unittest.TestCase):
             self.conn.execute("UPDATE clinical_floor SET status='SIGNED_OFF'")
 
     def test_no_sla_target_is_enforced(self):
+        db.seed_sample(self.conn)         # needs targets to test the rule against
         enforced = self.conn.execute(
             "SELECT COUNT(*) c FROM sla_target WHERE enforced=1").fetchone()["c"]
         self.assertEqual(enforced, 0)

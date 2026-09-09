@@ -35,6 +35,12 @@ def _seed_rows(name: str) -> list[dict]:
         return list(csv.DictReader(fh))
 
 
+def _sample_rows(name: str) -> list[dict]:
+    """Rows from seed/sample/ — never loaded unless somebody asks for them."""
+    with (SEED_DIR / "sample" / name).open(encoding="utf-8-sig", newline="") as fh:
+        return list(csv.DictReader(fh))
+
+
 def seed(conn: sqlite3.Connection) -> None:
     """Load the reference data that is the same for every deployment.
 
@@ -69,21 +75,22 @@ def seed(conn: sqlite3.Connection) -> None:
 
 
 def seed_catalogue(conn: sqlite3.Connection) -> None:
-    """Load the service catalogue.
+    """Create the first board, and nothing else.
 
-    The five phase 2 boards seed LIVE, with an owner and a deputy, because they
-    are Dada IT's and the PMO's own work and nobody else has to agree to them.
-    The names are defaults taken from the fulfiller groups the record already
-    states; they are in a CSV precisely so correcting one costs five seconds.
+    Dada's direction, 9 Sep 2026: a PSA does not arrive with boards in it. You
+    get the setup tables and you create the boards you are ready to run. So this
+    seeds ONE board -- the one Dada IT already answers -- and the catalogue,
+    the verbs, the floors and the SLA targets start empty.
 
-    The ten departmental boards seed not-live and unowned -- but the reason is
-    sequencing, not a signature. Phase 3a and 3b have not opened, so there is no
-    department to name an owner in yet. The CHECK still holds when they do.
+    What was here before was sixteen boards and fifty-one catalogue items
+    reverse-engineered from a workbook exported out of the desk in use today.
+    That workbook is a sample of how somebody once configured a different
+    system, not a model of how PMC works, and seeding it would have made
+    somebody else's guesses look like PMC's decisions the first time anyone
+    opened the database.
 
-    Clinical floors are the one thing seeded unsigned on purpose: that list is
-    signed by the Chief of Hospital, the Chief Nurse and the Quality officer,
-    and it changes no behaviour today because the catalogue items that matter
-    carry their own P1 floor regardless.
+    It is kept, under seed/sample/, and loaded only by seed_sample() when a
+    test or a demo asks for it. Nothing loads it by default.
     """
     def blank(v):
         return v if (v or "").strip() else None
@@ -97,27 +104,50 @@ def seed_catalogue(conn: sqlite3.Connection) -> None:
              blank(row["owner"]), blank(row["deputy"]), int(row["restricted"]),
              int(row["is_live"]), int(row["is_unrouted"]), blank(row["note"])),
         )
-    for row in _seed_rows("service_actions.csv"):
+    conn.commit()
+
+
+def seed_sample(conn: sqlite3.Connection) -> None:
+    """Load seed/sample/ -- the workbook-derived catalogue, boards and targets.
+
+    NOT loaded by init(). This is a sample of how a different system was once
+    configured, useful for exercising the importer and the reports against
+    something shaped like real data. It is not PMC's configuration and must not
+    be presented as one.
+    """
+    def blank(v):
+        return v if (v or "").strip() else None
+
+    for row in _sample_rows("boards.csv"):
+        conn.execute(
+            "INSERT OR REPLACE INTO board (board_id, display_name, phase, fulfiller_group,"
+            " owner, deputy, restricted, is_live, is_unrouted, note)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (row["board_id"], row["display_name"], row["phase"], row["fulfiller_group"],
+             blank(row["owner"]), blank(row["deputy"]), int(row["restricted"]),
+             int(row["is_live"]), int(row["is_unrouted"]), blank(row["note"])),
+        )
+    for row in _sample_rows("service_actions.csv"):
         conn.execute(
             "INSERT OR REPLACE INTO service_action"
             " (action_id, display_name, raw_name, kind, implies_impact, note) VALUES (?,?,?,?,?,?)",
             (row["action_id"], row["display_name"], blank(row["raw_name"]), row["kind"],
              blank(row["implies_impact"]), blank(row["note"])),
         )
-    for row in _seed_rows("service_families.csv"):
+    for row in _sample_rows("service_families.csv"):
         conn.execute(
             "INSERT OR REPLACE INTO service_family (family_id, display_name, raw_name, note)"
             " VALUES (?,?,?,?)",
             (row["family_id"], row["display_name"], blank(row["raw_name"]), blank(row["note"])),
         )
-    for row in _seed_rows("service_components.csv"):
+    for row in _sample_rows("service_components.csv"):
         conn.execute(
             "INSERT OR REPLACE INTO service_component"
             " (component_id, family_id, display_name, raw_name, is_draft, note) VALUES (?,?,?,?,?,?)",
             (row["component_id"], row["family_id"], row["display_name"], blank(row["raw_name"]),
              int(row["is_draft"]), blank(row["note"])),
         )
-    for row in _seed_rows("catalogue_items.csv"):
+    for row in _sample_rows("catalogue_items.csv"):
         conn.execute(
             "INSERT OR REPLACE INTO catalogue_item (catalogue_item_id, component_id, action_id,"
             " default_board_id, default_scope_item_id, default_contract_basis, clinical_impact,"
@@ -127,14 +157,14 @@ def seed_catalogue(conn: sqlite3.Connection) -> None:
              int(row["clinical_impact"]), blank(row["min_priority"]),
              int(row["restricted"]), int(row["is_draft"]), blank(row["note"])),
         )
-    for row in _seed_rows("clinical_floors.csv"):
+    for row in _sample_rows("clinical_floors.csv"):
         conn.execute(
             "INSERT OR REPLACE INTO clinical_floor"
             " (floor_id, description, priority, status, signed_off_by, signed_off_on) VALUES (?,?,?,?,?,?)",
             (row["floor_id"], row["description"], row["priority"], row["status"],
              blank(row["signed_off_by"]), blank(row["signed_off_on"])),
         )
-    for row in _seed_rows("sla_targets.csv"):
+    for row in _sample_rows("sla_targets.csv"):
         conn.execute(
             "INSERT OR REPLACE INTO sla_target (board_id, priority, clock, target_minutes,"
             " calendar, attainment_percent, enforced, note) VALUES (?,?,?,?,?,?,?,?)",
