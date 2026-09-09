@@ -31,11 +31,17 @@ Plus a data-quality summary, because the standing rule here is that flags are
 cd platform/psa-spine
 python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
-python3 -m psaspine report spine.db --out ./out --run-id r1
-python3 tests/test_spine.py          # 21 tests
+python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
+python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
+python3 tests/test_spine.py          # 83 tests
 ```
 
 Python 3.11+, standard library only. No packages, no server, no network.
+
+`import-tickets` reads an **export file**. There is no API client in this
+repository and nowhere to put a key: the TeamsWork keys were exposed in a
+screenshot, neither is ever written down, and both should be rotated. A test
+asserts the module contains no credential-shaped code.
 
 ## Measured against the real register
 
@@ -53,6 +59,42 @@ notices. The code is right and the paper carries a correction block.
 exact-match filter on `variation` drops it, and that row is an entire covered
 entity. `normalise_basis()` exists to make that mistake impossible rather than
 something to be remembered, and a test asserts it.
+
+## The SQL Server port
+
+`schema/*.sql` is the one schema. The copy that runs on `DND-SQL01\PMC_SS` is
+**generated** from it:
+
+```bash
+python3 tools/sqlite_to_tsql.py --write     # regenerate sqlserver/
+python3 tools/sqlite_to_tsql.py --check     # drift gate; CI runs this
+```
+
+Two copies of a commercial rule drift, and the copy that drifts is the one nobody
+reads — which here would be the one on the live server. So there is no
+hand-maintained second schema and the build fails if the committed T-SQL is not
+what the source produces today.
+
+The translator **refuses rather than guesses**. Every NVARCHAR width and every
+DECIMAL precision is a named decision in `tools/tsql-decisions.json`; a column
+missing from that file stops the build, as does an unrecognised statement, an
+unknown function inside a CHECK, or a width narrower than the CHECK beside it.
+
+| Construct | Port | Why |
+|---|---|---|
+| `INTEGER PRIMARY KEY` | `INT IDENTITY(1,1)` | It is a rowid alias, not an integer column |
+| `TEXT` | `NVARCHAR(n)`, `MAX` only for notes and details | The register's free-text cells run to thousands of characters; a name is not a note |
+| `REAL` | `DECIMAL` | These numbers reach an invoice |
+| dates | `NVARCHAR` **plus** a parsed computed column | `'20260904'` and `'2026-09-09'` both appear, and which shape the source used is itself evidence |
+| `RAISE(ABORT, …)` | `THROW` in an AFTER trigger that rolls back | SQL Server has no BEFORE trigger. The write is still refused; the blast radius is larger, and the generated file says so |
+
+`sqlserver/PMC_PSA_Spine_SqlServer.sql` previews by default (`@Apply = 0`),
+refuses to run twice over existing objects, verifies its own object counts inside
+the transaction before committing, and carries its rollback in the footer.
+
+**NOT VERIFIED.** It has never been executed. No environment on this account has
+a network route to `DND-SQL01`, so it is written to be handed to somebody who
+has one. Run it with `@Apply = 0` first and read the plan.
 
 ## Design notes
 
@@ -73,10 +115,11 @@ currently disappears.
 Advice written after the decision is worth nothing, so the schema refuses it.
 
 **SQLite, deliberately.** No server, no provisioning, no procurement, and one
-file that can be escrowed nightly to client-controlled storage. The schema stays
-within constructs SQL Server also accepts so the Azure SQL lift is a migration
-rather than a rewrite — but that path is **NOT VERIFIED**, and nothing here has
-been run against SQL Server.
+file that can be escrowed nightly to client-controlled storage. It is also still
+the source of the SQL Server schema rather than a thing that was replaced by it —
+see the port above. Nothing here has been run against SQL Server, and that
+remains **NOT VERIFIED**; what changed is that the T-SQL is now generated and
+drift-checked instead of being a claim about portability.
 
 ## What is deliberately not here
 
@@ -88,10 +131,20 @@ none is started:
 - **Service catalogue tables** — the ConnectWise Type/Subtype/Item taxonomy.
 - **Contacts, companies, boards** — the desk holds these today.
 - **Invoicing** — the spine produces the evidence for an invoice, not the invoice.
-- **The ticket ↔ variation adapter.** This is the known blocking gap: effort can
-  currently be banded against the 35 workstreams but not against tickets, so a
-  hospital-wide uplift claim cannot yet be evidenced from ticket effort. It is
-  the next thing to build if the variation is approved.
+- **Effort capture from the desk.** `import-tickets` writes work items and
+  tickets, never `time_entry`. Effort is banded by a person — the schema requires
+  a performer, an enterer, a charge method and an authority source, and a desk
+  export carries none of them reliably. An importer that invented those four
+  would be inventing the numerator of an uplift claim.
+- **Seeding the SQL Server copy.** The generated script creates structure only.
+  No fee amount, no board owner and no signed clinical floor: each is a decision
+  with a name attached that nobody has made yet.
+
+The ticket ↔ variation adapter is no longer on this list. `psaspine/tickets.py`
+puts tickets in `work_item`, `time_entry` already hangs off a work item, and
+`reports.uplift_evidence` produces the claim — see the two triggers in `005`,
+which are why a variation-path ticket cannot consume effort or close without a
+variation attached.
 
 ## The repository fence
 
