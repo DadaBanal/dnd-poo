@@ -258,7 +258,12 @@ function setWindow(pane, wc, ww) {
 function reloadForWindow(pane) {
   const targets = V.link.wl ? V.panes.filter(p => p.frame && p.frame.kind !== 'pixels') : [pane];
   for (const p of targets) {
-    for (const f of p.serie.frames) FrameCache.map.delete(FrameCache.key(f.instance, f.frame));
+    for (const f of p.serie.frames) {
+      // Only the archive-windowed pictures are stale. Stored values are not
+      // windowed, and on this archive they cost a cold file read to fetch, so
+      // throwing them away here would be expensive and pointless.
+      if (FrameCache.get(f.instance, f.frame)?.kind !== 'pixels') FrameCache.drop(f.instance, f.frame);
+    }
     showFrame(p, p.index);
   }
 }

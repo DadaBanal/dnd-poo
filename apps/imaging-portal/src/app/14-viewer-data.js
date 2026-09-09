@@ -82,20 +82,49 @@ function seriesGeometry(tags, seriesTags = {}) {
    browser tab will not survive. So the cache is bounded and evicts the frames
    furthest from where the user is looking, not simply the oldest.            */
 const FrameCache = {
-  max: 260, map: new Map(),
+  // Bounded by BYTES, not by a count of frames. MEASURED 9 Sep 2026 on PMC's
+  // cathlab archive: one XA frame's stored values are 1,478 KB and a single run
+  // is 56 frames, so a 260-frame cap would have been 384 MB of Int16Array in a
+  // browser tab. A cap in megabytes holds a whole run and still cannot run away.
+  maxBytes: 192 * 1024 * 1024,
+  bytes: 0, map: new Map(),
   key: (inst, f) => `${inst}#${f}`,
-  get(inst, f) { return this.map.get(this.key(inst, f)); },
+  size(val) {
+    if (val?.data?.byteLength) return val.data.byteLength;
+    return (val?.w && val?.h) ? val.w * val.h : 0;    // a decoded picture, roughly
+  },
+  get(inst, f) {
+    const k = this.key(inst, f), v = this.map.get(k);
+    // Touch on read, so eviction drops what nobody is looking at rather than
+    // what happened to be fetched first.
+    if (v !== undefined) { this.map.delete(k); this.map.set(k, v); }
+    return v;
+  },
   has(inst, f) { return this.map.has(this.key(inst, f)); },
   put(inst, f, val) {
-    this.map.set(this.key(inst, f), val);
-    if (this.map.size > this.max) {
-      const drop = this.map.size - this.max;
-      let n = 0;
-      for (const k of this.map.keys()) { if (n++ >= drop) break; this.map.delete(k); }
+    const k = this.key(inst, f), old = this.map.get(k);
+    // A picture must never displace the values for the same frame.
+    if (old?.kind === 'pixels' && val?.kind !== 'pixels') return old;
+    if (old) this.bytes -= this.size(old);
+    this.map.delete(k);
+    this.map.set(k, val);
+    this.bytes += this.size(val);
+    for (const key of this.map.keys()) {
+      if (this.bytes <= this.maxBytes || this.map.size <= 1) break;
+      if (key === k) continue;                       // never evict what was just asked for
+      this.bytes -= this.size(this.map.get(key));
+      this.map.delete(key);
     }
     return val;
   },
-  clear() { this.map.clear(); }
+  /** Drop one frame, keeping the byte count honest. */
+  drop(inst, f) {
+    const k = this.key(inst, f), v = this.map.get(k);
+    if (v === undefined) return;
+    this.bytes -= this.size(v);
+    this.map.delete(k);
+  },
+  clear() { this.map.clear(); this.bytes = 0; }
 };
 
 /** At most four frames in flight: more only queues them behind each other. */
