@@ -42,10 +42,17 @@ test/checks.mjs         24 checks driven through Chromium
 dist/                   the artifact. Generated. Never hand-edit.
 ```
 
-`src/` is a **lossless** split of the artifact that was signed off on 6 Sep 2026:
-concatenating the fragments in manifest order reproduces it byte for byte. The
-build asserts that on every run, so refactoring cannot silently change what goes
-onto the archive.
+`src/` began as a **lossless** split of the artifact signed off on 6 Sep 2026 —
+concatenating the fragments reproduced it byte for byte, and the build asserted
+that on every run so refactoring could not silently change what reaches the
+archive.
+
+**It has since diverged once, deliberately.** A security review found that an
+absolute `?api=` moved the whole data plane to another host while the address bar
+still read `imaging.pmcne.ph`. The parameter is now same-origin only. The
+artifact is therefore **101,154 bytes, sha256 `439667d3…d6f13`** — no longer the
+6 Sep build. Everything else about the gate is unchanged: the build still refuses
+any output that does not match the recorded reference.
 
 ## Commands
 

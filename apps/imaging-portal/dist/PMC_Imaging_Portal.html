@@ -1376,7 +1376,19 @@ async function boot() {
     if (r.ok) { const j = await r.json(); CFG = { ...CFG, ...j, viewers: { ...CFG.viewers, ...(j.viewers || {}) },
       features: { ...CFG.features, ...(j.features || {}) } }; } } catch {}
   const params = new URLSearchParams(location.search);
-  Live.base = new URL(params.get('api') || CFG.apiBase, location.href).href;
+  // The archive is always same-origin -- that is what lets this page reuse the
+  // browser's sign-in and never handle a password. An absolute ?api= would move
+  // the whole data plane to another host while the address bar still reads
+  // imaging.pmcne.ph, so a link could show fabricated studies, and a download
+  // button pointing at someone else's server, inside the hospital's own portal.
+  // Same-origin only; anything else is ignored and reported.
+  const asked = new URL(params.get('api') || CFG.apiBase, location.href);
+  if (asked.origin !== location.origin) {
+    console.warn('[PMC] ignoring cross-origin ?api=', asked.origin, '- the archive must be same-origin');
+    Live.base = new URL(CFG.apiBase, location.href).href;
+  } else {
+    Live.base = asked.href;
+  }
   $('#railEnv').textContent = CFG.environment;
   if (params.get('demo') === '1' || location.protocol === 'file:' || window.PMC_DEMO === true) { goDemo(); }
   else {

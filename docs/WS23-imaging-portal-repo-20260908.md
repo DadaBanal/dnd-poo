@@ -20,7 +20,7 @@ with a hand-pinned sha256. It is now built from source, with tests and CI.
 - `apps/imaging-portal/src/` — the artifact split into an HTML shell, 8 CSS
   fragments, 15 JS fragments and the favicon. **MEASURED: the split is lossless.**
   Re-joining the fragments in manifest order reproduces the original byte for
-  byte — 100,449 bytes, sha256 `c6d21731…3b30f4`. The build asserts this on every
+  byte — 100,449 bytes, sha256 `c6d21731…3b30f4` **as at 8 Sep**. The build asserted this on every
   run and refuses to emit anything else, so the file that goes onto the archive
   is provably the file that was signed off on 6 Sep.
 - `build/build.mjs` — assembles, and **enforces the self-contained rule**: it
@@ -34,6 +34,13 @@ with a hand-pinned sha256. It is now built from source, with tests and CI.
 - `.github/workflows/imaging-portal.yml` — CI runs the drift check, the browser
   checks, and publishes the artifact + hash. **NOT VERIFIED: never executed** (no
   Actions run has happened yet).
+
+## 1a. SUPERSEDED — the artifact changed on 9 Sep
+
+The hashes in section 2 describe the **6 Sep** build. A security fix on 9 Sep
+(cross-origin `?api=` ignored; see `WS36`-era commits) deliberately re-baselined
+the artifact to **101,154 bytes, sha256 `439667d3…d6f13`**. The comparison below
+is still the right method; only the left-hand number has moved.
 
 ## 2. Finding — the deliverables portal and the installer payload are different files
 

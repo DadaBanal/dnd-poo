@@ -41,9 +41,11 @@ archive. Therefore:
 
 - Never hand-edit anything in `dist/`. It is generated; CI fails if it drifts.
 - The build refuses to emit an artifact whose hash differs from the reference in
-  `build/manifest.json`. When a change is deliberate: change `src/`, run
-  `npm test`, run `npm run baseline`, and commit the manifest **with** the change
-  so the diff shows both.
+  `build/manifest.json`. When a change is deliberate the order is
+  **`npm run baseline` → `npm run build` → `npm test`**, then commit the manifest
+  **with** the change so the diff shows both. Baseline comes first because
+  `npm test` builds before it tests, so the gate would otherwise block the very
+  run that proves the change is sound.
 - The portal must stay self-contained — no CDN, no web font, no external request.
   The build enforces this; do not add an exception.
 - The portal must never send `OrderBy`. The ODBC index answers HTTP 500 to it.

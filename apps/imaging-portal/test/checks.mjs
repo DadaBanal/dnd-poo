@@ -297,11 +297,24 @@ check('falls back to clearly-labelled sample data when nothing answers', async (
   const url = dead.portalUrl; await dead.close();      // serve the page, then kill the API
   const live = await startStandInOrthanc({ portalHtml });
   try {
-    const { page, ctx } = await openPortal(browser, live, { url: `${live.portalUrl}?api=http://127.0.0.1:1/` });
+    const { page, ctx } = await openPortal(browser, live, { url: `${live.portalUrl}?api=/no-archive-here/` });
     eq(await page.textContent('#railEnv'), 'Sample data', 'rail label in fallback mode');
     ok((await page.locator('#results .card, #results tbody tr').count()) > 0, 'sample data produced no rows');
     await ctx.close();
   } finally { await live.close(); }
+});
+
+check('a cross-origin ?api= is ignored, not honoured', async (b, s, browser) => {
+  // A link like .../pmc/?api=https://evil.example/ must not move the data plane
+  // off the hospital's own origin while the address bar still says otherwise.
+  const { page, ctx, consoleErrors } = await openPortal(b, s,
+    { url: `${s.portalUrl}?api=https://example.invalid/` });
+  const base = await page.evaluate(() => document.querySelector('#healthText')?.textContent || '');
+  ok(/stand-in/.test(base), `the page did not fall back to the same-origin archive: ${base}`);
+  const offOrigin = s.requests.filter(r => /example\.invalid/.test(r.path));
+  eq(offOrigin.length, 0, 'requests sent to the attacker origin');
+  eq(consoleErrors.length, 0, `console errors: ${consoleErrors.join(' | ')}`);
+  await ctx.close();
 });
 
 check('the installer\'s config file overrides the defaults', async (b, s, browser) => {
