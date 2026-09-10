@@ -351,6 +351,16 @@
     "calendar.saturday_start": "TIME_TEXT",
     "calendar.saturday_end": "TIME_TEXT",
     "calendar.sunday_start": "TIME_TEXT",
-    "calendar.sunday_end": "TIME_TEXT"
+    "calendar.sunday_end": "TIME_TEXT",
+    "ticket_clock.work_item_id": "ID",
+    "ticket_clock.clock": "CODE",
+    "ticket_clock.calendar_id": "ID",
+    "ticket_clock.started_at": "TIMESTAMP_TEXT",
+    "ticket_clock.stopped_at": "TIMESTAMP_TEXT",
+    "ticket_clock.stopped_by_status": "ID",
+    "ticket_clock_pause.paused_at": "TIMESTAMP_TEXT",
+    "ticket_clock_pause.resumed_at": "TIMESTAMP_TEXT",
+    "ticket_clock_pause.board_status_id": "ID",
+    "ticket_clock_pause.reason": "FREE"
   }
 }

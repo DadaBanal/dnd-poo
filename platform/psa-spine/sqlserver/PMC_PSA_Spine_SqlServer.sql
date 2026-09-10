@@ -129,12 +129,14 @@ BEGIN
     PRINT N'    psa.holiday_list';
     PRINT N'    psa.holiday';
     PRINT N'    psa.calendar';
+    PRINT N'    psa.ticket_clock';
+    PRINT N'    psa.ticket_clock_pause';
     PRINT N'    psa.ix_fee_line_effective';
     PRINT N'    psa.ix_time_entry_period';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'';
-    PRINT N'  40 tables, 2 indexes, 2 triggers.';
+    PRINT N'  42 tables, 2 indexes, 2 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -1181,6 +1183,67 @@ CREATE TABLE psa.[calendar] (
 END;
 
 -- --------------------------------------------------------------------------
+-- ticket_clock   (from schema/007_clock.sql)
+IF OBJECT_ID(N'psa.[ticket_clock]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ticket_clock] (
+    [clock_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_ticket_clock] PRIMARY KEY,
+    [work_item_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ticket_clock_work_item_id] REFERENCES psa.[ticket]([work_item_id]),
+    [clock] NVARCHAR(32) NOT NULL CONSTRAINT [CK_ticket_clock_01] CHECK (clock IN ('RESPOND','RESOLUTION_PLAN','RESOLVE','ACKNOWLEDGE','DECISION')),
+
+    -- Which working week this clock counts against. A ward roster and Manila
+    -- business hours are different rows, so a clock on a clinical board and a
+    -- clock on the agreement board can disagree about whether Sunday counts.
+    [calendar_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ticket_clock_calendar_id] REFERENCES psa.[calendar]([calendar_id]),
+    [target_minutes] INT NOT NULL CONSTRAINT [CK_ticket_clock_02] CHECK (target_minutes > 0),
+    [started_at] NVARCHAR(64) NOT NULL,
+
+    -- Set when the ticket reaches a status whose escalation_status satisfies this
+    -- clock. Until then the clock is running and elapsed is computed to now.
+    [stopped_at] NVARCHAR(64) NULL,
+
+    -- The status that stopped it, so the reason is on the record rather than
+    -- inferred from a timestamp.
+    [stopped_by_status] NVARCHAR(64) NULL CONSTRAINT [FK_ticket_clock_stopped_by_status] REFERENCES psa.[board_status]([board_status_id]),
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [started_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [started_at], 126), CASE WHEN [started_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [started_at], 112) END)),
+    [stopped_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [stopped_at], 126), CASE WHEN [stopped_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [stopped_at], 112) END)),
+    CONSTRAINT [UQ_ticket_clock] UNIQUE ([work_item_id], [clock]),
+    CONSTRAINT [CK_ticket_clock_03] CHECK (stopped_at IS NULL OR stopped_at >= started_at)
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ticket_clock_pause   (from schema/007_clock.sql)
+-- One row per interval the clock was not counting. Derived from the ticket
+-- entering a status whose escalation_status is NO_ESCALATION, but stored
+-- explicitly because the status list can be edited afterwards and this must
+-- still recompute to the same answer.
+IF OBJECT_ID(N'psa.[ticket_clock_pause]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ticket_clock_pause] (
+    [pause_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_ticket_clock_pause] PRIMARY KEY,
+    [clock_id] INT NOT NULL CONSTRAINT [FK_ticket_clock_pause_clock_id] REFERENCES psa.[ticket_clock]([clock_id]),
+    [paused_at] NVARCHAR(64) NOT NULL,
+    [resumed_at] NVARCHAR(64) NULL,
+
+    -- Which status paused it. NULL only for a pause applied by hand, which then
+    -- needs a reason instead.
+    [board_status_id] NVARCHAR(64) NULL CONSTRAINT [FK_ticket_clock_pause_board_status_id] REFERENCES psa.[board_status]([board_status_id]),
+    [reason] NVARCHAR(MAX) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [paused_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [paused_at], 126), CASE WHEN [paused_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [paused_at], 112) END)),
+    [resumed_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [resumed_at], 126), CASE WHEN [resumed_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [resumed_at], 112) END)),
+    CONSTRAINT [CK_ticket_clock_pause_01] CHECK (resumed_at IS NULL OR resumed_at >= paused_at),
+    CONSTRAINT [CK_ticket_clock_pause_02] CHECK (board_status_id IS NOT NULL OR reason IS NOT NULL)
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- indexes
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_fee_line_effective' AND object_id = OBJECT_ID(N'psa.[fee_line]'))
@@ -1275,10 +1338,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_unique = 0 AND i.is_primary_key = 0;
 
-IF @Tables <> 40 OR @Triggers <> 2 OR @Indexes < 2
+IF @Tables <> 42 OR @Triggers <> 2 OR @Indexes < 2
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 40), %d triggers (expected 2), %d indexes (expected at least 2). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 42), %d triggers (expected 2), %d indexes (expected at least 2). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -1304,6 +1367,8 @@ PRINT N'target is enforced until somebody with the authority says so.';
 
     DROP TRIGGER IF EXISTS psa.[time_entry_requires_a_variation];
     DROP TRIGGER IF EXISTS psa.[ticket_close_requires_a_variation];
+    DROP TABLE IF EXISTS psa.[ticket_clock_pause];
+    DROP TABLE IF EXISTS psa.[ticket_clock];
     DROP TABLE IF EXISTS psa.[calendar];
     DROP TABLE IF EXISTS psa.[holiday];
     DROP TABLE IF EXISTS psa.[holiday_list];

@@ -12,14 +12,14 @@ import sqlite3
 import sys
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
-from psaspine import db, register, reports, tickets  # noqa: E402
+from psaspine import clocks, db, register, reports, tickets  # noqa: E402
 import sqlite_to_tsql  # noqa: E402
 from sqlite_ddl import Unsupported  # noqa: E402
 
@@ -943,6 +943,212 @@ class BoardConfigurationTest(unittest.TestCase):
             self.conn.execute(
                 "INSERT INTO holiday (holiday_list_id, observed_on, name)"
                 " VALUES ('PH','2026-12-25','Christmas')")
+
+
+class ClockTest(unittest.TestCase):
+    """007 — elapsed working time, and breach derived rather than stored.
+
+    The arithmetic under every SLA number this spine will report, so it is
+    asserted against dates somebody can check by hand rather than against
+    whatever the code happened to return.
+    """
+
+    MANILA = {i: (480, 1020) for i in range(5)}      # Mon-Fri 08:00-17:00
+    CLINICAL = {i: (0, 1440) for i in range(7)}      # every hour of every day
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn.execute(
+            "INSERT INTO holiday_list (holiday_list_id, name) VALUES ('PH','Philippines')")
+        self.conn.execute(
+            "INSERT INTO holiday (holiday_list_id, observed_on, name)"
+            " VALUES ('PH','2026-11-30','Bonifacio Day')")
+        self.conn.execute(
+            "INSERT INTO calendar (calendar_id, name, monday_start, monday_end,"
+            " tuesday_start, tuesday_end, wednesday_start, wednesday_end,"
+            " thursday_start, thursday_end, friday_start, friday_end, holiday_list_id)"
+            " VALUES ('MANILA','Manila business hours','08:00','17:00','08:00','17:00',"
+            "'08:00','17:00','08:00','17:00','08:00','17:00','PH')")
+        self.conn.execute(
+            "INSERT INTO calendar (calendar_id, name, monday_start, monday_end,"
+            " tuesday_start, tuesday_end, wednesday_start, wednesday_end,"
+            " thursday_start, thursday_end, friday_start, friday_end,"
+            " saturday_start, saturday_end, sunday_start, sunday_end)"
+            " VALUES ('CLINICAL','Clinical 24x7','00:00','24:00','00:00','24:00',"
+            "'00:00','24:00','00:00','24:00','00:00','24:00','00:00','24:00','00:00','24:00')")
+        self.conn.execute(
+            "INSERT INTO work_item (work_item_id, source, name, entity_id, contract_basis)"
+            " VALUES ('ITO-2001','desk','Ward switch down','PMC','BASELINE')")
+        self.conn.execute(
+            "INSERT INTO ticket (work_item_id, board_id, path, impact, urgency, priority,"
+            " priority_source, requested_at, opened_at, state)"
+            " VALUES ('ITO-2001','IT_HELP','INCIDENT','I1','U1','P1','MATRIX',"
+            "'2026-11-13','2026-11-13','IN_PROGRESS')")
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _clock(self, calendar: str = "MANILA", target: int = 240,
+               started: str = "2026-11-13T16:00", stopped: str | None = None) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO ticket_clock (work_item_id, clock, calendar_id, target_minutes,"
+            " started_at, stopped_at) VALUES ('ITO-2001','RESOLVE',?,?,?,?)",
+            (calendar, target, started, stopped))
+        return cur.lastrowid
+
+    # ------------------------------------------------------- the arithmetic
+
+    def test_a_weekend_does_not_count_on_a_business_calendar(self):
+        """Friday 16:00 to Monday 09:00 is two working hours, not sixty-five."""
+        cal = clocks.Calendar(self.MANILA, set())
+        self.assertEqual(
+            cal.working_minutes(datetime(2026, 11, 13, 16, 0),
+                                datetime(2026, 11, 16, 9, 0)), 120)
+
+    def test_a_philippine_holiday_does_not_count(self):
+        """Bonifacio Day, 30 November 2026, is a Monday. It must not be counted."""
+        cal = clocks.Calendar(self.MANILA, {date(2026, 11, 30)})
+        self.assertEqual(
+            cal.working_minutes(datetime(2026, 11, 27, 16, 0),
+                                datetime(2026, 12, 1, 9, 0)), 120)
+        without = clocks.Calendar(self.MANILA, set())
+        self.assertEqual(
+            without.working_minutes(datetime(2026, 11, 27, 16, 0),
+                                    datetime(2026, 12, 1, 9, 0)), 660)
+
+    def test_every_hour_counts_on_a_clinical_calendar(self):
+        cal = clocks.Calendar(self.CLINICAL, set())
+        self.assertEqual(
+            cal.working_minutes(datetime(2026, 11, 13, 16, 0),
+                                datetime(2026, 11, 16, 9, 0)), 65 * 60)
+
+    def test_out_of_hours_time_counts_as_nothing(self):
+        cal = clocks.Calendar(self.MANILA, set())
+        self.assertEqual(
+            cal.working_minutes(datetime(2026, 11, 13, 18, 0),
+                                datetime(2026, 11, 13, 23, 0)), 0)
+
+    def test_time_never_runs_backwards(self):
+        cal = clocks.Calendar(self.MANILA, set())
+        self.assertEqual(
+            cal.working_minutes(datetime(2026, 11, 16, 9, 0),
+                                datetime(2026, 11, 13, 16, 0)), 0)
+
+    def test_a_closed_day_is_a_null_start_not_a_special_case(self):
+        loaded = clocks.Calendar.load(self.conn, "MANILA")
+        self.assertNotIn(5, loaded.windows)      # Saturday
+        self.assertNotIn(6, loaded.windows)      # Sunday
+        self.assertIn(date(2026, 11, 30), loaded.holidays)
+
+    def test_twenty_four_by_seven_loads_as_seven_ordinary_rows(self):
+        loaded = clocks.Calendar.load(self.conn, "CLINICAL")
+        self.assertEqual(len(loaded.windows), 7)
+        self.assertEqual(loaded.windows[6], (0, 1440))
+
+    # ------------------------------------------------------------- pausing
+
+    def test_a_pause_at_two_in_the_morning_costs_a_business_clock_nothing(self):
+        """Nothing was running, so nothing is subtracted."""
+        clock_id = self._clock(started="2026-11-16T08:00", stopped="2026-11-16T12:00")
+        self.assertEqual(clocks.elapsed_minutes(self.conn, clock_id), 240)
+        self.conn.execute(
+            "INSERT INTO ticket_clock_pause (clock_id, paused_at, resumed_at, reason)"
+            " VALUES (?,'2026-11-17T02:00','2026-11-17T04:00','vendor asleep')",
+            (clock_id,))
+        self.assertEqual(clocks.elapsed_minutes(self.conn, clock_id), 240)
+
+    def test_a_pause_in_working_hours_is_subtracted(self):
+        clock_id = self._clock(started="2026-11-16T08:00", stopped="2026-11-16T12:00")
+        self.conn.execute(
+            "INSERT INTO ticket_clock_pause (clock_id, paused_at, resumed_at, reason)"
+            " VALUES (?,'2026-11-16T09:00','2026-11-16T10:30','waiting on the ward')",
+            (clock_id,))
+        self.assertEqual(clocks.elapsed_minutes(self.conn, clock_id), 150)
+
+    def test_a_pause_that_never_ended_runs_to_the_moment_asked_about(self):
+        clock_id = self._clock(started="2026-11-16T08:00")
+        self.conn.execute(
+            "INSERT INTO ticket_clock_pause (clock_id, paused_at, reason)"
+            " VALUES (?,'2026-11-16T09:00','still waiting')", (clock_id,))
+        used = clocks.elapsed_minutes(self.conn, clock_id,
+                                      as_of=datetime(2026, 11, 16, 16, 0))
+        self.assertEqual(used, 60)      # 08:00-09:00 only; the rest is paused
+
+    def test_a_pause_must_say_why_or_name_the_status_that_caused_it(self):
+        clock_id = self._clock()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute(
+                "INSERT INTO ticket_clock_pause (clock_id, paused_at) VALUES (?,'2026-11-16T09:00')",
+                (clock_id,))
+
+    def test_a_pause_cannot_end_before_it_began(self):
+        clock_id = self._clock()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute(
+                "INSERT INTO ticket_clock_pause (clock_id, paused_at, resumed_at, reason)"
+                " VALUES (?,'2026-11-16T10:00','2026-11-16T09:00','impossible')", (clock_id,))
+
+    # -------------------------------------------------------------- breach
+
+    def test_breach_is_derived_so_correcting_a_target_corrects_yesterday(self):
+        """A stored flag would defend a number nobody can reproduce."""
+        clock_id = self._clock(target=240, started="2026-11-16T08:00",
+                               stopped="2026-11-16T14:00")     # 6 working hours
+        self.assertTrue(clocks.breached(self.conn, clock_id))
+        self.conn.execute(
+            "UPDATE ticket_clock SET target_minutes = 480 WHERE clock_id = ?", (clock_id,))
+        self.assertFalse(clocks.breached(self.conn, clock_id))
+
+    def test_the_same_ticket_breaches_on_one_calendar_and_not_the_other(self):
+        """Friday 16:00 to Monday 09:00, against a four-hour target."""
+        biz = self._clock(calendar="MANILA", target=240,
+                          started="2026-11-13T16:00", stopped="2026-11-16T09:00")
+        self.assertFalse(clocks.breached(self.conn, biz))       # 120 working minutes
+        self.conn.execute("UPDATE ticket_clock SET clock='RESPOND' WHERE clock_id=?", (biz,))
+        clinical = self._clock(calendar="CLINICAL", target=240,
+                               started="2026-11-13T16:00", stopped="2026-11-16T09:00")
+        self.assertTrue(clocks.breached(self.conn, clinical))   # 3,900 minutes
+
+    def test_a_running_clock_is_measured_to_the_moment_asked_about(self):
+        clock_id = self._clock(target=240, started="2026-11-16T08:00")
+        self.assertFalse(clocks.breached(self.conn, clock_id,
+                                         as_of=datetime(2026, 11, 16, 11, 0)))
+        self.assertTrue(clocks.breached(self.conn, clock_id,
+                                        as_of=datetime(2026, 11, 16, 16, 0)))
+
+    # ------------------------------------------- which status stops which clock
+
+    def test_a_status_declares_the_milestone_and_the_clock_follows(self):
+        self.assertTrue(clocks.stops_clock("RESPONDED", "RESPOND"))
+        self.assertFalse(clocks.stops_clock("RESPONDED", "RESOLVE"))
+        self.assertTrue(clocks.stops_clock("RESOLVED", "RESOLVE"))
+        # Resolving without ever responding still satisfies the respond clock.
+        self.assertTrue(clocks.stops_clock("RESOLVED", "RESPOND"))
+        self.assertTrue(clocks.is_pause("NO_ESCALATION"))
+        self.assertFalse(clocks.is_pause("RESPONDED"))
+
+    def test_state_of_reports_everything_without_storing_any_of_it(self):
+        clock_id = self._clock(target=240, started="2026-11-16T08:00")
+        state = clocks.state_of(self.conn, clock_id, as_of=datetime(2026, 11, 16, 11, 0))
+        self.assertEqual(state["elapsed_minutes"], 180)
+        self.assertEqual(state["remaining_minutes"], 60)
+        self.assertFalse(state["breached"])
+        self.assertTrue(state["running"])
+        self.assertFalse(state["paused"])
+
+    def test_one_clock_of_each_kind_per_ticket(self):
+        self._clock()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self._clock()
+
+    def test_a_target_of_zero_is_not_a_target(self):
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute(
+                "INSERT INTO ticket_clock (work_item_id, clock, calendar_id,"
+                " target_minutes, started_at) VALUES"
+                " ('ITO-2001','ACKNOWLEDGE','MANILA',0,'2026-11-16T08:00')")
 
 
 class PortTest(unittest.TestCase):
