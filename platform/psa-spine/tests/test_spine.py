@@ -19,7 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
-from psaspine import board, clocks, db, register, reports, rules, tickets  # noqa: E402
+from psaspine import (board, clocks, db, register, reports, rules,  # noqa: E402
+                      tickets, walkthrough)
 import sqlite_to_tsql  # noqa: E402
 from sqlite_ddl import Unsupported  # noqa: E402
 
@@ -1530,6 +1531,59 @@ class BoardEngineTest(unittest.TestCase):
         self._move("IT_HELP.WORKING", datetime(2026, 11, 16, 8, 30))
         allowed, why = board.may_book_effort(self.conn, "ITO-4001")
         self.assertTrue(allowed, why)
+
+
+class WalkthroughTest(unittest.TestCase):
+    """The engine runs, not merely passes.
+
+    The record's base rate is designs that were never run, so this asserts the
+    narrative itself: if the arithmetic changes, the sentence a person reads
+    changes, and the test fails.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.text = "\n".join(walkthrough.run(self.conn))
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def test_the_pause_is_what_keeps_the_ticket_inside_its_target(self):
+        """Eleven hours of wall clock, two and three quarter hours of ours."""
+        self.assertIn("RESOLVE  used   2h 45m  of   4h 00m   within target", self.text)
+        self.assertIn("Wall clock from raise to close is 11h 10m", self.text)
+
+    def test_the_respond_clock_stopped_when_somebody_actually_responded(self):
+        self.assertIn("RESPOND  used   0h 25m  of   1h 00m   within target", self.text)
+
+    def test_a_parked_ticket_refuses_effort_in_words(self):
+        self.assertIn("effort: refused", self.text)
+        self.assertIn("'Waiting for parts' does not allow effort", self.text)
+
+    def test_the_unrouted_rule_pages_four_times_then_stops(self):
+        self.assertEqual(self.text.count("PAGE ON-CALL"), 4)
+        self.assertIn("firing 4 of 4", self.text)
+        self.assertIn("reached its cap of 4 firings", self.text)
+
+    def test_it_never_claims_a_target_is_enforced(self):
+        self.assertIn("These measure. They do not promise.", self.text)
+        enforced = self.conn.execute(
+            "SELECT COUNT(*) c FROM sla_target WHERE enforced = 1").fetchone()["c"]
+        self.assertEqual(enforced, 0)
+
+    def test_the_ticket_ends_closed_with_every_clock_stopped(self):
+        row = self.conn.execute(
+            "SELECT state, board_status_id, closed_at FROM ticket"
+            " WHERE work_item_id='ITO-9001'").fetchone()
+        self.assertEqual(row["state"], "CLOSED")
+        self.assertEqual(row["board_status_id"], "IT_HELP.DONE")
+        self.assertEqual(row["closed_at"], "2026-11-17 09:20")
+        still_running = self.conn.execute(
+            "SELECT COUNT(*) c FROM ticket_clock WHERE work_item_id='ITO-9001'"
+            " AND stopped_at IS NULL").fetchone()["c"]
+        self.assertEqual(still_running, 0)
 
 
 class PortTest(unittest.TestCase):

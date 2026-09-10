@@ -43,6 +43,12 @@ jobs:
           python3 -m psaspine import /tmp/spine.db tests/fixtures/register-sample.csv --run-id ci --as-of 2026-09-09
           python3 -m psaspine import-tickets /tmp/spine.db tests/fixtures/desk-export-sample.csv --run-id desk --as-of 2026-09-09
           python3 -m psaspine report /tmp/spine.db --out /tmp/out --run-id desk --as-of 2026-09-09
+          # The board engine is not finished when its tests pass. It is finished
+          # when it RUNS. BUILT-NOT-RUN is a live status in this programme's own
+          # register, so the walkthrough runs on every commit.
+          python3 -m psaspine walkthrough /tmp/spine.db | tee /tmp/walkthrough.txt
+          grep -q "within target" /tmp/walkthrough.txt
+          grep -q "firing 4 of 4" /tmp/walkthrough.txt
           test -f /tmp/out/PMC_AnnexB_Variation_Register_20260909.md
           test -f /tmp/out/PMC_Instrument_Exception_Report_20260909.md
           test -f /tmp/out/PMC_Uplift_Evidence_20260909.md

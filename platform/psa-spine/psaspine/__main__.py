@@ -6,7 +6,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import db, register, reports, tickets
+from . import db, register, reports, tickets, walkthrough
 
 
 def _as_of(value: str | None) -> date:
@@ -31,6 +31,10 @@ def main(argv: list[str] | None = None) -> int:
     pt.add_argument("export_csv")
     pt.add_argument("--run-id", default="desk-1")
     pt.add_argument("--as-of")
+
+    pw = sub.add_parser("walkthrough",
+                        help="run the board engine end to end and narrate it")
+    pw.add_argument("database")
 
     pr = sub.add_parser("report", help="write Annex B, dependency notices and the exception report")
     pr.add_argument("database")
@@ -67,6 +71,10 @@ def main(argv: list[str] | None = None) -> int:
             print("REFUSED: row count does not match — nothing may be silently dropped",
                   file=sys.stderr)
             return 1
+        return 0
+
+    if a.cmd == "walkthrough":
+        print("\n".join(walkthrough.run(conn)))
         return 0
 
     if a.cmd == "report":
