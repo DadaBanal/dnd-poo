@@ -877,11 +877,58 @@ should go on before the PSA does, because if the weekend produces only one thing
 that is the thing worth having.
 
 **2. The R740xd must not become `DND-HOST2` with the same disease.** A single
-host with no backup and no off-site copy is the trap we already have, built
-twice. The nightly push to Azure for reporting and disaster recovery is not
-optional garnish on option C — it is the half that makes it option C rather than
-option A. **[NOT VERIFIED]** whether a backup target and retention are in the
-weekend's plan; ask before the weekend, not after.
+host with no backup and no off-site copy is the trap we already have, built twice.
+
+**[Dada, 10 Sep 2026]** `DND-HOST1` stays on the main site and a host plus an
+**MD1200** goes to a remote building. **That is a real second site, and it is a
+better answer than the nightly push to Azure I proposed** — it gives PMC an
+off-site copy inside its own control, with no egress bill and no dependency on the
+WAN that §6.2 says will be down exactly when it matters.
+
+**One physical constraint to confirm before the weekend.** **[INFERRED, not
+verified against PMC's actual kit]** A PowerVault **MD1200 is a JBOD disk shelf,
+not a server** — no CPU, no OS, no network port. It attaches to a host's external
+SAS HBA, and copper SAS runs roughly **10 metres**, which does not cross a campus.
+So the remote building needs a **host** with the MD1200 hanging off it locally.
+Reading Dada's note as *"a host, with an MD1200, in the remote building"* makes
+sense and is the right shape; reading it as *"the MD1200 alone over there"* does
+not work physically. **Confirm which before anyone runs cable.**
+
+**Veeam: yes, and it should have been in this document already.**
+**[VERIFIED 10 Sep 2026, veeam.com/products/free/backup-recovery.html and
+veeam.com/blog/backup-replication-community-edition-features-description.html]**
+Veeam Backup & Replication **Community Edition is free for up to 10 workloads**,
+carries the full Standard feature set including **replication**, has **no cap on
+the amount of protected data**, and is **licensed for production use**.
+
+What that buys, given a host at the remote building:
+
+- **A safe domain-controller backup.** Application-aware processing is the
+  supported way to protect and restore a DC, and it is the direct answer to the
+  USN-rollback caution in point 0 — a Veeam restore is AD-aware, a snapshot revert
+  is not.
+- **A safe SQL backup**, with log handling, for whichever instance D7 lands on.
+- **Replication to the remote building**, which is a *warm standby VM* rather than
+  a pile of files. That is the difference between a restore measured in hours and
+  a failover measured in minutes.
+- **3-2-1 satisfied inside PMC's own estate.**
+
+**Two things Veeam does not solve, and both matter here.**
+
+1. **It is not a second domain controller.** A restore is recovery; a second live
+   DC is availability. They are different problems and Veeam only fixes the first.
+   Point 1 stands unchanged.
+2. **It does not back up M365.** That is a separate Veeam product. **[INFERRED]**
+   This now matters more than it did an hour ago: §8.3.1 puts instruments, notices
+   and signed evidence in SharePoint, and the record's retention obligation is
+   **10 years**. Microsoft's own position is shared-responsibility — retention
+   policies are not backup. So SharePoint holding the commercial record is a
+   decision that carries its own backup question, and it should be answered rather
+   than inherited.
+
+**[NOT VERIFIED]** the workload count. Community Edition stops at 10 instances,
+and between `DND-HOST1`'s guests, the R740xd's guests and `PMC-ORTHANC01` that
+ceiling is close enough to need counting before it is relied on.
 
 **3. The SQL Server target may have just moved, and it is in code.** The generated
 deploy script names `DND-SQL01\PMC_SS` in its preflight and refuses to run
