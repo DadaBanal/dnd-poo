@@ -827,8 +827,50 @@ Three options, and the scope needs a ruling:
 | **B** | Azure App Service + Azure SQL, PMC's subscription | No hardware. PITR and LTR come free. Already the spine's stated lift path. | Dies with the WAN. Ongoing cost, in PHP, forever. |
 | **C** | On-prem primary, nightly push to Azure for reporting and DR | Both properties. Matches the existing warehouse pattern. | Two places to operate. |
 
-**Recommendation: C**, with the primary explicitly *not* on `DND-HOST1`. Decision
-**D1**.
+~~**Recommendation: C**, with the primary explicitly *not* on `DND-HOST1`.~~
+
+### 8.1.1 D1 is closed — new hardware at PMC
+
+**[MEASURED — Dada, 9 Sep 2026]** A new **Dell PowerEdge R740xd**, fully
+specified, is being installed at PMC **this weekend**. The primary runs there.
+
+That is option **C** and it satisfies the condition that mattered: it is *new
+hardware*, not another guest on `DND-HOST1`. So the desk works when the WAN is
+down, and it is not one power supply away from the domain controller.
+
+Four things follow, and three of them are worth more to PMC than the ticket
+system is.
+
+**1. This is the first chance to fix `DND-HOST1`, and it should be taken first.**
+**[MEASURED]** `DND-HOST1` is a single Hyper-V host that runs **the only domain
+controller**, has one 10GbE uplink and **no host-level backup**. A second physical
+host is what makes a second domain controller and a real backup target possible
+for the first time in this programme. **[INFERRED]** A second DC on the R740xd is
+a few hours of work and removes the single largest availability risk at PMC. It
+should go on before the PSA does, because if the weekend produces only one thing,
+that is the thing worth having.
+
+**2. The R740xd must not become `DND-HOST2` with the same disease.** A single
+host with no backup and no off-site copy is the trap we already have, built
+twice. The nightly push to Azure for reporting and disaster recovery is not
+optional garnish on option C — it is the half that makes it option C rather than
+option A. **[NOT VERIFIED]** whether a backup target and retention are in the
+weekend's plan; ask before the weekend, not after.
+
+**3. The SQL Server target may have just moved, and it is in code.** The generated
+deploy script names `DND-SQL01\PMC_SS` in its preflight and refuses to run
+against any other database. If the PSA gets its own instance on the R740xd, that
+constant changes and the script is regenerated. If it stays on `DND-SQL01`, it
+lands next to the live BizBox HIS with **[MEASURED]** a 173-finding audit open,
+`sa` enabled, SSRS running as Enterprise Admin and the Domain firewall profile
+disabled. **[INFERRED]** A new instance on the new box is the better answer on
+every ground except licence cost, and that is a real cost worth pricing rather
+than assuming. **This is decision D7 below.**
+
+**4. Installed is not ready.** OS, domain join, backup, patching cadence and a
+change window all sit between the weekend and Phase A. **[MEASURED]** the record
+carries a **Monday blackout on `DND-SQL01` during the live payroll parallel run**,
+so a weekend that runs long lands on the one morning nothing should move.
 
 ### 8.2 Intake channels PMC already owns
 
@@ -1023,7 +1065,8 @@ that is a conversation for the change order, not for the schema.
 
 | | Decision | Why it blocks |
 |---|---|---|
-| **D1** | Where the primary runs — A, B or C in §8.1, and confirmation it is **not** on `DND-HOST1` | Changes the deployment, the backup design and the offline story |
+| ~~**D1**~~ | ~~Where the primary runs~~ **CLOSED 9 Sep** — on-premises at PMC on a new Dell R740xd, installed this weekend [MEASURED, Dada]. Option C, and it is new hardware rather than a guest on `DND-HOST1` | §8.1.1. Raises D7, and raises the question of whether a second domain controller goes on it first |
+| **D7** | **New:** does the PSA get its own SQL Server instance on the R740xd, or stay on `DND-SQL01\PMC_SS`? | The generated deploy script names the target in its preflight and refuses any other. `DND-SQL01` carries a 173-finding audit, `sa` enabled and the Domain firewall off |
 | **D2** | Does the standard-library-only rule change shape as proposed in §8.3? | Decides whether Phase B is buildable at all |
 | ~~**D3**~~ | ~~Identity~~ **CLOSED 9 Sep** — Entra for all. Every staff member already has an M365 licence [MEASURED, Dada] | Was costed at ~USD 2,160/year on an INFERRED count that is wrong. No cost, no trade-off, §8.4 |
 | **D4** | Ticket numbering: one `PMC-` sequence across all boards, with `legacy_ref` | Cheap now, very expensive after the first thousand tickets |
