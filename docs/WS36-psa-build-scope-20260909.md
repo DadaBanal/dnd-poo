@@ -886,12 +886,34 @@ weekend's plan; ask before the weekend, not after.
 **3. The SQL Server target may have just moved, and it is in code.** The generated
 deploy script names `DND-SQL01\PMC_SS` in its preflight and refuses to run
 against any other database. If the PSA gets its own instance on the R740xd, that
-constant changes and the script is regenerated. If it stays on `DND-SQL01`, it
-lands next to the live BizBox HIS with **[MEASURED]** a 173-finding audit open,
-`sa` enabled, SSRS running as Enterprise Admin and the Domain firewall profile
-disabled. **[INFERRED]** A new instance on the new box is the better answer on
-every ground except licence cost, and that is a real cost worth pricing rather
-than assuming. **This is decision D7 below.**
+constant changes and the script is regenerated. **This is decision D7 below, and
+it is a separation decision, not a spend decision** — an earlier draft of this
+document called a new instance better "on every ground except licence cost",
+which framed it as a purchase and was misleading. **Corrected 10 Sep 2026.**
+
+**Separation costs nothing.** **[INFERRED]** **SQL Server Express is free** and is
+very likely sufficient. Sized against the record's own numbers: at 2,000 tickets a
+month and a generous 50 KB per ticket including notes and events, that is
+**~1.2 GB a year** against Express's **10 GB per-database** limit — and
+attachments never enter the database at all, because `document.source_ref` is a
+SharePoint item id by design. Express's real limits are a 1 GB buffer pool and
+**no SQL Server Agent**, and neither binds here: a nightly push is a Windows
+scheduled task, which is exactly how the record already describes the existing job
+on `DND-SQL01`.
+
+| Option | Licence | Fits? |
+|---|---|---|
+| **SQLite on the R740xd** | free | Already works — 86 tests run against it. One file, escrowable nightly, zero administration. Weakest on Power BI reporting and on a DBA's comfort. |
+| **SQL Server Express** | **free** | **[INFERRED] the likely answer.** PMC already runs SQL Server, Power BI reads it, the port is generated and drift-gated, and 10 GB is years away at this volume. |
+| SQL Server Standard | expensive | Only if the 10 GB limit or Agent jobs actually bind. Measure before buying; never assume. |
+
+**Why separate at all, when it is free to be.** **[MEASURED]** `DND-SQL01` runs the
+live BizBox HIS with a 173-finding audit open, `sa` enabled, SSRS running as
+Enterprise Admin and the Domain firewall profile disabled. Putting a hospital-wide
+ticket system that carries patient references into that instance means one blast
+radius for both, and it means the PSA inherits all 173 findings at the next audit.
+A free Express instance on the new box buys that separation for the price of an
+installer.
 
 **4. Installed is not ready.** OS, domain join, backup, patching cadence and a
 change window all sit between the weekend and Phase A. **[MEASURED]** the record
@@ -1144,7 +1166,7 @@ that is a conversation for the change order, not for the schema.
 | | Decision | Why it blocks |
 |---|---|---|
 | ~~**D1**~~ | ~~Where the primary runs~~ **CLOSED 9 Sep** — on-premises at PMC on a new Dell R740xd, installed this weekend [MEASURED, Dada]. Option C, and it is new hardware rather than a guest on `DND-HOST1` | §8.1.1. Raises D7, and raises the question of whether a second domain controller goes on it first |
-| **D7** | **New:** does the PSA get its own SQL Server instance on the R740xd, or stay on `DND-SQL01\PMC_SS`? | The generated deploy script names the target in its preflight and refuses any other. `DND-SQL01` carries a 173-finding audit, `sa` enabled and the Domain firewall off |
+| **D7** | **New:** SQLite, **SQL Server Express (free)** or an existing instance? **Not a spend decision** — Express is free and ~1.2 GB/year against a 10 GB limit | Separation from the live HIS, which carries a 173-finding audit, `sa` enabled and the Domain firewall off. The deploy script names its target and refuses any other |
 | **D2** | Does the standard-library-only rule change shape as proposed in §8.3? SharePoint was raised and is answered in §8.3.1: **right for documents and identity, wrong for the ticket store** | Decides whether Phase B is buildable at all |
 | ~~**D3**~~ | ~~Identity~~ **CLOSED 9 Sep** — Entra for all. Every staff member already has an M365 licence [MEASURED, Dada] | Was costed at ~USD 2,160/year on an INFERRED count that is wrong. No cost, no trade-off, §8.4 |
 | **D4** | Ticket numbering: one `PMC-` sequence across all boards, with `legacy_ref` | Cheap now, very expensive after the first thousand tickets |
