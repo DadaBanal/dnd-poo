@@ -779,6 +779,172 @@ class SchemaRulesTest(unittest.TestCase):
         self.assertEqual(enforced, 0)
 
 
+class BoardConfigurationTest(unittest.TestCase):
+    """006 — the board owns its statuses, its people and its working week.
+
+    These are the rules a board engine rests on, so each one is walked into
+    rather than described.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _status(self, sid: str, name: str, escalation: str, **flags) -> None:
+        cols = "board_status_id, board_id, name, escalation_status"
+        vals = [sid, "IT_HELP", name, escalation]
+        for k, v in flags.items():
+            cols += f", {k}"
+            vals.append(v)
+        self.conn.execute(
+            f"INSERT INTO board_status ({cols}) VALUES ({','.join('?' * len(vals))})", vals)
+
+    # ------------------------------------------------------------- statuses
+
+    def test_a_status_declares_which_sla_milestone_it_represents(self):
+        """One field, not three booleans. NO_ESCALATION is the pause."""
+        self._status("IT_HELP.NEW", "New", "NOT_RESPONDED", is_default=1)
+        self._status("IT_HELP.PARTS", "Waiting for parts", "NO_ESCALATION",
+                     time_entry_allowed=0)
+        self._status("IT_HELP.DONE", "Closed", "RESOLVED", is_closed=1)
+        paused = self.conn.execute(
+            "SELECT escalation_status, time_entry_allowed FROM board_status"
+            " WHERE board_status_id='IT_HELP.PARTS'").fetchone()
+        self.assertEqual(paused["escalation_status"], "NO_ESCALATION")
+        self.assertEqual(paused["time_entry_allowed"], 0)
+
+    def test_a_status_nobody_invented_is_refused(self):
+        with self.assertRaises(sqlite3.IntegrityError):
+            self._status("IT_HELP.X", "Probably fine", "SORT_OF_RESPONDED")
+
+    def test_the_default_status_may_not_also_close_the_ticket(self):
+        """A new ticket must not land already closed."""
+        with self.assertRaises(sqlite3.IntegrityError):
+            self._status("IT_HELP.ODD", "Done on arrival", "RESOLVED",
+                         is_default=1, is_closed=1)
+
+    def test_two_statuses_on_one_board_cannot_share_a_name(self):
+        self._status("IT_HELP.A", "In progress", "RESPONDED")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self._status("IT_HELP.B", "In progress", "RESPONDED")
+
+    def test_a_status_belongs_to_a_board_that_exists(self):
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute(
+                "INSERT INTO board_status (board_status_id, board_id, name,"
+                " escalation_status) VALUES ('X.NEW','NO_SUCH_BOARD','New','NOT_RESPONDED')")
+
+    def test_what_a_requester_reads_is_a_different_sentence(self):
+        """Internal language must not be the only language a nurse gets."""
+        self._status("IT_HELP.PARTS", "Awaiting vendor RMA, PO 4471", "NO_ESCALATION",
+                     customer_description="We are waiting on a delivery.")
+        row = self.conn.execute(
+            "SELECT name, customer_description FROM board_status"
+            " WHERE board_status_id='IT_HELP.PARTS'").fetchone()
+        self.assertNotEqual(row["name"], row["customer_description"])
+        self.assertNotIn("PO 4471", row["customer_description"])
+
+    # ---------------------------------------------------------------- roles
+
+    def test_a_board_carries_four_roles_not_an_owner_and_a_deputy(self):
+        """Two names cannot say who answers at 02:00 and who answers when they do not."""
+        for role, who in (("SERVICE_MANAGER", "Dada Banal"), ("DISPATCH", "Dela Cruz"),
+                          ("ON_CALL", "Cadano"), ("DUTY_MANAGER", "Gabelo")):
+            self.conn.execute(
+                "INSERT INTO board_role (board_id, role, member) VALUES ('IT_HELP',?,?)",
+                (role, who))
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) c FROM board_role WHERE board_id='IT_HELP'").fetchone()["c"], 4)
+
+    def test_a_role_this_schema_does_not_know_is_refused(self):
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute(
+                "INSERT INTO board_role (board_id, role, member)"
+                " VALUES ('IT_HELP','WHOEVER_IS_FREE','Somebody')")
+
+    def test_one_person_per_role_per_board(self):
+        self.conn.execute(
+            "INSERT INTO board_role (board_id, role, member)"
+            " VALUES ('IT_HELP','ON_CALL','Cadano')")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute(
+                "INSERT INTO board_role (board_id, role, member)"
+                " VALUES ('IT_HELP','ON_CALL','Gabelo')")
+
+    # --------------------------------------------------------- membership
+
+    def test_membership_is_the_access_control_on_a_restricted_board(self):
+        self.conn.execute(
+            "INSERT INTO board_team (team_id, board_id, name, is_default)"
+            " VALUES ('IT_HELP.T1','IT_HELP','Windows team',1)")
+        self.conn.execute(
+            "INSERT INTO board_member (board_id, member, team_id, access)"
+            " VALUES ('IT_HELP','Cadano','IT_HELP.T1','WORK')")
+        visible = self.conn.execute(
+            "SELECT COUNT(*) c FROM board_member WHERE board_id='IT_HELP'"
+            " AND member='Dietary supervisor'").fetchone()["c"]
+        self.assertEqual(visible, 0)     # a non-member is provably excluded
+
+    def test_a_person_holds_one_access_level_per_board(self):
+        self.conn.execute(
+            "INSERT INTO board_member (board_id, member, access)"
+            " VALUES ('IT_HELP','Cadano','WORK')")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute(
+                "INSERT INTO board_member (board_id, member, access)"
+                " VALUES ('IT_HELP','Cadano','ADMIN')")
+
+    # ------------------------------------------------------ the working week
+
+    def test_a_calendar_is_a_table_so_a_ward_roster_is_a_row(self):
+        self.conn.execute(
+            "INSERT INTO holiday_list (holiday_list_id, name) VALUES ('PH','Philippines')")
+        self.conn.execute(
+            "INSERT INTO holiday (holiday_list_id, observed_on, name)"
+            " VALUES ('PH','2026-11-30','Bonifacio Day')")
+        self.conn.execute(
+            "INSERT INTO calendar (calendar_id, name, monday_start, monday_end,"
+            " holiday_list_id) VALUES ('MANILA','Manila business hours','08:00','17:00','PH')")
+        row = self.conn.execute(
+            "SELECT c.monday_start, c.sunday_start, h.name FROM calendar c"
+            " JOIN holiday h ON h.holiday_list_id = c.holiday_list_id"
+            " WHERE c.calendar_id='MANILA'").fetchone()
+        self.assertEqual(row["monday_start"], "08:00")
+        self.assertIsNone(row["sunday_start"])      # NULL means closed that day
+        self.assertEqual(row["name"], "Bonifacio Day")
+
+    def test_twenty_four_by_seven_is_a_row_not_a_special_case(self):
+        self.conn.execute(
+            "INSERT INTO calendar (calendar_id, name, monday_start, monday_end,"
+            " tuesday_start, tuesday_end, wednesday_start, wednesday_end,"
+            " thursday_start, thursday_end, friday_start, friday_end,"
+            " saturday_start, saturday_end, sunday_start, sunday_end)"
+            " VALUES ('CLINICAL','Clinical 24x7',"
+            "'00:00','24:00','00:00','24:00','00:00','24:00','00:00','24:00',"
+            "'00:00','24:00','00:00','24:00','00:00','24:00')")
+        row = self.conn.execute(
+            "SELECT * FROM calendar WHERE calendar_id='CLINICAL'").fetchone()
+        for day in ("monday", "tuesday", "wednesday", "thursday", "friday",
+                    "saturday", "sunday"):
+            self.assertEqual(row[f"{day}_start"], "00:00", day)
+            self.assertEqual(row[f"{day}_end"], "24:00", day)
+
+    def test_a_holiday_cannot_be_listed_twice_on_one_calendar(self):
+        self.conn.execute(
+            "INSERT INTO holiday_list (holiday_list_id, name) VALUES ('PH','Philippines')")
+        self.conn.execute(
+            "INSERT INTO holiday (holiday_list_id, observed_on, name)"
+            " VALUES ('PH','2026-12-25','Christmas Day')")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute(
+                "INSERT INTO holiday (holiday_list_id, observed_on, name)"
+                " VALUES ('PH','2026-12-25','Christmas')")
+
+
 class PortTest(unittest.TestCase):
     """The SQL Server port, and the drift gate that keeps the two in step.
 

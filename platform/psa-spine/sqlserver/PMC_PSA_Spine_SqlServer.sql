@@ -122,12 +122,19 @@ BEGIN
     PRINT N'    psa.ticket_event';
     PRINT N'    psa.ticket_handover';
     PRINT N'    psa.priority_override';
+    PRINT N'    psa.board_status';
+    PRINT N'    psa.board_role';
+    PRINT N'    psa.board_team';
+    PRINT N'    psa.board_member';
+    PRINT N'    psa.holiday_list';
+    PRINT N'    psa.holiday';
+    PRINT N'    psa.calendar';
     PRINT N'    psa.ix_fee_line_effective';
     PRINT N'    psa.ix_time_entry_period';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'';
-    PRINT N'  33 tables, 2 indexes, 2 triggers.';
+    PRINT N'  40 tables, 2 indexes, 2 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -996,6 +1003,184 @@ CREATE TABLE psa.[priority_override] (
 END;
 
 -- --------------------------------------------------------------------------
+-- board_status   (from schema/006_board.sql)
+-- ------------------------------------------------------------ board_status
+--
+-- A status is not a string. If "Waiting for parts" is a name, nothing in the
+-- system knows a clock should stop, and every pause becomes a special case
+-- somebody codes by hand.
+--
+-- The design drafted three booleans -- stops_respond, stops_resolve, and one
+-- more for the plan. ConnectWise carries ONE field instead, and it is better:
+-- the status declares WHICH SLA MILESTONE IT REPRESENTS and the clock engine
+-- derives the rest. NO_ESCALATION is the pause. Taken as-is, because inventing
+-- a worse version of a solved problem is not craft.
+IF OBJECT_ID(N'psa.[board_status]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[board_status] (
+    -- 'IT_HELP.IN_PROGRESS'
+    [board_status_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_board_status] PRIMARY KEY,
+    [board_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_board_status_board_id] REFERENCES psa.[board]([board_id]),
+
+    -- what a fulfiller reads
+    [name] NVARCHAR(400) NOT NULL,
+
+    -- What a REQUESTER reads, which is a different sentence. Internally
+    -- "Awaiting parts from vendor, PO raised"; on the portal "We are waiting on a
+    -- delivery". Without this you either leak internal language to 400 clinical
+    -- staff or you write statuses too vague to be useful to the people working.
+    [customer_description] NVARCHAR(MAX) NULL,
+    [escalation_status] NVARCHAR(32) NOT NULL CONSTRAINT [CK_board_status_01] CHECK (escalation_status IN ('NOT_RESPONDED','RESPONDED','RESOLUTION_PLAN','RESOLVED', 'NO_ESCALATION')),
+    [is_default] INT NOT NULL CONSTRAINT [DF_board_status_is_default] DEFAULT (0) CONSTRAINT [CK_board_status_02] CHECK (is_default IN (0, 1)),
+    [is_closed] INT NOT NULL CONSTRAINT [DF_board_status_is_closed] DEFAULT (0) CONSTRAINT [CK_board_status_03] CHECK (is_closed IN (0, 1)),
+
+    -- A status that forbids booking effort. This is how time stops accruing
+    -- against a parked ticket, and it composes with the variation gate in 005
+    -- rather than duplicating it.
+    [time_entry_allowed] INT NOT NULL CONSTRAINT [DF_board_status_time_entry_allowed] DEFAULT (1) CONSTRAINT [CK_board_status_04] CHECK (time_entry_allowed IN (0, 1)),
+    [display_on_board] INT NOT NULL CONSTRAINT [DF_board_status_display_on_board] DEFAULT (1) CONSTRAINT [CK_board_status_05] CHECK (display_on_board IN (0, 1)),
+    [sort_order] INT NOT NULL CONSTRAINT [DF_board_status_sort_order] DEFAULT (0),
+
+    -- Retired, never deleted. ConnectWise refuses to delete a board once anything
+    -- references it, and the same is true of a status: the tickets that sat in it
+    -- are evidence.
+    [inactive] INT NOT NULL CONSTRAINT [DF_board_status_inactive] DEFAULT (0) CONSTRAINT [CK_board_status_06] CHECK (inactive IN (0, 1)),
+    CONSTRAINT [UQ_board_status] UNIQUE ([board_id], [name]),
+    CONSTRAINT [CK_board_status_07] CHECK (is_default = 0 OR is_closed = 0)
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- board_role   (from schema/006_board.sql)
+-- ------------------------------------------------------------- board_role
+--
+-- Owner and deputy is too thin, and the record already shows why: triage today
+-- is one person, and when she is unavailable the path is a personal chat to a
+-- CIO in another country [MEASURED]. Two names cannot express "who answers at
+-- 02:00, and who answers when they do not".
+--
+-- ConnectWise carries four per board -- dispatchMember, dutyManagerMember,
+-- oncallMember, serviceManagerMember -- and documents the duty manager as
+-- "backup for the on-call member ... if the on-call member does not respond to
+-- the ticket within the specified time." That is the escalation chain a hospital
+-- needs, and DUTY_MANAGER is already a clinical escalation role on
+-- priority_override in 005, so the vocabularies converge for free.
+--
+-- board.owner and board.deputy stay for now: they are seeded, tested, and the
+-- is_live CHECK depends on them. This table is the model going forward, and the
+-- CHECK moves here when boards are created through it rather than seeded.
+IF OBJECT_ID(N'psa.[board_role]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[board_role] (
+    [board_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_board_role_board_id] REFERENCES psa.[board]([board_id]),
+    [role] NVARCHAR(32) NOT NULL CONSTRAINT [CK_board_role_01] CHECK (role IN ('SERVICE_MANAGER','DISPATCH','ON_CALL','DUTY_MANAGER')),
+
+    -- a named person, never a role name
+    [member] NVARCHAR(200) NOT NULL,
+    CONSTRAINT [PK_board_role] PRIMARY KEY ([board_id], [role])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- board_team   (from schema/006_board.sql)
+-- --------------------------------------------------------------- the teams
+IF OBJECT_ID(N'psa.[board_team]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[board_team] (
+    [team_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_board_team] PRIMARY KEY,
+    [board_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_board_team_board_id] REFERENCES psa.[board]([board_id]),
+    [name] NVARCHAR(400) NOT NULL,
+
+    -- who the queue falls to unassigned
+    [team_leader] NVARCHAR(200) NULL,
+    [is_default] INT NOT NULL CONSTRAINT [DF_board_team_is_default] DEFAULT (0) CONSTRAINT [CK_board_team_01] CHECK (is_default IN (0, 1)),
+    CONSTRAINT [UQ_board_team] UNIQUE ([board_id], [name])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- board_member   (from schema/006_board.sql)
+-- Membership is the access control on a restricted board, not a hint to the
+-- interface. Every read path filters by this at the query, and the acceptance
+-- test the record wrote for the incumbent and never ran -- can a departmental
+-- fulfiller be PROVABLY excluded from a PHI-bearing board -- is answered here.
+IF OBJECT_ID(N'psa.[board_member]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[board_member] (
+    [board_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_board_member_board_id] REFERENCES psa.[board]([board_id]),
+    [member] NVARCHAR(200) NOT NULL,
+    [team_id] NVARCHAR(64) NULL CONSTRAINT [FK_board_member_team_id] REFERENCES psa.[board_team]([team_id]),
+    [access] NVARCHAR(32) NOT NULL CONSTRAINT [CK_board_member_01] CHECK (access IN ('READ', 'WORK', 'ADMIN')),
+    CONSTRAINT [PK_board_member] PRIMARY KEY ([board_id], [member])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- holiday_list   (from schema/006_board.sql)
+-- ------------------------------------------------------ the working week
+--
+-- The design said two calendars, CLINICAL_24x7 and MANILA_BUSINESS, as fixed
+-- values. That breaks the first time a board needs a ward roster or a supplier's
+-- support window. ConnectWise lets an SLA run on a company calendar, a customer
+-- site calendar, 24x7, or a custom one -- so a calendar is a TABLE.
+--
+-- Philippine public holidays are rows, not code. PMC's holidays are not
+-- Melbourne's, and an SLA that breaches on Bonifacio Day because the calendar
+-- was compiled in is a report nobody trusts twice.
+IF OBJECT_ID(N'psa.[holiday_list]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[holiday_list] (
+    [holiday_list_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_holiday_list] PRIMARY KEY,
+    [name] NVARCHAR(400) NOT NULL
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- holiday   (from schema/006_board.sql)
+IF OBJECT_ID(N'psa.[holiday]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[holiday] (
+    [holiday_list_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_holiday_holiday_list_id] REFERENCES psa.[holiday_list]([holiday_list_id]),
+
+    -- as the source wrote it; see the port
+    [observed_on] NVARCHAR(32) NOT NULL,
+    [name] NVARCHAR(400) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [observed_on_parsed] AS (CASE WHEN [observed_on] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [observed_on], 112) WHEN [observed_on] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [observed_on], 23) END),
+    CONSTRAINT [PK_holiday] PRIMARY KEY ([holiday_list_id], [observed_on])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- calendar   (from schema/006_board.sql)
+-- A NULL start or end means the calendar is closed that day. 24x7 is
+-- '00:00'..'24:00' on all seven, which is a row rather than a special case.
+IF OBJECT_ID(N'psa.[calendar]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[calendar] (
+    [calendar_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_calendar] PRIMARY KEY,
+    [name] NVARCHAR(400) NOT NULL,
+    [monday_start] NVARCHAR(8) NULL,
+    [monday_end] NVARCHAR(8) NULL,
+    [tuesday_start] NVARCHAR(8) NULL,
+    [tuesday_end] NVARCHAR(8) NULL,
+    [wednesday_start] NVARCHAR(8) NULL,
+    [wednesday_end] NVARCHAR(8) NULL,
+    [thursday_start] NVARCHAR(8) NULL,
+    [thursday_end] NVARCHAR(8) NULL,
+    [friday_start] NVARCHAR(8) NULL,
+    [friday_end] NVARCHAR(8) NULL,
+    [saturday_start] NVARCHAR(8) NULL,
+    [saturday_end] NVARCHAR(8) NULL,
+    [sunday_start] NVARCHAR(8) NULL,
+    [sunday_end] NVARCHAR(8) NULL,
+    [holiday_list_id] NVARCHAR(64) NULL CONSTRAINT [FK_calendar_holiday_list_id] REFERENCES psa.[holiday_list]([holiday_list_id])
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- indexes
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_fee_line_effective' AND object_id = OBJECT_ID(N'psa.[fee_line]'))
@@ -1090,10 +1275,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_unique = 0 AND i.is_primary_key = 0;
 
-IF @Tables <> 33 OR @Triggers <> 2 OR @Indexes < 2
+IF @Tables <> 40 OR @Triggers <> 2 OR @Indexes < 2
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 33), %d triggers (expected 2), %d indexes (expected at least 2). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 40), %d triggers (expected 2), %d indexes (expected at least 2). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -1119,6 +1304,13 @@ PRINT N'target is enforced until somebody with the authority says so.';
 
     DROP TRIGGER IF EXISTS psa.[time_entry_requires_a_variation];
     DROP TRIGGER IF EXISTS psa.[ticket_close_requires_a_variation];
+    DROP TABLE IF EXISTS psa.[calendar];
+    DROP TABLE IF EXISTS psa.[holiday];
+    DROP TABLE IF EXISTS psa.[holiday_list];
+    DROP TABLE IF EXISTS psa.[board_member];
+    DROP TABLE IF EXISTS psa.[board_team];
+    DROP TABLE IF EXISTS psa.[board_role];
+    DROP TABLE IF EXISTS psa.[board_status];
     DROP TABLE IF EXISTS psa.[priority_override];
     DROP TABLE IF EXISTS psa.[ticket_handover];
     DROP TABLE IF EXISTS psa.[ticket_event];
