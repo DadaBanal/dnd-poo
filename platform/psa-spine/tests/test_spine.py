@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
-from psaspine import clocks, db, register, reports, rules, tickets  # noqa: E402
+from psaspine import board, clocks, db, register, reports, rules, tickets  # noqa: E402
 import sqlite_to_tsql  # noqa: E402
 from sqlite_ddl import Unsupported  # noqa: E402
 
@@ -1348,6 +1348,188 @@ class RulesTest(unittest.TestCase):
         source = Path(rules.__file__).read_text(encoding="utf-8")
         for forbidden in ("eval(", "exec(", "compile(", "__import__"):
             self.assertNotIn(forbidden, source)
+
+
+class BoardEngineTest(unittest.TestCase):
+    """009 — one status change, and everything that follows from it.
+
+    The seam where the board, the clocks and the rules stop being three
+    libraries sharing a database.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn.execute(
+            "INSERT INTO calendar (calendar_id, name, monday_start, monday_end,"
+            " tuesday_start, tuesday_end, wednesday_start, wednesday_end,"
+            " thursday_start, thursday_end, friday_start, friday_end,"
+            " saturday_start, saturday_end, sunday_start, sunday_end)"
+            " VALUES ('CLINICAL','Clinical 24x7','00:00','24:00','00:00','24:00',"
+            "'00:00','24:00','00:00','24:00','00:00','24:00','00:00','24:00','00:00','24:00')")
+        for sid, name, esc, flags in (
+                ("IT_HELP.NEW", "New", "NOT_RESPONDED", "is_default=1"),
+                ("IT_HELP.WORKING", "In progress", "RESPONDED", ""),
+                ("IT_HELP.PLAN", "Plan agreed", "RESOLUTION_PLAN", ""),
+                ("IT_HELP.PARTS", "Waiting for parts", "NO_ESCALATION",
+                 "time_entry_allowed=0"),
+                ("IT_HELP.DONE", "Closed", "RESOLVED", "is_closed=1"),
+                ("IT_HELP.OLD", "Retired status", "NO_ESCALATION", "inactive=1")):
+            extra = f", {flags.split('=')[0]}" if flags else ""
+            val = f", {flags.split('=')[1]}" if flags else ""
+            self.conn.execute(
+                f"INSERT INTO board_status (board_status_id, board_id, name,"
+                f" escalation_status{extra}) VALUES (?,'IT_HELP',?,?{val})",
+                (sid, name, esc))
+        # Another board, to prove a status cannot be borrowed across one.
+        self.conn.execute(
+            "INSERT INTO board_status (board_status_id, board_id, name, escalation_status)"
+            " VALUES ('UNROUTED.NEW','UNROUTED','New','NOT_RESPONDED')")
+        for clock, minutes in (("RESPOND", 60), ("RESOLVE", 240)):
+            self.conn.execute(
+                "INSERT INTO sla_target (board_id, priority, clock, target_minutes,"
+                " calendar, enforced) VALUES ('IT_HELP','P1',?,?, 'CLINICAL_24x7', 0)",
+                (clock, minutes))
+        self.conn.execute(
+            "INSERT INTO work_item (work_item_id, source, name, entity_id, contract_basis)"
+            " VALUES ('ITO-4001','desk','Ward switch stack down','PMC','BASELINE')")
+        self.conn.execute(
+            "INSERT INTO ticket (work_item_id, board_id, path, impact, urgency, priority,"
+            " priority_source, requested_at, opened_at, state)"
+            " VALUES ('ITO-4001','IT_HELP','INCIDENT','I1','U1','P1','MATRIX',"
+            "'2026-11-16 08:00','2026-11-16 08:00','NEW')")
+        board.open_clocks(self.conn, "ITO-4001",
+                          at=datetime(2026, 11, 16, 8, 0), calendar_id="CLINICAL")
+        self.conn.commit()
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _move(self, status_id: str, at: datetime) -> dict:
+        return board.change_status(self.conn, "ITO-4001", status_id,
+                                   at=at, actor="Cadano")
+
+    def _clock(self, clock: str):
+        return self.conn.execute(
+            "SELECT * FROM ticket_clock WHERE work_item_id='ITO-4001' AND clock=?",
+            (clock,)).fetchone()
+
+    # ------------------------------------------------------------- the clocks
+
+    def test_the_boards_sla_targets_start_the_clocks(self):
+        self.assertEqual(
+            {r["clock"] for r in self.conn.execute(
+                "SELECT clock FROM ticket_clock WHERE work_item_id='ITO-4001'")},
+            {"RESPOND", "RESOLVE"})
+
+    def test_responding_stops_the_respond_clock_and_not_the_resolve_clock(self):
+        result = self._move("IT_HELP.WORKING", datetime(2026, 11, 16, 8, 30))
+        self.assertEqual(result["stopped"], ["RESPOND"])
+        self.assertIsNotNone(self._clock("RESPOND")["stopped_at"])
+        self.assertIsNone(self._clock("RESOLVE")["stopped_at"])
+
+    def test_the_status_that_stopped_a_clock_is_on_the_record(self):
+        self._move("IT_HELP.WORKING", datetime(2026, 11, 16, 8, 30))
+        self.assertEqual(self._clock("RESPOND")["stopped_by_status"], "IT_HELP.WORKING")
+
+    def test_resolving_stops_everything_still_running(self):
+        result = self._move("IT_HELP.DONE", datetime(2026, 11, 16, 9, 0))
+        self.assertEqual(sorted(result["stopped"]), ["RESOLVE", "RESPOND"])
+
+    def test_a_pause_status_pauses_the_clocks_and_leaving_it_resumes_them(self):
+        self._move("IT_HELP.WORKING", datetime(2026, 11, 16, 8, 30))
+        paused = self._move("IT_HELP.PARTS", datetime(2026, 11, 16, 9, 0))
+        self.assertEqual(paused["paused"], ["RESOLVE"])
+        resumed = self._move("IT_HELP.WORKING", datetime(2026, 11, 16, 11, 0))
+        self.assertEqual(resumed["resumed"], ["RESOLVE"])
+        # Two hours parked, on a 24x7 calendar, must not count.
+        used = clocks.elapsed_minutes(self.conn, self._clock("RESOLVE")["clock_id"],
+                                      as_of=datetime(2026, 11, 16, 12, 0))
+        self.assertEqual(used, 120)      # 08:00-09:00 and 11:00-12:00
+
+    def test_pausing_twice_does_not_open_two_pauses(self):
+        self._move("IT_HELP.PARTS", datetime(2026, 11, 16, 9, 0))
+        again = self._move("IT_HELP.PARTS", datetime(2026, 11, 16, 10, 0))
+        self.assertEqual(again["paused"], [])
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) c FROM ticket_clock_pause").fetchone()["c"], 2)  # one per clock
+
+    def test_closing_from_a_pause_closes_the_pause_first(self):
+        """Otherwise the paused interval runs on past the moment it stopped."""
+        self._move("IT_HELP.PARTS", datetime(2026, 11, 16, 9, 0))
+        self._move("IT_HELP.DONE", datetime(2026, 11, 16, 10, 0))
+        open_pauses = self.conn.execute(
+            "SELECT COUNT(*) c FROM ticket_clock_pause WHERE resumed_at IS NULL"
+        ).fetchone()["c"]
+        self.assertEqual(open_pauses, 0)
+
+    # ---------------------------------------------------------- the lifecycle
+
+    def test_the_universal_state_follows_the_boards_status(self):
+        """`state` is what the variation gate tests, so it cannot drift."""
+        self._move("IT_HELP.WORKING", datetime(2026, 11, 16, 8, 30))
+        self.assertEqual(self.conn.execute(
+            "SELECT state FROM ticket").fetchone()["state"], "IN_PROGRESS")
+        self._move("IT_HELP.PARTS", datetime(2026, 11, 16, 9, 0))
+        self.assertEqual(self.conn.execute(
+            "SELECT state FROM ticket").fetchone()["state"], "WAITING_CLIENT")
+
+    def test_a_closed_status_closes_the_ticket_and_stamps_the_date(self):
+        self._move("IT_HELP.DONE", datetime(2026, 11, 16, 9, 0))
+        row = self.conn.execute("SELECT state, closed_at FROM ticket").fetchone()
+        self.assertEqual(row["state"], "CLOSED")
+        self.assertEqual(row["closed_at"], "2026-11-16 09:00")
+
+    def test_every_change_is_on_the_event_log(self):
+        self._move("IT_HELP.WORKING", datetime(2026, 11, 16, 8, 30))
+        detail = self.conn.execute(
+            "SELECT detail FROM ticket_event WHERE kind='STATUS_CHANGE'").fetchone()["detail"]
+        self.assertIn("IT_HELP.WORKING", detail)
+        self.assertIn("RESPONDED", detail)
+
+    # ------------------------------------------------------------- refusals
+
+    def test_a_status_from_another_board_is_refused(self):
+        with self.assertRaises(board.NotOnThisBoard):
+            self._move("UNROUTED.NEW", datetime(2026, 11, 16, 9, 0))
+
+    def test_a_retired_status_takes_no_new_tickets(self):
+        with self.assertRaises(board.NotOnThisBoard):
+            self._move("IT_HELP.OLD", datetime(2026, 11, 16, 9, 0))
+
+    # ------------------------------------------------- effort, both gates
+
+    def test_a_status_that_forbids_effort_says_so_before_the_attempt(self):
+        self._move("IT_HELP.PARTS", datetime(2026, 11, 16, 9, 0))
+        allowed, why = board.may_book_effort(self.conn, "ITO-4001")
+        self.assertFalse(allowed)
+        self.assertIn("Waiting for parts", why)
+
+    def test_the_variation_gate_answers_before_the_database_refuses(self):
+        """A nurse should read a sentence, not an IntegrityError."""
+        self.conn.execute(
+            "INSERT INTO work_item (work_item_id, source, name, entity_id, contract_basis)"
+            " VALUES ('ITO-4002','desk','Raise a variation','PMC','VARIATION')")
+        self.conn.execute(
+            "INSERT INTO ticket (work_item_id, board_id, path, impact, urgency, priority,"
+            " priority_source, requested_at, opened_at, state)"
+            " VALUES ('ITO-4002','IT_HELP','VARIATION','I2','U2','P3','MATRIX',"
+            "'2026-11-16 08:00','2026-11-16 08:00','NEW')")
+        allowed, why = board.may_book_effort(self.conn, "ITO-4002")
+        self.assertFalse(allowed)
+        self.assertIn("must be attached to a variation", why)
+        # And the trigger still refuses it regardless, which is the real gate.
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute(
+                "INSERT INTO time_entry (work_item_id, entity_id, worked_on, band_hours,"
+                " performed_by, entered_by, charge_method) VALUES"
+                " ('ITO-4002','PMC','2026-11-16',4,'Cadano','Cadano','CAPACITY_UPLIFT')")
+
+    def test_effort_is_allowed_on_an_ordinary_working_ticket(self):
+        self._move("IT_HELP.WORKING", datetime(2026, 11, 16, 8, 30))
+        allowed, why = board.may_book_effort(self.conn, "ITO-4001")
+        self.assertTrue(allowed, why)
 
 
 class PortTest(unittest.TestCase):

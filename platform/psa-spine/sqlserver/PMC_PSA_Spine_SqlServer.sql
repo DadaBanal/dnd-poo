@@ -1385,6 +1385,17 @@ CREATE TABLE psa.[workflow_run] (
 );
 END;
 
+-- ==========================================================================
+-- COLUMNS ADDED TO TABLES THAT ALREADY EXIST
+--
+-- Guarded by COL_LENGTH so a re-run adds nothing twice. A schema that can
+-- only be created and never evolved is not a schema, but on a live clinical
+-- database the only safe evolution is ADD: the translator refuses a rename
+-- or a drop rather than losing a column quietly.
+
+IF COL_LENGTH(N'psa.[ticket]', N'board_status_id') IS NULL
+ALTER TABLE psa.[ticket] ADD [board_status_id] NVARCHAR(64) NULL CONSTRAINT [FK_ticket_board_status_id] REFERENCES psa.[board_status]([board_status_id]);
+
 -- --------------------------------------------------------------------------
 -- indexes
 

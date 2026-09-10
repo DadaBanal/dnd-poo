@@ -175,6 +175,21 @@ class Table:
 
 
 @dataclass
+class AlterAddColumn:
+    """A column added to a table that already exists.
+
+    A schema that can only ever be created and never evolved is not a schema, so
+    this is recognised deliberately rather than refused. Only ADD COLUMN: a
+    rename or a drop loses data, and neither should happen silently on a live
+    clinical database.
+    """
+    table: str
+    column: "Column"
+    comment: str
+    source_file: str
+
+
+@dataclass
 class Index:
     name: str
     table: str
@@ -204,6 +219,7 @@ TABLE_CONSTRAINT_HEADS = {"PRIMARY", "UNIQUE", "CHECK", "FOREIGN", "CONSTRAINT"}
 _CREATE_TABLE = re.compile(r"^\s*CREATE\s+TABLE\s+(\w+)\s*\(", re.I)
 _CREATE_INDEX = re.compile(r"^\s*CREATE\s+INDEX\s+(\w+)\s+ON\s+(\w+)\s*\((.*)\)\s*;?\s*$", re.I | re.S)
 _PRAGMA = re.compile(r"^\s*PRAGMA\s+\w+\s*=\s*\w+\s*;?\s*$", re.I)
+_ALTER = re.compile(r"^\s*ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(.*?);?\s*$", re.I | re.S)
 _TRIGGER_HEAD = re.compile(
     r"^\s*CREATE\s+TRIGGER\s+(\w+)\s+(BEFORE|AFTER|INSTEAD\s+OF)\s+"
     r"(INSERT|DELETE|UPDATE)(?:\s+OF\s+([\w\s,]+?))?\s+ON\s+(\w+)\s+",
@@ -397,11 +413,26 @@ def parse_trigger(raw: str, code: str, source_file: str) -> Trigger:
     )
 
 
-def parse_schema(files: list[tuple[str, str]]) -> tuple[list[Table], list[Index], list[Trigger]]:
+def parse_alter(raw: str, code: str, source_file: str) -> AlterAddColumn:
+    m = _ALTER.match(strip_comments(code))
+    if not m:
+        raise Unsupported(
+            "only ALTER TABLE ... ADD COLUMN is ported. A rename or a drop loses "
+            "data and must not happen silently on a live clinical database.")
+    open_paren = code.index("(", code.upper().index("ADD COLUMN")) if False else None
+    body_code = m.group(2)
+    start = code.upper().index("ADD COLUMN") + len("ADD COLUMN")
+    return AlterAddColumn(table=m.group(1),
+                          column=parse_column(body_code, raw[start:].rstrip().rstrip(";")),
+                          comment=leading_comment(raw), source_file=source_file)
+
+
+def parse_schema(files: list[tuple[str, str]]) -> tuple[list[Table], list[Index], list[Trigger], list[AlterAddColumn]]:
     """Parse (filename, sql) pairs in the order given."""
     tables: list[Table] = []
     indexes: list[Index] = []
     triggers: list[Trigger] = []
+    alters: list[AlterAddColumn] = []
     for filename, sql in files:
         for raw, code in split_statements(sql):
             clean = strip_comments(code).strip()
@@ -409,7 +440,9 @@ def parse_schema(files: list[tuple[str, str]]) -> tuple[list[Table], list[Index]
                 continue
             if _PRAGMA.match(clean):
                 continue                               # recognised; see the emitter
-            if re.match(r"\s*CREATE\s+TABLE\b", clean, re.I):
+            if _ALTER.match(clean):
+                alters.append(parse_alter(raw, code, filename))
+            elif re.match(r"\s*CREATE\s+TABLE\b", clean, re.I):
                 # FOR EACH ROW never appears in a table; guard the order below.
                 tables.append(parse_table(raw, code, filename))
             elif re.match(r"\s*CREATE\s+INDEX\b", clean, re.I):
@@ -418,7 +451,7 @@ def parse_schema(files: list[tuple[str, str]]) -> tuple[list[Table], list[Index]
                 triggers.append(parse_trigger(raw, _consume_for_each_row(code), filename))
             else:
                 raise Unsupported(f"{filename}: statement not recognised: {clean[:100]!r}")
-    return tables, indexes, triggers
+    return tables, indexes, triggers, alters
 
 
 def _consume_for_each_row(code: str) -> str:

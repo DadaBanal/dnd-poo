@@ -398,6 +398,7 @@
     "workflow_run.work_item_id": "ID",
     "workflow_run.occurred_at": "TIMESTAMP_TEXT",
     "workflow_run.outcome": "CODE",
-    "workflow_run.detail": "FREE"
+    "workflow_run.detail": "FREE",
+    "ticket.board_status_id": "ID"
   }
 }

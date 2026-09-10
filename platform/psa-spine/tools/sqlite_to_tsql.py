@@ -31,7 +31,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from sqlite_ddl import (  # noqa: E402
-    Column, Index, Table, Trigger, Unsupported, _balanced, parse_schema,
+    AlterAddColumn, Column, Index, Table, Trigger, Unsupported, _balanced,
+    parse_schema,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -331,12 +332,14 @@ def _comment_block(text: str, indent: str = "") -> list[str]:
 
 def generate(schema_dir: Path = SCHEMA_DIR, decisions: Path = DECISIONS) -> str:
     files = [(p.name, p.read_text(encoding="utf-8")) for p in sorted(schema_dir.glob("*.sql"))]
-    tables, indexes, triggers = parse_schema(files)
+    tables, indexes, triggers, alters = parse_schema(files)
     dec = Decisions(decisions)
     names = {t.name for t in tables}
 
     live = {f"{t.name}.{c.name}" for t in tables for c in t.columns
             if c.sqlite_type in ("TEXT", "REAL")}
+    live |= {f"{a.table}.{a.column.name}" for a in alters
+             if a.column.sqlite_type in ("TEXT", "REAL")}
     stale = dec.unused(live)
     if stale:
         raise Unsupported(
@@ -344,6 +347,7 @@ def generate(schema_dir: Path = SCHEMA_DIR, decisions: Path = DECISIONS) -> str:
             + ", ".join(stale) + ". Remove them, so the decisions file cannot "
             "drift away from the schema either.")
 
+    by_name = {t.name: t for t in tables}
     objects = ([f"{SCHEMA}.{t.name}" for t in tables]
                + [f"{SCHEMA}.{i.name}" for i in indexes]
                + [f"{SCHEMA}.{t.name}" for t in triggers])
@@ -477,6 +481,47 @@ IF SCHEMA_ID(@Schema) IS NULL
         w("BEGIN")
         w(emit_table(table, dec, names))
         w("END;")
+
+    if alters:
+        w("")
+        w(f"-- {'=' * 74}")
+        w("-- COLUMNS ADDED TO TABLES THAT ALREADY EXIST")
+        w("--")
+        w("-- Guarded by COL_LENGTH so a re-run adds nothing twice. A schema that can")
+        w("-- only be created and never evolved is not a schema, but on a live clinical")
+        w("-- database the only safe evolution is ADD: the translator refuses a rename")
+        w("-- or a drop rather than losing a column quietly.")
+    for alter in alters:
+        table = by_name.get(alter.table)
+        if table is None:
+            raise Unsupported(
+                f"ALTER TABLE {alter.table} adds a column to a table this schema "
+                f"never creates")
+        w("")
+        if alter.comment:
+            out.extend(_comment_block(alter.comment))
+        sql_type, cls = column_type(table, alter.column, dec)
+        piece = [f"ALTER TABLE {SCHEMA}.[{alter.table}] ADD [{alter.column.name}]", sql_type]
+        # An added column is NULL by default and must be: the rows already there
+        # have no value for it, and inventing one is how a migration lies.
+        if alter.column.not_null:
+            raise Unsupported(
+                f"{alter.table}.{alter.column.name} is added NOT NULL. Existing rows "
+                f"have no value for it, so either give it a DEFAULT or let it be NULL "
+                f"rather than inventing data.")
+        piece.append("NULL")
+        if alter.column.default is not None:
+            piece.append(f"CONSTRAINT [DF_{alter.table}_{alter.column.name}] "
+                         f"DEFAULT ({alter.column.default})")
+        if alter.column.references is not None:
+            ref_table, ref_col = alter.column.references
+            piece.append(f"CONSTRAINT [FK_{alter.table}_{alter.column.name}] "
+                         f"REFERENCES {SCHEMA}.[{ref_table}]([{ref_col}])")
+        for n, check in enumerate(alter.column.checks, start=1):
+            piece.append(f"CONSTRAINT [CK_{alter.table}_{alter.column.name}_{n:02d}] "
+                         f"CHECK ({expression(check, names)})")
+        w(f"IF COL_LENGTH(N'{SCHEMA}.[{alter.table}]', N'{alter.column.name}') IS NULL")
+        w(" ".join(piece) + ";")
 
     if indexes:
         w("")
