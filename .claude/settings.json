@@ -1,16 +1,13 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-
   "permissions": {
     "defaultMode": "acceptEdits",
-
     "allow": [
       "Read(//home/user/dnd-poo/**)",
       "Glob(//home/user/dnd-poo/**)",
       "Grep(//home/user/dnd-poo/**)",
       "Edit(//home/user/dnd-poo/**)",
       "Write(//home/user/dnd-poo/**)",
-
       "Bash(npm run build)",
       "Bash(npm run check)",
       "Bash(npm run payload)",
@@ -23,7 +20,6 @@
       "Bash(python3 -c *)",
       "Bash(python3 --version)",
       "Bash(node --version)",
-
       "Bash(git status*)",
       "Bash(git log*)",
       "Bash(git diff*)",
@@ -40,14 +36,12 @@
       "Bash(git pull origin *)",
       "Bash(git checkout -b claude/*)",
       "Bash(git rm --cached *)",
-
       "Bash(mkdir -p *)",
       "Bash(cp *)",
       "Bash(zip *)",
       "Bash(unzip -l *)",
       "Bash(sha256sum *)",
       "Bash(cmp *)",
-
       "mcp__Microsoft_365__read_resource",
       "mcp__Microsoft_365__sharepoint_search",
       "mcp__Microsoft_365__sharepoint_folder_search",
@@ -60,7 +54,6 @@
       "mcp__Microsoft_365__teams_list_channel_messages",
       "mcp__Microsoft_365__teams_list_chats",
       "mcp__Microsoft_365__get_me",
-
       "mcp__github__pull_request_read",
       "mcp__github__get_file_contents",
       "mcp__github__get_commit",
@@ -77,7 +70,6 @@
       "mcp__github__actions_get",
       "mcp__github__actions_list",
       "mcp__github__get_me",
-
       "mcp__Microsoft_Learn__microsoft_docs_search",
       "mcp__Microsoft_Learn__microsoft_docs_fetch",
       "mcp__Microsoft_Learn__microsoft_code_sample_search",
@@ -89,7 +81,6 @@
       "mcp__Mermaid_Chart__validate_and_render_mermaid_diagram",
       "mcp__Claude_Code_Remote__get_session",
       "mcp__Claude_Code_Remote__list_repos",
-
       "WebSearch",
       "WebFetch",
       "ToolSearch",
@@ -97,7 +88,6 @@
       "TaskGet",
       "ReadNotifications"
     ],
-
     "ask": [
       "Bash(git push*)",
       "Bash(npm install*)",
@@ -120,7 +110,6 @@
       "mcp__Claude_Code_Remote__create_session",
       "mcp__Claude_Code_Remote__create_trigger"
     ],
-
     "deny": [
       "Bash(sudo *)",
       "Bash(su *)",
@@ -156,7 +145,6 @@
       "Bash(Invoke-Sqlcmd*)",
       "Bash(net user*)",
       "Bash(netsh *)",
-
       "Read(//**/.env)",
       "Read(//**/.env.*)",
       "Read(//**/id_rsa*)",
@@ -184,12 +172,23 @@
       "Read(//**/*_KEY_*)",
       "Read(//**/*REVIEWER_KEY*)",
       "Read(//**/*EXAMINER_KEY*)",
-
       "Write(//home/user/dnd-poo/apps/imaging-portal/dist/**)",
       "Edit(//home/user/dnd-poo/apps/imaging-portal/dist/**)"
     ]
   },
-
   "cleanupPeriodDays": 7,
-  "includeCoAuthoredBy": true
+  "includeCoAuthoredBy": true,
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat \"$CLAUDE_PROJECT_DIR/ENVIRONMENT.md\""
+          }
+        ]
+      }
+    ]
+  }
 }

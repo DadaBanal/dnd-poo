@@ -1,3 +1,5 @@
+**Before anything else, find your row in [`ENVIRONMENT.md`](ENVIRONMENT.md).**
+
 # Working rules for this repository
 
 This repo is **code**. The programme record — every finding, decision, handoff

@@ -1,0 +1,43 @@
+name: fence
+
+# The commit fence in CLAUDE.md, checked over the WHOLE tree. The psa-spine
+# workflow already checks its own folder; this one exists because a slip in
+# docs/, a handoff or a README would have passed everything else.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  fence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Private IPv4 ranges, four octets. RFC 5737 documentation addresses
+      # (192.0.2.x) are allowed; they are what the demo fallback uses.
+      - name: No private network address anywhere
+        run: |
+          if grep -rInE '\b(10\.[0-9]{1,3}|192\.168|172\.(1[6-9]|2[0-9]|3[01]))\.[0-9]{1,3}\.[0-9]{1,3}\b' \
+               --exclude-dir=.git --exclude-dir=node_modules . ; then
+            echo "FAIL: a private network address is committed"; exit 1
+          fi
+          echo "ok: no private network addresses"
+
+      # The record's inventory denylist, as filenames.
+      - name: No denylisted file
+        run: |
+          hits=$(git ls-files -z | tr '\0' '\n' | grep -iE \
+            '(^|/)(\.env$|pmc-portal\.config\.json$|[^/]*SOA[^/]*|CaseNo[^/]*|ConsentForm[^/]*|[^/]*passport[^/]*|[^/]*Recovery-Key[^/]*|[^/]*\.rdp$|[^/]*\.bak$|[^/]*\.hl7$|[^/]*_KEY_[^/]*|bio_enrolment_map[^/]*|dept_logins\.csv$|appsysUsers[^/]*|users_[^/]*\.xlsx$|EMPLOYEE MASTERLIST[^/]*)' || true)
+          if [ -n "$hits" ]; then echo "FAIL: denylisted file committed:"; echo "$hits"; exit 1; fi
+          echo "ok: no denylisted filename"
+
+      # Secret-shaped strings. Anthropic OAuth tokens, GitHub tokens, SAS keys.
+      - name: No token-shaped string
+        run: |
+          if grep -rInE 'sk-ant-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AccountKey=[A-Za-z0-9+/=]{20,}' \
+               --exclude-dir=.git --exclude-dir=node_modules --exclude=fence.yml . ; then
+            echo "FAIL: a token-shaped string is committed"; exit 1
+          fi
+          echo "ok: no token-shaped strings"
