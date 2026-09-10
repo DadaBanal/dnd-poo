@@ -131,12 +131,19 @@ BEGIN
     PRINT N'    psa.calendar';
     PRINT N'    psa.ticket_clock';
     PRINT N'    psa.ticket_clock_pause';
+    PRINT N'    psa.workflow';
+    PRINT N'    psa.workflow_event';
+    PRINT N'    psa.workflow_trigger';
+    PRINT N'    psa.workflow_condition';
+    PRINT N'    psa.workflow_action';
+    PRINT N'    psa.workflow_run';
     PRINT N'    psa.ix_fee_line_effective';
     PRINT N'    psa.ix_time_entry_period';
+    PRINT N'    psa.ix_workflow_run_event';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'';
-    PRINT N'  42 tables, 2 indexes, 2 triggers.';
+    PRINT N'  48 tables, 3 indexes, 2 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -1244,6 +1251,141 @@ CREATE TABLE psa.[ticket_clock_pause] (
 END;
 
 -- --------------------------------------------------------------------------
+-- workflow   (from schema/008_workflow.sql)
+IF OBJECT_ID(N'psa.[workflow]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[workflow] (
+    [workflow_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_workflow] PRIMARY KEY,
+
+    -- NULL means global. A rule that pages on a clinical P1 should not have to be
+    -- copied onto fourteen boards.
+    [board_id] NVARCHAR(64) NULL CONSTRAINT [FK_workflow_board_id] REFERENCES psa.[board]([board_id]),
+    [name] NVARCHAR(400) NOT NULL,
+    [table_type] NVARCHAR(32) NOT NULL CONSTRAINT [CK_workflow_01] CHECK (table_type IN ('TICKET','WORK_ITEM','TIME_ENTRY','VARIATION')),
+
+    -- Off by default. A rule nobody has read should not be running.
+    [is_active] INT NOT NULL CONSTRAINT [DF_workflow_is_active] DEFAULT (0) CONSTRAINT [CK_workflow_02] CHECK (is_active IN (0, 1)),
+
+    -- Time-based rules are first class, not an afterthought. And the schedule can
+    -- run on SLA HOURS rather than wall clock: a rule that escalates at 80% of a
+    -- target must be evaluated on the same calendar the target uses, or it fires
+    -- at the wrong time on a public holiday.
+    [batch_interval] INT NULL,
+    [batch_frequency_unit] NVARCHAR(32) NULL CONSTRAINT [CK_workflow_03] CHECK (batch_frequency_unit IN ('MINUTES','HOURS','DAYS') OR batch_frequency_unit IS NULL),
+    [batch_schedule] NVARCHAR(32) NULL CONSTRAINT [CK_workflow_04] CHECK (batch_schedule IN ('ANY_TIME','BUSINESS_HOURS','SLA_HOURS') OR batch_schedule IS NULL),
+    [sort_order] INT NOT NULL CONSTRAINT [DF_workflow_sort_order] DEFAULT (0),
+    [note] NVARCHAR(MAX) NULL
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- workflow_event   (from schema/008_workflow.sql)
+IF OBJECT_ID(N'psa.[workflow_event]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[workflow_event] (
+    [event_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_workflow_event] PRIMARY KEY,
+    [workflow_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_workflow_event_workflow_id] REFERENCES psa.[workflow]([workflow_id]),
+    [name] NVARCHAR(400) NULL,
+    [fires_on] NVARCHAR(32) NOT NULL CONSTRAINT [CK_workflow_event_01] CHECK (fires_on IN ('ON_CREATE','ON_STATUS_CHANGE','ON_OWNER_CHANGE','ON_NOTE_ADDED', 'ON_HANDOVER','ON_SCHEDULE','ON_SLA_THRESHOLD')),
+    [execution_time] NVARCHAR(32) NOT NULL CONSTRAINT [DF_workflow_event_execution_time] DEFAULT ('ONCE') CONSTRAINT [CK_workflow_event_02] CHECK (execution_time IN ('ONCE','MULTIPLE_TIMES','CONTINUOUSLY')),
+    [frequency] INT NULL,
+    [frequency_unit] NVARCHAR(32) NULL CONSTRAINT [CK_workflow_event_03] CHECK (frequency_unit IN ('MINUTES','HOURS','DAYS') OR frequency_unit IS NULL),
+    [max_executions] INT NULL,
+    CONSTRAINT [CK_workflow_event_04] CHECK (execution_time = 'ONCE' OR (frequency IS NOT NULL AND frequency > 0 AND frequency_unit IS NOT NULL)),
+    CONSTRAINT [CK_workflow_event_05] CHECK (execution_time <> 'MULTIPLE_TIMES' OR (max_executions IS NOT NULL AND max_executions > 0))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- workflow_trigger   (from schema/008_workflow.sql)
+-- ----------------------------------------------------- the condition vocabulary
+--
+-- Which fields a rule may look at, and what kind of value each holds. Rows, so
+-- adding a field a rule can test is a row rather than a release.
+IF OBJECT_ID(N'psa.[workflow_trigger]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[workflow_trigger] (
+    -- 'TICKET.PRIORITY'
+    [trigger_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_workflow_trigger] PRIMARY KEY,
+    [table_type] NVARCHAR(32) NOT NULL CONSTRAINT [CK_workflow_trigger_01] CHECK (table_type IN ('TICKET','WORK_ITEM','TIME_ENTRY','VARIATION')),
+
+    -- the column the engine reads
+    [field] NVARCHAR(400) NOT NULL,
+
+    -- what an administrator sees
+    [display_name] NVARCHAR(400) NOT NULL,
+    [value_type] NVARCHAR(32) NOT NULL CONSTRAINT [CK_workflow_trigger_02] CHECK (value_type IN ('TEXT','NUMBER','CODE','DATE','BOOLEAN')),
+
+    -- Where the option list comes from, when there is one. NULL means free entry.
+    [option_source] NVARCHAR(400) NULL,
+    CONSTRAINT [UQ_workflow_trigger] UNIQUE ([table_type], [field])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- workflow_condition   (from schema/008_workflow.sql)
+IF OBJECT_ID(N'psa.[workflow_condition]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[workflow_condition] (
+    [condition_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_workflow_condition] PRIMARY KEY,
+    [event_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_workflow_condition_event_id] REFERENCES psa.[workflow_event]([event_id]),
+    [trigger_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_workflow_condition_trigger_id] REFERENCES psa.[workflow_trigger]([trigger_id]),
+    [operator] NVARCHAR(32) NOT NULL CONSTRAINT [CK_workflow_condition_01] CHECK (operator IN ('EQ','NE','IN','NOT_IN','LT','LTE','GT','GTE', 'IS_NULL','IS_NOT_NULL','CONTAINS')),
+    [value] NVARCHAR(MAX) NULL,
+    [conjunction] NVARCHAR(32) NOT NULL CONSTRAINT [DF_workflow_condition_conjunction] DEFAULT ('AND') CONSTRAINT [CK_workflow_condition_02] CHECK (conjunction IN ('AND','OR')),
+    [sort_order] INT NOT NULL CONSTRAINT [DF_workflow_condition_sort_order] DEFAULT (0),
+    CONSTRAINT [CK_workflow_condition_03] CHECK (operator IN ('IS_NULL','IS_NOT_NULL') OR value IS NOT NULL)
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- workflow_action   (from schema/008_workflow.sql)
+-- ------------------------------------------------------------------ actions
+IF OBJECT_ID(N'psa.[workflow_action]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[workflow_action] (
+    [action_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_workflow_action] PRIMARY KEY,
+    [event_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_workflow_action_event_id] REFERENCES psa.[workflow_event]([event_id]),
+    [action] NVARCHAR(32) NOT NULL CONSTRAINT [CK_workflow_action_01] CHECK (action IN ('SET_STATUS','SET_BOARD','ASSIGN_TEAM','ASSIGN_OWNER','NOTIFY', 'ESCALATE','ADD_NOTE','FLAG','REQUIRE_APPROVAL','APPLY_TEMPLATE')),
+
+    -- Who a NOTIFY or ESCALATE reaches. A board role rather than a name, so the
+    -- rule survives somebody leaving.
+    [notify_role] NVARCHAR(32) NULL CONSTRAINT [CK_workflow_action_02] CHECK (notify_role IN ('SERVICE_MANAGER','DISPATCH','ON_CALL','DUTY_MANAGER', 'TEAM_LEADER','OWNER','REQUESTER') OR notify_role IS NULL),
+    [target_board_id] NVARCHAR(64) NULL CONSTRAINT [FK_workflow_action_target_board_id] REFERENCES psa.[board]([board_id]),
+    [target_status_id] NVARCHAR(64) NULL CONSTRAINT [FK_workflow_action_target_status_id] REFERENCES psa.[board_status]([board_status_id]),
+    [target_team_id] NVARCHAR(64) NULL CONSTRAINT [FK_workflow_action_target_team_id] REFERENCES psa.[board_team]([team_id]),
+    [target_member] NVARCHAR(200) NULL,
+    [detail] NVARCHAR(MAX) NULL,
+    [sort_order] INT NOT NULL CONSTRAINT [DF_workflow_action_sort_order] DEFAULT (0),
+    CONSTRAINT [CK_workflow_action_03] CHECK (action NOT IN ('NOTIFY','ESCALATE') OR notify_role IS NOT NULL OR target_member IS NOT NULL)
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- workflow_run   (from schema/008_workflow.sql)
+-- --------------------------------------------------------------- the record
+--
+-- Append-only, and every firing writes here whether it acted or not. "Why did
+-- nobody get paged" and "why did this page four times" are both questions with
+-- an answer, and both get asked after the incident rather than before.
+IF OBJECT_ID(N'psa.[workflow_run]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[workflow_run] (
+    [run_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_workflow_run] PRIMARY KEY,
+    [event_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_workflow_run_event_id] REFERENCES psa.[workflow_event]([event_id]),
+    [work_item_id] NVARCHAR(64) NULL,
+    [occurred_at] NVARCHAR(64) NOT NULL,
+    [execution_number] INT NOT NULL CONSTRAINT [DF_workflow_run_execution_number] DEFAULT (1),
+    [outcome] NVARCHAR(32) NOT NULL CONSTRAINT [CK_workflow_run_01] CHECK (outcome IN ('MATCHED','NOT_MATCHED','ACTED','SUPPRESSED','ERROR')),
+    [detail] NVARCHAR(MAX) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [occurred_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [occurred_at], 126), CASE WHEN [occurred_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [occurred_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- indexes
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_fee_line_effective' AND object_id = OBJECT_ID(N'psa.[fee_line]'))
@@ -1251,6 +1393,9 @@ CREATE INDEX [ix_fee_line_effective] ON psa.[fee_line] ([entity_id], [effective_
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_time_entry_period' AND object_id = OBJECT_ID(N'psa.[time_entry]'))
 CREATE INDEX [ix_time_entry_period] ON psa.[time_entry] ([entity_id], [worked_on]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_workflow_run_event' AND object_id = OBJECT_ID(N'psa.[workflow_run]'))
+CREATE INDEX [ix_workflow_run_event] ON psa.[workflow_run] ([event_id], [work_item_id]);
 
 -- ==========================================================================
 -- THE GATE
@@ -1338,10 +1483,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_unique = 0 AND i.is_primary_key = 0;
 
-IF @Tables <> 42 OR @Triggers <> 2 OR @Indexes < 2
+IF @Tables <> 48 OR @Triggers <> 2 OR @Indexes < 3
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 42), %d triggers (expected 2), %d indexes (expected at least 2). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 48), %d triggers (expected 2), %d indexes (expected at least 3). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -1367,6 +1512,12 @@ PRINT N'target is enforced until somebody with the authority says so.';
 
     DROP TRIGGER IF EXISTS psa.[time_entry_requires_a_variation];
     DROP TRIGGER IF EXISTS psa.[ticket_close_requires_a_variation];
+    DROP TABLE IF EXISTS psa.[workflow_run];
+    DROP TABLE IF EXISTS psa.[workflow_action];
+    DROP TABLE IF EXISTS psa.[workflow_condition];
+    DROP TABLE IF EXISTS psa.[workflow_trigger];
+    DROP TABLE IF EXISTS psa.[workflow_event];
+    DROP TABLE IF EXISTS psa.[workflow];
     DROP TABLE IF EXISTS psa.[ticket_clock_pause];
     DROP TABLE IF EXISTS psa.[ticket_clock];
     DROP TABLE IF EXISTS psa.[calendar];

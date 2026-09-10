@@ -12,14 +12,14 @@ import sqlite3
 import sys
 import tempfile
 import unittest
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
-from psaspine import clocks, db, register, reports, tickets  # noqa: E402
+from psaspine import clocks, db, register, reports, rules, tickets  # noqa: E402
 import sqlite_to_tsql  # noqa: E402
 from sqlite_ddl import Unsupported  # noqa: E402
 
@@ -1149,6 +1149,205 @@ class ClockTest(unittest.TestCase):
                 "INSERT INTO ticket_clock (work_item_id, clock, calendar_id,"
                 " target_minutes, started_at) VALUES"
                 " ('ITO-2001','ACKNOWLEDGE','MANILA',0,'2026-11-16T08:00')")
+
+
+class RulesTest(unittest.TestCase):
+    """008 — rules as rows, with no expression language anywhere near them.
+
+    The headline case is the real one the record calls for: triage today is one
+    person, and when she is unavailable the path is a personal chat to a CIO in
+    another country. So an unowned ticket on the Unrouted queue must page IT
+    every thirty minutes, four times, and then stop.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn.execute(
+            "INSERT INTO workflow (workflow_id, board_id, name, table_type, is_active)"
+            " VALUES ('WF_UNROUTED','UNROUTED','Unrouted ages and pages IT','TICKET',1)")
+        self.conn.execute(
+            "INSERT INTO workflow_event (event_id, workflow_id, name, fires_on,"
+            " execution_time, frequency, frequency_unit, max_executions)"
+            " VALUES ('EV_AGE','WF_UNROUTED','Nobody has picked it up','ON_SCHEDULE',"
+            "'MULTIPLE_TIMES',30,'MINUTES',4)")
+        for tid, field, disp, vtype in (
+                ("TICKET.OWNER", "owner", "Owner", "TEXT"),
+                ("TICKET.PRIORITY", "priority", "Priority", "CODE"),
+                ("TICKET.STATE", "state", "State", "CODE"),
+                ("TICKET.AGE", "age_minutes", "Age in minutes", "NUMBER")):
+            self.conn.execute(
+                "INSERT INTO workflow_trigger (trigger_id, table_type, field,"
+                " display_name, value_type) VALUES (?, 'TICKET', ?, ?, ?)",
+                (tid, field, disp, vtype))
+        self.conn.execute(
+            "INSERT INTO workflow_condition (event_id, trigger_id, operator, sort_order)"
+            " VALUES ('EV_AGE','TICKET.OWNER','IS_NULL',1)")
+        self.conn.execute(
+            "INSERT INTO workflow_condition (event_id, trigger_id, operator, value, sort_order)"
+            " VALUES ('EV_AGE','TICKET.AGE','GTE','30',2)")
+        self.conn.execute(
+            "INSERT INTO workflow_action (event_id, action, notify_role, detail)"
+            " VALUES ('EV_AGE','ESCALATE','ON_CALL','Unrouted and unowned')")
+        self.conn.commit()
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    UNOWNED = {"work_item_id": "ITO-3001", "owner": None, "priority": "P2",
+               "state": "NEW", "age_minutes": 45}
+
+    # ------------------------------------------------------ the execution policy
+
+    def test_the_unrouted_rule_pages_four_times_then_stops(self):
+        """Every thirty minutes, capped. Not once into an empty room, not forever."""
+        at = datetime(2026, 11, 16, 9, 0)
+        fired = []
+        for _ in range(8):
+            result = rules.evaluate(self.conn, "EV_AGE", self.UNOWNED, as_of=at)
+            if result["fired"]:
+                fired.append(at)
+            at += timedelta(minutes=30)
+        self.assertEqual(len(fired), 4)
+        self.assertEqual(fired[0], datetime(2026, 11, 16, 9, 0))
+        self.assertEqual(fired[-1], datetime(2026, 11, 16, 10, 30))
+
+    def test_it_does_not_fire_again_before_the_interval_is_up(self):
+        at = datetime(2026, 11, 16, 9, 0)
+        self.assertTrue(rules.evaluate(self.conn, "EV_AGE", self.UNOWNED, as_of=at)["fired"])
+        soon = rules.evaluate(self.conn, "EV_AGE", self.UNOWNED,
+                              as_of=at + timedelta(minutes=10))
+        self.assertFalse(soon["fired"])
+        self.assertIn("next firing is due", soon["reason"])
+
+    def test_a_once_rule_fires_once(self):
+        self.conn.execute(
+            "INSERT INTO workflow_event (event_id, workflow_id, name, fires_on,"
+            " execution_time) VALUES ('EV_ONE','WF_UNROUTED','Greet','ON_CREATE','ONCE')")
+        at = datetime(2026, 11, 16, 9, 0)
+        self.assertTrue(rules.evaluate(self.conn, "EV_ONE", self.UNOWNED, as_of=at)["fired"])
+        again = rules.evaluate(self.conn, "EV_ONE", self.UNOWNED,
+                               as_of=at + timedelta(days=1))
+        self.assertFalse(again["fired"])
+        self.assertIn("already acted once", again["reason"])
+
+    def test_an_inactive_workflow_never_fires(self):
+        """Off by default. A rule nobody has read should not be running."""
+        self.conn.execute("UPDATE workflow SET is_active = 0 WHERE workflow_id='WF_UNROUTED'")
+        result = rules.evaluate(self.conn, "EV_AGE", self.UNOWNED,
+                                as_of=datetime(2026, 11, 16, 9, 0))
+        self.assertFalse(result["fired"])
+        self.assertIn("not active", result["reason"])
+
+    def test_a_repeating_rule_must_carry_an_interval(self):
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute(
+                "INSERT INTO workflow_event (event_id, workflow_id, fires_on,"
+                " execution_time) VALUES ('EV_BAD','WF_UNROUTED','ON_SCHEDULE','CONTINUOUSLY')")
+
+    def test_multiple_times_without_a_cap_is_refused(self):
+        """If you mean forever, say CONTINUOUSLY and mean it."""
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute(
+                "INSERT INTO workflow_event (event_id, workflow_id, fires_on,"
+                " execution_time, frequency, frequency_unit)"
+                " VALUES ('EV_BAD','WF_UNROUTED','ON_SCHEDULE','MULTIPLE_TIMES',30,'MINUTES')")
+
+    # --------------------------------------------------------- the conditions
+
+    def test_an_owned_ticket_does_not_page_anybody(self):
+        owned = dict(self.UNOWNED, owner="Dela Cruz")
+        result = rules.evaluate(self.conn, "EV_AGE", owned,
+                                as_of=datetime(2026, 11, 16, 9, 0))
+        self.assertFalse(result["fired"])
+        self.assertEqual(result["reason"], "conditions not met")
+
+    def test_a_young_ticket_does_not_page_anybody(self):
+        young = dict(self.UNOWNED, age_minutes=5)
+        self.assertFalse(rules.evaluate(self.conn, "EV_AGE", young,
+                                        as_of=datetime(2026, 11, 16, 9, 0))["fired"])
+
+    def test_numbers_compare_as_numbers_not_as_text(self):
+        """'100' < '30' as strings. That is how an ageing rule silently stops working."""
+        self.assertTrue(rules.OPERATORS["GTE"](100, "30"))
+        self.assertTrue(rules.OPERATORS["GT"](100, "30"))
+        self.assertFalse(rules.OPERATORS["LT"](100, "30"))
+
+    def test_every_operator_behaves(self):
+        self.assertTrue(rules.OPERATORS["IN"]("P1", "P1,P2"))
+        self.assertFalse(rules.OPERATORS["IN"]("P3", "P1,P2"))
+        self.assertTrue(rules.OPERATORS["NOT_IN"]("P3", "P1,P2"))
+        self.assertTrue(rules.OPERATORS["CONTAINS"]("Ward 3 switch stack", "switch"))
+        self.assertTrue(rules.OPERATORS["IS_NULL"](None, None))
+        self.assertFalse(rules.OPERATORS["IS_NOT_NULL"](None, None))
+        self.assertTrue(rules.OPERATORS["NE"]("P1", "P2"))
+
+    def test_a_condition_reading_a_field_nobody_supplied_raises(self):
+        """A rule quietly evaluating False is a control that stopped working."""
+        with self.assertRaises(rules.UnknownField):
+            rules.matches(self.conn, "EV_AGE", {"priority": "P1"})   # no owner key
+
+    def test_an_event_with_no_conditions_fires_on_its_trigger(self):
+        self.conn.execute(
+            "INSERT INTO workflow_event (event_id, workflow_id, fires_on, execution_time)"
+            " VALUES ('EV_ANY','WF_UNROUTED','ON_CREATE','ONCE')")
+        self.assertTrue(rules.matches(self.conn, "EV_ANY", {}))
+
+    def test_conditions_combine_left_to_right_with_their_own_conjunction(self):
+        self.conn.execute(
+            "INSERT INTO workflow_event (event_id, workflow_id, fires_on, execution_time)"
+            " VALUES ('EV_OR','WF_UNROUTED','ON_CREATE','ONCE')")
+        self.conn.execute(
+            "INSERT INTO workflow_condition (event_id, trigger_id, operator, value, sort_order)"
+            " VALUES ('EV_OR','TICKET.PRIORITY','EQ','P1',1)")
+        self.conn.execute(
+            "INSERT INTO workflow_condition (event_id, trigger_id, operator, value,"
+            " conjunction, sort_order) VALUES ('EV_OR','TICKET.STATE','EQ','NEW','OR',2)")
+        self.assertTrue(rules.matches(self.conn, "EV_OR",
+                                      {"priority": "P4", "state": "NEW"}))
+        self.assertTrue(rules.matches(self.conn, "EV_OR",
+                                      {"priority": "P1", "state": "CLOSED"}))
+        self.assertFalse(rules.matches(self.conn, "EV_OR",
+                                       {"priority": "P4", "state": "CLOSED"}))
+
+    # --------------------------------------------------------- the audit trail
+
+    def test_every_evaluation_is_recorded_whether_it_acted_or_not(self):
+        """Why did nobody get paged, and why did this page four times."""
+        at = datetime(2026, 11, 16, 9, 0)
+        rules.evaluate(self.conn, "EV_AGE", self.UNOWNED, as_of=at)
+        rules.evaluate(self.conn, "EV_AGE", self.UNOWNED, as_of=at + timedelta(minutes=5))
+        rules.evaluate(self.conn, "EV_AGE", dict(self.UNOWNED, owner="Cadano"),
+                       as_of=at + timedelta(minutes=40))
+        outcomes = [r["outcome"] for r in self.conn.execute(
+            "SELECT outcome FROM workflow_run WHERE event_id='EV_AGE' ORDER BY run_id")]
+        self.assertEqual(outcomes, ["ACTED", "SUPPRESSED", "NOT_MATCHED"])
+
+    def test_a_suppressed_firing_says_why(self):
+        at = datetime(2026, 11, 16, 9, 0)
+        rules.evaluate(self.conn, "EV_AGE", self.UNOWNED, as_of=at)
+        rules.evaluate(self.conn, "EV_AGE", self.UNOWNED, as_of=at + timedelta(minutes=1))
+        detail = self.conn.execute(
+            "SELECT detail FROM workflow_run WHERE outcome='SUPPRESSED'").fetchone()["detail"]
+        self.assertIn("30 minutes", detail)
+
+    def test_the_action_names_a_role_rather_than_a_person(self):
+        """So the rule survives somebody leaving."""
+        result = rules.evaluate(self.conn, "EV_AGE", self.UNOWNED,
+                                as_of=datetime(2026, 11, 16, 9, 0))
+        self.assertEqual(result["actions"][0]["action"], "ESCALATE")
+        self.assertEqual(result["actions"][0]["notify_role"], "ON_CALL")
+
+    def test_a_notification_with_nobody_to_notify_is_refused(self):
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute(
+                "INSERT INTO workflow_action (event_id, action) VALUES ('EV_AGE','NOTIFY')")
+
+    def test_nothing_in_this_engine_reaches_eval(self):
+        source = Path(rules.__file__).read_text(encoding="utf-8")
+        for forbidden in ("eval(", "exec(", "compile(", "__import__"):
+            self.assertNotIn(forbidden, source)
 
 
 class PortTest(unittest.TestCase):
