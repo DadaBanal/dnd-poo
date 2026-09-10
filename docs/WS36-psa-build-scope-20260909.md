@@ -841,7 +841,33 @@ down, and it is not one power supply away from the domain controller.
 Four things follow, and three of them are worth more to PMC than the ticket
 system is.
 
-**1. This is the first chance to fix `DND-HOST1`, and it should be taken first.**
+**0. The plan for `DND-HOST1` is a Hyper-V move.** **[Dada, 9 Sep 2026]** Sensible
+as a first step, and it is worth being precise about what it does and does not
+buy, because the two are easy to conflate.
+
+**A move relocates the risk; it does not remove it.** If the only domain
+controller moves from `DND-HOST1` to the R740xd, there is still exactly one domain
+controller, now on a newer box. If it stays and other guests move, `DND-HOST1` is
+still a single host with no host-level backup carrying the DC. Either way the
+count of domain controllers is one, and one is the number that hurts.
+**[INFERRED]** The actual fix is a *second* DC, which is a few hours and a Windows
+licence, and the move is the occasion that makes it easy rather than the thing
+that achieves it.
+
+**What the move does buy, and it is real:** two hosts to spread guests across, so
+one failure is no longer total; somewhere to put a backup target that is not the
+host being backed up; and a path to patch or rebuild `DND-HOST1` without an
+outage.
+
+**Two cautions on the move itself.** **[INFERRED]** A domain controller must be
+*live-migrated or cleanly shut down and moved*, never snapshotted and restored —
+a reverted DC causes a USN rollback, which is a quiet, lasting Active Directory
+corruption rather than a visible failure. And `DND-SQL01` is a guest on
+`DND-HOST1` running the **live BizBox HIS**, so moving it is a clinical-system
+change that needs a change window, not a weekend improvisation. **[MEASURED]** the
+record carries a Monday blackout on `DND-SQL01` for the live payroll parallel run.
+
+**1. The move is also the first chance to fix `DND-HOST1`, and it should be taken.**
 **[MEASURED]** `DND-HOST1` is a single Hyper-V host that runs **the only domain
 controller**, has one 10GbE uplink and **no host-level backup**. A second physical
 host is what makes a second domain controller and a real backup target possible
@@ -904,6 +930,58 @@ otherwise produces a hand-rolled HTTP server nobody should run in a hospital.
 
 Decision **D2**, and it needs Dada's explicit sign-off because it edits a rule in
 `CLAUDE.md`'s spirit rather than a preference.
+
+### 8.3.1 SharePoint — where it fits, and where it must not
+
+**[Dada, 9 Sep 2026]** raised SharePoint for the web tier. It is already in this
+design in two places and should stay there. It should not hold the tickets.
+
+**Where it is already right, and already in the schema.** `document.source_ref`
+and `instrument.source_ref` are documented as *"SharePoint item id, never a path"*.
+Notices, instruments, signed evidence and the uplift papers belong there. PMC owns
+it, every staff member has a licence [MEASURED], and it does versioning and
+retention better than anything we would write. **[MEASURED]** the record already
+plans a Purview 10-year retention policy on the helpdesk mailbox; the same estate
+covers documents.
+
+**Where it is right for identity.** D3 is closed on Entra, which is the same M365
+investment. Nothing changes.
+
+**Three reasons it must not be the ticket store.**
+
+1. **It cannot hold the gate, and the gate is the point.** A SharePoint list has
+   no CHECK constraint, no foreign key, no trigger and no transaction. The two
+   rules in `005_ticket.sql` exist *in the schema rather than the importer*
+   precisely because *"an importer can be bypassed and a trigger cannot."* Moving
+   them into Power Automate flows puts the commercial rules back into the
+   bypassable application layer this spine was built to get them out of. That is
+   not a tooling preference; it is the whole thesis.
+2. **SharePoint Online dies with the WAN, which is what D1 just spent hardware to
+   avoid.** §6.2 argues a hospital desk that is unavailable during a network
+   outage is unavailable exactly when it is needed. Putting the front end in the
+   cloud gives that failure mode straight back, on new hardware bought to prevent
+   it.
+3. **The list thresholds land inside the first year.** **[INFERRED]** at the
+   record's 700–2,000 tickets a month, a ticket list crosses SharePoint's 5,000
+   item view threshold within months, and the notes and events lists far sooner.
+   Workable with indexed columns and careful views, but it is a tax paid forever
+   by a two-to-three person team.
+
+**[NOT VERIFIED]** the Power Platform licence position. Premium connectors,
+including SQL Server, sit outside base M365, and the record already flags that
+Power Apps per-app versus per-user was an explicit question nobody answered. If
+SharePoint or Power Apps is pursued further, that is the first number to get.
+
+**The better option, and it is a smaller change than it sounds.** Keep the engine
+exactly as it is — standard library, 86 tests, drift-gated to SQL Server — and put
+a thin web tier in front of it **on the R740xd**, with a small pinned dependency
+set. Python end to end, because the commercial rules are already written and
+tested in Python, and a language seam at exactly the point where the money rules
+live is the worst possible place to put one.
+
+So the rule in §8.3 changes shape rather than being dropped: **the engine, schema,
+importers and reports stay dependency-free and escrowable; the web tier may take a
+small, pinned, reviewed dependency set.** That is the decision D2 asks for.
 
 ### 8.4 Identity
 
@@ -1067,7 +1145,7 @@ that is a conversation for the change order, not for the schema.
 |---|---|---|
 | ~~**D1**~~ | ~~Where the primary runs~~ **CLOSED 9 Sep** — on-premises at PMC on a new Dell R740xd, installed this weekend [MEASURED, Dada]. Option C, and it is new hardware rather than a guest on `DND-HOST1` | §8.1.1. Raises D7, and raises the question of whether a second domain controller goes on it first |
 | **D7** | **New:** does the PSA get its own SQL Server instance on the R740xd, or stay on `DND-SQL01\PMC_SS`? | The generated deploy script names the target in its preflight and refuses any other. `DND-SQL01` carries a 173-finding audit, `sa` enabled and the Domain firewall off |
-| **D2** | Does the standard-library-only rule change shape as proposed in §8.3? | Decides whether Phase B is buildable at all |
+| **D2** | Does the standard-library-only rule change shape as proposed in §8.3? SharePoint was raised and is answered in §8.3.1: **right for documents and identity, wrong for the ticket store** | Decides whether Phase B is buildable at all |
 | ~~**D3**~~ | ~~Identity~~ **CLOSED 9 Sep** — Entra for all. Every staff member already has an M365 licence [MEASURED, Dada] | Was costed at ~USD 2,160/year on an INFERRED count that is wrong. No cost, no trade-off, §8.4 |
 | **D4** | Ticket numbering: one `PMC-` sequence across all boards, with `legacy_ref` | Cheap now, very expensive after the first thousand tickets |
 | **D5** | Rule conditions. **Largely answered by ConnectWise's `WorkflowTrigger`** — the condition vocabulary is data, each field declaring its type and whether it takes an operator or an option list. Confirm we adopt that rather than an expression language | Security and testability |
