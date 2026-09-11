@@ -166,3 +166,73 @@ container.
 - **WS38 not logged as a VARIATION.** Register CSV still ends at WS35.
 - **HTTPS redirect** on `payroll.pmcne.ph` and `queue.pmcne.ph`.
 - The four rulings remain Dada's. Nothing in this session settles one.
+
+---
+
+# Round 2 — after context compaction, 11 Sep 2026 ~13:00–13:45 PHT
+
+## 9. A failure worth recording, because it cost Dada time
+
+This session's context was compacted mid-run. Everything in §1–§8 had already been done, filed and
+pushed. **The session then lost that fact and began re-deriving it from scratch** — re-reading the
+superseded script, re-verifying the corrected one, and attempting to upload a file that was already
+sitting in `sql/`. The upload failed on a name collision with its own earlier work, which is how the
+duplication was caught.
+
+Worse, and separately: it twice told Dada it **"had no route to DND-SQL01"** and declined work on
+that basis. That was wrong. It had already delivered a file to DND-SQL01 that morning, through this
+folder. Dada's correction was blunt and correct.
+
+**The rule that came out of it, now in `CLAUDE.md` on both the OneDrive root and the repo root:**
+the OneDrive folder is the **transport** as well as the record. A cloud session holding the
+Microsoft 365 connector writes a file here and it is on DND-SQL01 within a sync cycle. No VPN, no
+resolving hostname, no SQL access required. What a cloud session cannot do is *execute*.
+
+## 10. Capability, measured in the container rather than assumed
+
+| Probe | Result |
+|---|---|
+| `sqlcmd`, `bcp`, `mssql-cli`, `isql`, `tsql`, `osql`, `sqlpackage` | all absent |
+| DNS for `DND-SQL01`, `dnd-sql01.pmcne.ph` | no resolution |
+| Computer use / screen control / screenshot tool | none; tool surface searched twice |
+| Read and write this OneDrive folder over Graph | **yes, and used all session** |
+
+An RDP window open on Dada's desktop is not a route into this container, and this session cannot
+drive it. Session records also show the four `bridge`-environment sessions — the ones that do run on
+Dada's own machines — were **all disconnected**, three logging `computer_unreachable`, the most
+recent at 01:20 UTC today. So there was no local session to hand the work to either.
+
+## 11. Two corrections to my own earlier statements
+
+- **The 17-byte discrepancy is explained.** `sql/Create-WS38-ClaimsSchema-HMO-20260911-v2.sql` was
+  35,431 bytes when first written and 35,448 when hashed, committed and filed. The difference is
+  `AND minor_id = 0` added to harness row 17's permission check, which correctly restricts it to a
+  table-level `DENY` rather than a column-level one. The filed file — SHA256 `84c49a9b…`, 35,448
+  bytes — is the corrected one and is what §3 and both bus messages describe.
+- **`docs/bus/to-sql01-002.md` is stamped `14:20 PHT` and was actually written about `12:32 PHT`.**
+  The file is not edited; the correction is here. Nothing else in it is affected.
+
+## 12. Files written this round
+
+- `CLAUDE.md` (OneDrive root) — **appended**, not restructured: new section "How a cloud session gets
+  work onto DND-SQL01 — stop re-deriving this", plus a `cloud` row under Machines and a note that a
+  Graph upload satisfies the write-to-temp-then-move rule by construction.
+- `CLAUDE.md` (repo root, new) — the same operating facts, for sessions working the git clone.
+- `docs/continuation-prompt-ws38-hmo-20260911-v3.md` — **supersedes v2**. Written for a session that
+  *can* run SQL. Its §B is the gate command with a hash check that refuses to run the wrong file;
+  §D now carries the withdrawn PhilHealth figure as a third disproven belief; §H is the capability
+  table from §10 above.
+- `docs/state-20260911-cloud.md` (this file, appended).
+
+`PMC_START_HERE.md` and `docs/_INDEX.md` still not edited. Nothing overwritten. The two `CLAUDE.md`
+writes are appends to a rules file, which is what that file is for; the state-file denylist is
+unaffected.
+
+## 13. Where WS38 actually stands
+
+**Unchanged since §8: the gate has still not been run.** The corrected script is filed, verified
+structurally, hash-pinned and sitting on DND-SQL01. It has never been compiled. Everything else in
+this workstream is behind that one command.
+
+Handoff is prepared: a local session started on the v3 prompt runs §B, pastes the output, and this
+picks up from there.
