@@ -17,19 +17,32 @@ Do not tell the user there is no route to that machine. File delivery works. It 
 been used in this very session to read the schema scripts, the state files and the
 session bus, and to rename a superseded script.
 
-## What a cloud session genuinely cannot do
+## What a cloud session cannot do DIRECTLY — and the one route that gets round it
 
-Measured in this container, 11 Sep 2026:
+Measured in this container, 11 Sep 2026, and still true:
 
 | Capability | State |
 |---|---|
 | `sqlcmd`, `bcp`, `mssql-cli`, `isql`, `tsql`, `osql`, `sqlpackage` | all absent |
 | DNS for `DND-SQL01` / `dnd-sql01.pmcne.ph` | no resolution |
-| Network path to the hospital LAN | none, by design |
+| Direct network path to the hospital LAN | none, by design |
 
-It cannot execute SQL, run PowerShell on a hospital host, or press F5. It also cannot
-see an RDP window the user has open — that is a window on their desktop, not a route
-into this container.
+So no cloud session executes SQL over the network. **But it may still be able to reach
+the server by driving Dada's desktop.**
+
+**MEASURED 11 Sep 2026:** a cloud session drove `mstsc.exe` on `desktop-ranfmve` into
+his already-open RDP session on the SQL server and ran the schema gate there in elevated
+PowerShell. Computer use had been failing — the approval dialog rendered with only a
+*Deny* control — and started working when the Claude desktop build moved from 1.49585.0
+to 1.52386.0.
+
+**Therefore: check your own tool surface before claiming you cannot reach that machine.**
+Computer use is not present in every session; search for it rather than assuming either
+way. A session that has it can drive the RDP window. A session that does not still has
+the OneDrive route above, and still cannot press F5 itself.
+
+Getting this wrong in both directions has cost Dada time: once by refusing OneDrive
+delivery that worked, once by stating flatly that no session could drive his screen.
 
 ## The division of labour that follows
 
