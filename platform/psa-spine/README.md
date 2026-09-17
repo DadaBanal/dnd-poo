@@ -33,15 +33,60 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 83 tests
+python3 tests/test_spine.py          # 189 tests
 ```
 
-Python 3.11+, standard library only. No packages, no server, no network.
+Python 3.11+, standard library only. No packages and no network; the Phase B
+desk adds an optional server, and it too is standard library (`wsgiref`) — see
+below.
 
 `import-tickets` reads an **export file**. There is no API client in this
 repository and nowhere to put a key: the TeamsWork keys were exposed in a
 screenshot, neither is ever written down, and both should be rotated. A test
 asserts the module contains no credential-shaped code.
+
+## The fulfiller desk (Phase B)
+
+The engine computes every SLA number but a person could only reach it from
+Python. Phase B is the desk that puts it in front of Dada IT — the phasing gate
+is that *Dada IT runs its own work on it before anyone at PMC is asked to*.
+
+```bash
+python3 -m psaspine serve spine.db --host 127.0.0.1 --port 8080
+```
+
+A standard-library WSGI app (`psaspine/web/`), run for the pilot by
+`wsgiref.simple_server`. Zero packages, so the same WSGI callable drops behind a
+production server in Phase C with no code change; a test wraps it in
+`wsgiref.validate.validator()` to prove PEP 3333 conformance. It is **LAN only,
+Dada IT only** and refuses to bind to a public interface. Seven surfaces: the
+board, one ticket, dispatch/triage, the closed loop, the on-call rota, an admin
+surface, and the uplift evidence screen (§7 — a first-class screen, not an
+export).
+
+**Two ways in.** Entra SSO is the normal path and the only one for everyone but
+the on-call rota; its RS256 token check is written out in pure Python (no crypto
+dependency) and is **NOT VERIFIED** against a real tenant — proven against a
+synthetic key in the tests, run against Entra by somebody who has a route to it,
+the way the SQL Server port is. Break-glass local accounts are the WAN-down
+fallback (§11 test 10), sealed and scrypt-hashed:
+
+```bash
+python3 -m psaspine create-local-account spine.db --username oncall
+```
+
+The password is read from a no-echo prompt, never an argument or an environment
+variable; the account is seeded into no repository; every login is audited. The
+web offers no way to mint one — creation is CLI-only, and a test asserts there is
+no route. The credential table lives in `schema/local/`, outside the `schema/*.sql`
+glob, so it is applied to the local pilot database and **never** ported to the
+commercial spine on `DND-SQL01`.
+
+**The restricted-board guarantee.** A restricted board's tickets are filtered by
+`board_member` at every query, for everyone — the sysadmin flag unlocks
+cross-board configuration, never a restricted board's contents. This is §11 test
+5, the acceptance test the record wrote and never ran: a non-member is *provably*
+excluded, and a test asserts a non-member gets a 404, not a leak.
 
 ## Measured against the real register
 

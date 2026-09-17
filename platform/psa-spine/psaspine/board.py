@@ -16,6 +16,7 @@ mail server, and it is kept here too.
 from __future__ import annotations
 
 import sqlite3
+import uuid
 from datetime import datetime
 
 from . import clocks
@@ -34,6 +35,12 @@ LIFECYCLE = {
 class NotOnThisBoard(Exception):
     """A status from another board. Refused rather than accepted, because a
     ticket wearing another board's status is a ticket no report can group."""
+
+
+class EffortRefused(Exception):
+    """The closed loop was asked to do something a gate forbids — band effort on
+    a status that disallows it, or close a variation-path ticket with no
+    variation. Raised before anything is written, so nothing partial is left."""
 
 
 def status(conn: sqlite3.Connection, board_status_id: str) -> sqlite3.Row:
@@ -174,3 +181,88 @@ def may_book_effort(conn: sqlite3.Connection, work_item_id: str) -> tuple[bool, 
     if row["board_status_id"] and not row["time_entry_allowed"]:
         return False, f"the status {row['name']!r} does not allow effort to be booked"
     return True, "allowed"
+
+
+def current_oncall(conn: sqlite3.Connection, board_id: str, role: str, *,
+                   at: datetime | None = None) -> str | None:
+    """Who is on call for this board and role at `at` (default: now).
+
+    The rota answers the question board_role cannot: not "who is the named
+    on-call member" but "who is actually on shift right now". Slots are compared
+    as parsed instants rather than by text order, because the record carries dates
+    in more than one shape and a lexical comparison of mixed shapes is a bug
+    waiting for a night shift. Overlapping slots resolve to the one that started
+    most recently — a hand-off writes a new slot, and the new slot wins.
+    """
+    at = at or datetime.now()
+    best: tuple[datetime, str] | None = None
+    for row in conn.execute(
+            "SELECT member, starts_at, ends_at FROM oncall_slot"
+            " WHERE board_id = ? AND role = ?", (board_id, role)):
+        start = clocks.parse_instant(row["starts_at"])
+        end = clocks.parse_instant(row["ends_at"])
+        if start <= at < end and (best is None or start > best[0]):
+            best = (start, row["member"])
+    return best[1] if best else None
+
+
+def close_loop(conn: sqlite3.Connection, work_item_id: str, to_status_id: str, *,
+               body: str, sent_by: str, at: datetime, actor: str | None = None,
+               band_hours: float | None = None, performed_by: str | None = None,
+               entered_by: str | None = None, entity_id: str | None = None,
+               charge_method: str = "INCLUDED_IN_MONTHLY_FEE",
+               authority_source: str | None = None,
+               counts_to_capacity: bool = True) -> dict:
+    """Answer the requester and band the effort in one action, then close.
+
+    This is §5.2 made mechanical: the reply and the banding are a single write,
+    so the numerator of an uplift claim is captured by construction rather than by
+    a fulfiller remembering to log time after the fact. The effort still goes
+    through the variation gate in 005 — the loop makes the honest path the easy
+    one, it does not open a way round the gate.
+
+    Refuses BEFORE writing anything if the ticket is variation-path with no
+    variation attached (the close would be refused anyway, and a half-written loop
+    reply is worse than a clear refusal), or if banding is asked for with no entity
+    to book it against.
+    """
+    ticket = conn.execute(
+        "SELECT t.path, t.owner, w.variation_id, w.entity_id"
+        "  FROM ticket t JOIN work_item w ON w.work_item_id = t.work_item_id"
+        " WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
+    if ticket is None:
+        raise LookupError(f"no ticket {work_item_id!r}")
+
+    if ticket["path"] == "VARIATION" and ticket["variation_id"] is None:
+        raise EffortRefused(
+            "a variation-path ticket cannot be closed with no variation attached")
+
+    book_entity = entity_id or ticket["entity_id"]
+    if band_hours is not None and not book_entity:
+        raise EffortRefused(
+            "effort was banded but the work item names no entity to book it against")
+
+    stamp = at.isoformat(sep=" ", timespec="minutes")
+    loop_reply_id = f"LR-{uuid.uuid4().hex[:16]}"
+    effort_minutes = int(round(band_hours * 60)) if band_hours is not None else None
+
+    conn.execute(
+        "INSERT INTO loop_reply (loop_reply_id, work_item_id, body, sent_at,"
+        " sent_by, effort_minutes, banded_at) VALUES (?,?,?,?,?,?,?)",
+        (loop_reply_id, work_item_id, body, stamp, sent_by, effort_minutes,
+         stamp if band_hours is not None else None))
+
+    if band_hours is not None:
+        conn.execute(
+            "INSERT INTO time_entry (work_item_id, entity_id, worked_on, band_hours,"
+            " performed_by, entered_by, counts_to_capacity, charge_method,"
+            " authority_source, loop_reply_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (work_item_id, book_entity, at.date().isoformat(), band_hours,
+             performed_by or sent_by, entered_by or sent_by,
+             1 if counts_to_capacity else 0, charge_method, authority_source,
+             loop_reply_id))
+
+    result = change_status(conn, work_item_id, to_status_id, at=at,
+                           actor=actor or sent_by)
+    return {"loop_reply_id": loop_reply_id, "effort_minutes": effort_minutes,
+            "band_hours": band_hours, "status": result}

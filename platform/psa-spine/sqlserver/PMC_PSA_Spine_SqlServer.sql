@@ -137,13 +137,16 @@ BEGIN
     PRINT N'    psa.workflow_condition';
     PRINT N'    psa.workflow_action';
     PRINT N'    psa.workflow_run';
+    PRINT N'    psa.oncall_slot';
+    PRINT N'    psa.loop_reply';
     PRINT N'    psa.ix_fee_line_effective';
     PRINT N'    psa.ix_time_entry_period';
     PRINT N'    psa.ix_workflow_run_event';
+    PRINT N'    psa.ix_oncall_active';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'';
-    PRINT N'  48 tables, 3 indexes, 2 triggers.';
+    PRINT N'  50 tables, 4 indexes, 2 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -749,8 +752,14 @@ CREATE TABLE psa.[board] (
     [restricted] INT NOT NULL CONSTRAINT [DF_board_restricted] DEFAULT (0) CONSTRAINT [CK_board_02] CHECK (restricted IN (0, 1)),
     [is_live] INT NOT NULL CONSTRAINT [DF_board_is_live] DEFAULT (0) CONSTRAINT [CK_board_03] CHECK (is_live IN (0, 1)),
     [is_unrouted] INT NOT NULL CONSTRAINT [DF_board_is_unrouted] DEFAULT (0) CONSTRAINT [CK_board_04] CHECK (is_unrouted IN (0, 1)),
+
+    -- Closing a ticket on this board goes through the closed loop: the answer to
+    -- the requester and the banding of the effort are one action, so the effort is
+    -- captured by construction and not by a fulfiller remembering to. Off by
+    -- default; a board turns it on when it is ready to be measured that way.
+    [closed_loop_required] INT NOT NULL CONSTRAINT [DF_board_closed_loop_required] DEFAULT (0) CONSTRAINT [CK_board_05] CHECK (closed_loop_required IN (0, 1)),
     [note] NVARCHAR(MAX) NULL,
-    CONSTRAINT [CK_board_05] CHECK (is_live = 0 OR (owner IS NOT NULL AND deputy IS NOT NULL))
+    CONSTRAINT [CK_board_06] CHECK (is_live = 0 OR (owner IS NOT NULL AND deputy IS NOT NULL))
 );
 END;
 
@@ -1385,6 +1394,56 @@ CREATE TABLE psa.[workflow_run] (
 );
 END;
 
+-- --------------------------------------------------------------------------
+-- oncall_slot   (from schema/011_oncall.sql)
+IF OBJECT_ID(N'psa.[oncall_slot]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[oncall_slot] (
+    [slot_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_oncall_slot] PRIMARY KEY,
+    [board_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_oncall_slot_board_id] REFERENCES psa.[board]([board_id]),
+
+    -- The same namespace as board_member.member and board_role.member: a named
+    -- person, never a role name. Who to page, not what to page.
+    [member] NVARCHAR(200) NOT NULL,
+    [role] NVARCHAR(32) NOT NULL CONSTRAINT [CK_oncall_slot_01] CHECK (role IN ('ON_CALL', 'DUTY_MANAGER')),
+    [starts_at] NVARCHAR(64) NOT NULL,
+    [ends_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [starts_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [starts_at], 126), CASE WHEN [starts_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [starts_at], 112) END)),
+    [ends_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [ends_at], 126), CASE WHEN [ends_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [ends_at], 112) END)),
+    CONSTRAINT [CK_oncall_slot_02] CHECK (ends_at > starts_at)
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- loop_reply   (from schema/012_closedloop.sql)
+IF OBJECT_ID(N'psa.[loop_reply]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[loop_reply] (
+    [loop_reply_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_loop_reply] PRIMARY KEY,
+    [work_item_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_loop_reply_work_item_id] REFERENCES psa.[work_item]([work_item_id]),
+
+    -- What the fulfiller typed to the requester. Not a clinical note: the §6.1
+    -- fence keeps PHI out of ticket text, and this is ticket text.
+    [body] NVARCHAR(MAX) NOT NULL,
+    [sent_at] NVARCHAR(64) NOT NULL,
+    [sent_by] NVARCHAR(200) NOT NULL,
+
+    -- The band recorded at reply time, in minutes, so the loop can be shown
+    -- without joining time_entry. NULL when the reply banded nothing (a chase,
+    -- a holding answer). The authoritative effort is still the time_entry row.
+    [effort_minutes] INT NULL,
+    [banded_at] NVARCHAR(64) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [sent_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [sent_at], 126), CASE WHEN [sent_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [sent_at], 112) END)),
+    [banded_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [banded_at], 126), CASE WHEN [banded_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [banded_at], 112) END))
+);
+END;
+
 -- ==========================================================================
 -- COLUMNS ADDED TO TABLES THAT ALREADY EXIST
 --
@@ -1395,6 +1454,12 @@ END;
 
 IF COL_LENGTH(N'psa.[ticket]', N'board_status_id') IS NULL
 ALTER TABLE psa.[ticket] ADD [board_status_id] NVARCHAR(64) NULL CONSTRAINT [FK_ticket_board_status_id] REFERENCES psa.[board_status]([board_status_id]);
+
+-- The effort banded through a loop points back at the reply that captured it, so
+-- the uplift evidence can say not just how many hours but that each hour was
+-- answered to the requester in the same breath.
+IF COL_LENGTH(N'psa.[time_entry]', N'loop_reply_id') IS NULL
+ALTER TABLE psa.[time_entry] ADD [loop_reply_id] NVARCHAR(64) NULL CONSTRAINT [FK_time_entry_loop_reply_id] REFERENCES psa.[loop_reply]([loop_reply_id]);
 
 -- --------------------------------------------------------------------------
 -- indexes
@@ -1407,6 +1472,11 @@ CREATE INDEX [ix_time_entry_period] ON psa.[time_entry] ([entity_id], [worked_on
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_workflow_run_event' AND object_id = OBJECT_ID(N'psa.[workflow_run]'))
 CREATE INDEX [ix_workflow_run_event] ON psa.[workflow_run] ([event_id], [work_item_id]);
+
+-- "Who is on call for this board and role right now" is the only question asked
+-- of this table on a hot path, so it is the shape the index serves.
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_oncall_active' AND object_id = OBJECT_ID(N'psa.[oncall_slot]'))
+CREATE INDEX [ix_oncall_active] ON psa.[oncall_slot] ([board_id], [role], [starts_at], [ends_at]);
 
 -- ==========================================================================
 -- THE GATE
@@ -1494,10 +1564,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_unique = 0 AND i.is_primary_key = 0;
 
-IF @Tables <> 48 OR @Triggers <> 2 OR @Indexes < 3
+IF @Tables <> 50 OR @Triggers <> 2 OR @Indexes < 4
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 48), %d triggers (expected 2), %d indexes (expected at least 3). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 50), %d triggers (expected 2), %d indexes (expected at least 4). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -1523,6 +1593,8 @@ PRINT N'target is enforced until somebody with the authority says so.';
 
     DROP TRIGGER IF EXISTS psa.[time_entry_requires_a_variation];
     DROP TRIGGER IF EXISTS psa.[ticket_close_requires_a_variation];
+    DROP TABLE IF EXISTS psa.[loop_reply];
+    DROP TABLE IF EXISTS psa.[oncall_slot];
     DROP TABLE IF EXISTS psa.[workflow_run];
     DROP TABLE IF EXISTS psa.[workflow_action];
     DROP TABLE IF EXISTS psa.[workflow_condition];

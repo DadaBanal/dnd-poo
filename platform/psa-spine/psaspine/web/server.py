@@ -1,0 +1,51 @@
+"""Run the WSGI app for the pilot with the standard library's own server.
+
+`wsgiref.simple_server` is the pilot server and does not pretend to be more. It
+is here because the whole web tier is zero-dependency by choice (D2), and the
+value of a WSGI callable is that this launcher is the only thing that changes in
+Phase C: the same `application` drops behind gunicorn or IIS with no edit to a
+view. The stdlib's own warning that this server is not for production is left to
+print — it is true, and hiding it would be the wrong kind of tidy.
+
+It refuses to bind to a public interface. The pilot is LAN only and Dada IT
+only; a bind to 0.0.0.0 is not a convenience here, it is a way to put an
+unfinished desk on a hospital's network, so it is refused rather than warned
+about.
+"""
+from __future__ import annotations
+
+import sys
+from wsgiref.simple_server import make_server
+
+from . import Config, make_app
+
+# Interfaces the pilot will not bind to. 0.0.0.0 and :: reach every network the
+# host is on; the pilot belongs on the loopback or a named LAN address a person
+# typed on purpose.
+PUBLIC_BINDS = {"0.0.0.0", "::", ""}
+
+
+def serve(db_path: str, *, host: str = "127.0.0.1", port: int = 8080,
+          config: Config | None = None) -> None:
+    if host in PUBLIC_BINDS:
+        raise SystemExit(
+            f"refusing to bind to {host!r}: the Phase B pilot is LAN only and Dada "
+            "IT only. Bind to 127.0.0.1, or to a specific LAN address you mean to "
+            "expose, never to all interfaces.")
+
+    config = config or Config.from_env()
+    app = make_app(db_path, config=config)
+
+    posture = ("Entra + break-glass" if config.entra_configured
+               else "break-glass only (no Entra tenant configured)")
+    print(f"PSA desk (Phase B pilot) on http://{host}:{port}", file=sys.stderr)
+    print(f"  database: {db_path}", file=sys.stderr)
+    print(f"  sign-in:  {posture}", file=sys.stderr)
+    print("  wsgiref.simple_server is not a production server. Phase C puts the "
+          "same app behind a real one.", file=sys.stderr)
+
+    with make_server(host, port, app) as httpd:
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print("\nstopped.", file=sys.stderr)

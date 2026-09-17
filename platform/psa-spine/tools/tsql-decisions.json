@@ -399,6 +399,19 @@
     "workflow_run.occurred_at": "TIMESTAMP_TEXT",
     "workflow_run.outcome": "CODE",
     "workflow_run.detail": "FREE",
-    "ticket.board_status_id": "ID"
+    "ticket.board_status_id": "ID",
+    "oncall_slot.slot_id": "ID",
+    "oncall_slot.board_id": "ID",
+    "oncall_slot.member": "PERSON",
+    "oncall_slot.role": "CODE",
+    "oncall_slot.starts_at": "TIMESTAMP_TEXT",
+    "oncall_slot.ends_at": "TIMESTAMP_TEXT",
+    "loop_reply.loop_reply_id": "ID",
+    "loop_reply.work_item_id": "ID",
+    "loop_reply.body": "FREE",
+    "loop_reply.sent_at": "TIMESTAMP_TEXT",
+    "loop_reply.sent_by": "PERSON",
+    "loop_reply.banded_at": "TIMESTAMP_TEXT",
+    "time_entry.loop_reply_id": "ID"
   }
 }

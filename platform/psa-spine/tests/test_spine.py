@@ -1730,5 +1730,514 @@ class PortTest(unittest.TestCase):
         self.assertIn("SELECT RAISE", str(caught.exception))
 
 
+# ============================================================ Phase B additions
+#
+# The fulfiller surfaces: the on-call rota, the closed loop, the auth that lets
+# the desk answer when the WAN is down, and the WSGI app that carries all three.
+
+import base64 as _b64        # noqa: E402
+import hashlib as _hashlib   # noqa: E402
+import io as _io             # noqa: E402
+import json as _json         # noqa: E402
+import secrets as _secrets   # noqa: E402
+import time as _time         # noqa: E402
+import urllib.parse as _urlparse   # noqa: E402
+from wsgiref.validate import validator as _validator   # noqa: E402
+
+from psaspine.web import Config, make_app, auth as webauth  # noqa: E402
+
+
+def _b64u(raw: bytes) -> str:
+    return _b64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _miller_rabin(n: int, rounds: int = 12) -> bool:
+    if n < 2:
+        return False
+    for p in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37):
+        if n % p == 0:
+            return n == p
+    d, r = n - 1, 0
+    while d % 2 == 0:
+        d //= 2
+        r += 1
+    for _ in range(rounds):
+        a = 2 + _secrets.randbelow(n - 3)
+        x = pow(a, d, n)
+        if x in (1, n - 1):
+            continue
+        for _ in range(r - 1):
+            x = pow(x, 2, n)
+            if x == n - 1:
+                break
+        else:
+            return False
+    return True
+
+
+def _prime(bits: int) -> int:
+    while True:
+        cand = _secrets.randbits(bits) | (1 << (bits - 1)) | 1
+        if _miller_rabin(cand):
+            return cand
+
+
+def _rsa_keypair(bits: int = 512):
+    """A throwaway RSA keypair in pure Python, so the RS256 verifier is proven
+    end to end without a crypto dependency and without a network. Small primes:
+    this is a signature-shape test, not a strength claim."""
+    p = _prime(bits)
+    q = _prime(bits)
+    while q == p:
+        q = _prime(bits)
+    n = p * q
+    e = 65537
+    d = pow(e, -1, (p - 1) * (q - 1))
+    return n, e, d
+
+
+def _sign_rs256(claims: dict, n: int, d: int, *, kid: str = "k1") -> str:
+    header = _b64u(_json.dumps({"alg": "RS256", "kid": kid}).encode())
+    body = _b64u(_json.dumps(claims).encode())
+    signing_input = f"{header}.{body}".encode("ascii")
+    k = (n.bit_length() + 7) // 8
+    der = bytes.fromhex("3031300d060960864801650304020105000420")
+    tail = der + _hashlib.sha256(signing_input).digest()
+    em = b"\x00\x01" + b"\xff" * (k - len(tail) - 3) + b"\x00" + tail
+    sig = pow(int.from_bytes(em, "big"), d, n).to_bytes(k, "big")
+    return f"{header}.{body}." + _b64u(sig)
+
+
+class OnCallTest(unittest.TestCase):
+    """011 — the rota answers 'who is on shift now', over the org chart."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn.execute(
+            "INSERT OR REPLACE INTO board (board_id, display_name, phase, fulfiller_group,"
+            " owner, deputy, is_live) VALUES ('IT_HELP','IT Help','2','Dada','a','b',1)")
+        self.conn.commit()
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _slot(self, member, role, start, end):
+        self.conn.execute(
+            "INSERT INTO oncall_slot (slot_id, board_id, member, role, starts_at, ends_at)"
+            " VALUES (?,?,?,?,?,?)",
+            (f"OC-{member}-{start}", "IT_HELP", member, role, start, end))
+        self.conn.commit()
+
+    def test_the_member_on_shift_now_is_returned(self):
+        self._slot("nightnurse", "ON_CALL", "2026-09-17 18:00", "2026-09-18 06:00")
+        who = board.current_oncall(self.conn, "IT_HELP", "ON_CALL",
+                                   at=datetime(2026, 9, 17, 23, 0))
+        self.assertEqual(who, "nightnurse")
+
+    def test_nobody_on_shift_is_none(self):
+        self._slot("nightnurse", "ON_CALL", "2026-09-17 18:00", "2026-09-18 06:00")
+        who = board.current_oncall(self.conn, "IT_HELP", "ON_CALL",
+                                   at=datetime(2026, 9, 17, 12, 0))
+        self.assertIsNone(who)
+
+    def test_end_is_exclusive(self):
+        self._slot("nightnurse", "ON_CALL", "2026-09-17 18:00", "2026-09-18 06:00")
+        self.assertIsNone(board.current_oncall(
+            self.conn, "IT_HELP", "ON_CALL", at=datetime(2026, 9, 18, 6, 0)))
+
+    def test_overlap_resolves_to_the_later_start(self):
+        """A hand-off writes a new slot; the new slot wins."""
+        self._slot("early", "ON_CALL", "2026-09-17 18:00", "2026-09-18 08:00")
+        self._slot("relief", "ON_CALL", "2026-09-17 23:00", "2026-09-18 08:00")
+        self.assertEqual(board.current_oncall(
+            self.conn, "IT_HELP", "ON_CALL", at=datetime(2026, 9, 18, 1, 0)), "relief")
+
+    def test_role_is_not_crossed(self):
+        self._slot("oncall1", "ON_CALL", "2026-09-17 18:00", "2026-09-18 06:00")
+        self.assertIsNone(board.current_oncall(
+            self.conn, "IT_HELP", "DUTY_MANAGER", at=datetime(2026, 9, 17, 23, 0)))
+
+
+class ClosedLoopTest(unittest.TestCase):
+    """012 — answering the requester and banding the effort as one action."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn.executescript(
+            "INSERT OR REPLACE INTO board (board_id, display_name, phase, fulfiller_group, owner,"
+            " deputy, is_live, closed_loop_required) VALUES"
+            " ('IT_HELP','IT Help','2','Dada','a','b',1,1);"
+            "INSERT OR REPLACE INTO board_status (board_status_id, board_id, name, escalation_status,"
+            " is_default) VALUES ('IT_HELP.NEW','IT_HELP','New','NOT_RESPONDED',1);"
+            "INSERT OR REPLACE INTO board_status (board_status_id, board_id, name, escalation_status,"
+            " is_closed) VALUES ('IT_HELP.DONE','IT_HELP','Resolved','RESOLVED',1);")
+        self._ticket("ITO-1", "BASELINE", "INCIDENT")
+        self.conn.commit()
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _ticket(self, wid, basis, path, variation_id=None):
+        self.conn.execute(
+            "INSERT INTO work_item (work_item_id, source, name, entity_id, contract_basis,"
+            " variation_id) VALUES (?,?,?,?,?,?)",
+            (wid, "desk", "A thing", "PMC", basis, variation_id))
+        self.conn.execute(
+            "INSERT INTO ticket (work_item_id, board_id, path, impact, urgency, priority,"
+            " priority_source, requested_at, opened_at, state, board_status_id)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (wid, "IT_HELP", path, "I3", "U3", "P3", "MATRIX",
+             "2026-09-17 08:00", "2026-09-17 08:00", "NEW", "IT_HELP.NEW"))
+
+    def test_the_loop_writes_a_reply_and_bands_the_effort_in_one_go(self):
+        result = board.close_loop(
+            self.conn, "ITO-1", "IT_HELP.DONE", body="Fixed, back online.",
+            sent_by="cadano", at=datetime(2026, 9, 17, 9, 0), band_hours=0.5)
+        self.conn.commit()
+        reply = self.conn.execute("SELECT * FROM loop_reply").fetchone()
+        entry = self.conn.execute("SELECT * FROM time_entry").fetchone()
+        self.assertEqual(reply["body"], "Fixed, back online.")
+        self.assertEqual(reply["effort_minutes"], 30)
+        self.assertEqual(entry["band_hours"], 0.5)
+        self.assertEqual(entry["loop_reply_id"], reply["loop_reply_id"])
+        self.assertEqual(result["status"]["state"], "CLOSED")
+
+    def test_a_holding_reply_bands_nothing(self):
+        board.close_loop(self.conn, "ITO-1", "IT_HELP.DONE", body="Chasing the vendor.",
+                         sent_by="cadano", at=datetime(2026, 9, 17, 9, 0))
+        self.conn.commit()
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) c FROM time_entry").fetchone()["c"], 0)
+        self.assertIsNone(self.conn.execute("SELECT effort_minutes FROM loop_reply").fetchone()["effort_minutes"])
+
+    def test_a_variation_ticket_with_no_variation_is_refused_before_any_write(self):
+        self._ticket("ITO-2", "VARIATION", "VARIATION")
+        self.conn.commit()
+        with self.assertRaises(board.EffortRefused):
+            board.close_loop(self.conn, "ITO-2", "IT_HELP.DONE", body="Done.",
+                             sent_by="cadano", at=datetime(2026, 9, 17, 9, 0), band_hours=2)
+        # Nothing partial left behind.
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) c FROM loop_reply WHERE work_item_id='ITO-2'").fetchone()["c"], 0)
+
+
+class AuthTest(unittest.TestCase):
+    """The two ways in: sealed break-glass, and a hand-verified Entra token."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.secret = _secrets.token_bytes(32)
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def test_scrypt_round_trips_and_rejects_the_wrong_password(self):
+        h = webauth.hash_password("correct horse battery staple")
+        self.assertTrue(webauth.verify_password("correct horse battery staple", h))
+        self.assertFalse(webauth.verify_password("Tr0ub4dor&3", h))
+
+    def test_a_local_account_is_created_and_authenticates(self):
+        webauth.create_local_account(self.conn, "oncall", "shift-secret",
+                                     at=datetime(2026, 9, 17))
+        self.conn.commit()
+        user = webauth.authenticate_local(self.conn, "oncall", "shift-secret",
+                                          at=datetime(2026, 9, 17, 23, 0))
+        self.assertEqual(user.id, "oncall")
+        self.assertEqual(user.via, "local")
+
+    def test_the_stored_hash_is_never_the_password(self):
+        webauth.create_local_account(self.conn, "oncall", "shift-secret",
+                                     at=datetime(2026, 9, 17))
+        stored = self.conn.execute(
+            "SELECT scrypt_hash FROM local_account WHERE username='oncall'").fetchone()["scrypt_hash"]
+        self.assertTrue(stored.startswith("scrypt$"))
+        self.assertNotIn("shift-secret", stored)
+
+    def test_a_creation_and_every_login_is_audited(self):
+        webauth.create_local_account(self.conn, "oncall", "shift-secret",
+                                     at=datetime(2026, 9, 17))
+        webauth.authenticate_local(self.conn, "oncall", "shift-secret",
+                                   at=datetime(2026, 9, 17, 23, 0))
+        actions = [r["action"] for r in self.conn.execute(
+            "SELECT action FROM audit_event WHERE subject_id='oncall' ORDER BY audit_id")]
+        self.assertEqual(actions, ["LOCAL_ACCOUNT_CREATE", "LOCAL_LOGIN"])
+
+    def test_a_refused_login_is_audited_too(self):
+        webauth.create_local_account(self.conn, "oncall", "shift-secret",
+                                     at=datetime(2026, 9, 17))
+        with self.assertRaises(webauth.Unauthenticated):
+            webauth.authenticate_local(self.conn, "oncall", "wrong",
+                                       at=datetime(2026, 9, 17, 23, 0))
+        self.assertTrue(self.conn.execute(
+            "SELECT 1 FROM audit_event WHERE action='LOCAL_LOGIN_REFUSED'").fetchone())
+
+    def test_a_disabled_account_cannot_log_in(self):
+        webauth.create_local_account(self.conn, "oncall", "shift-secret",
+                                     at=datetime(2026, 9, 17))
+        self.conn.execute("UPDATE local_account SET disabled=1 WHERE username='oncall'")
+        self.conn.commit()
+        with self.assertRaises(webauth.Unauthenticated):
+            webauth.authenticate_local(self.conn, "oncall", "shift-secret",
+                                       at=datetime(2026, 9, 17, 23, 0))
+
+    def test_a_duplicate_account_is_refused_not_overwritten(self):
+        webauth.create_local_account(self.conn, "oncall", "one", at=datetime(2026, 9, 17))
+        with self.assertRaises(ValueError):
+            webauth.create_local_account(self.conn, "oncall", "two", at=datetime(2026, 9, 17))
+
+    def test_a_session_cookie_round_trips_and_is_tamper_evident(self):
+        user = webauth.User(id="oncall", name="On Call", via="local")
+        token = webauth.open_session(user, self.secret)
+        self.assertEqual(webauth.read_session(token, self.secret)["sub"], "oncall")
+        self.assertIsNone(webauth.read_session(token + "x", self.secret))
+        self.assertIsNone(webauth.read_session(token, _secrets.token_bytes(32)))
+
+    def test_an_expired_session_is_rejected(self):
+        user = webauth.User(id="oncall", name="On Call")
+        old = webauth.open_session(user, self.secret, now=1.0)
+        self.assertIsNone(webauth.read_session(old, self.secret))
+
+    def test_a_correctly_signed_entra_token_verifies(self):
+        n, e, d = _rsa_keypair()
+        now = int(_time.time())
+        token = _sign_rs256({"oid": "u-1", "name": "Alice",
+                             "preferred_username": "alice@pmcne.ph", "aud": "client-x",
+                             "iss": "https://login.microsoftonline.com/tenant-y/v2.0",
+                             "nbf": now - 10, "exp": now + 3600}, n, d)
+        user = webauth.verify_entra_token(token, {"k1": {"n": n, "e": e}},
+                                          tenant="tenant-y", client_id="client-x", now=now)
+        self.assertEqual(user.id, "u-1")
+        self.assertEqual(user.email, "alice@pmcne.ph")
+
+    def test_a_tampered_or_wrong_token_is_refused(self):
+        n, e, d = _rsa_keypair()
+        n2, e2, d2 = _rsa_keypair()
+        now = int(_time.time())
+        jwks = {"k1": {"n": n, "e": e}}
+        good = {"oid": "u", "aud": "client-x",
+                "iss": "https://login.microsoftonline.com/tenant-y/v2.0",
+                "nbf": now - 10, "exp": now + 3600}
+        # signed by a different key
+        forged = _sign_rs256(good, n2, d2)
+        with self.assertRaises(webauth.Unauthenticated):
+            webauth.verify_entra_token(forged, jwks, tenant="tenant-y",
+                                       client_id="client-x", now=now)
+        # expired well past the 60s leeway
+        expired = _sign_rs256({**good, "nbf": now - 7200, "exp": now - 3600}, n, d)
+        with self.assertRaises(webauth.Unauthenticated):
+            webauth.verify_entra_token(expired, jwks, tenant="tenant-y",
+                                       client_id="client-x", now=now)
+        # wrong audience
+        wrong_aud = _sign_rs256({**good, "aud": "someone-else"}, n, d)
+        with self.assertRaises(webauth.Unauthenticated):
+            webauth.verify_entra_token(wrong_aud, jwks, tenant="tenant-y",
+                                       client_id="client-x", now=now)
+        # wrong tenant
+        wrong_iss = _sign_rs256(
+            {**good, "iss": "https://login.microsoftonline.com/evil/v2.0"}, n, d)
+        with self.assertRaises(webauth.Unauthenticated):
+            webauth.verify_entra_token(wrong_iss, jwks, tenant="tenant-y",
+                                       client_id="client-x", now=now)
+
+
+class WebWSGITest(unittest.TestCase):
+    """The WSGI app: PEP 3333 conformance, the seven surfaces, and the one
+    guarantee the record wrote and never ran — a non-member is provably excluded
+    from a restricted board (§11 test 5)."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = str(Path(self.tmp.name) / "spine.db")
+        conn = db.init(self.db_path)
+        conn.executescript(
+            "INSERT OR IGNORE INTO entity (entity_id,name,is_covered,note) VALUES ('PMC','PMC',1,'');"
+            "INSERT OR REPLACE INTO board (board_id,display_name,phase,fulfiller_group,owner,deputy,"
+            " is_live,is_unrouted,closed_loop_required) VALUES"
+            " ('IT_HELP','IT Help','2','Dada','a','b',1,0,1);"
+            "INSERT OR REPLACE INTO board (board_id,display_name,phase,fulfiller_group,owner,deputy,"
+            " is_live,restricted) VALUES ('PHI','PHI Board','2','Clin','a','b',1,1);"
+            "INSERT OR REPLACE INTO board_status (board_status_id,board_id,name,escalation_status,"
+            " is_default) VALUES ('IT_HELP.NEW','IT_HELP','New','NOT_RESPONDED',1);"
+            "INSERT OR REPLACE INTO board_status (board_status_id,board_id,name,escalation_status,"
+            " is_closed) VALUES ('IT_HELP.DONE','IT_HELP','Resolved','RESOLVED',1);"
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','alice','ADMIN');"
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('PHI','alice','WORK');"
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','carol','READ');"
+            "INSERT INTO work_item (work_item_id,source,name,entity_id,contract_basis)"
+            " VALUES ('ITO-1','desk','Printer down','PMC','BASELINE');"
+            "INSERT INTO ticket (work_item_id,board_id,path,impact,urgency,priority,"
+            " priority_source,requested_at,opened_at,state,board_status_id) VALUES"
+            " ('ITO-1','IT_HELP','INCIDENT','I1','U1','P1','MATRIX','2026-09-17 08:00',"
+            "'2026-09-17 08:00','NEW','IT_HELP.NEW');"
+            "INSERT INTO work_item (work_item_id,source,name,entity_id,contract_basis)"
+            " VALUES ('ITO-9','desk','Sensitive','PMC','BASELINE');"
+            "INSERT INTO ticket (work_item_id,board_id,path,impact,urgency,priority,"
+            " priority_source,requested_at,opened_at,state) VALUES"
+            " ('ITO-9','PHI','INCIDENT','I1','U1','P1','MATRIX','2026-09-17 08:00',"
+            "'2026-09-17 08:00','NEW');")
+        conn.commit()
+        conn.close()
+        self.config = Config(session_secret=_secrets.token_bytes(32))
+        self.raw = make_app(self.db_path, config=self.config,
+                            clock=lambda: datetime(2026, 9, 17, 10, 0))
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _environ(self, method, path, *, cookie=None, body=b"", query=""):
+        env = {
+            "REQUEST_METHOD": method, "PATH_INFO": path, "SCRIPT_NAME": "",
+            "QUERY_STRING": query, "SERVER_NAME": "t", "SERVER_PORT": "80",
+            "SERVER_PROTOCOL": "HTTP/1.1", "wsgi.version": (1, 0),
+            "wsgi.url_scheme": "http", "wsgi.input": _io.BytesIO(body),
+            "wsgi.errors": _io.StringIO(), "wsgi.multithread": False,
+            "wsgi.multiprocess": False, "wsgi.run_once": False}
+        if body:
+            env["CONTENT_LENGTH"] = str(len(body))
+            env["CONTENT_TYPE"] = "application/x-www-form-urlencoded"
+        if cookie:
+            env["HTTP_COOKIE"] = cookie
+        return env
+
+    def _call(self, method, path, *, cookie=None, form=None, query="", validate=True):
+        body = _urlparse.urlencode(form).encode() if form else b""
+        app = _validator(self.raw) if validate else self.raw
+        captured = {}
+
+        def start_response(status, headers, exc_info=None):
+            captured["status"] = status
+            captured["headers"] = headers
+        it = app(self._environ(method, path, cookie=cookie, body=body, query=query),
+                 start_response)
+        try:
+            payload = b"".join(it).decode()
+        finally:
+            if hasattr(it, "close"):
+                it.close()
+        return captured["status"], captured.get("headers", []), payload
+
+    def _cookie_for(self, member, **kw):
+        user = webauth.User(id=member, name=member, **kw)
+        return "psa_session=" + webauth.open_session(user, self.config.session_secret)
+
+    # ------------------------------------------------------- conformance & auth
+
+    def test_the_app_is_pep3333_conformant_when_unauthenticated(self):
+        status, _, body = self._call("GET", "/")
+        self.assertTrue(status.startswith("401"))
+        self.assertIn("Break-glass", body)
+
+    def test_a_break_glass_login_opens_a_session(self):
+        conn = db.connect(self.db_path)
+        webauth.create_local_account(conn, "oncall", "shift-secret",
+                                     at=datetime(2026, 9, 17), is_sysadmin=True)
+        conn.execute("INSERT OR REPLACE INTO board_member (board_id,member,access)"
+                     " VALUES ('IT_HELP','oncall','WORK')")
+        conn.commit()
+        conn.close()
+        status, headers, _ = self._call(
+            "POST", "/login", form={"username": "oncall", "password": "shift-secret", "next": "/"})
+        self.assertTrue(status.startswith("303"))
+        self.assertTrue(any(k == "Set-Cookie" and "psa_session=" in v for k, v in headers))
+
+    # -------------------------------------------------------------- the surfaces
+
+    def test_each_surface_renders_for_a_member(self):
+        cookie = self._cookie_for("alice")
+        for path, needle in (("/", "ITO-1"), ("/ticket/ITO-1", "Printer down"),
+                             ("/dispatch", "Dispatch"), ("/oncall", "On-call"),
+                             ("/uplift", "Uplift"), ("/admin", "Admin")):
+            status, _, body = self._call("GET", path, cookie=cookie)
+            self.assertTrue(status.startswith("200"), f"{path} -> {status}")
+            self.assertIn(needle, body)
+
+    def test_the_board_shows_only_the_members_boards(self):
+        status, _, body = self._call("GET", "/", cookie=self._cookie_for("carol"))
+        self.assertIn("ITO-1", body)       # carol reads IT_HELP
+        self.assertNotIn("ITO-9", body)    # carol is not on PHI
+
+    # -------- §11 test 5: a non-member is PROVABLY excluded from a restricted board
+
+    def test_a_non_member_cannot_reach_a_restricted_boards_ticket(self):
+        status, _, _ = self._call("GET", "/ticket/ITO-9", cookie=self._cookie_for("carol"))
+        self.assertTrue(status.startswith("404"),
+                        "restricted-board ticket leaked to a non-member")
+
+    def test_even_a_break_glass_sysadmin_does_not_bypass_board_membership(self):
+        """The sysadmin flag unlocks cross-board config, never a restricted
+        board's contents. Otherwise the exclusion is 'absolute unless admin'."""
+        cookie = self._cookie_for("nobody", via="local", is_sysadmin=True)
+        status, _, _ = self._call("GET", "/ticket/ITO-9", cookie=cookie)
+        self.assertTrue(status.startswith("404"))
+
+    # ---------------------------------------------------------- admin & the loop
+
+    def test_the_admin_surface_adds_a_board_status(self):
+        cookie = self._cookie_for("alice")
+        status, _, _ = self._call("POST", "/admin/status/add", cookie=cookie,
+                                  form={"board_id": "IT_HELP", "name": "Waiting client",
+                                        "escalation": "NO_ESCALATION", "is_closed": "0"})
+        self.assertTrue(status.startswith("303"))
+        conn = db.connect(self.db_path)
+        row = conn.execute("SELECT escalation_status FROM board_status"
+                           " WHERE board_id='IT_HELP' AND name='Waiting client'").fetchone()
+        conn.close()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["escalation_status"], "NO_ESCALATION")
+
+    def test_the_web_offers_no_way_to_create_a_break_glass_account(self):
+        """Creation is CLI-only by design; there must be no route that mints one."""
+        for path in ("/admin/local/create", "/local/create", "/admin/create-local"):
+            status, _, _ = self._call("GET", path, cookie=self._cookie_for(
+                "root", is_sysadmin=True))
+            self.assertTrue(status.startswith(("404", "405")), f"{path} -> {status}")
+
+    def test_closing_the_loop_over_http_bands_effort_and_closes(self):
+        cookie = self._cookie_for("alice")
+        status, _, _ = self._call(
+            "POST", "/ticket/ITO-1/loop", cookie=cookie,
+            form={"body": "Reseated the cable.", "hours": "0.5", "to_status": "IT_HELP.DONE"})
+        self.assertTrue(status.startswith("303"))
+        conn = db.connect(self.db_path)
+        entry = conn.execute("SELECT band_hours, loop_reply_id FROM time_entry"
+                             " WHERE work_item_id='ITO-1'").fetchone()
+        state = conn.execute("SELECT state FROM ticket WHERE work_item_id='ITO-1'").fetchone()
+        conn.close()
+        self.assertEqual(entry["band_hours"], 0.5)
+        self.assertIsNotNone(entry["loop_reply_id"])
+        self.assertEqual(state["state"], "CLOSED")
+
+
+class MarkdownRenderTest(unittest.TestCase):
+    """The uplift screen renders the report's own markdown; the renderer must
+    handle exactly the shapes the reports emit, and escape everything else."""
+
+    def _render(self, md):
+        from psaspine.web import templates
+        return templates.md_to_html(md)
+
+    def test_headings_bold_and_code(self):
+        html = self._render("# Title\n\nText with **bold** and `code`.")
+        self.assertIn("<h1>Title</h1>", html)
+        self.assertIn("<strong>bold</strong>", html)
+        self.assertIn("<code>code</code>", html)
+
+    def test_a_pipe_table_becomes_a_table(self):
+        html = self._render("| A | B |\n|---|---|\n| 1 | 2 |")
+        self.assertIn("<table>", html)
+        self.assertIn("<th>A</th>", html)
+        self.assertIn("<td>1</td>", html)
+
+    def test_content_is_escaped(self):
+        html = self._render("A paragraph with <script> in it.")
+        self.assertNotIn("<script>", html)
+        self.assertIn("&lt;script&gt;", html)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

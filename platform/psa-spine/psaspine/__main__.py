@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from . import db, register, reports, tickets, walkthrough
@@ -35,6 +36,20 @@ def main(argv: list[str] | None = None) -> int:
     pw = sub.add_parser("walkthrough",
                         help="run the board engine end to end and narrate it")
     pw.add_argument("database")
+
+    ps = sub.add_parser("serve", help="run the Phase B fulfiller desk (pilot, LAN only)")
+    ps.add_argument("database")
+    ps.add_argument("--host", default="127.0.0.1",
+                    help="interface to bind; refuses 0.0.0.0 (default 127.0.0.1)")
+    ps.add_argument("--port", type=int, default=8080)
+
+    pc = sub.add_parser("create-local-account",
+                        help="create a sealed break-glass account (password read from a "
+                             "no-echo prompt, never an argument)")
+    pc.add_argument("database")
+    pc.add_argument("--username", required=True)
+    pc.add_argument("--sysadmin", action="store_true",
+                    help="grant cross-board admin; off by default")
 
     pr = sub.add_parser("report", help="write Annex B, dependency notices and the exception report")
     pr.add_argument("database")
@@ -75,6 +90,34 @@ def main(argv: list[str] | None = None) -> int:
 
     if a.cmd == "walkthrough":
         print("\n".join(walkthrough.run(conn)))
+        return 0
+
+    if a.cmd == "serve":
+        # Imported here so the rest of the CLI needs nothing under web/, and so a
+        # deployment without the web tier still runs init/import/report.
+        from .web.server import serve
+        serve(a.database, host=a.host, port=a.port)
+        return 0
+
+    if a.cmd == "create-local-account":
+        from .web import auth
+        # The password is read here and nowhere else: a no-echo prompt, never an
+        # argument, never an environment variable. That is the rule the whole
+        # break-glass arrangement rests on.
+        password = getpass.getpass("break-glass password: ")
+        if password != getpass.getpass("confirm password: "):
+            print("passwords did not match; nothing written", file=sys.stderr)
+            return 1
+        try:
+            auth.create_local_account(conn, a.username, password,
+                                      at=datetime.now(), is_sysadmin=a.sysadmin)
+            conn.commit()
+        except ValueError as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        role = "sysadmin" if a.sysadmin else "board-scoped"
+        print(f"created break-glass account {a.username!r} ({role}). It is sealed: "
+              "seeded into no repository, audited on every use.")
         return 0
 
     if a.cmd == "report":

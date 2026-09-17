@@ -29,6 +29,11 @@ CREATE TABLE board (
   restricted      INTEGER NOT NULL DEFAULT 0 CHECK (restricted IN (0, 1)),
   is_live         INTEGER NOT NULL DEFAULT 0 CHECK (is_live IN (0, 1)),
   is_unrouted     INTEGER NOT NULL DEFAULT 0 CHECK (is_unrouted IN (0, 1)),
+  -- Closing a ticket on this board goes through the closed loop: the answer to
+  -- the requester and the banding of the effort are one action, so the effort is
+  -- captured by construction and not by a fulfiller remembering to. Off by
+  -- default; a board turns it on when it is ready to be measured that way.
+  closed_loop_required INTEGER NOT NULL DEFAULT 0 CHECK (closed_loop_required IN (0, 1)),
   note            TEXT,
   CHECK (is_live = 0 OR (owner IS NOT NULL AND deputy IS NOT NULL))
 );

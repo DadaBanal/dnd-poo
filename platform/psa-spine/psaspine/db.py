@@ -24,8 +24,17 @@ def connect(path: str | Path) -> sqlite3.Connection:
 
 
 def create(conn: sqlite3.Connection) -> None:
-    """Apply every migration in name order."""
+    """Apply every migration in name order.
+
+    schema/*.sql is the one schema, and the SQL Server port is generated from it.
+    schema/local/ is applied here too but is NOT part of that port: it holds the
+    break-glass credential table, which belongs on the local pilot database and
+    nowhere near the commercial spine on DND-SQL01. The glob is non-recursive on
+    purpose so the translator and this loader see the same files.
+    """
     for sql_file in sorted(SCHEMA_DIR.glob("*.sql")):
+        conn.executescript(sql_file.read_text(encoding="utf-8"))
+    for sql_file in sorted((SCHEMA_DIR / "local").glob("*.sql")):
         conn.executescript(sql_file.read_text(encoding="utf-8"))
     conn.commit()
 

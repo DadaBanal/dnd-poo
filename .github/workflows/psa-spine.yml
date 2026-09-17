@@ -54,6 +54,37 @@ jobs:
           test -f /tmp/out/PMC_Uplift_Evidence_20260909.md
           ls /tmp/out/notices/*.md >/dev/null
 
+      # The fulfiller desk is not finished when its tests pass; it is finished
+      # when the server RUNS. So CI starts it and hits it, the same rule the
+      # walkthrough answers for the engine. An unauthenticated request must get
+      # the sign-in page with a 401 — that proves the app booted, routed, and
+      # ran the auth edge, not that a socket merely opened.
+      - name: The desk boots and answers
+        run: |
+          python3 -m psaspine init /tmp/desk.db
+          python3 -m psaspine serve /tmp/desk.db --host 127.0.0.1 --port 8137 &
+          SERVER_PID=$!
+          for i in $(seq 1 20); do
+            python3 -c "import socket,sys; sys.exit(0 if socket.socket().connect_ex(('127.0.0.1',8137))==0 else 1)" && break
+            sleep 0.5
+          done
+          # 401 with the sign-in page proves the app booted, routed, and ran the
+          # auth edge — not merely that a socket opened.
+          STATUS=$(python3 tests/desk_probe.py http://127.0.0.1:8137/)
+          kill $SERVER_PID 2>/dev/null || true
+          echo "unauthenticated GET / -> $STATUS"
+          test "$STATUS" = "401"
+
+      # serve must refuse a public bind. The pilot is LAN only and Dada IT only;
+      # a bind to every interface is a way to put an unfinished desk on a
+      # hospital network, so it is refused, and CI proves the refusal holds.
+      - name: The desk refuses a public bind
+        run: |
+          if python3 -m psaspine serve /tmp/desk.db --host 0.0.0.0 --port 8138; then
+            echo "FAIL: serve bound to 0.0.0.0"; exit 1
+          fi
+          echo "ok: 0.0.0.0 refused"
+
       # The fence: no real register, no addresses, no commercial amounts in git.
       - name: Repository fence
         run: |
