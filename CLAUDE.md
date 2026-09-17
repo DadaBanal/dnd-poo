@@ -61,6 +61,33 @@ passed exactly that class of check on the Melbourne PC and then failed to compil
 ways on first contact with the server. Always say which of the two was done, and never
 present the first as the second.
 
+## Working cheaply — this account has run into its seven-day limit
+
+MEASURED 17 Sep 2026 across ten sessions: $570.92, 549.8M tokens. **95.1% of those tokens were
+cache reads** — re-reading conversation history. Output was 0.5%. One session accounted for 70%
+of the spend.
+
+Cost is driven by session length, not by how much is asked for. A one-line question in a 500K
+session costs about the same as a fifty-line one.
+
+- **Keep sessions short.** Findings go to a dated file in the record, then start a new session that
+  reads it. Do not carry a conversation for days.
+- **Never set a recurring check-in on something that cannot change on its own.** A pull request in a
+  repository with no CI and no reviewers will not move; each wake re-reads the whole context to
+  report nothing.
+- **Read narrowly.** Fetch the lines needed, not whole files, and never re-read a file already in
+  context.
+- **Do not re-derive.** Check the state file and the bus before re-measuring something.
+- Connectors flapping in and out invalidate the prompt prefix and force the whole context to be
+  re-cached, which is the expensive kind of token. Fewer connectors, cheaper turns.
+
+## Scope a claim to what was actually checked
+
+A fresh clone has `main` and one branch. **"Absent from every commit" requires `git fetch --all`
+and `git branch -r` first.** On 11 Sep a claim that this repository held two files and no PSA
+spine went into the record as MEASURED; 40 spine files, a CI workflow and 25,097 lines were sitting
+on an unfetched branch the whole time. Say which ref you measured.
+
 ## WS38 specifics
 
 - Never write to `LIVEDB_PMC`, `PMC` or `PHILHEALTH`. WS38 lives only in `PMC_Apps`,
