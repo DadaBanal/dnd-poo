@@ -1745,6 +1745,7 @@ import urllib.parse as _urlparse   # noqa: E402
 from wsgiref.validate import validator as _validator   # noqa: E402
 
 from psaspine.web import Config, make_app, auth as webauth  # noqa: E402
+from psaspine.web import api as webapi  # noqa: E402
 
 
 def _b64u(raw: bytes) -> str:
@@ -2818,6 +2819,236 @@ class PortalTest(unittest.TestCase):
                               " AND kind='PORTAL_REPLY'").fetchone()
         conn.close()
         self.assertIsNone(leaked)
+
+
+class MachineApiTest(unittest.TestCase):
+    """The machine API: a local token, JSON, priority computed, repeats collapsed.
+
+    §6.2 is why the credential is local: the monitor that raises "the WAN is
+    down" cannot fetch an Entra token while the WAN is down.
+    """
+
+    _cookie_for = WebWSGITest._cookie_for
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = str(Path(self.tmp.name) / "spine.db")
+        conn = db.init(self.db_path)
+        conn.execute(
+            "INSERT OR REPLACE INTO board_status (board_status_id, board_id, name,"
+            " escalation_status, is_closed) VALUES"
+            " ('IT_HELP.DONE','IT_HELP','Resolved','RESOLVED',1)")
+        self.token_id, self.token = webapi.create_token(
+            conn, label="orthanc monitoring", board_id="IT_HELP",
+            at=datetime(2026, 9, 22))
+        self.other_id, self.other = webapi.create_token(
+            conn, label="ups alerts", board_id="IT_HELP", at=datetime(2026, 9, 22))
+        conn.commit()
+        conn.close()
+        self.config = Config(session_secret=_secrets.token_bytes(32))
+        self.raw = make_app(self.db_path, config=self.config,
+                            clock=lambda: datetime(2026, 9, 22, 10, 0))
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _api(self, method, path, *, token=None, payload=None, raw=None,
+             ctype="application/json", cookie=None, validate=True):
+        body = raw if raw is not None else (
+            _json.dumps(payload).encode() if payload is not None else b"")
+        env = {
+            "REQUEST_METHOD": method, "PATH_INFO": path, "SCRIPT_NAME": "",
+            "QUERY_STRING": "", "SERVER_NAME": "t", "SERVER_PORT": "80",
+            "SERVER_PROTOCOL": "HTTP/1.1", "wsgi.version": (1, 0),
+            "wsgi.url_scheme": "http", "wsgi.input": _io.BytesIO(body),
+            "wsgi.errors": _io.StringIO(), "wsgi.multithread": False,
+            "wsgi.multiprocess": False, "wsgi.run_once": False}
+        if body:
+            env["CONTENT_LENGTH"] = str(len(body))
+            env["CONTENT_TYPE"] = ctype
+        if token:
+            env["HTTP_AUTHORIZATION"] = f"Bearer {token}"
+        if cookie:
+            env["HTTP_COOKIE"] = cookie
+        app = _validator(self.raw) if validate else self.raw
+        got = {}
+
+        def start_response(status, headers, exc_info=None):
+            got["status"], got["headers"] = status, headers
+        it = app(env, start_response)
+        try:
+            text = b"".join(it).decode()
+        finally:
+            if hasattr(it, "close"):
+                it.close()
+        try:
+            data = _json.loads(text)
+        except ValueError:
+            data = text
+        return got["status"], dict(got["headers"]), data
+
+    def _conn(self):
+        return db.connect(self.db_path)
+
+    # ------------------------------------------------------------- the credential
+
+    def test_no_token_is_401_with_a_bearer_challenge(self):
+        status, headers, data = self._api("POST", "/api/v1/tickets",
+                                          payload={"summary": "x"})
+        self.assertTrue(status.startswith("401"))
+        self.assertIn("Bearer", headers.get("WWW-Authenticate", ""))
+
+    def test_an_unknown_and_a_disabled_token_are_refused_identically(self):
+        """A caller probing for which tokens exist learns nothing from the answer."""
+        conn = self._conn()
+        conn.execute("UPDATE api_token SET disabled=1 WHERE token_id=?", (self.other_id,))
+        conn.commit()
+        conn.close()
+        s1, _, d1 = self._api("POST", "/api/v1/tickets", token="psa_nope",
+                              payload={"summary": "x"})
+        s2, _, d2 = self._api("POST", "/api/v1/tickets", token=self.other,
+                              payload={"summary": "x"})
+        self.assertEqual((s1, d1), (s2, d2))
+        self.assertTrue(s1.startswith("401"))
+
+    def test_the_token_is_stored_only_as_a_hash(self):
+        conn = self._conn()
+        dump = "\n".join(conn.iterdump())
+        conn.close()
+        self.assertNotIn(self.token, dump)
+        self.assertIn(_hashlib.sha256(self.token.encode()).hexdigest(), dump)
+
+    def test_every_refusal_is_audited(self):
+        self._api("POST", "/api/v1/tickets", token="psa_nope", payload={"summary": "x"})
+        conn = self._conn()
+        n = conn.execute("SELECT COUNT(*) c FROM audit_event"
+                         " WHERE action='API_AUTH_REFUSED'").fetchone()["c"]
+        conn.close()
+        self.assertEqual(n, 1)
+
+    # -------------------------------------------------------- tokens and cookies
+
+    def test_a_session_cookie_cannot_authorise_an_api_call(self):
+        """A cookie on an API is how another site makes a browser raise tickets."""
+        cookie = self._cookie_for("alice", is_sysadmin=True)
+        status, _, _ = self._api("POST", "/api/v1/tickets", cookie=cookie,
+                                 payload={"summary": "x"})
+        self.assertTrue(status.startswith("401"))
+
+    def test_a_machine_token_is_not_a_person_on_the_desk(self):
+        """One leaked machine credential must not become a user of the UI."""
+        status, _, body = self._api("GET", "/", token=self.token)
+        self.assertTrue(status.startswith("401"))
+        self.assertIn("Break-glass", body)
+
+    # ---------------------------------------------------------------- creating
+
+    def test_a_valid_call_opens_a_numbered_ticket_on_the_tokens_board(self):
+        status, _, data = self._api("POST", "/api/v1/tickets", token=self.token,
+                                    payload={"summary": "Orthanc not answering",
+                                             "impact": "I1", "urgency": "U1"})
+        self.assertTrue(status.startswith("201"))
+        self.assertTrue(data["id"].startswith("PMC-"))
+        conn = self._conn()
+        row = conn.execute("SELECT board_id, requested_by FROM ticket WHERE work_item_id=?",
+                           (data["id"],)).fetchone()
+        conn.close()
+        self.assertEqual(row["board_id"], "IT_HELP")
+        self.assertEqual(row["requested_by"], f"api:{self.token_id}")
+
+    def test_priority_is_computed_from_impact_and_urgency(self):
+        _, _, data = self._api("POST", "/api/v1/tickets", token=self.token,
+                               payload={"summary": "x", "impact": "I1", "urgency": "U1"})
+        self.assertEqual(data["priority"], "P1")
+        self.assertEqual(data["priority_source"], "MATRIX")
+
+    def test_a_caller_cannot_assert_a_priority(self):
+        status, _, data = self._api("POST", "/api/v1/tickets", token=self.token,
+                                    payload={"summary": "x", "priority": "P1"})
+        self.assertTrue(status.startswith("422"))
+        self.assertEqual(data["field"], "priority")
+        self.assertIn("computed", data["error"])
+
+    def test_bad_input_is_refused_with_the_field_named(self):
+        for payload, field in (({"summary": ""}, "summary"),
+                               ({"summary": "x", "impact": "I9"}, "impact"),
+                               ({"summary": "x", "urgency": "U0"}, "urgency"),
+                               ({"summary": "y" * 201}, "summary")):
+            status, _, data = self._api("POST", "/api/v1/tickets", token=self.token,
+                                        payload=payload)
+            self.assertTrue(status.startswith("422"), payload)
+            self.assertEqual(data["field"], field)
+
+    def test_not_json_is_refused(self):
+        s1, _, _ = self._api("POST", "/api/v1/tickets", token=self.token,
+                             raw=b"summary=x", ctype="application/x-www-form-urlencoded")
+        s2, _, _ = self._api("POST", "/api/v1/tickets", token=self.token, raw=b"{not json")
+        self.assertTrue(s1.startswith("415"))
+        self.assertTrue(s2.startswith("400"))
+
+    # --------------------------------------------------------- repeats collapse
+
+    def test_a_repeat_firing_while_open_is_a_count_not_a_ticket(self):
+        first = self._api("POST", "/api/v1/tickets", token=self.token,
+                          payload={"summary": "Orthanc down", "dedup_key": "orthanc-down"})
+        again = self._api("POST", "/api/v1/tickets", token=self.token,
+                          payload={"summary": "Orthanc down", "dedup_key": "orthanc-down"})
+        self.assertTrue(first[0].startswith("201"))
+        self.assertTrue(again[0].startswith("200"))
+        self.assertEqual(again[2]["id"], first[2]["id"])
+        self.assertTrue(again[2]["duplicate"])
+        self.assertEqual(again[2]["times"], 2)
+        conn = self._conn()
+        n = conn.execute("SELECT COUNT(*) c FROM ticket").fetchone()["c"]
+        conn.close()
+        self.assertEqual(n, 1)
+
+    def test_a_fault_that_returns_after_being_fixed_is_a_new_ticket(self):
+        """Folding it into the closed ticket hides the recurrence."""
+        _, _, first = self._api("POST", "/api/v1/tickets", token=self.token,
+                                payload={"summary": "UPS on battery",
+                                         "dedup_key": "ups"})
+        conn = self._conn()
+        board.change_status(conn, first["id"], "IT_HELP.DONE",
+                            at=datetime(2026, 9, 22, 10, 30), actor="Cadano")
+        conn.commit()
+        conn.close()
+        status, _, second = self._api("POST", "/api/v1/tickets", token=self.token,
+                                      payload={"summary": "UPS on battery",
+                                               "dedup_key": "ups"})
+        self.assertTrue(status.startswith("201"))
+        self.assertNotEqual(second["id"], first["id"])
+
+    # ----------------------------------------------------------------- reading
+
+    def test_a_token_reads_the_tickets_it_raised(self):
+        _, _, made = self._api("POST", "/api/v1/tickets", token=self.token,
+                               payload={"summary": "x"})
+        status, _, data = self._api("GET", f"/api/v1/tickets/{made['id']}",
+                                    token=self.token)
+        self.assertTrue(status.startswith("200"))
+        self.assertTrue(data["open"])
+
+    def test_a_token_cannot_read_a_ticket_another_token_raised(self):
+        _, _, made = self._api("POST", "/api/v1/tickets", token=self.token,
+                               payload={"summary": "x"})
+        status, _, _ = self._api("GET", f"/api/v1/tickets/{made['id']}",
+                                 token=self.other)
+        self.assertTrue(status.startswith("404"))
+
+    # --------------------------------------------------------------------- PHI
+
+    def test_phi_is_flagged_and_the_value_never_repeated(self):
+        status, _, _ = self._api(
+            "POST", "/api/v1/tickets", token=self.token,
+            payload={"summary": "Charge date", "description": "PhilHealth 12-345678901-2"})
+        self.assertTrue(status.startswith("201"))
+        conn = self._conn()
+        rows = conn.execute("SELECT detail FROM data_quality WHERE code LIKE 'PHI_%'").fetchall()
+        conn.close()
+        self.assertTrue(rows)
+        for r in rows:
+            self.assertNotIn("345678901", r["detail"])
 
 
 class MarkdownRenderTest(unittest.TestCase):

@@ -164,7 +164,10 @@ def resolve_user(conn, request: Request, config: Config) -> auth.User:
         if payload:
             return auth.user_from_session(conn, payload)
     token = request.bearer()
-    if token and config.entra_configured:
+    # A psa_ token is a machine credential and is only valid under /api/. It is
+    # not an Entra token and is never tried as one, so one leaked machine
+    # credential cannot become a person on the desk.
+    if token and not token.startswith("psa_") and config.entra_configured:
         return auth.verify_entra_token(token, config.jwks,
                                        tenant=config.entra_tenant,
                                        client_id=config.entra_client)
@@ -191,6 +194,14 @@ def make_app(db_path: str, *, config: Config | None = None, clock=datetime.now):
 
 
 def _route(conn, request: Request, config: Config, now: datetime) -> Response:
+    # The machine API authenticates by token and ONLY by token, and it is routed
+    # before the browser's identity is resolved so that a session cookie can
+    # never authorise an API call. A cookie on an API is how a page on another
+    # site makes a signed-in browser raise tickets it never meant to.
+    if request.path.startswith("/api/"):
+        from . import api
+        return api.handle(conn, request, now=now)
+
     # The two doors that do not require an established identity.
     from . import templates
     if request.path == "/login" and request.method == "POST":

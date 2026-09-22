@@ -429,6 +429,11 @@
     "intake_message.disposition": "CODE",
     "intake_message.work_item_id": "ID",
     "intake_message.duplicate_of": "REF",
-    "intake_message.run_id": "ID"
+    "intake_message.run_id": "ID",
+    "api_alert.board_id": "ID",
+    "api_alert.dedup_key": "REF",
+    "api_alert.work_item_id": "ID",
+    "api_alert.first_seen": "TIMESTAMP_TEXT",
+    "api_alert.last_seen": "TIMESTAMP_TEXT"
   }
 }

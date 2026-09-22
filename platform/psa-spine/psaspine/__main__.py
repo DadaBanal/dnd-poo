@@ -64,6 +64,15 @@ def main(argv: list[str] | None = None) -> int:
     pc.add_argument("--sysadmin", action="store_true",
                     help="grant cross-board admin; off by default")
 
+    pk = sub.add_parser("create-api-token",
+                        help="mint a machine API token for one board; printed ONCE, "
+                             "stored only as a sha256")
+    pk.add_argument("database")
+    pk.add_argument("--label", required=True,
+                    help="what it is for, in words: 'orthanc monitoring'")
+    pk.add_argument("--board", required=True, dest="board_id",
+                    help="the one board this token may raise tickets onto")
+
     pr = sub.add_parser("report", help="write Annex B, dependency notices and the exception report")
     pr.add_argument("database")
     pr.add_argument("--out", required=True)
@@ -150,6 +159,23 @@ def main(argv: list[str] | None = None) -> int:
         role = "sysadmin" if a.sysadmin else "board-scoped"
         print(f"created break-glass account {a.username!r} ({role}). It is sealed: "
               "seeded into no repository, audited on every use.")
+        return 0
+
+    if a.cmd == "create-api-token":
+        from .web import api
+        try:
+            token_id, token = api.create_token(conn, label=a.label, board_id=a.board_id,
+                                               at=datetime.now())
+            conn.commit()
+        except ValueError as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        # Printed once, to stdout, and never again: the database holds only the
+        # sha256. Lose it and mint another; do not look for it.
+        print(f"token_id: {token_id}")
+        print(f"token:    {token}")
+        print("This is the only time the token is shown. It is stored as a sha256 "
+              "and cannot be recovered.", file=sys.stderr)
         return 0
 
     if a.cmd == "report":

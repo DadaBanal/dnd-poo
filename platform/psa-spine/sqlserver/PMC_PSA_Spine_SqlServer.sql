@@ -142,6 +142,7 @@ BEGIN
     PRINT N'    psa.ticket_numbering';
     PRINT N'    psa.ticket_number';
     PRINT N'    psa.intake_message';
+    PRINT N'    psa.api_alert';
     PRINT N'    psa.ix_fee_line_effective';
     PRINT N'    psa.ix_time_entry_period';
     PRINT N'    psa.ix_workflow_run_event';
@@ -153,7 +154,7 @@ BEGIN
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  53 tables, 6 indexes, 4 triggers.';
+    PRINT N'  54 tables, 6 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -1532,6 +1533,28 @@ CREATE TABLE psa.[intake_message] (
 );
 END;
 
+-- --------------------------------------------------------------------------
+-- api_alert   (from schema/016_api_alert.sql)
+IF OBJECT_ID(N'psa.[api_alert]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[api_alert] (
+    [board_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_api_alert_board_id] REFERENCES psa.[board]([board_id]),
+
+    -- Chosen by the sender. Stable across firings of the same condition.
+    [dedup_key] NVARCHAR(400) NOT NULL,
+    [work_item_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_api_alert_work_item_id] REFERENCES psa.[ticket]([work_item_id]),
+    [first_seen] NVARCHAR(64) NOT NULL,
+    [last_seen] NVARCHAR(64) NOT NULL,
+    [times] INT NOT NULL CONSTRAINT [DF_api_alert_times] DEFAULT (1) CONSTRAINT [CK_api_alert_01] CHECK (times >= 1),
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [first_seen_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [first_seen], 126), CASE WHEN [first_seen] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [first_seen], 112) END)),
+    [last_seen_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [last_seen], 126), CASE WHEN [last_seen] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [last_seen], 112) END)),
+    CONSTRAINT [PK_api_alert] PRIMARY KEY ([board_id], [dedup_key])
+);
+END;
+
 -- ==========================================================================
 -- COLUMNS ADDED TO TABLES THAT ALREADY EXIST
 --
@@ -1711,10 +1734,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_unique = 0 AND i.is_primary_key = 0;
 
-IF @Tables <> 53 OR @Triggers <> 4 OR @Indexes < 6
+IF @Tables <> 54 OR @Triggers <> 4 OR @Indexes < 6
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 53), %d triggers (expected 4), %d indexes (expected at least 6). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 54), %d triggers (expected 4), %d indexes (expected at least 6). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -1742,6 +1765,7 @@ PRINT N'target is enforced until somebody with the authority says so.';
     DROP TRIGGER IF EXISTS psa.[ticket_close_requires_a_variation];
     DROP TRIGGER IF EXISTS psa.[patient_reference_needs_a_restricted_board];
     DROP TRIGGER IF EXISTS psa.[patient_reference_stays_on_a_restricted_board];
+    DROP TABLE IF EXISTS psa.[api_alert];
     DROP TABLE IF EXISTS psa.[intake_message];
     DROP TABLE IF EXISTS psa.[ticket_number];
     DROP TABLE IF EXISTS psa.[ticket_numbering];
