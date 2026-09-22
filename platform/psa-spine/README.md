@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 189 tests
+python3 tests/test_spine.py          # 257 tests
 ```
 
 Python 3.11+, standard library only. No packages and no network; the Phase B
@@ -87,6 +87,45 @@ commercial spine on `DND-SQL01`.
 cross-board configuration, never a restricted board's contents. This is §11 test
 5, the acceptance test the record wrote and never ran: a non-member is *provably*
 excluded, and a test asserts a non-member gets a 404, not a leak.
+
+## Requester intake (Phase C)
+
+Phase C opens the desk to the ~400 staff who raise work, which is what makes the
+hospital-wide case evidenceable — and what scales the §6.1 PHI exposure unless
+the controls land first. They did:
+
+- **A ticket references a patient record and never carries one.**
+  `013_intake.sql` adds `patient_reference`, held only on a restricted board by
+  two triggers (insert and update). `psaspine/phi.py` detects identifiers at
+  every intake path and flags them in `data_quality` — **naming the shape and
+  the field, never the value**, because `detail` is read by reports. The ticket
+  still imports: refusing it sends the identifier to the telephone, where
+  nothing records it.
+- **Every read of a restricted ticket is audited** — `RESTRICTED_READ`, with the
+  ticket, the actor and which door they came through.
+- **One ticket sequence (D4).** `PMC-000001`, hospital-wide, never reused; the
+  prefix is a row, not a constant (§12). See
+  [`docs/WS36-decisions-d4-d5-20260922.md`](../../docs/WS36-decisions-d4-d5-20260922.md).
+
+Three ways in, each idempotent where it can be:
+
+```bash
+python3 -m psaspine import-mail spine.db ./drop --channel helpdesk   # RFC 822 files
+python3 -m psaspine create-api-token spine.db --label "orthanc monitoring" --board IT_HELP
+```
+
+| Path | Who | The rule that matters |
+|---|---|---|
+| `/my` (portal) | a requester | Ownership, not board membership, is the filter. Reads `customer_description`, never the internal status name. |
+| `import-mail` | the helpdesk mailboxes | Keyed by Message-ID, so a re-run makes no second ticket; replies thread by In-Reply-To. Kills the MEASURED double-creation at the intake end. |
+| `/api/v1/tickets` | monitoring, the archive | A local token (§6.2 — the WAN-down alarm cannot fetch an Entra token), sha256 only, one board, tokens only. Priority computed from impact × urgency, never asserted. A `dedup_key` holds one open ticket per alert. |
+
+API tokens live in `schema/local/` beside the break-glass accounts and are
+never ported to SQL Server.
+
+**NOT VERIFIED:** whether a Privacy Impact Assessment is required before
+hospital-wide rollout. §6.1 says ask PMC's Data Protection Officer before Phase
+C goes live. Building the controls is not the same as being cleared to use them.
 
 ## Measured against the real register
 

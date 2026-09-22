@@ -54,6 +54,17 @@ jobs:
           test -f /tmp/out/PMC_Uplift_Evidence_20260909.md
           ls /tmp/out/notices/*.md >/dev/null
 
+      # Intake is idempotent or it is the double-creation all over again. Run it
+      # on a synthetic drop twice: the first run opens two tickets and threads a
+      # reply; the second must open nothing.
+      - name: Email intake runs, and a re-run is a no-op
+        run: |
+          python3 -m psaspine init /tmp/mail.db
+          python3 -m psaspine import-mail /tmp/mail.db tests/fixtures/mail-drop --run-id m1 --as-of 2026-09-22 | tee /tmp/m1.txt
+          grep -q "2 new, 1 appended" /tmp/m1.txt
+          python3 -m psaspine import-mail /tmp/mail.db tests/fixtures/mail-drop --run-id m2 --as-of 2026-09-22 | tee /tmp/m2.txt
+          grep -q "0 new, 0 appended, 0 duplicate, 0 unclassified, 3 already seen" /tmp/m2.txt
+
       # The fulfiller desk is not finished when its tests pass; it is finished
       # when the server RUNS. So CI starts it and hits it, the same rule the
       # walkthrough answers for the engine. An unauthenticated request must get
