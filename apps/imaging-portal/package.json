@@ -1,0 +1,23 @@
+{
+  "name": "pmc-imaging-portal",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PMC Imaging \u2014 the imaging worklist Orthanc serves at https://imaging.pmcne.ph/pmc/index.html",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node build/build.mjs",
+    "check": "node build/build.mjs --check",
+    "test": "node build/build.mjs && node test/checks.mjs",
+    "payload": "node build/build.mjs && node build/payload.mjs",
+    "verify-installer": "node build/payload.mjs",
+    "baseline": "node build/baseline.mjs",
+    "oneliner": "node build/build.mjs && node build/oneliner.mjs",
+    "package": "node build/build.mjs && node build/package.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.56.1"
+  }
+}

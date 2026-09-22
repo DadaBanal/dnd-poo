@@ -1,0 +1,5 @@
+entity_id,name,is_covered,note
+PMC,Premiere Medical Center Nueva Ecija,1,Principal client under the ICT Service Agreement
+JRBY-CI,JRBY Cancer Institute,0,Covered only if Amendment No. 1 is executed — signature block is blank in every readable copy
+DADA-IT,Dada IT / Dan & Dada Inc.,0,The supplier. Internal work items only.
+UNCLASSIFIED,Unclassified — entity not yet determined,0,Register carries at least one workstream whose client is undecided

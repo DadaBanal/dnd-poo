@@ -1,0 +1,57 @@
+component_id,family_id,display_name,raw_name,is_draft,note
+SRV_HYPERV,SERVERS_STORAGE,Hyper-V host,,0,
+SRV_GUEST,SERVERS_STORAGE,Virtual machine,,0,
+SRV_STORAGE,SERVERS_STORAGE,Storage array,,0,
+SRV_SQL,SERVERS_STORAGE,SQL Server instance,,0,Exists on DND-SQL01 today and would exist again in Azure. Hosting location is a CI attribute.
+NET_LINK,NETWORKING,Link unstable or degraded,Link unstable/dgraded,0,Misspelt in the source workbook.
+NET_SWITCH,NETWORKING,Switch or access point,,0,
+NET_FIREWALL,NETWORKING,Firewall rule,,0,
+NET_PORTFWD,NETWORKING,Port forward,,0,Added: WS33 is closing 1433/3389/443/5432 and those tickets exist today.
+NET_DMZ,NETWORKING,DMZ,,0,Added alongside the firewall items.
+NET_NAT,NETWORKING,NAT,,0,Added alongside the firewall items.
+NET_RADIUS,NETWORKING,RADIUS,,0,Moved here from the workbook's SECURITY??? family. It is network access control.
+IAM_USER,IDENTITY_ACCESS,User account,,0,
+IAM_GROUP,IDENTITY_ACCESS,Security group,,0,
+IAM_MFA,IDENTITY_ACCESS,Multi-factor authentication,,0,
+EUC_WORKSTATION,END_USER,Workstation,,0,
+EUC_PRINTER,END_USER,Printer,,0,
+EUC_UPDATES,END_USER,Update management,Update agement,0,Misspelt in the source workbook.
+APP_LICENCE,APPLICATIONS,Licence,,0,
+APP_UNSUPPORTED,APPLICATIONS,Unsupported application,unsupport application,0,Misspelt in the source workbook.
+APP_OTHER,APPLICATIONS,Other application,,1,"The workbook's ~20-entry Application family sits below its own 'im up to here' marker and was never worked through."
+CERT_SSL,CERTIFICATES,Certificate,,0,
+BAK_JOB,BACKUP,Backup job,,0,
+BAK_RESTORE,BACKUP,Restore,,0,
+MAIL_MAILBOX,EMAIL_COLLAB,Mailbox,,0,
+MAIL_SHARED,EMAIL_COLLAB,Shared mailbox,,0,
+MAIL_DL,EMAIL_COLLAB,Distribution list,Distrubution List,0,Misspelt in the source workbook.
+TEL_HANDSET,TELEPHONY,Handset,,0,The last entry above the workbook's 'im up to here' marker.
+TEL_PBX,TELEPHONY,PBX,,1,Below the marker. Draft.
+TEL_IVR,TELEPHONY,IVR,,1,Below the marker. Draft.
+TEL_VOICEMAIL,TELEPHONY,Voice mail,,1,Below the marker. Draft.
+SEC_ACCOUNT,SECURITY_PRIVACY,Account compromise or phishing,,0,
+SEC_MALWARE,SECURITY_PRIVACY,Malware,,0,
+SEC_UNAUTH,SECURITY_PRIVACY,Unauthorised access,,0,
+SEC_PRIVACY,SECURITY_PRIVACY,Data loss or privacy incident,,0,RA 10173.
+SEC_AUDIT,SECURITY_PRIVACY,Audit finding remediation,,0,The 173 open findings are this board's first backlog.
+AGR_VARIATION,AGREEMENT_VAR,Variation,,0,
+AGR_FEE,AGREEMENT_VAR,Fee,,0,
+AGR_REVIEW,AGREEMENT_VAR,Six-monthly review,,0,
+AGR_DEPENDENCY,AGREEMENT_VAR,Client dependency notice,,0,
+AGR_SLA,AGREEMENT_VAR,Different SLAs,Differnet SLA's,1,"Misspelt in the workbook, where it reads as an open question rather than a service. Kept as draft so the question is not lost."
+IMG_MODALITY,IMAGING,Modality,,0,
+IMG_WORKLIST,IMAGING,Modality worklist,,0,
+PACS_ARCHIVE,PACS,Archive,,0,
+PACS_VIEWER,PACS,Viewer,,0,
+HIS_BIZBOX,HIS,BizBox,,0,
+HIS_QUEUE,HIS,Patient queue,,0,
+PHIC_ECLAIMS,PHILHEALTH_F,eClaims,,0,
+BIO_DEFIB,BIOMED,Defibrillator,,0,
+BIO_FRIDGE,BIOMED,Blood-bank refrigerator,,0,
+BIO_MONITOR,BIOMED,Patient monitor,,0,
+GAS_MANIFOLD,MEDICAL_GAS,Manifold,,0,
+GAS_OUTLET,MEDICAL_GAS,Ward outlet,,0,
+FAC_ROOM,FACILITIES_F,Room and equipment,Romm and equipment,0,Misspelt in the source workbook.
+FAC_POWER,FACILITIES_F,Power,,0,
+HK_CLEANING,HOUSEKEEPING_F,Cleaning,,0,
+DIET_MEAL,DIETARY_F,Meal service,,0,

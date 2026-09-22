@@ -1,0 +1,14 @@
+Ticket ID,Summary,Board,Type,SubType,Item,Company,Status,Impact,Urgency,Priority,Contact,Owner,Date Entered,Date Closed,Description
+ITO-1801,Ward 3 switch stack down,IT Help,Networking,Switch or access point,Outage,PMC,In Progress,I1,U1,Priority 1 - Critical,Ward 3 Nurse Station,Dada IT,2026-09-01,,"Whole ward off the network. Escalated by phone, then by ticket."
+ITO-1802,New starter account for radiology clerk,IT Service Request,Identity,User account,Install,PMC,Closed,I3,U3,4,Radiology Admin,Dada IT,20260902,20260903,Onboard new user. Sits inside baseline item 2.
+ITO-1803,Archive not accepting studies from CT,IT Help,PACS,Archive,Outage,PMC,In Progress,I1,U1,1,Imaging Supervisor,Dada IT,2026-09-03,,No baseline heading covers PACS. This is the row that needs a ruling.
+ITO-1804,Add three people to the ward distribution list,IT Service Request,Email,Distrubution List,Modify,PMC,Resolved,,,,Ward Clerk,Dada IT,2026-09-04,2026-09-04,Misspelt component name as the workbook spells it.
+ITO-1805,Raise a variation for hospital-wide ticketing,Agreement & Variation,Administration,Variation,Install,PMC,Closed,I2,U3,3,PMO,Dada IT,2026-09-05,2026-09-05,Arrived from the desk already closed on the variation path.
+ITO-1806,Medical gas manifold alarm panel unreadable,Facilities & Engineering,Facilities,Manifold,Degredation,PMC,Waiting for Client,I2,U1,3,Engineering,Facilities,2026-09-05,,No curated triple matches this. It should not be forced into one.
+ITO-1807,Shared mailbox for the billing team,IT Service Request,Identity,User account,Install,PMC+JRBY,Assigned,I3,U3,4,Billing,Dada IT,2026-09-06,,Two entities named in one cell.
+ITO-1808,Printer re-cabled at outpatient reception,IT Help,Networking,Switch or access point,Outage,SOMEBODY ELSE,Closed,I3,U3,4,Reception,Dada IT,2026-09-06,2026-09-06,Company is not a covered entity.
+ITO-1809,Switch port flapping in the laboratory,IT Help,Networking,Switch or access point,Outage,PMC,Parked pending parts,I2,U2,4,Laboratory,Dada IT,2026-09-07,,"Status the spine does not know, and a desk priority that disagrees with the matrix."
+,Nobody wrote a reference on this one,IT Help,Networking,Switch or access point,Outage,PMC,New,I3,U3,4,Unknown,,2026-09-07,,A row with no ticket reference still has to be counted.
+ITO-1802,Duplicate of the new starter request,IT Service Request,Identity,User account,Install,PMC,Closed,I3,U3,4,Radiology Admin,Dada IT,2026-09-08,2026-09-08,"The same reference twice; the second must not overwrite the first, and must not vanish."
+ITO-1811,Variation still open for the imaging uplift,Agreement & Variation,Administration,Variation,Install,JRBY,In Progress,I2,U2,3,PMO,Dada IT,2026-09-08,,A variation-path ticket that is still open.
+ITO-1812,Dietary trolley lift out of service,,Facilities,Lift,Failure,PMC,New,I2,U2,3,Dietary,,2026-09-08,,No board named and no curated triple. This is what the Unrouted queue is for.

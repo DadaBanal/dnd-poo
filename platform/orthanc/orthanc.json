@@ -1,0 +1,32 @@
+{
+  "//": "Config as versioned code (Path A, roadmap wk 2-5). NOT DEPLOYED. Values that differ per site come from the environment; nothing site-specific and no secret belongs in this file.",
+
+  "Name": "PMC-ORTHANC",
+  "DicomAet": "${ORTHANC_AE_TITLE}",
+  "DicomPort": 4242,
+  "HttpPort": 8042,
+
+  "//index": "ADR-001: PostgreSQL index plugin, replacing the SQL Server ODBC index. The ODBC index hard-codes no ordering (OdbcIndex::HasFindSupport() returns false), which is why /tools/find with OrderBy answers HTTP 500 today.",
+  "PostgreSQL": {
+    "EnableIndex": true,
+    "EnableStorage": false,
+    "Host": "${PG_HOST}",
+    "Port": 5432,
+    "Database": "${PG_DATABASE}",
+    "Username": "${PG_USER}",
+    "Password": "${PG_PASSWORD}"
+  },
+
+  "//worklists": "DB-mode worklists need the Key-Value Stores that only SQLite >= 1.12.8 and PostgreSQL >= 8.0 provide. Blocked until ADR-001 lands.",
+  "Worklists": { "Enable": true, "Database": "/var/lib/orthanc/worklists" },
+
+  "DicomModalitiesInDatabase": true,
+  "DicomModalities": {},
+
+  "//auth": "Local accounts go away with Keycloak. Until then this MUST stay empty in the repo: RegisteredUsers is cleartext.",
+  "RegisteredUsers": {},
+  "AuthenticationEnabled": true,
+
+  "//transcoding": "IngestTranscoding affects NEW arrivals only. Changing it does not re-transcode what is already stored; that is a separate, costed decision.",
+  "StorageDirectory": "/var/lib/orthanc/db"
+}

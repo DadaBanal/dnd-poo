@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="PMC Imaging — the imaging worklist for Premiere Medical Center Nueva Ecija.">
+<title>PMC Imaging</title>
+<meta name="pmc-build" content="@BUILD@">
+<link rel="icon" href="data:image/png;base64,@FAVICON_BASE64@">
+<style>
+/*@STYLES@*/
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<g id="i-list" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/></g>
+<g id="i-device" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8 21h8M12 17v4"/><path d="M6.5 11h2l1.5-3 2 6 1.5-3h4"/></g>
+<g id="i-pulse" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5-6 4 12 2.5-6H21"/></g>
+<g id="i-info" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.6v.4"/></g>
+<g id="i-search" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.6 15.6 4 4"/></g>
+<g id="i-grid" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3.5" y="3.5" width="7" height="7" rx="1.4"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.4"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.4"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.4"/></g>
+<g id="i-rows" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3.5 6h17M3.5 12h17M3.5 18h17"/></g>
+<g id="i-refresh" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-.6 4"/><path d="M20 4.5V11h-6"/></g>
+<g id="i-eye" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/></g>
+<g id="i-download" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5v11M8 11l4 4 4-4"/><path d="M4.5 19.5h15"/></g>
+<g id="i-copy" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="8.5" y="8.5" width="12" height="12" rx="2"/><path d="M5.5 15.5h-1a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></g>
+<g id="i-x" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></g>
+<g id="i-alert" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5 21 19.5H3Z"/><path d="M12 10v4M12 17v.4"/></g>
+<g id="i-check" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 12.5 5 5 10-11"/></g>
+<g id="i-sun" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4"/></g>
+<g id="i-moon" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.2A8.4 8.4 0 0 1 9.8 4a8.5 8.5 0 1 0 10.2 10.2Z"/></g>
+<g id="i-kbd" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6.5 10h.01M10 10h.01M13.5 10h.01M17 10h.01M8 14h8"/></g>
+<g id="i-db" fill="none" stroke="currentColor" stroke-width="1.7"><ellipse cx="12" cy="6" rx="7.5" ry="3"/><path d="M4.5 6v12c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3V6"/><path d="M4.5 12c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3"/></g>
+<g id="i-send" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 3.5 10 14"/><path d="M20.5 3.5 14 20.5l-4-6.5-6.5-4Z"/></g>
+<g id="i-open" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 4.5H19.5V10.5"/><path d="M19.5 4.5 11 13"/><path d="M18 14.5v4a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6h4"/></g>
+<g id="i-empty" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M3 9h18"/><path d="M8.5 14h7"/></g>
+<g id="i-wl" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17" /><path d="M12 3.5a8.5 8.5 0 0 1 0 17Z" fill="currentColor" stroke="none"/></g>
+<g id="i-pan" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5v17M3.5 12h17"/><path d="m8.5 7 3.5-3.5L15.5 7M17 8.5 20.5 12 17 15.5M15.5 17 12 20.5 8.5 17M7 15.5 3.5 12 7 8.5"/></g>
+<g id="i-zoom" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.6 15.6 4 4M8 10.5h5M10.5 8v5"/></g>
+<g id="i-stack" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="m12 3.5 8 4-8 4-8-4Z"/><path d="m4 12 8 4 8-4M4 16.5l8 4 8-4"/></g>
+<g id="i-ruler" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.6" y="8" width="18.8" height="8" rx="1.6" transform="rotate(-20 12 12)"/><path d="m7.4 10.6.9 2M10.4 9.5l1.5 3.2M13.6 8.3l.9 2M16.7 7.2l1.5 3.2"/></g>
+<g id="i-angle" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16L4 6Z" fill="none"/><path d="M4 20 4 6l16 14"/><path d="M8.6 20a6 6 0 0 0-1.1-4.6"/></g>
+<g id="i-roi" fill="none" stroke="currentColor" stroke-width="1.7"><ellipse cx="12" cy="12" rx="8.4" ry="6.4"/><path d="M12 9.5v5M9.5 12h5" stroke-linecap="round"/></g>
+<g id="i-rect" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3.6" y="5.6" width="16.8" height="12.8" rx="1.4"/></g>
+<g id="i-probe" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 2.6v5M12 16.4v5M2.6 12h5M16.4 12h5"/><circle cx="12" cy="12" r="2.6"/></g>
+<g id="i-invert" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 0 0 17Z" fill="currentColor" stroke="none"/></g>
+<g id="i-rotate" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13a8 8 0 1 1 2.6 5.4"/><path d="M3.5 19v-5h5"/></g>
+<g id="i-flip" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M9 7 4 12l5 5Z"/><path d="m15 7 5 5-5 5Z"/></g>
+<g id="i-fit" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></g>
+<g id="i-play" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M8 5.5 19 12 8 18.5Z"/></g>
+<g id="i-layout" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3.5" y="4.5" width="17" height="15" rx="1.6"/><path d="M12 4.5v15M3.5 12h17"/></g>
+<g id="i-tag" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M11 3.5H20.5V13L12 21.5 3.5 13Z"/><circle cx="16.6" cy="7.4" r="1.5"/></g>
+<g id="i-ruler2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 8.5h18v7H3Z"/><path d="M7 8.5v3M11 8.5v4.5M15 8.5v3M19 8.5v4.5"/></g>
+</defs></svg>
+
+<div class="seg-bar"></div>
+<div class="app">
+
+  <!-- ============ rail ============ -->
+  <aside class="rail">
+    <div class="rail__brand">
+      <img class="full" src="data:image/png;base64,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" alt="Premiere Medical Center Nueva Ecija">
+      <img class="mark" src="data:image/png;base64,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" alt="Premiere Medical Center Nueva Ecija">
+    </div>
+    <div class="rail__product"><b>PMC Imaging</b><span id="railEnv">Diagnostic archive</span></div>
+    <nav class="nav" id="nav" aria-label="Sections">
+      <button class="nav__item" data-view="worklist" aria-current="page"><svg><use href="#i-list"/></svg><span>Worklist</span><em class="nav__count" id="navCount" style="font-style:normal">—</em></button>
+      <button class="nav__item" data-view="devices"><svg><use href="#i-device"/></svg><span>Devices</span></button>
+      <button class="nav__item" data-view="activity"><svg><use href="#i-pulse"/></svg><span>Activity</span></button>
+      <button class="nav__item" data-view="system"><svg><use href="#i-info"/></svg><span>System</span></button>
+    </nav>
+    <div class="rail__foot">
+      <div class="rail__tag">Better Care. <i>For Every Life.</i></div>
+      <div class="health"><span class="dot idle" id="healthDot"></span><span id="healthText">connecting…</span></div>
+    </div>
+  </aside>
+
+  <!-- ============ main ============ -->
+  <div class="main">
+    <header class="topbar">
+      <h1 id="viewTitle">Worklist</h1>
+      <span class="sub" id="viewSub">studies held in the imaging archive</span>
+      <div class="spacer"></div>
+      <search class="search">
+        <svg aria-hidden="true"><use href="#i-search"/></svg>
+        <input id="q" type="search" autocomplete="off" spellcheck="false"
+               placeholder="Patient name, patient ID or accession number" aria-label="Search studies">
+        <kbd>/</kbd>
+      </search>
+      <button class="btn btn--icon btn--ghost" id="themeBtn" title="Reading-room theme" aria-label="Toggle dark theme"><svg><use href="#i-moon"/></svg></button>
+      <button class="btn btn--icon btn--ghost" id="kbdBtn" title="Keyboard shortcuts" aria-label="Keyboard shortcuts"><svg><use href="#i-kbd"/></svg></button>
+      <button class="btn btn--icon" id="refreshBtn" title="Refresh (r)" aria-label="Refresh"><svg><use href="#i-refresh"/></svg></button>
+    </header>
+
+    <div class="toolbar" id="toolbar">
+      <div class="chips" id="scopeChips" role="group" aria-label="Date range">
+        <button class="chip" data-scope="today" aria-pressed="true">Today</button>
+        <button class="chip" data-scope="yesterday" aria-pressed="false">Yesterday</button>
+        <button class="chip" data-scope="7" aria-pressed="false">7 days</button>
+        <button class="chip" data-scope="30" aria-pressed="false">30 days</button>
+        <button class="chip" data-scope="all" aria-pressed="false">Everything</button>
+      </div>
+      <div class="chips" id="modChips" role="group" aria-label="Modality"></div>
+      <div class="spacer"></div>
+      <div class="seg" role="group" aria-label="Layout">
+        <button id="viewCards" aria-pressed="true" title="Cards" aria-label="Card layout"><svg><use href="#i-grid"/></svg></button>
+        <button id="viewTable" aria-pressed="false" title="Table" aria-label="Table layout"><svg><use href="#i-rows"/></svg></button>
+      </div>
+    </div>
+
+    <main class="content" id="content">
+
+      <!-- ---------- worklist ---------- -->
+      <section class="view is-active" id="view-worklist">
+        <div id="banner"></div>
+        <div class="meta-line" id="metaLine" aria-live="polite"></div>
+        <div id="results"></div>
+      </section>
+
+      <!-- ---------- devices ---------- -->
+      <section class="view" id="view-devices">
+        <div class="stats" id="devStats"></div>
+        <div class="panels">
+          <div class="panel panel--wide">
+            <div class="panel__hd"><h3>Imaging devices</h3><div class="rule-dot"></div></div>
+            <div class="panel__bd" id="modalityList"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- activity ---------- -->
+      <section class="view" id="view-activity">
+        <div class="stats" id="actStats"></div>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel__hd"><h3>Latest arrivals</h3><div class="rule-dot"></div></div>
+            <div class="panel__bd" id="changeList"></div>
+          </div>
+          <div class="panel">
+            <div class="panel__hd"><h3>Background jobs</h3><div class="rule-dot"></div></div>
+            <div class="panel__bd" id="jobList"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- system ---------- -->
+      <section class="view" id="view-system">
+        <div class="panels">
+          <div class="panel">
+            <div class="panel__hd"><h3>Archive</h3><div class="rule-dot"></div></div>
+            <div class="panel__bd"><dl class="kv" id="sysKv"></dl></div>
+          </div>
+          <div class="panel">
+            <div class="panel__hd"><h3>Viewers</h3><div class="rule-dot"></div></div>
+            <div class="panel__bd" id="viewerList"></div>
+          </div>
+          <div class="panel panel--wide">
+            <div class="panel__hd"><h3>Loaded plugins</h3><div class="rule-dot"></div></div>
+            <div class="panel__bd" id="pluginList"></div>
+          </div>
+          <div class="panel panel--wide">
+            <div class="panel__hd"><h3>Interfaces for other systems</h3><div class="rule-dot"></div></div>
+            <div class="panel__bd" id="ifaceList"></div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<!-- ============ study sheet ============ -->
+<dialog id="sheet" aria-labelledby="sheetTitle">
+  <div class="sheet">
+    <div class="sheet__hd">
+      <button class="sheet__x" id="sheetClose" aria-label="Close"><svg width="16" height="16"><use href="#i-x"/></svg></button>
+      <h2 id="sheetTitle">—</h2>
+      <div class="sub" id="sheetSub">—</div>
+      <div class="tags" id="sheetTags"></div>
+      <svg class="swoosh" viewBox="0 0 1200 16" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M0 16 C 300 2 600 14 1200 0 L1200 16 Z" fill="#F06423" opacity=".85"/>
+        <path d="M0 16 C 320 6 640 16 1200 4 L1200 16 Z" fill="#FFFFFF" opacity="0"/>
+      </svg>
+    </div>
+    <div class="sheet__bd" id="sheetBody"></div>
+    <div class="sheet__ft" id="sheetFoot"></div>
+  </div>
+</dialog>
+
+<!-- ============ shortcuts ============ -->
+<dialog id="kbdDlg" aria-labelledby="kbdTitle">
+  <div class="sheet" style="width:min(560px,94vw)">
+    <div class="sheet__hd">
+      <button class="sheet__x" data-close="kbdDlg" aria-label="Close"><svg width="16" height="16"><use href="#i-x"/></svg></button>
+      <h2 id="kbdTitle">Keyboard</h2>
+      <div class="sub" style="font-family:var(--font-body)">Everything here is reachable without the mouse.</div>
+    </div>
+    <div class="sheet__bd">
+      <dl class="kv">
+        <dt><kbd>/</kbd></dt><dd>Jump to search</dd>
+        <dt><kbd>j</kbd> <kbd>k</kbd></dt><dd>Move down / up the list</dd>
+        <dt><kbd>Enter</kbd></dt><dd>Open the highlighted study</dd>
+        <dt><kbd>v</kbd></dt><dd>Open it straight in the viewer</dd>
+        <dt><kbd>d</kbd></dt><dd>Download it as DICOM (.zip)</dd>
+        <dt><kbd>r</kbd></dt><dd>Refresh</dd>
+        <dt><kbd>g</kbd> then <kbd>1</kbd>–<kbd>4</kbd></dt><dd>Worklist, Devices, Activity, System</dd>
+        <dt><kbd>t</kbd></dt><dd>Light / reading-room theme</dd>
+        <dt><kbd>Esc</kbd></dt><dd>Close</dd>
+      </dl>
+      <h3 style="font-size:14px;margin:18px 0 0">In the viewer</h3><div class="rule-dot"></div>
+      <dl class="kv">
+        <dt><kbd>←</kbd> <kbd>→</kbd> · wheel</dt><dd>Previous / next image</dd>
+        <dt><kbd>PgUp</kbd> <kbd>PgDn</kbd></dt><dd>Ten at a time</dd>
+        <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Previous / next series</dd>
+        <dt>right-drag</dt><dd>Window and level, on any tool</dd>
+        <dt>middle-drag</dt><dd>Pan, on any tool</dd>
+        <dt><kbd>w</kbd> <kbd>p</kbd> <kbd>z</kbd> <kbd>s</kbd> <kbd>x</kbd> <kbd>m</kbd></dt><dd>Window, pan, zoom, stack, probe, magnifier</dd>
+        <dt><kbd>l</kbd> <kbd>a</kbd> <kbd>o</kbd> <kbd>b</kbd></dt><dd>Length, angle, elliptical and rectangular region</dd>
+        <dt><kbd>0</kbd> <kbd>1</kbd> <kbd>9</kbd></dt><dd>Fit, 1:1, true size</dd>
+        <dt><kbd>i</kbd> <kbd>r</kbd> <kbd>h</kbd> <kbd>v</kbd></dt><dd>Invert, rotate, flip across, flip down</dd>
+        <dt><kbd>k</kbd></dt><dd>Crosshair — drive every reconstructed plane from one point</dd>
+        <dt><kbd>c</kbd> · <kbd>g</kbd> · <kbd>e</kbd></dt><dd>Cine · overlay · reset the pane</dd>
+        <dt><kbd>Del</kbd></dt><dd>Remove the last measurement</dd>
+      </dl>
+    </div>
+    <div class="sheet__ft"><button class="btn btn--primary" data-close="kbdDlg">Got it</button></div>
+  </div>
+</dialog>
+
+<!-- ============ viewer ============ -->
+<div class="vwr" id="viewer" hidden aria-hidden="true" role="dialog" aria-label="Image viewer">
+  <header class="vwr__bar">
+    <button class="vb vb--close" id="vwrClose" title="Close the viewer (Esc)" aria-label="Close the viewer"><svg><use href="#i-x"/></svg></button>
+    <div class="vwr__id"><b id="vwrName">—</b><span id="vwrSub"></span></div>
+
+    <div class="vwr__group" id="vwrTools" role="group" aria-label="Tools">
+      <button class="vb" data-tool="wl" aria-pressed="true" title="Window / level — drag, or right-drag on any tool (W)"><svg><use href="#i-wl"/></svg></button>
+      <button class="vb" data-tool="pan" aria-pressed="false" title="Pan — drag, or middle-drag on any tool (P)"><svg><use href="#i-pan"/></svg></button>
+      <button class="vb" data-tool="zoom" aria-pressed="false" title="Zoom (Z)"><svg><use href="#i-zoom"/></svg></button>
+      <button class="vb" data-tool="magnify" aria-pressed="false" title="Magnifier — hold and move (M)"><svg><use href="#i-search"/></svg></button>
+      <button class="vb" data-tool="stack" aria-pressed="false" title="Stack scroll — or just use the wheel (S)"><svg><use href="#i-stack"/></svg></button>
+      <button class="vb" data-tool="probe" aria-pressed="false" title="Pixel probe (X)"><svg><use href="#i-probe"/></svg></button>
+      <button class="vb" data-tool="length" aria-pressed="false" title="Length (L)"><svg><use href="#i-ruler"/></svg></button>
+      <button class="vb" data-tool="angle" aria-pressed="false" title="Angle — three clicks (A)"><svg><use href="#i-angle"/></svg></button>
+      <button class="vb" data-tool="ellipse" aria-pressed="false" title="Elliptical region (O)"><svg><use href="#i-roi"/></svg></button>
+      <button class="vb" data-tool="rect" aria-pressed="false" title="Rectangular region (B)"><svg><use href="#i-rect"/></svg></button>
+      <button class="vb" data-tool="arrow" aria-pressed="false" title="Arrow"><svg><use href="#i-send"/></svg></button>
+      <button class="vb" data-tool="cross" aria-pressed="false" title="Crosshair — move every reconstructed plane to one point (K)"><svg><use href="#i-probe"/></svg></button>
+    </div>
+
+    <div class="vwr__group" id="vwrActions" role="group" aria-label="Image">
+      <button class="vb" data-act="invert" title="Invert (I)"><svg><use href="#i-invert"/></svg></button>
+      <button class="vb" data-act="rotate" title="Rotate 90° (R)"><svg><use href="#i-rotate"/></svg></button>
+      <button class="vb" data-act="fliph" title="Flip horizontally (H)"><svg><use href="#i-flip"/></svg></button>
+      <button class="vb" data-act="fit" title="Fit to the pane (0)"><svg><use href="#i-fit"/></svg></button>
+      <button class="vb" data-act="one" title="One image pixel per screen pixel (1)">1:1</button>
+      <button class="vb" data-act="truesize" title="True size — 1 mm of anatomy per 1 mm of glass (9)"><svg><use href="#i-ruler2"/></svg></button>
+      <button class="vb" data-act="sharpen" aria-pressed="false" title="Sharpen, then smooth. Runs on the picture, never on the measured values.">Enhance</button>
+      <button class="vb" data-act="reset" title="Reset this pane (E)">Reset</button>
+    </div>
+
+    <div class="vwr__group" id="vwrLayouts" role="group" aria-label="Layout">
+      <button class="vb" data-layout="1x1" aria-pressed="true" title="Single">1×1</button>
+      <button class="vb" data-layout="1x2" aria-pressed="false" title="Side by side">1×2</button>
+      <button class="vb" data-layout="2x2" aria-pressed="false" title="Four up">2×2</button>
+      <button class="vb" data-layout="2x3" aria-pressed="false" title="Six up">2×3</button>
+    </div>
+
+    <div class="vwr__group">
+      <button class="vb" id="vwrMpr" aria-pressed="false" title="Reconstruct coronal and sagittal planes from the stack">MPR</button>
+      <button class="vb" id="vwrCine" aria-pressed="false" title="Cine (C)"><svg><use href="#i-play"/></svg></button>
+      <label class="vwr__cine"><input type="range" id="vwrFps" min="1" max="60" value="12" aria-label="Cine rate"><span id="vwrFpsOut">12 fps</span></label>
+      <label class="vwr__check"><input type="checkbox" id="vwrBounce">bounce</label>
+    </div>
+
+    <div class="vwr__spacer"></div>
+
+    <div class="vwr__group">
+      <label class="vwr__check" title="Scroll every pane together"><input type="checkbox" id="vwrLinkScroll">link scroll</label>
+      <label class="vwr__check" title="Apply window and level to every pane"><input type="checkbox" id="vwrLinkWl">link W/L</label>
+      <button class="vb" id="vwrPresets" title="Window presets">W/L presets</button>
+      <button class="vb" data-act="overlay" aria-pressed="true" title="Show or hide the overlay (G)">Overlay</button>
+      <button class="vb" data-act="clear" title="Clear the measurements on this frame">Clear</button>
+      <button class="vb" id="vwrTagsBtn" title="Every DICOM tag on this frame"><svg><use href="#i-tag"/></svg></button>
+      <button class="vb" id="vwrCalBtn" title="Calibrate this display so 1:1 is true size">Calibrate</button>
+      <button class="vb" id="vwrExport" title="Save the pane as a PNG, overlay included"><svg><use href="#i-download"/></svg></button>
+    </div>
+
+    <div class="vwr__pop" id="vwrPresetPop" hidden><div id="vwrPresetList"></div></div>
+  </header>
+
+  <div class="vwr__body">
+    <aside class="vwr__side">
+      <div><h4>Series</h4><div id="vwrSeries"></div></div>
+      <div><h4>Prior studies</h4><div id="vwrPriors"></div></div>
+      <div><h4>Measurements</h4><div id="vwrNotes"></div></div>
+    </aside>
+    <div class="vwr__grid" id="vwrGrid"></div>
+  </div>
+
+  <div class="vwr__foot" id="vwrFoot"></div>
+</div>
+
+<!-- ============ every tag on the frame ============ -->
+<dialog id="tagDlg" aria-labelledby="tagTitle">
+  <div class="sheet" style="width:min(720px,94vw)">
+    <div class="sheet__hd">
+      <button class="sheet__x" data-close="tagDlg" aria-label="Close"><svg width="16" height="16"><use href="#i-x"/></svg></button>
+      <h2 id="tagTitle">DICOM tags</h2>
+      <div class="sub" style="font-family:var(--font-body)">Read from the archive for the frame on screen.</div>
+    </div>
+    <div class="sheet__bd" id="tagBody"></div>
+    <div class="sheet__ft"><button class="btn" data-close="tagDlg">Close</button></div>
+  </div>
+</dialog>
+
+<!-- ============ what the arrow says ============ -->
+<dialog id="noteDlg" aria-labelledby="noteTitle">
+  <div class="sheet" style="width:min(440px,94vw)">
+    <div class="sheet__hd">
+      <button class="sheet__x" data-close="noteDlg" aria-label="Close"><svg width="16" height="16"><use href="#i-x"/></svg></button>
+      <h2 id="noteTitle">Label this mark</h2>
+      <div class="sub" style="font-family:var(--font-body)">It is drawn on the image and appears in the measurement list.</div>
+    </div>
+    <div class="sheet__bd">
+      <input id="noteText" type="text" maxlength="80" placeholder="e.g. calcification" style="width:100%; height:38px; padding:0 12px; border-radius:var(--r); border:1px solid var(--line-strong); background:var(--paper); color:var(--text); font:14px var(--font-body)">
+    </div>
+    <div class="sheet__ft"><button class="btn" data-close="noteDlg">Skip</button><div class="spacer"></div>
+      <button class="btn btn--primary" id="noteSave">Save</button></div>
+  </div>
+</dialog>
+
+<!-- ============ display calibration ============ -->
+<dialog id="calDlg" aria-labelledby="calTitle">
+  <div class="sheet" style="width:min(520px,94vw)">
+    <div class="sheet__hd">
+      <button class="sheet__x" data-close="calDlg" aria-label="Close"><svg width="16" height="16"><use href="#i-x"/></svg></button>
+      <h2 id="calTitle">Calibrate this display</h2>
+      <div class="sub" style="font-family:var(--font-body)">A browser cannot ask the monitor how big its pixels are, so true size is a guess until you measure it once.</div>
+    </div>
+    <div class="sheet__bd">
+      <p style="margin:0 0 4px">Hold any bank or PhilHealth card against the screen and drag until the box is exactly its width (85.6 mm).</p>
+      <div class="cal__card" id="calCard"></div>
+      <input type="range" id="calRange" min="120" max="700" value="323" style="width:100%" aria-label="Card width in screen pixels">
+      <p style="color:var(--text-3); font-size:12.5px; margin:8px 0 0">Kept in this browser only. Until it is set, 1:1 assumes a 96 dpi display and the viewer says so.</p>
+    </div>
+    <div class="sheet__ft">
+      <button class="btn" id="calClear">Clear</button><div class="spacer"></div>
+      <button class="btn btn--primary" id="calSave">Save</button>
+    </div>
+  </div>
+</dialog>
+
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+<script type="module">
+/*@APP@*/
+</script>
+</body>
+</html>

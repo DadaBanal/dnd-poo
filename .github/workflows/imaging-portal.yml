@@ -1,0 +1,59 @@
+name: imaging-portal
+
+# A branch with an open pull request would otherwise run this twice, once for the
+# push and once for the pull_request. That is not just wasted runner time: both
+# runs uploaded an artifact under the same name, and whichever finalised second
+# failed. MEASURED 9 Sep 2026 on adef3c2 -- one run green at 14:35:45, its twin
+# red at 14:36:04 on FinalizeArtifact. So push covers main, pull_request covers
+# everything else, and each commit is built once.
+on:
+  push:
+    branches: [main]
+    paths: ['apps/imaging-portal/**', '.github/workflows/imaging-portal.yml']
+  pull_request:
+    paths: ['apps/imaging-portal/**', '.github/workflows/imaging-portal.yml']
+  workflow_dispatch:
+
+jobs:
+  build-and-check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/imaging-portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The artifact goes onto a live clinical archive, so the committed dist/
+      # must be exactly what src/ builds -- no hand edits, no drift.
+      - name: dist/ is in step with src/
+        run: npm run check
+
+      - name: Install Playwright (Chromium only)
+        run: npm install --no-save playwright@1.56.1 && npx playwright install --with-deps chromium
+
+      - name: Browser checks against a stand-in Orthanc
+        run: node test/checks.mjs
+
+      - name: Emit the installer payload and its hash
+        run: npm run payload
+
+      # The one-shot installer carries the hash it will accept. If a re-baseline
+      # moves the artifact and leaves that constant behind, the package ships a
+      # script that rejects its own payload. This is where that gets caught.
+      - name: Build the deployment package
+        run: npm run package
+
+      # Named per run, so two runs can never collide over one artifact name, and
+      # loud if the build produced nothing to publish.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pmc-imaging-portal-${{ github.run_id }}
+          if-no-files-found: error
+          path: |
+            apps/imaging-portal/dist/PMC_Imaging_Portal.html
+            apps/imaging-portal/dist/PMC_Imaging_Portal.html.sha256
+            apps/imaging-portal/dist/payload.gz.b64
+            apps/imaging-portal/dist/PMC_Imaging_Portal_Deploy_*.zip

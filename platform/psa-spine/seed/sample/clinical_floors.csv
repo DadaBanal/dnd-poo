@@ -1,0 +1,5 @@
+floor_id,description,priority,status,signed_off_by,signed_off_on
+CF_OXYGEN,Ward oxygen outlet,P1,PROPOSED,,
+CF_GAS_MANIFOLD,Medical gas manifold,P1,PROPOSED,,
+CF_BLOOD_FRIDGE,Blood-bank refrigerator alarm,P1,PROPOSED,,
+CF_DEFIB,Defibrillator failed self-test,P1,PROPOSED,,
