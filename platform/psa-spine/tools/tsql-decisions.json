@@ -417,6 +417,9 @@
     "loop_reply.sent_by": "PERSON",
     "loop_reply.banded_at": "TIMESTAMP_TEXT",
     "time_entry.loop_reply_id": "ID",
-    "ticket.patient_reference": "PATIENT_REF"
+    "ticket.patient_reference": "PATIENT_REF",
+    "ticket_numbering.prefix": "CODE",
+    "ticket_number.issued_at": "TIMESTAMP_TEXT",
+    "ticket_number.issued_to": "ID"
   }
 }

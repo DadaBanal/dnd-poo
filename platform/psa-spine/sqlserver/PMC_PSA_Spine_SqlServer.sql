@@ -139,6 +139,8 @@ BEGIN
     PRINT N'    psa.workflow_run';
     PRINT N'    psa.oncall_slot';
     PRINT N'    psa.loop_reply';
+    PRINT N'    psa.ticket_numbering';
+    PRINT N'    psa.ticket_number';
     PRINT N'    psa.ix_fee_line_effective';
     PRINT N'    psa.ix_time_entry_period';
     PRINT N'    psa.ix_workflow_run_event';
@@ -148,7 +150,7 @@ BEGIN
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  50 tables, 4 indexes, 4 triggers.';
+    PRINT N'  52 tables, 4 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -1446,6 +1448,47 @@ CREATE TABLE psa.[loop_reply] (
 );
 END;
 
+-- --------------------------------------------------------------------------
+-- ticket_numbering   (from schema/014_numbering.sql)
+-- The prefix is configuration, not a constant, because §12 is explicit: if PMC
+-- cannot change it without a deployment, it is in the wrong place. Exactly one
+-- row, enforced, so there is never a question of which prefix is in force.
+-- The single row is written by db.seed(), not here: schema/*.sql is DDL only,
+-- and the translator refuses a statement it does not recognise rather than
+-- guessing what a seed INSERT should become on SQL Server.
+IF OBJECT_ID(N'psa.[ticket_numbering]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ticket_numbering] (
+    [id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_ticket_numbering] PRIMARY KEY CONSTRAINT [CK_ticket_numbering_01] CHECK (id = 1),
+    [prefix] NVARCHAR(32) NOT NULL CONSTRAINT [DF_ticket_numbering_prefix] DEFAULT ('PMC'),
+
+    -- Zero padding, so PMC-000001 sorts as text in the order it was issued for
+    -- the first million tickets. Twelve is well past any hospital's lifetime.
+    [padding] INT NOT NULL CONSTRAINT [CK_ticket_numbering_02] CHECK (padding BETWEEN 1 AND 12)
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ticket_number   (from schema/014_numbering.sql)
+-- The sequence itself. Append-only: a row is written when a number is ISSUED,
+-- never deleted, so a number is never reused. A reused ticket number is a
+-- reference that points at two different tickets, which is worse than a gap —
+-- and gaps are fine. `issued_to` is filled in once the ticket exists, so a
+-- number issued and then abandoned is visible as exactly that rather than
+-- silently vanishing.
+IF OBJECT_ID(N'psa.[ticket_number]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ticket_number] (
+    [number] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_ticket_number] PRIMARY KEY,
+    [issued_at] NVARCHAR(64) NOT NULL,
+    [issued_to] NVARCHAR(64) NULL CONSTRAINT [FK_ticket_number_issued_to] REFERENCES psa.[ticket]([work_item_id]),
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [issued_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [issued_at], 126), CASE WHEN [issued_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [issued_at], 112) END))
+);
+END;
+
 -- ==========================================================================
 -- COLUMNS ADDED TO TABLES THAT ALREADY EXIST
 --
@@ -1617,10 +1660,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_unique = 0 AND i.is_primary_key = 0;
 
-IF @Tables <> 50 OR @Triggers <> 4 OR @Indexes < 4
+IF @Tables <> 52 OR @Triggers <> 4 OR @Indexes < 4
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 50), %d triggers (expected 4), %d indexes (expected at least 4). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 52), %d triggers (expected 4), %d indexes (expected at least 4). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -1648,6 +1691,8 @@ PRINT N'target is enforced until somebody with the authority says so.';
     DROP TRIGGER IF EXISTS psa.[ticket_close_requires_a_variation];
     DROP TRIGGER IF EXISTS psa.[patient_reference_needs_a_restricted_board];
     DROP TRIGGER IF EXISTS psa.[patient_reference_stays_on_a_restricted_board];
+    DROP TABLE IF EXISTS psa.[ticket_number];
+    DROP TABLE IF EXISTS psa.[ticket_numbering];
     DROP TABLE IF EXISTS psa.[loop_reply];
     DROP TABLE IF EXISTS psa.[oncall_slot];
     DROP TABLE IF EXISTS psa.[workflow_run];

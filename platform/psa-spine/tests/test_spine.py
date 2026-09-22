@@ -19,8 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
-from psaspine import (board, clocks, db, phi, register, reports, rules,  # noqa: E402
-                      tickets, walkthrough)
+from psaspine import (board, clocks, db, numbering, phi, register,  # noqa: E402
+                      reports, rules, tickets, walkthrough)
 import sqlite_to_tsql  # noqa: E402
 from sqlite_ddl import Unsupported  # noqa: E402
 
@@ -2256,6 +2256,94 @@ class WebWSGITest(unittest.TestCase):
         self.assertEqual(entry["band_hours"], 0.5)
         self.assertIsNotNone(entry["loop_reply_id"])
         self.assertEqual(state["state"], "CLOSED")
+
+
+class TicketNumberingTest(unittest.TestCase):
+    """D4 — one sequence across every board, and a number never reused."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.at = datetime(2026, 9, 22, 10, 0)
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def test_numbers_are_issued_in_order_and_formatted(self):
+        issued = [numbering.issue(self.conn, at=self.at) for _ in range(3)]
+        self.assertEqual(issued, ["PMC-000001", "PMC-000002", "PMC-000003"])
+
+    def test_the_sequence_is_hospital_wide_not_per_board(self):
+        """A ticket moves board — that is what a handover is — so a number that
+        belongs to a board stops being a reference the moment it is used."""
+        self.conn.executescript(
+            "INSERT OR REPLACE INTO board (board_id,display_name,phase,"
+            " fulfiller_group,owner,deputy,is_live) VALUES"
+            " ('A','Board A','2','Dada','x','y',1);"
+            "INSERT OR REPLACE INTO board (board_id,display_name,phase,"
+            " fulfiller_group,owner,deputy,is_live) VALUES"
+            " ('B','Board B','2','Dada','x','y',1);")
+        # Issuing while working two boards draws from the same sequence.
+        first = numbering.issue(self.conn, at=self.at)
+        second = numbering.issue(self.conn, at=self.at)
+        self.assertNotEqual(first, second)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) c FROM ticket_number").fetchone()["c"], 2)
+
+    def test_the_prefix_is_configuration_not_a_constant(self):
+        """§12: if PMC cannot change it without a deployment, it is in the wrong
+        place."""
+        self.conn.execute("UPDATE ticket_numbering SET prefix='PMCNE', padding=4")
+        self.assertEqual(numbering.issue(self.conn, at=self.at), "PMCNE-0001")
+
+    def test_there_can_only_ever_be_one_numbering_row(self):
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute(
+                "INSERT INTO ticket_numbering (id, prefix, padding) VALUES (2,'X',6)")
+
+    def test_a_number_is_not_reused_after_the_last_one_is_abandoned(self):
+        """A reused ticket number points at two tickets. Worse than a gap."""
+        numbering.issue(self.conn, at=self.at)
+        numbering.issue(self.conn, at=self.at)
+        third = numbering.issue(self.conn, at=self.at)
+        self.assertEqual(third, "PMC-000003")
+        # Nothing reclaims 1 and 2 just because they never became tickets.
+        self.assertEqual(numbering.unbound(self.conn), [1, 2, 3])
+        self.assertEqual(numbering.issue(self.conn, at=self.at), "PMC-000004")
+
+    def test_binding_records_what_the_number_became(self):
+        self.conn.executescript(
+            "INSERT OR REPLACE INTO board (board_id,display_name,phase,"
+            " fulfiller_group,owner,deputy,is_live) VALUES"
+            " ('A','Board A','2','Dada','x','y',1);")
+        ticket_id = numbering.issue(self.conn, at=self.at)
+        self.conn.execute(
+            "INSERT INTO work_item (work_item_id, source, name, entity_id,"
+            " contract_basis) VALUES (?,'desk','A thing','PMC','BASELINE')",
+            (ticket_id,))
+        self.conn.execute(
+            "INSERT INTO ticket (work_item_id, board_id, path, impact, urgency,"
+            " priority, priority_source, requested_at, opened_at, state)"
+            " VALUES (?,'A','INCIDENT','I3','U3','P3','MATRIX',"
+            "'2026-09-22 10:00','2026-09-22 10:00','NEW')", (ticket_id,))
+        numbering.bind(self.conn, ticket_id)
+        self.assertEqual(numbering.unbound(self.conn), [])
+        self.assertEqual(self.conn.execute(
+            "SELECT issued_to FROM ticket_number WHERE number=1").fetchone()["issued_to"],
+            ticket_id)
+
+    def test_binding_an_imported_id_is_a_no_op(self):
+        """An imported desk id was never ours to issue; external_ref keeps it."""
+        numbering.issue(self.conn, at=self.at)
+        numbering.bind(self.conn, "ITO-1723")
+        self.assertEqual(numbering.unbound(self.conn), [1])
+
+    def test_the_desk_reference_is_not_replaced_by_renumbering(self):
+        """Imported history keeps its own id — renumbering breaks every
+        reference anybody wrote down. external_ref already carries the source."""
+        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(ticket)")]
+        self.assertIn("external_ref", cols)
 
 
 class PhiDetectionTest(unittest.TestCase):

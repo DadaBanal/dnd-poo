@@ -79,6 +79,13 @@ def seed(conn: sqlite3.Connection) -> None:
                 row["note"],
             ),
         )
+    # D4: one ticket sequence for the whole hospital. The prefix is a row rather
+    # than a constant because §12 says configuration PMC cannot change without a
+    # deployment is in the wrong place. Exactly one row, and the CHECK enforces
+    # it, so there is never a question of which prefix is in force.
+    conn.execute(
+        "INSERT OR IGNORE INTO ticket_numbering (id, prefix, padding)"
+        " VALUES (1, 'PMC', 6)")
     seed_catalogue(conn)
     conn.commit()
 
