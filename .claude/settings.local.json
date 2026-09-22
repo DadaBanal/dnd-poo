@@ -7,7 +7,13 @@
       "Bash(python3 -c ' *)",
       "Bash(git fetch *)",
       "Bash(git rebase *)",
-      "Bash(git commit -q -m ' *)"
+      "Bash(git commit -q -m ' *)",
+      "Bash(npm view *)",
+      "Bash(tar xzf *)",
+      "Bash(find package *)",
+      "Bash(xargs ls -l)",
+      "Bash(awk '{print $5, $9}')",
+      "Read(//tmp/**)"
     ]
   }
 }
