@@ -25,7 +25,7 @@ Two things it does that the fulfiller views deliberately do not:
 """
 from __future__ import annotations
 
-from ... import numbering, phi
+from ... import numbering, phi, tickets
 from .. import templates as t
 
 # What a requester is allowed to see about their own ticket. Deliberately not
@@ -36,6 +36,21 @@ MINE = (
     "  FROM ticket t"
     "  JOIN work_item w ON w.work_item_id = t.work_item_id"
     "  LEFT JOIN board_status s ON s.board_status_id = t.board_status_id")
+
+# The two plain questions (§9: "it asks two questions -- who is affected and is
+# a patient waiting -- and never shows a priority dropdown"). The wording is the
+# requester's; the codes are the matrix's. Meanings follow the definitions the
+# matrix in tickets.py is built from, which are INFERRED from the WS36 paper.
+WHO_IS_AFFECTED = (
+    ("I3", "Just me"),
+    ("I2", "My ward or department, or several people"),
+    ("I1", "The whole hospital, or a clinical service is down"),
+)
+PATIENT_WAITING = (
+    ("U3", "No"),
+    ("U2", "Yes, but we have a workaround"),
+    ("U1", "Yes -- care has stopped, or there is a safety risk"),
+)
 
 FRIENDLY_STATE = {
     "NEW": "Received, not yet picked up",
@@ -110,11 +125,27 @@ def _raise_form(error: str = "", notice: str = "") -> str:
             "<label>What do you need? "
             "<input name='summary' required maxlength='200' "
             "placeholder='Printer in ward 3 is offline'></label>"
+            + _radio_group("impact", "Who is affected?", WHO_IS_AFFECTED) +
+            _radio_group("urgency", "Is a patient waiting?", PATIENT_WAITING) +
             "<label>Anything that would help us"
             "<textarea name='description' placeholder='Please do not include "
             "patient names or case numbers -- give us the record number if we "
             "need one.'></textarea></label>"
             "<div><button type='submit'>Send it</button></div></form></div>")
+
+
+def _radio_group(name: str, legend: str, choices) -> str:
+    """One required question. `required` on the first radio makes the browser
+    insist on an answer; the server insists again, because a browser is not a
+    control."""
+    opts = "".join(
+        f"<label style='font-weight:400;color:var(--ink)'>"
+        f"<input type='radio' name='{name}' value='{code}' style='width:auto'"
+        f"{' required' if i == 0 else ''}> {t.esc(text)}</label>"
+        for i, (code, text) in enumerate(choices))
+    return (f"<fieldset style='border:none;padding:0;margin:0'>"
+            f"<legend style='font-size:13px;font-weight:600;color:var(--muted)'>"
+            f"{t.esc(legend)}</legend>{opts}</fieldset>")
 
 
 def detail(ctx, work_item_id):
@@ -161,6 +192,18 @@ def create(ctx):
             "Your requests",
             "<h1>Your requests</h1>" + _raise_form(error="Tell us what you need."),
             user=ctx.user))
+    impact = form.get("impact", "")
+    urgency = form.get("urgency", "")
+    if impact not in dict(WHO_IS_AFFECTED) or urgency not in dict(PATIENT_WAITING):
+        return Response("400 Bad Request", t.page(
+            "Your requests",
+            "<h1>Your requests</h1>" + _raise_form(
+                error="Please answer both questions: who is affected, and whether "
+                      "a patient is waiting."),
+            user=ctx.user))
+    # Computed, never chosen: the requester answered two questions and the
+    # matrix decides. There is no priority field for them to set.
+    priority, priority_source = tickets.compute_priority(impact, urgency)
 
     board = ctx.conn.execute(
         "SELECT board_id FROM board WHERE is_unrouted = 1").fetchone()
@@ -181,8 +224,9 @@ def create(ctx):
     ctx.conn.execute(
         "INSERT INTO ticket (work_item_id, board_id, path, impact, urgency,"
         " priority, priority_source, requested_by, requested_at, opened_at, state)"
-        " VALUES (?,?,'INCIDENT','I3','U3','P4','MATRIX',?,?,?,'NEW')",
-        (ticket_id, board["board_id"], requester, stamp, stamp))
+        " VALUES (?,?,'INCIDENT',?,?,?,?,?,?,?,'NEW')",
+        (ticket_id, board["board_id"], impact, urgency, priority, priority_source,
+         requester, stamp, stamp))
     numbering.bind(ctx.conn, ticket_id)
     if description:
         ctx.conn.execute(

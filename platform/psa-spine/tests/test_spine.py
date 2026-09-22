@@ -2762,7 +2762,8 @@ class PortalTest(unittest.TestCase):
     def test_raising_a_request_opens_a_numbered_ticket_owned_by_the_requester(self):
         status, headers, _ = self._call(
             "POST", "/my/new", cookie=self.nurse_a,
-            form={"summary": "Monitor flickers", "description": "Bed 4."})
+            form={"summary": "Monitor flickers", "description": "Bed 4.",
+                  "impact": "I3", "urgency": "U3"})
         self.assertTrue(status.startswith("303"))
         conn = self._conn()
         row = conn.execute(
@@ -2771,6 +2772,52 @@ class PortalTest(unittest.TestCase):
         conn.close()
         self.assertEqual(row["requested_by"], "nurse.a@pmcne.ph")
         self.assertEqual(row["board_id"], "UNROUTED")
+
+    # ------------------------------------- the two questions, never a dropdown
+
+    def test_the_form_asks_both_questions_and_offers_no_priority(self):
+        _, _, body = self._call("GET", "/my", cookie=self.nurse_a)
+        self.assertIn("Who is affected?", body)
+        self.assertIn("Is a patient waiting?", body)
+        self.assertNotIn("name='priority'", body)
+        self.assertNotIn('name="priority"', body)
+
+    def test_the_answers_decide_the_priority(self):
+        """One user, patient waiting with care stopped: I3/U1, which the matrix
+        puts at P3. Hospital-wide with care stopped: I1/U1, P1."""
+        for impact, urgency, expected in (("I3", "U1", "P3"), ("I1", "U1", "P1"),
+                                          ("I2", "U2", "P3"), ("I3", "U3", "P4")):
+            self._call("POST", "/my/new", cookie=self.nurse_a,
+                       form={"summary": f"{impact}{urgency}", "impact": impact,
+                             "urgency": urgency})
+            conn = self._conn()
+            row = conn.execute(
+                "SELECT t.priority, t.priority_source FROM ticket t"
+                " JOIN work_item w USING (work_item_id) WHERE w.name = ?",
+                (f"{impact}{urgency}",)).fetchone()
+            conn.close()
+            self.assertEqual(row["priority"], expected, (impact, urgency))
+            self.assertEqual(row["priority_source"], "MATRIX")
+
+    def test_a_priority_smuggled_into_the_form_is_ignored(self):
+        """There is no priority field; a crafted one changes nothing."""
+        self._call("POST", "/my/new", cookie=self.nurse_a,
+                   form={"summary": "smuggle", "impact": "I3", "urgency": "U3",
+                         "priority": "P1"})
+        conn = self._conn()
+        row = conn.execute("SELECT t.priority FROM ticket t JOIN work_item w"
+                           " USING (work_item_id) WHERE w.name='smuggle'").fetchone()
+        conn.close()
+        self.assertEqual(row["priority"], "P4")
+
+    def test_an_unanswered_question_is_refused_in_words(self):
+        for form in ({"summary": "x", "urgency": "U3"},
+                     {"summary": "x", "impact": "I3"},
+                     {"summary": "x", "impact": "I9", "urgency": "U3"}):
+            status, _, body = self._call("POST", "/my/new", cookie=self.nurse_a,
+                                         form=form)
+            self.assertTrue(status.startswith("400"), form)
+            self.assertIn("answer both questions", body)
 
     def test_a_request_with_no_summary_is_refused_in_words(self):
         status, _, body = self._call("POST", "/my/new", cookie=self.nurse_a,
@@ -2783,7 +2830,8 @@ class PortalTest(unittest.TestCase):
         status, _, body = self._call(
             "POST", "/my/new", cookie=self.nurse_a,
             form={"summary": "Edit charge date",
-                  "description": "PhilHealth 12-345678901-2 Case No: 44812"})
+                  "description": "PhilHealth 12-345678901-2 Case No: 44812",
+                  "impact": "I3", "urgency": "U3"})
         self.assertTrue(status.startswith("200"))
         self.assertIn("patient details", body)
         conn = self._conn()
