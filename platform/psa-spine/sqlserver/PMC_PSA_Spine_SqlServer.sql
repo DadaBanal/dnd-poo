@@ -145,8 +145,10 @@ BEGIN
     PRINT N'    psa.ix_oncall_active';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
+    PRINT N'    psa.patient_reference_needs_a_restricted_board';
+    PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  50 tables, 4 indexes, 2 triggers.';
+    PRINT N'  50 tables, 4 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -1461,6 +1463,13 @@ ALTER TABLE psa.[ticket] ADD [board_status_id] NVARCHAR(64) NULL CONSTRAINT [FK_
 IF COL_LENGTH(N'psa.[time_entry]', N'loop_reply_id') IS NULL
 ALTER TABLE psa.[time_entry] ADD [loop_reply_id] NVARCHAR(64) NULL CONSTRAINT [FK_time_entry_loop_reply_id] REFERENCES psa.[loop_reply]([loop_reply_id]);
 
+-- The reference itself. A record number, nothing else — no name, no date of
+-- birth, no diagnosis. Everything a fulfiller needs to find the patient in the
+-- system that is actually the record of care, and nothing that makes this
+-- database into a second one.
+IF COL_LENGTH(N'psa.[ticket]', N'patient_reference') IS NULL
+ALTER TABLE psa.[ticket] ADD [patient_reference] NVARCHAR(64) NULL;
+
 -- --------------------------------------------------------------------------
 -- indexes
 
@@ -1548,6 +1557,50 @@ BEGIN
 END
 ';
 
+-- A patient reference belongs only on a board that is restricted, because
+-- `restricted` is what makes membership a hard filter at the query (§5.6) and
+-- what makes a read auditable (§6.1). Putting one on an open board would place a
+-- patient identifier on the same queue as printer faults, which is the exact
+-- defect this file exists to answer.
+--
+-- In the schema and not the importer, for the reason 005 gives: an importer can
+-- be bypassed and a trigger cannot.
+-- from schema/013_intake.sql, where it reads: BEFORE INSERT ON ticket
+IF OBJECT_ID(N'psa.[patient_reference_needs_a_restricted_board]', N'TR') IS NULL
+EXEC sp_executesql N'
+CREATE TRIGGER psa.[patient_reference_needs_a_restricted_board]
+ON psa.[ticket]
+AFTER INSERT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    IF EXISTS (SELECT 1 FROM inserted AS inserted_row WHERE inserted_row.patient_reference IS NOT NULL AND (SELECT restricted FROM psa.board WHERE board_id = inserted_row.board_id) = 0)
+    BEGIN
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        THROW 50003, N''a patient reference may only be held on a restricted board'', 1;
+    END
+END
+';
+
+-- The same rule on the way through, so a ticket cannot acquire one by being
+-- moved or edited onto an open board.
+-- from schema/013_intake.sql, where it reads: BEFORE UPDATE ON ticket
+IF OBJECT_ID(N'psa.[patient_reference_stays_on_a_restricted_board]', N'TR') IS NULL
+EXEC sp_executesql N'
+CREATE TRIGGER psa.[patient_reference_stays_on_a_restricted_board]
+ON psa.[ticket]
+AFTER UPDATE
+AS
+BEGIN
+    SET NOCOUNT ON;
+    IF EXISTS (SELECT 1 FROM inserted AS inserted_row WHERE inserted_row.patient_reference IS NOT NULL AND (SELECT restricted FROM psa.board WHERE board_id = inserted_row.board_id) = 0)
+    BEGIN
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        THROW 50004, N''a patient reference may only be held on a restricted board'', 1;
+    END
+END
+';
+
 /*----------------------------------------------------------- the verify gate */
 --
 -- Count what is actually there before committing. If the schema is short an
@@ -1564,10 +1617,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_unique = 0 AND i.is_primary_key = 0;
 
-IF @Tables <> 50 OR @Triggers <> 2 OR @Indexes < 4
+IF @Tables <> 50 OR @Triggers <> 4 OR @Indexes < 4
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 50), %d triggers (expected 2), %d indexes (expected at least 4). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 50), %d triggers (expected 4), %d indexes (expected at least 4). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -1593,6 +1646,8 @@ PRINT N'target is enforced until somebody with the authority says so.';
 
     DROP TRIGGER IF EXISTS psa.[time_entry_requires_a_variation];
     DROP TRIGGER IF EXISTS psa.[ticket_close_requires_a_variation];
+    DROP TRIGGER IF EXISTS psa.[patient_reference_needs_a_restricted_board];
+    DROP TRIGGER IF EXISTS psa.[patient_reference_stays_on_a_restricted_board];
     DROP TABLE IF EXISTS psa.[loop_reply];
     DROP TABLE IF EXISTS psa.[oncall_slot];
     DROP TABLE IF EXISTS psa.[workflow_run];

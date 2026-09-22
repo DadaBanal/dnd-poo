@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
-from psaspine import (board, clocks, db, register, reports, rules,  # noqa: E402
+from psaspine import (board, clocks, db, phi, register, reports, rules,  # noqa: E402
                       tickets, walkthrough)
 import sqlite_to_tsql  # noqa: E402
 from sqlite_ddl import Unsupported  # noqa: E402
@@ -2177,6 +2177,51 @@ class WebWSGITest(unittest.TestCase):
 
     # ---------------------------------------------------------- admin & the loop
 
+    # ------- §6.1 requirement 4: every read of a restricted ticket is audited
+
+    def _audit_rows(self, action="RESTRICTED_READ"):
+        conn = db.connect(self.db_path)
+        rows = conn.execute(
+            "SELECT actor, subject_kind, subject_id, detail FROM audit_event"
+            " WHERE action = ? ORDER BY audit_id", (action,)).fetchall()
+        conn.close()
+        return rows
+
+    def test_reading_a_restricted_ticket_is_audited(self):
+        status, _, _ = self._call("GET", "/ticket/ITO-9", cookie=self._cookie_for("alice"))
+        self.assertTrue(status.startswith("200"))
+        rows = self._audit_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["actor"], "alice")
+        self.assertEqual(rows[0]["subject_kind"], "ticket")
+        self.assertEqual(rows[0]["subject_id"], "ITO-9")
+
+    def test_reading_an_unrestricted_ticket_is_not_audited(self):
+        """An audit log that records every printer fault is one nobody reads."""
+        self._call("GET", "/ticket/ITO-1", cookie=self._cookie_for("alice"))
+        self.assertEqual(self._audit_rows(), [])
+
+    def test_a_refused_read_writes_no_read_audit(self):
+        """A 404 is not a read — the board never appeared."""
+        status, _, _ = self._call("GET", "/ticket/ITO-9", cookie=self._cookie_for("carol"))
+        self.assertTrue(status.startswith("404"))
+        self.assertEqual(self._audit_rows(), [])
+
+    def test_listing_a_restricted_board_is_audited_once_with_a_count(self):
+        status, _, _ = self._call("GET", "/", cookie=self._cookie_for("alice"))
+        self.assertTrue(status.startswith("200"))
+        rows = self._audit_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["subject_kind"], "board")
+        self.assertEqual(rows[0]["subject_id"], "PHI")
+        self.assertIn("listed 1 ticket(s)", rows[0]["detail"])
+
+    def test_the_audit_records_which_door_the_reader_came_through(self):
+        """A break-glass read and an Entra read are not the same risk."""
+        cookie = self._cookie_for("alice", via="local")
+        self._call("GET", "/ticket/ITO-9", cookie=cookie)
+        self.assertIn("via local", self._audit_rows()[0]["detail"])
+
     def test_the_admin_surface_adds_a_board_status(self):
         cookie = self._cookie_for("alice")
         status, _, _ = self._call("POST", "/admin/status/add", cookie=cookie,
@@ -2211,6 +2256,170 @@ class WebWSGITest(unittest.TestCase):
         self.assertEqual(entry["band_hours"], 0.5)
         self.assertIsNotNone(entry["loop_reply_id"])
         self.assertEqual(state["state"], "CLOSED")
+
+
+class PhiDetectionTest(unittest.TestCase):
+    """§6.1 — a ticket references a patient record and never carries one.
+
+    The load-bearing property is not just that identifiers are found: it is that
+    finding one never repeats it. A detector that copies the PhilHealth number
+    into data_quality.detail has moved the identifier into a column that reports
+    read, and called it compliance.
+    """
+
+    def test_a_philhealth_shaped_number_is_an_error(self):
+        found = phi.scan("PhilHealth 12-345678901-2 for the charge date",
+                         field="summary")
+        codes = {c for c, _, _ in found}
+        self.assertIn("PHI_PHILHEALTH_NUMBER", codes)
+        self.assertEqual(
+            [s for c, s, _ in found if c == "PHI_PHILHEALTH_NUMBER"], ["ERROR"])
+
+    def test_a_case_number_and_a_record_number_are_errors(self):
+        self.assertIn("PHI_CASE_NUMBER",
+                      {c for c, _, _ in phi.scan("Case No: 44812", field="summary")})
+        self.assertIn("PHI_RECORD_NUMBER",
+                      {c for c, _, _ in phi.scan("MRN 99812 needs editing",
+                                                 field="description")})
+
+    def test_the_finding_never_repeats_the_identifier(self):
+        """The whole point. detail is read by reports, and reports are shared."""
+        secret = "12-345678901-2"
+        for _, _, detail in phi.scan(f"PhilHealth {secret}", field="summary"):
+            self.assertNotIn(secret, detail)
+            self.assertNotIn("345678901", detail)
+
+    def test_the_finding_names_the_field_it_was_found_in(self):
+        found = phi.scan("Case No: 44812", field="description")
+        self.assertTrue(all("description" in d for _, _, d in found))
+
+    def test_ordinary_ticket_text_is_not_flagged(self):
+        """A detector that flags every printer fault is one nobody acts on."""
+        self.assertEqual(phi.scan("Printer in ward 3 is offline", field="summary"), [])
+        self.assertEqual(phi.scan("Ticket 4821 needs reassigning", field="summary"), [])
+        self.assertTrue(phi.looks_clean({"summary": "Switch stack down",
+                                         "description": "Reseated the uplink."}))
+
+    def test_one_rule_fires_once_per_field(self):
+        """Three case numbers in one summary is one problem, not three."""
+        found = phi.scan("Case No: 1 and Case No: 2 and Case No: 3", field="summary")
+        self.assertEqual(len([c for c, _, _ in found if c == "PHI_CASE_NUMBER"]), 1)
+
+    def test_scan_fields_covers_every_field_given(self):
+        found = phi.scan_fields({"summary": "Case No: 1", "description": "MRN 2"})
+        self.assertEqual({c for c, _, _ in found},
+                         {"PHI_CASE_NUMBER", "PHI_RECORD_NUMBER"})
+
+
+class PhiAtIntakeTest(unittest.TestCase):
+    """The detector wired to the importer: flagged, counted, never dropped.
+
+    Modelled on the message that prompted §6.1 — a charge-date request carrying a
+    named patient and a PhilHealth case number, on the same queue as printer
+    faults (MEASURED, 9 Sep 2026).
+    """
+
+    EXPORT = ("id,summary,description,status,requested_by,opened_at\n"
+              "T-1,REQUEST TO EDIT CHARGE DATE,"
+              "PhilHealth 12-345678901-2 Case No: 44812 for the charge date,"
+              "New,ward3@pmcne.ph,2026-09-09\n"
+              "T-2,Printer in ward 3 offline,Reseated the cable,"
+              "New,ward3@pmcne.ph,2026-09-09\n")
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        export = Path(self.tmp.name) / "desk.csv"
+        export.write_text(self.EXPORT, encoding="utf-8")
+        self.summary = tickets.import_tickets(
+            self.conn, export, run_id="phi1", at="2026-09-09")
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _phi_findings(self):
+        return self.conn.execute(
+            "SELECT subject_id, code, severity, detail FROM data_quality"
+            " WHERE code LIKE 'PHI_%' ORDER BY finding_id").fetchall()
+
+    def test_the_phi_bearing_row_is_flagged(self):
+        codes = {r["code"] for r in self._phi_findings()}
+        self.assertIn("PHI_PHILHEALTH_NUMBER", codes)
+        self.assertIn("PHI_CASE_NUMBER", codes)
+
+    def test_the_clean_row_is_not_flagged(self):
+        self.assertEqual({r["subject_id"] for r in self._phi_findings()}, {"T-1"})
+
+    def test_the_row_still_imports_rather_than_being_dropped(self):
+        """Losslessness outranks tidiness: a refused import hides the exposure."""
+        self.assertEqual(self.summary["rows_in"], self.summary["rows_out"])
+        self.assertEqual(self.summary["rows_in"], 2)
+        self.assertTrue(self.conn.execute(
+            "SELECT 1 FROM ticket WHERE work_item_id='T-1'").fetchone())
+
+    def test_no_finding_anywhere_repeats_the_identifier(self):
+        for row in self.conn.execute("SELECT detail FROM data_quality"):
+            self.assertNotIn("345678901", row["detail"] or "")
+            self.assertNotIn("44812", row["detail"] or "")
+
+
+class PatientReferenceTest(unittest.TestCase):
+    """013 — the reference may only live where reads are filtered and audited."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn.executescript(
+            "INSERT OR REPLACE INTO board (board_id,display_name,phase,fulfiller_group,"
+            " owner,deputy,is_live,restricted) VALUES"
+            " ('OPEN','Open board','2','Dada','a','b',1,0);"
+            "INSERT OR REPLACE INTO board (board_id,display_name,phase,fulfiller_group,"
+            " owner,deputy,is_live,restricted) VALUES"
+            " ('PHI','PHI board','2','Clin','a','b',1,1);")
+        self.conn.commit()
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _ticket(self, wid, board_id, patient_reference=None):
+        self.conn.execute(
+            "INSERT INTO work_item (work_item_id, source, name, entity_id,"
+            " contract_basis) VALUES (?,'desk','A thing','PMC','BASELINE')", (wid,))
+        self.conn.execute(
+            "INSERT INTO ticket (work_item_id, board_id, path, impact, urgency,"
+            " priority, priority_source, requested_at, opened_at, state,"
+            " patient_reference) VALUES (?,?,'INCIDENT','I3','U3','P3','MATRIX',"
+            "'2026-09-17 08:00','2026-09-17 08:00','NEW',?)",
+            (wid, board_id, patient_reference))
+
+    def test_a_restricted_board_may_hold_a_patient_reference(self):
+        self._ticket("ITO-1", "PHI", patient_reference="MRN-0042")
+        self.conn.commit()
+        self.assertEqual(self.conn.execute(
+            "SELECT patient_reference FROM ticket WHERE work_item_id='ITO-1'"
+        ).fetchone()["patient_reference"], "MRN-0042")
+
+    def test_an_open_board_may_not(self):
+        with self.assertRaises(sqlite3.IntegrityError) as caught:
+            self._ticket("ITO-2", "OPEN", patient_reference="MRN-0042")
+        self.assertIn("restricted board", str(caught.exception))
+
+    def test_a_ticket_cannot_be_moved_onto_an_open_board_carrying_one(self):
+        """Otherwise the rule is only true at insert, which is not a rule."""
+        self._ticket("ITO-3", "PHI", patient_reference="MRN-0042")
+        self.conn.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute(
+                "UPDATE ticket SET board_id='OPEN' WHERE work_item_id='ITO-3'")
+
+    def test_an_open_board_ticket_with_no_reference_is_unaffected(self):
+        self._ticket("ITO-4", "OPEN")
+        self.conn.commit()
+        self.assertIsNone(self.conn.execute(
+            "SELECT patient_reference FROM ticket WHERE work_item_id='ITO-4'"
+        ).fetchone()["patient_reference"])
 
 
 class MarkdownRenderTest(unittest.TestCase):

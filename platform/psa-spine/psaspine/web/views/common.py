@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from ... import clocks
+from ... import clocks, db
 
 # Fraction of a target at which a still-running clock turns amber.
 WARN_FRACTION = 0.8
@@ -37,12 +37,45 @@ def may_access_board(ctx, board_id: str, *, need: str = "READ") -> bool:
     return rank.get(row["access"], -1) >= rank[need]
 
 
-def require_board(ctx, board_id: str, *, need: str = "READ"):
+def is_restricted(ctx, board_id: str) -> bool:
+    row = ctx.conn.execute("SELECT restricted FROM board WHERE board_id = ?",
+                           (board_id,)).fetchone()
+    return bool(row and row["restricted"])
+
+
+def audit_restricted_read(ctx, board_id: str, *, subject_id: str | None = None,
+                          detail: str | None = None) -> None:
+    """§6.1 requirement 4: every read of a restricted ticket is audited.
+
+    In a hospital who looked is as material as who changed, and an access control
+    that leaves no trace cannot answer the only question that matters after the
+    fact — who saw this patient's ticket. Unrestricted boards write nothing: an
+    audit log that records every printer fault is one nobody reads.
+
+    This records a read that was ALLOWED. A refused one raises 404 above and is
+    not a read at all; the board never appeared.
+    """
+    if not is_restricted(ctx, board_id):
+        return
+    db.audit(ctx.conn,
+             at=ctx.now.isoformat(sep=" ", timespec="minutes"),
+             actor=ctx.user.id,
+             action="RESTRICTED_READ",
+             subject_kind="ticket" if subject_id else "board",
+             subject_id=subject_id or board_id,
+             detail=detail or f"read on restricted board {board_id}"
+                              f" via {ctx.user.via}")
+    ctx.conn.commit()
+
+
+def require_board(ctx, board_id: str, *, need: str = "READ",
+                  subject_id: str | None = None):
     from .. import HttpError
     if not may_access_board(ctx, board_id, need=need):
         # 404, not 403: a fulfiller who is not on a restricted board should not
         # even learn the ticket exists. Absence is the honest answer.
         raise HttpError("404 Not Found", "No such ticket.")
+    audit_restricted_read(ctx, board_id, subject_id=subject_id)
 
 
 def require_sysadmin(ctx):

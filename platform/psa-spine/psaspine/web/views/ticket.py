@@ -31,7 +31,9 @@ def _load(ctx, work_item_id):
         " WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
     if row is None:
         raise HttpError("404 Not Found", "No such ticket.")
-    common.require_board(ctx, row["board_id"])
+    # subject_id names the ticket, so a restricted read is auditable to the
+    # patient's ticket and not merely to the board (§6.1 requirement 4).
+    common.require_board(ctx, row["board_id"], subject_id=work_item_id)
     return row
 
 

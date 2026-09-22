@@ -54,6 +54,16 @@ def index(ctx):
         return (PRIORITY_ORDER.get(r["priority"], 9), r["opened_at"] or "")
     rows = sorted(rows, key=sort_key)
 
+    # A list of a restricted board's tickets is a read of restricted data, so it
+    # is audited too — once per board with the count, rather than once per row,
+    # which would bury the ticket-level reads that matter (§6.1 requirement 4).
+    seen: dict[str, int] = {}
+    for r in rows:
+        seen[r["board_id"]] = seen.get(r["board_id"], 0) + 1
+    for bid, count in sorted(seen.items()):
+        common.audit_restricted_read(
+            ctx, bid, detail=f"listed {count} ticket(s) on the board view")
+
     body = _filters(ctx, board_rows, selected, status_filter, search)
     if not rows:
         body += "<div class='card'><div class='empty'>No tickets match.</div></div>"

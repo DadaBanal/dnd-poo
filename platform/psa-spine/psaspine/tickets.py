@@ -42,7 +42,7 @@ import re
 import sqlite3
 from pathlib import Path
 
-from . import db
+from . import db, phi
 from .register import ENTITY_MAP
 
 # ---------------------------------------------------------------- the export
@@ -412,6 +412,16 @@ def import_tickets(conn: sqlite3.Connection, export_path: str | Path, *,
                  "arrived from the desk already closed on the variation path with no "
                  "variation attached. Imported as it was; the effort on it cannot reach "
                  "an uplift claim until a variation is raised for it", "ERROR")
+
+        # §6.1: PHI arrives in ticket text and nothing today stops it — a
+        # measured message on 9 Sep carried a named patient and a PhilHealth case
+        # number on the same queue as printer faults. Detected here and flagged,
+        # never dropped and never rewritten: the row imports as it was sent, and
+        # the finding names the shape without repeating the identifier.
+        for code, severity, detail in phi.scan_fields({
+                "summary": cell(row, "summary"),
+                "description": cell(row, "description")}):
+            flag("ticket", wid, code, detail, severity)
 
         # ------------------------------------------------------------- write
         conn.execute(

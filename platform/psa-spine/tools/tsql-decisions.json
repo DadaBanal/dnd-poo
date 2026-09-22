@@ -50,6 +50,10 @@
     "TIME_TEXT": {
       "sql": "NVARCHAR(8)",
       "why": "A time of day as 'HH:MM', or NULL meaning the calendar is closed that day. Eight characters leaves room for 'HH:MM:SS' if a shift ever needs seconds; nothing here needs a full DATETIME."
+    },
+    "PATIENT_REF": {
+      "sql": "NVARCHAR(64)",
+      "why": "A record number pointing at the system that is actually the record of care, and nothing else -- no name, no date of birth, no diagnosis (013, and §6.1). Deliberately narrower than REF: the width is part of the control, because a column that cannot hold a paragraph cannot quietly become a second copy of the chart."
     }
   },
   "decimals": {
@@ -412,6 +416,7 @@
     "loop_reply.sent_at": "TIMESTAMP_TEXT",
     "loop_reply.sent_by": "PERSON",
     "loop_reply.banded_at": "TIMESTAMP_TEXT",
-    "time_entry.loop_reply_id": "ID"
+    "time_entry.loop_reply_id": "ID",
+    "ticket.patient_reference": "PATIENT_REF"
   }
 }
