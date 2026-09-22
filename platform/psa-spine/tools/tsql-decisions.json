@@ -420,6 +420,15 @@
     "ticket.patient_reference": "PATIENT_REF",
     "ticket_numbering.prefix": "CODE",
     "ticket_number.issued_at": "TIMESTAMP_TEXT",
-    "ticket_number.issued_to": "ID"
+    "ticket_number.issued_to": "ID",
+    "intake_message.message_id": "REF",
+    "intake_message.received_at": "TIMESTAMP_TEXT",
+    "intake_message.from_address": "PERSON",
+    "intake_message.subject": "NAME",
+    "intake_message.channel": "CODE",
+    "intake_message.disposition": "CODE",
+    "intake_message.work_item_id": "ID",
+    "intake_message.duplicate_of": "REF",
+    "intake_message.run_id": "ID"
   }
 }

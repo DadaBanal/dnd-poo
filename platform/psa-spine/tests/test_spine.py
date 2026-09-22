@@ -19,8 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
-from psaspine import (board, clocks, db, numbering, phi, register,  # noqa: E402
-                      reports, rules, tickets, walkthrough)
+from psaspine import (board, clocks, db, intake, numbering, phi,  # noqa: E402
+                      register, reports, rules, tickets, walkthrough)
 import sqlite_to_tsql  # noqa: E402
 from sqlite_ddl import Unsupported  # noqa: E402
 
@@ -2508,6 +2508,164 @@ class PatientReferenceTest(unittest.TestCase):
         self.assertIsNone(self.conn.execute(
             "SELECT patient_reference FROM ticket WHERE work_item_id='ITO-4'"
         ).fetchone()["patient_reference"])
+
+
+class EmailIntakeTest(unittest.TestCase):
+    """015 — what arrived, what it became, and never the same ticket twice.
+
+    The double-creation is MEASURED (§13 prescribes aliasing support@ onto
+    helpdesk@ to stop one cause of it). Aliasing fixes a cause; it does not make
+    intake idempotent, which is what these assert.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.drop = Path(self.tmp.name) / "drop"
+        self.drop.mkdir()
+        self.at = datetime(2026, 9, 22, 9, 0)
+        self.n = 0
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _msg(self, *, subject, body="Please help.", sender="ward3@pmcne.ph",
+             message_id=None, in_reply_to=None, date="Tue, 22 Sep 2026 09:00:00 +0800",
+             name=None):
+        self.n += 1
+        mid = message_id or f"<m{self.n}@pmcne.ph>"
+        headers = [f"From: {sender}", f"Subject: {subject}",
+                   f"Date: {date}", f"Message-ID: {mid}"]
+        if in_reply_to:
+            headers.append(f"In-Reply-To: {in_reply_to}")
+        raw = "\r\n".join(headers) + "\r\n\r\n" + body + "\r\n"
+        (self.drop / (name or f"{self.n:03d}.eml")).write_text(raw, encoding="utf-8")
+        return mid
+
+    def _run(self, run_id="i1"):
+        return intake.import_drop(self.conn, self.drop, run_id=run_id, at=self.at)
+
+    def _rows(self):
+        return self.conn.execute(
+            "SELECT * FROM intake_message ORDER BY rowid").fetchall()
+
+    # ------------------------------------------------------------ opening one
+
+    def test_a_message_opens_one_numbered_ticket(self):
+        self._msg(subject="Printer in ward 3 offline")
+        counts = self._run()
+        self.assertEqual(counts["new"], 1)
+        row = self._rows()[0]
+        self.assertEqual(row["disposition"], "NEW_TICKET")
+        self.assertTrue(row["work_item_id"].startswith("PMC-"))
+        self.assertEqual(self.conn.execute(
+            "SELECT name FROM work_item WHERE work_item_id=?",
+            (row["work_item_id"],)).fetchone()["name"], "Printer in ward 3 offline")
+
+    def test_the_body_becomes_the_first_event(self):
+        self._msg(subject="Printer offline", body="It flashes a red light.")
+        self._run()
+        detail = self.conn.execute(
+            "SELECT detail FROM ticket_event WHERE kind='INTAKE'").fetchone()["detail"]
+        self.assertEqual(detail, "It flashes a red light.")
+
+    # -------------------------------------------------------------- idempotent
+
+    def test_running_the_same_drop_twice_makes_no_second_ticket(self):
+        """The guard that actually stops double-creation on a re-run."""
+        self._msg(subject="Printer offline")
+        first = self._run()
+        second = self._run(run_id="i2")
+        self.assertEqual(first["new"], 1)
+        self.assertEqual(second["new"], 0)
+        self.assertEqual(second["already_seen"], 1)
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) c FROM ticket").fetchone()["c"], 1)
+
+    # ------------------------------------------------------------- threading
+
+    def test_a_reply_appends_to_the_ticket_rather_than_opening_one(self):
+        parent = self._msg(subject="Printer offline")
+        self._run()
+        self._msg(subject="RE: Printer offline", body="Still down.",
+                  in_reply_to=parent)
+        counts = self._run(run_id="i2")
+        self.assertEqual(counts["appended"], 1)
+        self.assertEqual(counts["new"], 0)
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) c FROM ticket").fetchone()["c"], 1)
+        self.assertTrue(self.conn.execute(
+            "SELECT 1 FROM ticket_event WHERE kind='INTAKE_REPLY'").fetchone())
+
+    def test_reply_and_forward_prefixes_do_not_change_the_subject(self):
+        self.assertEqual(intake.normalise_subject("RE: FW: Re:  printer"), "printer")
+        self.assertEqual(intake.normalise_subject("Printer   offline"), "Printer offline")
+
+    # ------------------------------------------------- the weaker duplicate guard
+
+    def test_a_resend_with_no_thread_header_inside_the_window_is_a_duplicate(self):
+        self._msg(subject="Printer offline")
+        self._run()
+        self._msg(subject="Printer offline")          # no In-Reply-To
+        counts = self._run(run_id="i2")
+        self.assertEqual(counts["duplicate"], 1)
+        self.assertEqual(counts["new"], 0)
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) c FROM ticket").fetchone()["c"], 1)
+
+    def test_the_same_subject_long_afterwards_is_a_new_request(self):
+        """A printer that breaks twice in a month is two tickets, not one."""
+        self._msg(subject="Printer offline")
+        self._run()
+        self.at = datetime(2026, 10, 22, 9, 0)
+        self._msg(subject="Printer offline",
+                  date="Thu, 22 Oct 2026 09:00:00 +0800")
+        counts = self._run(run_id="i2")
+        self.assertEqual(counts["new"], 1)
+
+    def test_a_different_requester_with_the_same_subject_is_not_a_duplicate(self):
+        self._msg(subject="Printer offline", sender="ward3@pmcne.ph")
+        self._run()
+        self._msg(subject="Printer offline", sender="ward7@pmcne.ph")
+        self.assertEqual(self._run(run_id="i2")["new"], 1)
+
+    # ------------------------------------------------------------ losslessness
+
+    def test_a_message_that_cannot_be_placed_is_imported_and_flagged(self):
+        self._msg(subject="", sender="", body="who knows")
+        counts = self._run()
+        self.assertEqual(counts["unclassified"], 1)
+        self.assertEqual(self._rows()[0]["disposition"], "UNCLASSIFIED")
+        self.assertTrue(self.conn.execute(
+            "SELECT 1 FROM data_quality WHERE code='INTAKE_UNCLASSIFIED'").fetchone())
+
+    def test_every_file_produces_exactly_one_row(self):
+        self._msg(subject="One")
+        self._msg(subject="Two")
+        self._msg(subject="", sender="")
+        counts = self._run()
+        self.assertEqual(counts["files"], 3)
+        self.assertEqual(len(self._rows()), 3)
+
+    def test_a_message_with_no_message_id_is_still_identified_once(self):
+        raw = ("From: ward3@pmcne.ph\r\nSubject: No id\r\n"
+               "Date: Tue, 22 Sep 2026 09:00:00 +0800\r\n\r\nbody\r\n")
+        (self.drop / "noid.eml").write_text(raw, encoding="utf-8")
+        self.assertEqual(self._run()["new"], 1)
+        self.assertEqual(self._run(run_id="i2")["already_seen"], 1)
+        self.assertTrue(self._rows()[0]["message_id"].startswith("sha256:"))
+
+    # -------------------------------------------------------------------- PHI
+
+    def test_phi_in_a_message_is_flagged_and_the_message_still_imports(self):
+        self._msg(subject="REQUEST TO EDIT CHARGE DATE",
+                  body="PhilHealth 12-345678901-2 Case No: 44812")
+        counts = self._run()
+        self.assertGreater(counts["phi_flagged"], 0)
+        self.assertEqual(counts["new"], 1)
+        for row in self.conn.execute("SELECT detail FROM data_quality"):
+            self.assertNotIn("345678901", row["detail"] or "")
 
 
 class MarkdownRenderTest(unittest.TestCase):

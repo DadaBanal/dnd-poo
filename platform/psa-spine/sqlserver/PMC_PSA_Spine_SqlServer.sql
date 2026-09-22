@@ -141,16 +141,19 @@ BEGIN
     PRINT N'    psa.loop_reply';
     PRINT N'    psa.ticket_numbering';
     PRINT N'    psa.ticket_number';
+    PRINT N'    psa.intake_message';
     PRINT N'    psa.ix_fee_line_effective';
     PRINT N'    psa.ix_time_entry_period';
     PRINT N'    psa.ix_workflow_run_event';
     PRINT N'    psa.ix_oncall_active';
+    PRINT N'    psa.ix_intake_thread';
+    PRINT N'    psa.ix_intake_ticket';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  52 tables, 4 indexes, 4 triggers.';
+    PRINT N'  53 tables, 6 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -1489,6 +1492,46 @@ CREATE TABLE psa.[ticket_number] (
 );
 END;
 
+-- --------------------------------------------------------------------------
+-- intake_message   (from schema/015_intake.sql)
+IF OBJECT_ID(N'psa.[intake_message]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[intake_message] (
+    -- RFC 5322 Message-ID, as the sender wrote it. The natural key of a message,
+    -- and the reason a redelivery cannot become a second ticket.
+    [message_id] NVARCHAR(400) NOT NULL CONSTRAINT [PK_intake_message] PRIMARY KEY,
+    [received_at] NVARCHAR(64) NOT NULL,
+
+    -- The address as sent, kept verbatim. Measured intake today includes consumer
+    -- Gmail and Yahoo mailboxes (§6.1), and normalising that away loses evidence
+    -- about who is actually raising tickets.
+    [from_address] NVARCHAR(200) NULL,
+    [subject] NVARCHAR(400) NULL,
+
+    -- Which mailbox it landed in: 'helpdesk', 'support', or whatever the drop is
+    -- named. This is how the double-creation is visible as a number rather than
+    -- as an anecdote.
+    [channel] NVARCHAR(32) NULL,
+
+    -- What happened to it. Exactly one of these, always:
+    -- NEW_TICKET  it opened a ticket
+    -- APPENDED    it was a reply or a resend; it became a note on one
+    -- DUPLICATE   same requester, same subject, inside the window
+    -- UNCLASSIFIED it could not be placed, and is flagged rather than dropped
+    [disposition] NVARCHAR(32) NOT NULL CONSTRAINT [CK_intake_message_01] CHECK (disposition IN ('NEW_TICKET','APPENDED','DUPLICATE','UNCLASSIFIED')),
+    [work_item_id] NVARCHAR(64) NULL CONSTRAINT [FK_intake_message_work_item_id] REFERENCES psa.[work_item]([work_item_id]),
+
+    -- The message this one was judged to continue, when it was.
+    [duplicate_of] NVARCHAR(400) NULL CONSTRAINT [FK_intake_message_duplicate_of] REFERENCES psa.[intake_message]([message_id]),
+    [run_id] NVARCHAR(64) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [received_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [received_at], 126), CASE WHEN [received_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [received_at], 112) END)),
+    CONSTRAINT [CK_intake_message_02] CHECK ((disposition IN ('NEW_TICKET','APPENDED')) = (work_item_id IS NOT NULL))
+);
+END;
+
 -- ==========================================================================
 -- COLUMNS ADDED TO TABLES THAT ALREADY EXIST
 --
@@ -1529,6 +1572,14 @@ CREATE INDEX [ix_workflow_run_event] ON psa.[workflow_run] ([event_id], [work_it
 -- of this table on a hot path, so it is the shape the index serves.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_oncall_active' AND object_id = OBJECT_ID(N'psa.[oncall_slot]'))
 CREATE INDEX [ix_oncall_active] ON psa.[oncall_slot] ([board_id], [role], [starts_at], [ends_at]);
+
+-- "Have I seen this thread before" and "what else came from this requester with
+-- this subject" are the two questions asked on the hot path.
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_intake_thread' AND object_id = OBJECT_ID(N'psa.[intake_message]'))
+CREATE INDEX [ix_intake_thread] ON psa.[intake_message] ([from_address], [subject]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_intake_ticket' AND object_id = OBJECT_ID(N'psa.[intake_message]'))
+CREATE INDEX [ix_intake_ticket] ON psa.[intake_message] ([work_item_id]);
 
 -- ==========================================================================
 -- THE GATE
@@ -1660,10 +1711,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_unique = 0 AND i.is_primary_key = 0;
 
-IF @Tables <> 52 OR @Triggers <> 4 OR @Indexes < 4
+IF @Tables <> 53 OR @Triggers <> 4 OR @Indexes < 6
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 52), %d triggers (expected 4), %d indexes (expected at least 4). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 53), %d triggers (expected 4), %d indexes (expected at least 6). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -1691,6 +1742,7 @@ PRINT N'target is enforced until somebody with the authority says so.';
     DROP TRIGGER IF EXISTS psa.[ticket_close_requires_a_variation];
     DROP TRIGGER IF EXISTS psa.[patient_reference_needs_a_restricted_board];
     DROP TRIGGER IF EXISTS psa.[patient_reference_stays_on_a_restricted_board];
+    DROP TABLE IF EXISTS psa.[intake_message];
     DROP TABLE IF EXISTS psa.[ticket_number];
     DROP TABLE IF EXISTS psa.[ticket_numbering];
     DROP TABLE IF EXISTS psa.[loop_reply];

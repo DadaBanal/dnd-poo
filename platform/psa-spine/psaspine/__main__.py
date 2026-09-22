@@ -33,6 +33,19 @@ def main(argv: list[str] | None = None) -> int:
     pt.add_argument("--run-id", default="desk-1")
     pt.add_argument("--as-of")
 
+    pmail = sub.add_parser("import-mail",
+                           help="import a drop of RFC 822 files as tickets "
+                                "(idempotent; a re-run makes no second ticket)")
+    pmail.add_argument("database")
+    pmail.add_argument("drop_dir")
+    pmail.add_argument("--run-id", default="mail-1")
+    pmail.add_argument("--channel", default="helpdesk",
+                       help="which mailbox this drop came from; how the measured "
+                            "double-creation becomes a number rather than an anecdote")
+    pmail.add_argument("--board-id",
+                       help="where a new ticket lands; defaults to the unrouted board")
+    pmail.add_argument("--as-of")
+
     pw = sub.add_parser("walkthrough",
                         help="run the board engine end to end and narrate it")
     pw.add_argument("database")
@@ -85,6 +98,25 @@ def main(argv: list[str] | None = None) -> int:
         if s["rows_in"] != s["rows_out"]:
             print("REFUSED: row count does not match — nothing may be silently dropped",
                   file=sys.stderr)
+            return 1
+        return 0
+
+    if a.cmd == "import-mail":
+        from . import intake
+        as_of = _as_of(a.as_of)
+        c = intake.import_drop(
+            conn, a.drop_dir, run_id=a.run_id, channel=a.channel,
+            board_id=a.board_id,
+            at=datetime(as_of.year, as_of.month, as_of.day))
+        print(f"{c['files']} files: {c['new']} new, {c['appended']} appended, "
+              f"{c['duplicate']} duplicate, {c['unclassified']} unclassified, "
+              f"{c['already_seen']} already seen ({c['phi_flagged']} PHI findings)")
+        # Losslessness, stated the same way the other importers state it: every
+        # file is accounted for by exactly one outcome.
+        placed = (c["new"] + c["appended"] + c["duplicate"] + c["unclassified"]
+                  + c["already_seen"])
+        if placed != c["files"]:
+            print("REFUSED: a message was neither placed nor counted", file=sys.stderr)
             return 1
         return 0
 
