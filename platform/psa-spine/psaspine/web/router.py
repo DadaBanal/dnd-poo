@@ -8,7 +8,7 @@ context, and return a Response.
 """
 from __future__ import annotations
 
-from .views import admin, board, dispatch, loop, oncall, ticket, uplift
+from .views import admin, board, dispatch, loop, oncall, portal, ticket, uplift
 
 # (method, pattern, handler). Order does not matter; patterns do not overlap.
 ROUTES = [
@@ -22,6 +22,11 @@ ROUTES = [
     ("POST", "/dispatch/assign", dispatch.assign),
     ("GET", "/oncall", oncall.index),
     ("POST", "/oncall/add", oncall.add),
+    # The requester portal. Ownership, not board membership, is the filter.
+    ("GET", "/my", portal.index),
+    ("POST", "/my/new", portal.create),
+    ("GET", "/my/<work_item_id>", portal.detail),
+    ("POST", "/my/<work_item_id>/reply", portal.reply),
     ("GET", "/uplift", uplift.index),
     ("GET", "/admin", admin.index),
     ("POST", "/admin/status/add", admin.add_status),

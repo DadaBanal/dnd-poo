@@ -2668,6 +2668,158 @@ class EmailIntakeTest(unittest.TestCase):
             self.assertNotIn("345678901", row["detail"] or "")
 
 
+class PortalTest(unittest.TestCase):
+    """The requester portal: ownership, not board membership, is the filter.
+
+    Every fulfiller view answers "which boards may you see". This one answers
+    "which tickets did you raise", and nothing else — never a board, never a
+    queue, never somebody else's request.
+    """
+
+    # Reuse the WSGI harness without inheriting WebWSGITest's tests.
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = str(Path(self.tmp.name) / "spine.db")
+        conn = db.init(self.db_path)
+        conn.executescript(
+            "INSERT OR REPLACE INTO board_status (board_status_id, board_id, name,"
+            " escalation_status, customer_description) VALUES"
+            " ('UNROUTED.PARTS','UNROUTED','Awaiting parts from vendor, PO raised',"
+            "  'NO_ESCALATION','We are waiting on a delivery');"
+            "INSERT INTO work_item (work_item_id,source,name,contract_basis)"
+            " VALUES ('PMC-000901','desk','Printer in ward 3','UNKNOWN');"
+            "INSERT INTO ticket (work_item_id,board_id,path,impact,urgency,priority,"
+            " priority_source,requested_by,requested_at,opened_at,state,board_status_id,"
+            " owner) VALUES ('PMC-000901','UNROUTED','INCIDENT','I3','U3','P4','MATRIX',"
+            " 'nurse.a@pmcne.ph','2026-09-22 08:00','2026-09-22 08:00','WAITING_CLIENT',"
+            " 'UNROUTED.PARTS','Cadano');"
+            "INSERT INTO work_item (work_item_id,source,name,contract_basis)"
+            " VALUES ('PMC-000902','desk','Somebody else entirely','UNKNOWN');"
+            "INSERT INTO ticket (work_item_id,board_id,path,impact,urgency,priority,"
+            " priority_source,requested_by,requested_at,opened_at,state) VALUES"
+            " ('PMC-000902','UNROUTED','INCIDENT','I3','U3','P4','MATRIX',"
+            " 'nurse.b@pmcne.ph','2026-09-22 08:00','2026-09-22 08:00','NEW');")
+        conn.commit()
+        conn.close()
+        self.config = Config(session_secret=_secrets.token_bytes(32))
+        self.raw = make_app(self.db_path, config=self.config,
+                            clock=lambda: datetime(2026, 9, 22, 10, 0))
+        # A requester: no board membership at all, which is the normal case.
+        self.nurse_a = self._cookie_for("nurse.a", email="nurse.a@pmcne.ph")
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _conn(self):
+        return db.connect(self.db_path)
+
+    # --------------------------------------------------------------- the filter
+
+    def test_a_requester_sees_their_own_tickets(self):
+        status, _, body = self._call("GET", "/my", cookie=self.nurse_a)
+        self.assertTrue(status.startswith("200"))
+        self.assertIn("PMC-000901", body)
+
+    def test_a_requester_never_sees_somebody_elses(self):
+        _, _, body = self._call("GET", "/my", cookie=self.nurse_a)
+        self.assertNotIn("PMC-000902", body)
+        self.assertNotIn("Somebody else entirely", body)
+
+    def test_opening_somebody_elses_ticket_is_a_404_not_a_403(self):
+        """Absence is the honest answer; a 403 confirms the ticket exists."""
+        status, _, _ = self._call("GET", "/my/PMC-000902", cookie=self.nurse_a)
+        self.assertTrue(status.startswith("404"))
+
+    def test_the_portal_needs_no_board_membership(self):
+        """Four hundred requesters are not board members, and must not need to be."""
+        status, _, _ = self._call("GET", "/my/PMC-000901", cookie=self.nurse_a)
+        self.assertTrue(status.startswith("200"))
+
+    # -------------------------------------------------- what a requester reads
+
+    def test_the_requester_reads_the_customer_description(self):
+        _, _, body = self._call("GET", "/my/PMC-000901", cookie=self.nurse_a)
+        self.assertIn("We are waiting on a delivery", body)
+
+    def test_internal_language_and_fields_do_not_leak(self):
+        _, _, body = self._call("GET", "/my/PMC-000901", cookie=self.nurse_a)
+        self.assertNotIn("Awaiting parts from vendor, PO raised", body)
+        self.assertNotIn("Cadano", body)           # the owner
+        self.assertNotIn("UNKNOWN", body)          # the contract basis
+
+    def test_with_no_customer_description_the_state_is_said_plainly(self):
+        nurse_b = self._cookie_for("nurse.b", email="nurse.b@pmcne.ph")
+        _, _, body = self._call("GET", "/my/PMC-000902", cookie=nurse_b)
+        self.assertIn("Received, not yet picked up", body)
+
+    # --------------------------------------------------------------- raising one
+
+    def test_raising_a_request_opens_a_numbered_ticket_owned_by_the_requester(self):
+        status, headers, _ = self._call(
+            "POST", "/my/new", cookie=self.nurse_a,
+            form={"summary": "Monitor flickers", "description": "Bed 4."})
+        self.assertTrue(status.startswith("303"))
+        conn = self._conn()
+        row = conn.execute(
+            "SELECT work_item_id, requested_by, board_id FROM ticket"
+            " WHERE work_item_id LIKE 'PMC-0000%'").fetchone()
+        conn.close()
+        self.assertEqual(row["requested_by"], "nurse.a@pmcne.ph")
+        self.assertEqual(row["board_id"], "UNROUTED")
+
+    def test_a_request_with_no_summary_is_refused_in_words(self):
+        status, _, body = self._call("POST", "/my/new", cookie=self.nurse_a,
+                                     form={"summary": "", "description": "x"})
+        self.assertTrue(status.startswith("400"))
+        self.assertIn("Tell us what you need", body)
+
+    def test_phi_is_flagged_the_ticket_is_still_created_and_the_requester_told(self):
+        """Refusing sends the identifier to the telephone, where nothing records it."""
+        status, _, body = self._call(
+            "POST", "/my/new", cookie=self.nurse_a,
+            form={"summary": "Edit charge date",
+                  "description": "PhilHealth 12-345678901-2 Case No: 44812"})
+        self.assertTrue(status.startswith("200"))
+        self.assertIn("patient details", body)
+        conn = self._conn()
+        created = conn.execute(
+            "SELECT COUNT(*) c FROM ticket WHERE requested_by='nurse.a@pmcne.ph'"
+        ).fetchone()["c"]
+        flags = conn.execute(
+            "SELECT detail FROM data_quality WHERE code LIKE 'PHI_%'").fetchall()
+        conn.close()
+        self.assertEqual(created, 2)
+        self.assertTrue(flags)
+        for f in flags:
+            self.assertNotIn("345678901", f["detail"])
+
+    # ---------------------------------------------------------------- replying
+
+    def test_a_requester_can_reply_on_their_own_ticket(self):
+        status, _, _ = self._call("POST", "/my/PMC-000901/reply", cookie=self.nurse_a,
+                                  form={"body": "Still flickering."})
+        self.assertTrue(status.startswith("303"))
+        conn = self._conn()
+        ok = conn.execute("SELECT 1 FROM ticket_event WHERE work_item_id='PMC-000901'"
+                          " AND kind='PORTAL_REPLY'").fetchone()
+        conn.close()
+        self.assertTrue(ok)
+
+    def test_a_requester_cannot_reply_on_somebody_elses(self):
+        status, _, _ = self._call("POST", "/my/PMC-000902/reply", cookie=self.nurse_a,
+                                  form={"body": "hello"})
+        self.assertTrue(status.startswith("404"))
+        conn = self._conn()
+        leaked = conn.execute("SELECT 1 FROM ticket_event WHERE work_item_id='PMC-000902'"
+                              " AND kind='PORTAL_REPLY'").fetchone()
+        conn.close()
+        self.assertIsNone(leaked)
+
+
 class MarkdownRenderTest(unittest.TestCase):
     """The uplift screen renders the report's own markdown; the renderer must
     handle exactly the shapes the reports emit, and escape everything else."""

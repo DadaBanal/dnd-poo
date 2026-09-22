@@ -193,6 +193,7 @@ def page(title: str, body: str, *, user=None, active: str = "") -> str:
     the desk is being run on the fallback path.
     """
     nav_items = [
+        ("my", "/my", "My requests"),
         ("board", "/", "Board"),
         ("dispatch", "/dispatch", "Dispatch"),
         ("oncall", "/oncall", "On-call"),
