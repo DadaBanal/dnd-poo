@@ -77,7 +77,7 @@ if "${compose[@]}" exec -T orthanc python3 -c \
 fi
 echo "ok: no SQLite index, no route out"
 
-step "engine tests (DICOM, REST, DICOMweb) against a fresh engine"
+step "engine tests (DICOM, REST, DICOMweb, a person's session) against a fresh engine"
 "${compose[@]}" --profile test run --rm "${as_me[@]}" tests -m "not after_restart"
 
 step "browser tests: sign-in, the front door and the viewer"
@@ -93,6 +93,6 @@ RUN_PHASE=after_restart "${compose[@]}" --profile test run --rm "${as_me[@]}" te
 RUN_PHASE=after_restart "${compose[@]}" --profile test run --rm "${as_me[@]}" browser -g "cathlab run opens playing"
 
 step "measured on synthetic data, on this host"
-cat .results/measurements-first.json .results/measurements-browser-first.json
+cat .results/measurements-first.json .results/measurements-browser-first.json .results/measurements-access.json
 echo
 step "PASS"

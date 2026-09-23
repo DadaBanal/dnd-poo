@@ -209,6 +209,9 @@ services:
       KC_PROXY_HEADERS: xforwarded
       KC_HEALTH_ENABLED: "true"
       PMC_HOSTNAME: ${PMC_HOSTNAME:-imaging.pmcne.ph}
+      # How long a person's access token lives. oauth2-proxy renews it before
+      # then (OAUTH2_PROXY_COOKIE_REFRESH), and the engine refuses it after.
+      PMC_ACCESS_TOKEN_SECONDS: "300"
       PMC_ENTRA_CLIENT_ID: ${PMC_ENTRA_CLIENT_ID:-}
       PMC_ENTRA_AUTHORIZATION_URL: ${PMC_ENTRA_AUTHORIZATION_URL:-}
       PMC_ENTRA_TOKEN_URL: ${PMC_ENTRA_TOKEN_URL:-}
@@ -296,7 +299,6 @@ services:
       - --cookie-secure=true
       - --cookie-samesite=lax
       - --cookie-expire=12h
-      - --cookie-refresh=4m
       - --redirect-url=https://${PMC_HOSTNAME:-imaging.pmcne.ph}/oauth2/callback
       - --whitelist-domain=${PMC_HOSTNAME:-imaging.pmcne.ph}
       # The browser goes to the public name, and straight on to Entra ID;
@@ -327,6 +329,10 @@ services:
       # the front door cannot pass a split one back when it is refreshed.)
       - --session-store-type=redis
       - --redis-connection-url=redis://sessions:6379/0
+    environment:
+      # Renew a person's access token once it is this old: always shorter than
+      # the token's own life (PMC_ACCESS_TOKEN_SECONDS, on keycloak).
+      OAUTH2_PROXY_COOKIE_REFRESH: 4m
     secrets:
       - front-door-client-secret
       - front-door-cookie-secret

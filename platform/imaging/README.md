@@ -66,11 +66,11 @@ stand-in Entra ID, unless marked:
    page they asked for.
 6. On every request the front door hands the engine the person's own access
    token. It lasts 5 minutes, and oauth2-proxy renews it once it is 4 minutes
-   old (configured; the renewal is not yet measured). The engine's
-   authorization plugin asks orthanc-auth-service what the person's role may
-   do, and matches the route against the engine's permission table
-   (`orthanc/orthanc.json`). A route the table does not name is refused,
-   whoever asks.
+   old, so a person keeps working past it. The engine's authorization plugin
+   asks orthanc-auth-service what the person's role may do, and matches the
+   route against the engine's permission table (`orthanc/orthanc.json`). A
+   route the table does not name is refused, whoever asks. An expired token
+   is refused too, though up to a minute late (see Found while building it).
 
 Signing out (`/oauth2/sign_out`) ends the session, and the viewer's own
 requests cannot revive it.
@@ -175,6 +175,13 @@ MEASURED, 23 Sep 2026, unless marked.
 - **Removing someone from a group takes effect at their next sign-in**: at
   most 12 hours later, or 1 hour after they stop using it (INFERRED: roles are
   copied from Entra when a person signs in). See Open.
+- **An expired token is still accepted for up to a minute.** The engine
+  refused one 63 s after it expired. orthanc-auth-service 26.8.1 tells the
+  authorization plugin to keep a person's profile for 60 s, and that figure
+  is fixed in its code (MEASURED from its source). The token only ever sits
+  inside the platform (oauth2-proxy, the front door, the engine), never in a
+  browser, so this is a one-minute window for a token stolen from inside, not
+  for a person at a PC.
 
 ## Pinned
 
@@ -197,11 +204,16 @@ Each was pulled on 23 Sep 2026 (MEASURED). The official images (`postgres`,
 
 ## What the tests prove
 
-`ci/run.sh` runs 50 tests. All passed on 23 Sep 2026 (MEASURED, cloud build,
-about 7½ minutes). It starts from empty volumes and runs 28 engine tests and
+`ci/run.sh` runs 52 tests. All passed on 23 Sep 2026 (MEASURED, cloud build,
+about 10 minutes). It starts from empty volumes and runs 30 engine tests and
 15 browser tests. It then removes the containers, starts new ones from the
 same volumes, and runs 5 engine tests and 2 browser tests again: the
 radiologist signs in afresh, and a cathlab run still opens playing.
+
+The test overlay shortens three clocks so the tests can wait them out: a
+study is stable after 5 s (60 s on site), worklist housekeeping runs every
+5 s, and a person's token lives 60 s and is renewed at 40 s (5 min and 4 min
+on site).
 
 | Property | Test |
 |---|---|
@@ -222,6 +234,7 @@ radiologist signs in afresh, and a cathlab run still opens playing.
 | From where people sit, the engine cannot be reached by name. Its REST API is not routed. DICOMweb refuses writes | `browser/tests/viewer.spec.js` |
 | A link opened without a session goes straight to Entra ID (the stand-in), with no image request first, and comes back to the same page. The session cookie is HttpOnly, Secure and SameSite=Lax | `browser/tests/access.spec.js` |
 | Someone signed in to Entra ID but in no PMC group gets no session and no images | `browser/tests/access.spec.js` |
+| The engine is handed the person's own short-lived token. A session outlives its first token, and the engine refuses the expired one | `tests/test_session.py` |
 | A referrer opens a study shared with referrers. A search finds only shared studies, and an unshared study is refused even by its UID | `browser/tests/access.spec.js` |
 | A cardiologist opens a cathlab run and it plays | `browser/tests/access.spec.js` |
 | Without a session, DICOMweb answers 401: never data, never a sign-in page. Keycloak's admin console and master realm are not reachable. Signing out ends the session | `browser/tests/access.spec.js` |
@@ -257,8 +270,10 @@ The AE titles the tests play are PMC's own, as MEASURED in the record.
   NOT VERIFIED; it is measured next (see Open). All of these include OHIF's own
   start-up and a CPU-rendered canvas, so a ward PC with a GPU should do better.
   That too is NOT VERIFIED: it is measured on PMC hardware in M4.
-- **A new share reached a referrer after 60–64 s**, in two runs: the engine's
-  authorization plugin caches what it knows about a study.
+- **A new share reached a referrer after 60–64 s**, in three runs: the
+  engine's authorization plugin caches what it knows about a study.
+- **An expired token was refused 63 s after it expired** (the same cache; see
+  Sign-in).
 
 ## Run it
 
@@ -390,9 +405,6 @@ These are INFERRED, not decided by anyone but this build. Argue with them.
 - **DICOM from the modalities on-prem:** the engine sits on a network with no
   route out, which also means port 4242 cannot be published from it. M4 gives
   the engine a second, DICOM-only network for the modalities.
-- **Token renewal and expiry are configured, not measured.** Two things to
-  prove next: that the engine refuses an expired token, and that a session
-  outlives its first 5-minute token.
 - **What sign-in costs each image request**, and whether the viewer can fetch
   a cathlab run in fewer requests (see Measured). OHIF's frame-by-frame
   fetching is the pattern the engine measures as slowest.
@@ -421,7 +433,6 @@ uv pip compile --generate-hashes --python-version 3.14 \
 
 ## Next
 
-- **M2.2, the rest:** measure token renewal and expiry (see Open).
 - **M2.3:** the PMC front door app at `/pmc/`: the worklist and study search,
   sharing with referrers, and ICT's admin screens. It opens the viewer, and
   OHIF's own study list goes off.
