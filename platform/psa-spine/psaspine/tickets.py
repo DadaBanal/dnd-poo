@@ -437,8 +437,8 @@ def import_tickets(conn: sqlite3.Connection, export_path: str | Path, *,
         conn.execute(
             "INSERT OR REPLACE INTO ticket (work_item_id, external_ref, board_id,"
             " catalogue_item_id, path, impact, urgency, priority, priority_source,"
-            " requested_by, requested_at, owner, opened_at, closed_at, state, source_ref)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " requested_by, requested_at, owner, opened_at, closed_at, state, source_ref,"
+            " intake_source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'IMPORT')",
             (wid, external or None, board_id,
              catalogue["catalogue_item_id"] if catalogue else None,
              path_kind, impact, urgency, priority, priority_source,
@@ -499,7 +499,7 @@ def open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
                 actor: str | None = None, description: str | None = None,
                 entity_id: str | None = None, owner: str | None = None,
                 path: str = "INCIDENT", event_kind: str = "INTAKE",
-                min_priority: str | None = None) -> str:
+                min_priority: str | None = None, source: str = "DESK") -> str:
     """Open one ticket, the same way whichever door it came in by.
 
     The portal, email intake, the machine API and a fulfiller's New Ticket all
@@ -514,7 +514,8 @@ def open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
     """
     from . import board, numbering
 
-    priority, source = compute_priority(impact, urgency, min_priority=min_priority)
+    priority, priority_source = compute_priority(impact, urgency,
+                                                 min_priority=min_priority)
     ticket_id = numbering.issue(conn, at=at)
     stamp = at.isoformat(sep=" ", timespec="minutes")
     conn.execute(
@@ -522,10 +523,10 @@ def open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
         " VALUES (?,'desk',?,?,'UNKNOWN')", (ticket_id, summary, entity_id))
     conn.execute(
         "INSERT INTO ticket (work_item_id, board_id, path, impact, urgency, priority,"
-        " priority_source, requested_by, requested_at, owner, opened_at, state)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?,'NEW')",
-        (ticket_id, board_id, path, impact, urgency, priority, source, requested_by,
-         stamp, owner, stamp))
+        " priority_source, requested_by, requested_at, owner, opened_at, state,"
+        " intake_source) VALUES (?,?,?,?,?,?,?,?,?,?,?,'NEW',?)",
+        (ticket_id, board_id, path, impact, urgency, priority, priority_source,
+         requested_by, stamp, owner, stamp, source))
     numbering.bind(conn, ticket_id)
     if description:
         conn.execute(

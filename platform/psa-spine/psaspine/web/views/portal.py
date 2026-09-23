@@ -218,7 +218,7 @@ def create(ctx):
     ticket_id = tickets.open_ticket(
         ctx.conn, board_id=board["board_id"], summary=summary, impact=impact,
         urgency=urgency, requested_by=requester, description=description or None,
-        at=ctx.now)
+        at=ctx.now, source="PORTAL")
 
     # §6.1: flagged, counted, and the requester is told -- not refused. Refusing
     # sends the same identifier to the telephone, where nothing records it.

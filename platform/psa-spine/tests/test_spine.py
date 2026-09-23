@@ -3320,6 +3320,24 @@ class BoardSetupTest(unittest.TestCase):
         self.assertEqual(self.conn.execute(
             "SELECT COUNT(*) c FROM ticket_handover WHERE work_item_id = ?", (tid,)).fetchone()[0], 1)
 
+    def test_every_door_records_where_the_ticket_came_from(self):
+        """018: ConnectWise's Source, and the build scope's intake_source."""
+        tid = self._open(source="PHONE")
+        self.assertEqual(self.conn.execute(
+            "SELECT intake_source FROM ticket WHERE work_item_id = ?", (tid,)).fetchone()[0],
+            "PHONE")
+        drop = Path(self.tmp.name) / "drop"
+        drop.mkdir()
+        (drop / "a.eml").write_bytes(
+            b"From: ward3@pmcne.ph\r\nSubject: Printer\r\nMessage-ID: <s1@pmcne.ph>\r\n"
+            b"Date: Tue, 22 Sep 2026 09:00:00 +0800\r\n\r\nbody\r\n")
+        intake.import_drop(self.conn, drop, run_id="s", at=self.at)
+        self.assertEqual(self.conn.execute(
+            "SELECT t.intake_source FROM intake_message m JOIN ticket t"
+            " ON t.work_item_id = m.work_item_id").fetchone()[0], "EMAIL")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self._open(source="CARRIER_PIGEON")
+
     def test_setup_board_cli(self):
         import io
         from contextlib import redirect_stdout, redirect_stderr
@@ -3331,6 +3349,40 @@ class BoardSetupTest(unittest.TestCase):
             self.assertEqual(main(["setup-board", path, "--board", "IT_HELP"]), 0)
             self.assertEqual(main(["setup-board", path, "--board", "NOPE"]), 1)
         self.assertIn("ready", out.getvalue())
+
+
+class MailPickupScriptTest(unittest.TestCase):
+    """scripts/Invoke-PmcMailPickup.ps1 runs on the live server, where nothing
+    here can execute it. So its fences are asserted as text: pure ASCII for
+    Windows PowerShell 5.1, preview unless -Apply, a certificate and never a
+    secret, and no inbound listener."""
+
+    SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "Invoke-PmcMailPickup.ps1"
+
+    def setUp(self) -> None:
+        self.raw = self.SCRIPT.read_bytes()
+        self.text = self.raw.decode("ascii")          # raises if not pure ASCII
+
+    def test_it_holds_no_secret_and_takes_none(self):
+        lowered = self.text.lower()
+        for shape in ("client_secret", "password", "convertto-securestring", "apikey"):
+            self.assertNotIn(shape, lowered, shape)
+        self.assertIn("client-assertion-type:jwt-bearer", self.text)
+
+    def test_nothing_is_written_without_apply(self):
+        self.assertIn("[switch] $Apply", self.text)
+        preview = self.text.index("if (-not $Apply) {")
+        first_write = self.text.index("Invoke-Graph \"$Graph/users/$mbx/messages/")
+        self.assertLess(preview, first_write)
+
+    def test_it_polls_and_never_listens(self):
+        for shape in ("HttpListener", "notificationUrl", "subscriptions"):
+            self.assertNotIn(shape, self.text)
+
+    def test_the_delta_link_only_moves_after_a_good_import(self):
+        failed = self.text.index("if ($code -ne 0) {")
+        saved = self.text.index("Set-Content -Path $DeltaFile")
+        self.assertLess(failed, saved)
 
 
 class MarkdownRenderTest(unittest.TestCase):

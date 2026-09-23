@@ -1594,6 +1594,9 @@ ALTER TABLE psa.[ticket_event] ADD [note_flag] NVARCHAR(32) NULL CONSTRAINT [CK_
 IF COL_LENGTH(N'psa.[ticket]', N'updated_at') IS NULL
 ALTER TABLE psa.[ticket] ADD [updated_at] NVARCHAR(64) NULL;
 
+IF COL_LENGTH(N'psa.[ticket]', N'intake_source') IS NULL
+ALTER TABLE psa.[ticket] ADD [intake_source] NVARCHAR(32) NULL CONSTRAINT [CK_ticket_intake_source_01] CHECK (intake_source IN ('EMAIL', 'PHONE', 'WALK_UP', 'PORTAL', 'API', 'DESK', 'IMPORT'));
+
 -- --------------------------------------------------------------------------
 -- indexes
 

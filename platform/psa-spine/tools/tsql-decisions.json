@@ -437,6 +437,7 @@
     "api_alert.last_seen": "TIMESTAMP_TEXT",
     "board.calendar_id": "ID",
     "ticket_event.note_flag": "CODE",
-    "ticket.updated_at": "TIMESTAMP_TEXT"
+    "ticket.updated_at": "TIMESTAMP_TEXT",
+    "ticket.intake_source": "CODE"
   }
 }

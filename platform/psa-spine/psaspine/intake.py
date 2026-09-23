@@ -270,7 +270,7 @@ def _open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
     from . import tickets
     return tickets.open_ticket(conn, board_id=board_id, summary=summary,
                                impact="I3", urgency="U3", requested_by=requester,
-                               description=body or None, at=at)
+                               description=body or None, at=at, source="EMAIL")
 
 
 def _append_note(conn: sqlite3.Connection, work_item_id: str, body: str,

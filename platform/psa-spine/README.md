@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 269 tests
+python3 tests/test_spine.py          # 284 tests
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -123,6 +123,16 @@ python3 -m psaspine create-api-token spine.db --label "orthanc monitoring" --boa
 
 API tokens live in `schema/local/` beside the break-glass accounts and are
 never ported to SQL Server.
+
+**Email arrives within about 30 seconds.** `scripts/Invoke-PmcMailPickup.ps1`
+runs on DND-SQL01. It polls the helpdesk mailbox through Microsoft Graph
+(delta query, new messages only), writes each email byte for byte to the drop
+folder and runs `import-mail`. It signs in with a certificate in the Windows
+store, never a secret, and is scoped by Exchange RBAC for Applications to that
+one mailbox. It polls rather than listens, so no inbound port is opened.
+Preview unless `-Apply`. Setup: `docs/handoffs/HANDOFF-cloud-sql01-WS36-20260923-mail.md`.
+Every ticket records where it came from (`ticket.intake_source`: EMAIL, PHONE,
+WALK_UP, PORTAL, API, DESK, IMPORT).
 
 **NOT VERIFIED:** whether a Privacy Impact Assessment is required before
 hospital-wide rollout. §6.1 says ask PMC's Data Protection Officer before Phase
