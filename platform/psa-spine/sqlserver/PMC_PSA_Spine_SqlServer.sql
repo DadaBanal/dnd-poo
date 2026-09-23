@@ -151,6 +151,7 @@ BEGIN
     PRINT N'    psa.sla_target_type';
     PRINT N'    psa.change_approval';
     PRINT N'    psa.ticket_link';
+    PRINT N'    psa.notification';
     PRINT N'    psa.ix_fee_line_effective';
     PRINT N'    psa.ix_time_entry_period';
     PRINT N'    psa.ix_workflow_run_event';
@@ -162,12 +163,13 @@ BEGIN
     PRINT N'    psa.ix_configuration_entity';
     PRINT N'    psa.ux_configuration_ad_guid';
     PRINT N'    psa.ix_change_approval_ticket';
+    PRINT N'    psa.ix_notification_status';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  62 tables, 11 indexes, 4 triggers.';
+    PRINT N'  63 tables, 12 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -1777,6 +1779,38 @@ CREATE TABLE psa.[ticket_link] (
 );
 END;
 
+-- --------------------------------------------------------------------------
+-- notification   (from schema/024_workflow_runner.sql)
+-- A NOTIFY or ESCALATE action writes here. The desk sends no mail yet: this is
+-- the queue a sender works through, and until one exists it is what the desk
+-- shows as "who was told what". Nothing is lost for the lack of a sender.
+IF OBJECT_ID(N'psa.[notification]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[notification] (
+    [notification_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_notification] PRIMARY KEY,
+    [work_item_id] NVARCHAR(64) NULL CONSTRAINT [FK_notification_work_item_id] REFERENCES psa.[ticket]([work_item_id]),
+    [event_id] NVARCHAR(64) NULL CONSTRAINT [FK_notification_event_id] REFERENCES psa.[workflow_event]([event_id]),
+
+    -- a member id or an address
+    [recipient] NVARCHAR(400) NOT NULL,
+
+    -- the board role it was resolved from
+    [recipient_role] NVARCHAR(32) NULL,
+
+    -- carries the ticket token, e.g. [PMC-000123]
+    [subject] NVARCHAR(400) NOT NULL,
+    [body] NVARCHAR(MAX) NULL,
+    [created_at] NVARCHAR(64) NOT NULL,
+    [status] NVARCHAR(32) NOT NULL CONSTRAINT [DF_notification_status] DEFAULT ('PENDING') CONSTRAINT [CK_notification_01] CHECK (status IN ('PENDING', 'SENT', 'FAILED', 'NO_SENDER')),
+    [sent_at] NVARCHAR(64) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END)),
+    [sent_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [sent_at], 126), CASE WHEN [sent_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [sent_at], 112) END))
+);
+END;
+
 -- ==========================================================================
 -- COLUMNS ADDED TO TABLES THAT ALREADY EXIST
 --
@@ -1897,6 +1931,12 @@ ALTER TABLE psa.[board] ADD [reopen_status_id] NVARCHAR(64) NULL CONSTRAINT [FK_
 IF COL_LENGTH(N'psa.[ticket]', N'customer_updated') IS NULL
 ALTER TABLE psa.[ticket] ADD [customer_updated] INT NULL CONSTRAINT [CK_ticket_customer_updated_01] CHECK (customer_updated IN (0, 1));
 
+IF COL_LENGTH(N'psa.[workflow_event]', N'tested_at') IS NULL
+ALTER TABLE psa.[workflow_event] ADD [tested_at] NVARCHAR(64) NULL;
+
+IF COL_LENGTH(N'psa.[workflow_event]', N'tested_matches') IS NULL
+ALTER TABLE psa.[workflow_event] ADD [tested_matches] INT NULL;
+
 -- --------------------------------------------------------------------------
 -- indexes
 
@@ -1939,6 +1979,9 @@ CREATE UNIQUE INDEX [ux_configuration_ad_guid] ON psa.[configuration] ([ad_objec
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_change_approval_ticket' AND object_id = OBJECT_ID(N'psa.[change_approval]'))
 CREATE INDEX [ix_change_approval_ticket] ON psa.[change_approval] ([work_item_id]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_notification_status' AND object_id = OBJECT_ID(N'psa.[notification]'))
+CREATE INDEX [ix_notification_status] ON psa.[notification] ([status]);
 
 -- ==========================================================================
 -- THE GATE
@@ -2070,10 +2113,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 62 OR @Triggers <> 4 OR @Indexes < 11
+IF @Tables <> 63 OR @Triggers <> 4 OR @Indexes < 12
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 62), %d triggers (expected 4), %d indexes (expected at least 11). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 63), %d triggers (expected 4), %d indexes (expected at least 12). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -2106,6 +2149,7 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[board] DROP CONSTRAINT IF EXISTS [FK_board_calendar_id];
     ALTER TABLE psa.[time_entry] DROP CONSTRAINT IF EXISTS [FK_time_entry_loop_reply_id];
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
+    DROP TABLE IF EXISTS psa.[notification];
     DROP TABLE IF EXISTS psa.[ticket_link];
     DROP TABLE IF EXISTS psa.[change_approval];
     DROP TABLE IF EXISTS psa.[sla_target_type];

@@ -568,4 +568,6 @@ def open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
             " note_flag) VALUES (?,?,?,?,?,'DISCUSSION')",
             (ticket_id, stamp, event_kind, actor or requested_by, description))
     board.admit(conn, ticket_id, at=at)
+    from . import workflow
+    workflow.fire(conn, ticket_id, "ON_CREATE", at=at)
     return ticket_id

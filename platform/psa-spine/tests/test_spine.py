@@ -2571,6 +2571,29 @@ class WebWSGITest(unittest.TestCase):
         _, _, body = self._call("GET", "/my", cookie=self._cookie_for("dave"))
         self.assertIn("Is something broken, or do you need something?", body)
 
+    def test_a_board_admin_builds_tests_and_switches_on_a_rule(self):
+        alice = self._cookie_for("alice")                 # ADMIN on IT_HELP
+        _, headers, _ = self._call("POST", "/admin/rules/new", cookie=alice,
+                                   form={"name": "Unowned P1", "board_id": "IT_HELP"})
+        loc = dict(headers)["Location"]
+        wid = loc.rsplit("/", 1)[1]
+        self._call("POST", f"/admin/rules/{wid}/event", cookie=alice, form={
+            "event_name": "P1 created", "fires_on": "ON_CREATE", "mode": "ONCE",
+            "field0": "TICKET.PRIORITY", "op0": "EQ", "value0": "P1",
+            "act0": "ADD_NOTE", "detail0": "P1: page the on-call"})
+        _, headers, _ = self._call("POST", f"/admin/rules/{wid}/activate", cookie=alice)
+        self.assertIn("err=", dict(headers)["Location"])          # untested: refused
+        _, headers, _ = self._call("POST", f"/admin/rules/{wid}/test", cookie=alice,
+                                   form={"event_id": f"{wid}_E1"})
+        self.assertIn("1+open+ticket", dict(headers)["Location"])  # ITO-1 is a P1
+        _, headers, _ = self._call("POST", f"/admin/rules/{wid}/activate", cookie=alice)
+        self.assertIn("Switched+on", dict(headers)["Location"])
+        _, _, body = self._call("GET", f"/admin/rules/{wid}", cookie=alice)
+        self.assertIn("P1 created", body)
+        # carol only reads the board: no rules for her
+        status, _, _ = self._call("GET", f"/admin/rules/{wid}", cookie=self._cookie_for("carol"))
+        self.assertTrue(status.startswith("403"))
+
     def _add_configuration(self):
         conn = db.connect(self.db_path)
         conn.execute(
@@ -4198,6 +4221,123 @@ class MailPolicyTest(unittest.TestCase):
                        flag="DISCUSSION")
         self.assertEqual(self.conn.execute("SELECT customer_updated FROM ticket WHERE"
                                            " work_item_id = ?", (wid,)).fetchone()[0], 0)
+
+
+class WorkflowRunnerTest(unittest.TestCase):
+    """024 and psaspine.workflow: rules run at the moment, age in SLA time,
+    escalation as successive events, test before activate, all-or-nothing."""
+
+    def setUp(self) -> None:
+        from psaspine import workflow
+        self.wf = workflow
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.at = datetime(2026, 9, 23, 9, 0)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        workflow.ensure_vocabulary(self.conn)
+        self.conn.execute("INSERT INTO board_role (board_id, role, member) VALUES"
+                          " ('IT_HELP', 'DISPATCH', 'disp'), ('IT_HELP', 'SERVICE_MANAGER', 'mgr')")
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _rule(self, wid, events):
+        self.conn.execute("INSERT INTO workflow (workflow_id, board_id, name, table_type)"
+                          " VALUES (?, 'IT_HELP', ?, 'TICKET')", (wid, wid))
+        for ev, fires_on, conds, acts, extra in events:
+            self.conn.execute(
+                "INSERT INTO workflow_event (event_id, workflow_id, fires_on, execution_time,"
+                " frequency, frequency_unit, max_executions) VALUES (?,?,?,?,?,?,?)",
+                (ev, wid, fires_on, *extra))
+            for n, (trig, op, val) in enumerate(conds):
+                self.conn.execute("INSERT INTO workflow_condition (event_id, trigger_id, operator,"
+                                  " value, sort_order) VALUES (?,?,?,?,?)", (ev, trig, op, val, n))
+            for n, (act, role, status, detail) in enumerate(acts):
+                self.conn.execute("INSERT INTO workflow_action (event_id, action, notify_role,"
+                                  " target_status_id, detail, sort_order) VALUES (?,?,?,?,?,?)",
+                                  (ev, act, role, status, detail, n))
+            self.wf.test_event(self.conn, ev, at=self.at)
+        self.wf.activate(self.conn, wid, actor="t", at=self.at)
+
+    def _open(self, **kw):
+        return tickets.open_ticket(self.conn, board_id="IT_HELP", summary="Printer down",
+                                   impact="I3", urgency="U3", requested_by=None, at=self.at, **kw)
+
+    def test_a_rule_that_was_never_tested_cannot_be_switched_on(self):
+        self.conn.execute("INSERT INTO workflow (workflow_id, name, table_type) VALUES"
+                          " ('W', 'W', 'TICKET')")
+        self.conn.execute("INSERT INTO workflow_event (event_id, workflow_id, fires_on)"
+                          " VALUES ('E', 'W', 'ON_CREATE')")
+        with self.assertRaises(ValueError):
+            self.wf.activate(self.conn, "W", actor="t", at=self.at)
+        self.assertEqual(self.wf.test_event(self.conn, "E", at=self.at)["matches"], 0)
+        self.wf.activate(self.conn, "W", actor="t", at=self.at)
+        self.wf.edited(self.conn, "W")                      # an edit switches it off again
+        self.assertEqual(self.conn.execute("SELECT is_active FROM workflow").fetchone()[0], 0)
+
+    def test_a_p1_fires_at_the_moment_it_is_created(self):
+        self._rule("W_P1", [("E_P1", "ON_CREATE", [("TICKET.PRIORITY", "EQ", "P1")],
+                             [("NOTIFY", "SERVICE_MANAGER", None, "P1 raised")],
+                             ("ONCE", None, None, None))])
+        p1 = self._open(min_priority="P1")
+        self._open()                                      # a P4: no page
+        rows = self.conn.execute("SELECT work_item_id, recipient, subject FROM notification").fetchall()
+        self.assertEqual([(r[0], r[1]) for r in rows], [(p1, "mgr")])
+        self.assertIn(f"[{p1}]", rows[0][2])              # the token a reply threads on
+        self.assertIsNotNone(self.conn.execute(
+            "SELECT 1 FROM ticket_event WHERE work_item_id = ? AND kind = 'NOTIFY'"
+            " AND actor = 'workflow:W_P1/E_P1'", (p1,)).fetchone())
+
+    def test_escalation_is_successive_events_on_sla_time(self):
+        """ConnectWise's own pattern: New too long tells dispatch; later still,
+        the service manager."""
+        self._rule("W_ESC", [
+            ("E_50", "ON_SLA_THRESHOLD", [("TICKET.ESCALATION", "EQ", "NOT_RESPONDED"),
+                                          ("TICKET.SLA_PERCENT", "GTE", "50")],
+             [("NOTIFY", "DISPATCH", None, "half the respond time gone")], ("ONCE", None, None, None)),
+            ("E_100", "ON_SLA_THRESHOLD", [("TICKET.ESCALATION", "EQ", "NOT_RESPONDED"),
+                                           ("TICKET.SLA_PERCENT", "GTE", "100")],
+             [("ESCALATE", "SERVICE_MANAGER", None, "respond target missed")],
+             ("ONCE", None, None, None))])
+        wid = self._open()                                # P4: respond target 480 min
+        target = setup.STARTER_TARGETS["P4"][0]
+        self.wf.sweep(self.conn, at=self.at + timedelta(minutes=target * 0.3))
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM notification").fetchone()[0], 0)
+        self.wf.sweep(self.conn, at=self.at + timedelta(minutes=target * 0.6))
+        self.wf.sweep(self.conn, at=self.at + timedelta(minutes=target * 0.7))   # once only
+        self.assertEqual([r[0] for r in self.conn.execute("SELECT recipient FROM notification")],
+                         ["disp"])
+        self.wf.sweep(self.conn, at=self.at + timedelta(minutes=target + 5))
+        self.assertEqual([r[0] for r in self.conn.execute(
+            "SELECT recipient FROM notification ORDER BY notification_id")], ["disp", "mgr"])
+        self.assertTrue(wid)
+
+    def test_a_rules_own_status_change_fires_no_further_rules(self):
+        progress = setup.status_id("IT_HELP", "In Progress")
+        self._rule("W_LOOP", [("E_A", "ON_CREATE", [], [("SET_STATUS", None, progress, "start")],
+                               ("ONCE", None, None, None)),
+                              ("E_B", "ON_STATUS_CHANGE", [], [("ADD_NOTE", None, None, "loop?")],
+                               ("CONTINUOUSLY", 1, "MINUTES", None))])
+        wid = self._open()
+        self.assertEqual(self.conn.execute("SELECT board_status_id FROM ticket WHERE"
+                                           " work_item_id = ?", (wid,)).fetchone()[0], progress)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM workflow_run WHERE"
+                                           " event_id = 'E_B'").fetchone()[0], 0)
+
+    def test_a_failing_action_leaves_nothing_half_done(self):
+        self._rule("W_BAD", [("E_BAD", "ON_CREATE", [],
+                              [("ADD_NOTE", None, None, "first"),
+                               ("NOTIFY", "ON_CALL", None, "nobody is on call")],
+                              ("ONCE", None, None, None))])
+        wid = self._open()                                # the ticket itself stands
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM ticket_event WHERE"
+                                           " work_item_id = ? AND detail = 'first'",
+                                           (wid,)).fetchone()[0], 0)
+        run = self.conn.execute("SELECT outcome, detail FROM workflow_run WHERE"
+                                " event_id = 'E_BAD'").fetchall()
+        self.assertEqual([r[0] for r in run], ["ERROR"])
+        self.assertIn("no one holds that role", run[0][1])
 
 
 class ContactsTest(unittest.TestCase):

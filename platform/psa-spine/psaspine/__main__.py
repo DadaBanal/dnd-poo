@@ -97,6 +97,11 @@ def main(argv: list[str] | None = None) -> int:
     pcf.add_argument("export_csv")
     pcf.add_argument("--company", required=True, dest="entity_id")
 
+    prr = sub.add_parser("run-rules",
+                         help="run time-based workflow events (ON_SCHEDULE, ON_SLA_THRESHOLD) "
+                              "over every open ticket; the server runs this every minute")
+    prr.add_argument("database")
+
     pu = sub.add_parser("setup-board",
                         help="give a board the starter statuses, calendar and SLA "
                              "targets (adds what is missing, never overwrites)")
@@ -217,6 +222,13 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         conn.commit()
         return 0
+
+    if a.cmd == "run-rules":
+        from . import workflow
+        c = workflow.sweep(conn, at=datetime.now())
+        print(f"{c['tickets']} tickets with timed rules: {c['acted']} actions taken, "
+              f"{c['errors']} errors (see workflow_run)")
+        return 1 if c["errors"] else 0
 
     if a.cmd == "setup-board":
         from . import setup

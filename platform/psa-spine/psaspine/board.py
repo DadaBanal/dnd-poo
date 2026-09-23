@@ -154,6 +154,8 @@ def change_status(conn: sqlite3.Connection, work_item_id: str, to_status_id: str
          f"resumed={resumed or '-'}"))
 
     touch(conn, work_item_id, at)
+    from . import workflow
+    workflow.fire(conn, work_item_id, "ON_STATUS_CHANGE", at=at)
     return {"work_item_id": work_item_id, "board_status_id": to_status_id,
             "state": state, "escalation_status": escalation,
             "stopped": stopped, "paused": paused, "resumed": resumed,
@@ -433,6 +435,8 @@ def move(conn: sqlite3.Connection, work_item_id: str, to_board_id: str, *,
                                 (work_item_id,)).fetchone():
         open_clocks(conn, work_item_id, at=at, calendar_id=cal)
     touch(conn, work_item_id, at)
+    from . import workflow
+    workflow.fire(conn, work_item_id, "ON_HANDOVER", at=at)
     return {"work_item_id": work_item_id, "board_id": to_board_id,
             "board_status_id": landed}
 
@@ -499,6 +503,8 @@ def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: st
     if to_status_id:
         status = change_status(conn, work_item_id, to_status_id, at=at, actor=actor)
     touch(conn, work_item_id, at)
+    from . import workflow
+    workflow.fire(conn, work_item_id, "ON_NOTE_ADDED", at=at)
     return {"flag": flag, "band_hours": band_hours, "status": status}
 
 
@@ -680,4 +686,7 @@ def update_fields(conn: sqlite3.Connection, work_item_id: str, *, at: datetime,
     if changed:
         _event(conn, work_item_id, stamp, "UPDATED", actor, "; ".join(changed))
         touch(conn, work_item_id, at)
+        if any(c.startswith("owner ") for c in changed):
+            from . import workflow
+            workflow.fire(conn, work_item_id, "ON_OWNER_CHANGE", at=at)
     return changed

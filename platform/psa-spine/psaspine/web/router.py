@@ -9,7 +9,7 @@ context, and return a Response.
 from __future__ import annotations
 
 from .views import (admin, board, companies, configurations, dispatch, loop, oncall,
-                    portal, ticket, uplift)
+                    portal, rules, ticket, uplift)
 
 # (method, pattern, handler). The first pattern that matches the path wins,
 # so a literal segment must be listed before a <capture> in the same place.
@@ -52,6 +52,13 @@ ROUTES = [
     ("POST", "/admin/status/add", admin.add_status),
     ("POST", "/admin/member/add", admin.add_member),
     ("POST", "/admin/local/disable", admin.disable_local),
+    ("GET", "/admin/rules", rules.index),
+    ("POST", "/admin/rules/new", rules.create),
+    ("GET", "/admin/rules/<workflow_id>", rules.detail),
+    ("POST", "/admin/rules/<workflow_id>/event", rules.add_event),
+    ("POST", "/admin/rules/<workflow_id>/test", rules.test),
+    ("POST", "/admin/rules/<workflow_id>/activate", rules.activate),
+    ("POST", "/admin/rules/<workflow_id>/deactivate", rules.deactivate),
     ("GET", "/admin/integrations", configurations.integrations),
     ("POST", "/admin/integrations/add", configurations.integrations_add),
     ("POST", "/admin/integrations/toggle", configurations.integrations_toggle),

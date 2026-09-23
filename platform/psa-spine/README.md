@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 372 tests
+python3 tests/test_spine.py          # 378 tests
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -173,6 +173,33 @@ workbook column A. (Sources are in `schema/022_record_type.sql`.)
 - The commercial path (VARIATION) is derived, never passed in. This closes a
   bypass where a variation item opened as INCIDENT could have time booked
   against it.
+
+### Workflow rules (Setup › Workflow rules)
+
+This is ConnectWise's shape, from its archived workflow-rules page:
+- **Shape:** a rule is scoped to a board, or to every board. It holds
+  events. Each event has conditions read left to right, a run mode (once, N
+  times every T, or continuously every T) and actions: notify, escalate, set
+  status, move board, assign owner, add an internal note, or flag.
+- **Escalation levels** are successive events, for example *50% of the
+  respond time used → dispatch*, then *100% → service manager*.
+- **Switching on:** a rule is created off. Every event must be tested, which
+  shows how many open tickets match now, before it can be switched on. Any
+  edit switches it off again.
+
+Where this desk differs from ConnectWise:
+- **Timing:** rules fire the moment a ticket is created, changes status,
+  gets a note, changes owner or moves board. Only time-based events wait for
+  `psaspine run-rules`, which the server runs every minute; ConnectWise waits
+  up to ten.
+- **SLA time:** "SLA used (%)" follows the board's calendar and leaves out
+  time in waiting statuses.
+- **Traceability:** every action names its rule and event on the ticket.
+  Notify and escalate actions go to a `notification` outbox, with the ticket
+  number in the subject.
+- **Failures:** an action that fails rolls its whole event back and is
+  recorded as ERROR.
+- **No chains:** a rule's own actions never fire further rules.
 
 Waiting statuses pause the **resolve** clock, never the respond clock. A board
 move keeps the ticket id and its clocks. A POST from another site is refused,

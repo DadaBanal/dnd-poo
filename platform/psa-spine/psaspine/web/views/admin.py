@@ -80,6 +80,12 @@ def index(ctx):
             "IT Change board and an IT Projects board. His Request-board SLA numbers become "
             "Request targets on IT Help. Items for boards that do not exist yet wait until those "
             "boards are created. It adds what is missing and never overwrites.</p></div>")
+    if rows or ctx.user.is_sysadmin:
+        n_rules = ctx.conn.execute("SELECT COUNT(*) FROM workflow WHERE is_active = 1").fetchone()[0]
+        cards.append(
+            "<div class=card><h3>Workflow rules</h3><p class=sub>Escalations, notifications and "
+            "routing as rules: an event, conditions, actions. Test, then switch on.</p>"
+            f"<a class='btn ghost' href='/admin/rules'>Workflow rules ({n_rules} on)</a></div>")
     if rows:
         cards.append("<div class=card><h3>Your boards</h3><div class=tablewrap><table>"
                      "<thead><tr><th>Board</th><th>Setup</th><th>Tickets</th><th></th></tr></thead>"

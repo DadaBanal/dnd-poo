@@ -517,6 +517,16 @@
     "ticket_link.linked_by": "PERSON",
     "board.kind": "CODE",
     "board.closed_reply_policy": "CODE",
-    "board.reopen_status_id": "ID"
+    "board.reopen_status_id": "ID",
+    "workflow_event.tested_at": "TIMESTAMP_TEXT",
+    "notification.work_item_id": "ID",
+    "notification.event_id": "ID",
+    "notification.recipient": "NAME",
+    "notification.recipient_role": "CODE",
+    "notification.subject": "NAME",
+    "notification.body": "FREE",
+    "notification.created_at": "TIMESTAMP_TEXT",
+    "notification.status": "CODE",
+    "notification.sent_at": "TIMESTAMP_TEXT"
   }
 }
