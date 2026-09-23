@@ -193,8 +193,9 @@ def attach(conn: sqlite3.Connection, work_item_id: str, configuration_id: str, *
            at: datetime, actor: str) -> bool:
     """List a configuration on a ticket. Returns False if it already was."""
     from .board import _event, touch
-    if conn.execute("SELECT 1 FROM configuration WHERE configuration_id = ?",
-                    (configuration_id,)).fetchone() is None:
+    row = conn.execute("SELECT name FROM configuration WHERE configuration_id = ?",
+                       (configuration_id,)).fetchone()
+    if row is None:
         raise LookupError(f"no configuration {configuration_id!r}")
     stamp = at.isoformat(sep=" ", timespec="minutes")
     cur = conn.execute(
@@ -202,7 +203,7 @@ def attach(conn: sqlite3.Connection, work_item_id: str, configuration_id: str, *
         " linked_at, linked_by) VALUES (?,?,?,?)", (work_item_id, configuration_id, stamp, actor))
     if cur.rowcount:
         _event(conn, work_item_id, stamp, "UPDATED", actor,
-               f"configuration {configuration_id} attached")
+               f"configuration {row['name']} ({configuration_id}) attached")
         touch(conn, work_item_id, at)
     return bool(cur.rowcount)
 
@@ -211,11 +212,13 @@ def detach(conn: sqlite3.Connection, work_item_id: str, configuration_id: str, *
            at: datetime, actor: str) -> bool:
     from .board import _event, touch
     stamp = at.isoformat(sep=" ", timespec="minutes")
+    row = conn.execute("SELECT name FROM configuration WHERE configuration_id = ?",
+                       (configuration_id,)).fetchone()
     cur = conn.execute("DELETE FROM ticket_configuration WHERE work_item_id = ?"
                        " AND configuration_id = ?", (work_item_id, configuration_id))
     if cur.rowcount:
         _event(conn, work_item_id, stamp, "UPDATED", actor,
-               f"configuration {configuration_id} removed")
+               f"configuration {row['name'] if row else '?'} ({configuration_id}) removed")
         touch(conn, work_item_id, at)
     return bool(cur.rowcount)
 

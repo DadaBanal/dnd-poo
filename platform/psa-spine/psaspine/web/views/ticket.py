@@ -94,6 +94,10 @@ def _initials(name) -> str:
     return "".join(p[0] for p in parts[:2]).upper() or "?"
 
 
+def _ago(age: str) -> str:
+    return age if age == "—" else f"{age} ago"
+
+
 def _contact_list(conn, list_id: str, entity_id: str | None = None) -> str:
     """A <datalist> of active contacts as 'Name <email>', which is exactly the
     shape contacts.resolve() matches. Plain HTML: the browser offers the names
@@ -324,7 +328,7 @@ def detail(ctx, work_item_id):
     details = (
         "<div class=card><h3>Details</h3><dl class=kv>"
         f"<dt>Opened</dt><dd>{t.esc(tk['opened_at'])}</dd>"
-        f"<dt>Updated</dt><dd>{t.esc(common.human_age(tk['updated_at'] or tk['opened_at'], now=ctx.now))} ago</dd>"
+        f"<dt>Updated</dt><dd>{t.esc(_ago(common.human_age(tk['updated_at'] or tk['opened_at'], now=ctx.now)))}</dd>"
         f"<dt>Source</dt><dd>{t.esc((tk['intake_source'] or '—').replace('_', '-').title())}</dd>"
         f"<dt>Desk ref</dt><dd>{t.esc(tk['external_ref'] or '—')}</dd>"
         f"<dt>Calendar</dt><dd>{t.esc(tk['calendar_name'] or '—')}</dd></dl></div>")

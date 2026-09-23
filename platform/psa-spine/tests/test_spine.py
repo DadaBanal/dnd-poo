@@ -4108,7 +4108,8 @@ class ConfigurationsTest(unittest.TestCase):
         self.assertTrue(self.cmdb.detach(self.conn, wid, cid, at=self.at, actor="t"))
         details = [r["detail"] for r in self.conn.execute(
             "SELECT detail FROM ticket_event WHERE work_item_id = ? AND kind = 'UPDATED'", (wid,))]
-        self.assertEqual(details, [f"configuration {cid} attached", f"configuration {cid} removed"])
+        self.assertEqual(details, [f"configuration WARD3-PC01 ({cid}) attached",
+                                   f"configuration WARD3-PC01 ({cid}) removed"])
 
 
 class AdComputersScriptTest(unittest.TestCase):
