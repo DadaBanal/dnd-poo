@@ -144,6 +144,9 @@ BEGIN
     PRINT N'    psa.intake_message';
     PRINT N'    psa.api_alert';
     PRINT N'    psa.contact';
+    PRINT N'    psa.configuration';
+    PRINT N'    psa.ticket_configuration';
+    PRINT N'    psa.integration_link';
     PRINT N'    psa.ix_fee_line_effective';
     PRINT N'    psa.ix_time_entry_period';
     PRINT N'    psa.ix_workflow_run_event';
@@ -152,12 +155,14 @@ BEGIN
     PRINT N'    psa.ix_intake_ticket';
     PRINT N'    psa.ix_contact_email';
     PRINT N'    psa.ux_contact_ad_guid';
+    PRINT N'    psa.ix_configuration_entity';
+    PRINT N'    psa.ux_configuration_ad_guid';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  55 tables, 8 indexes, 4 triggers.';
+    PRINT N'  58 tables, 10 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -1588,6 +1593,90 @@ CREATE TABLE psa.[contact] (
 );
 END;
 
+-- --------------------------------------------------------------------------
+-- configuration   (from schema/021_configurations.sql)
+IF OBJECT_ID(N'psa.[configuration]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[configuration] (
+    [configuration_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_configuration] PRIMARY KEY,
+    [entity_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_configuration_entity_id] REFERENCES psa.[entity]([entity_id]),
+
+    -- the hostname, as AD holds it
+    [name] NVARCHAR(400) NOT NULL,
+    [config_type] NVARCHAR(32) NOT NULL CONSTRAINT [CK_configuration_01] CHECK (config_type IN ('WORKSTATION', 'LAPTOP', 'SERVER', 'PRINTER', 'NETWORK', 'MOBILE', 'OTHER')),
+    [status] NVARCHAR(32) NOT NULL CONSTRAINT [DF_configuration_status] DEFAULT ('ACTIVE') CONSTRAINT [CK_configuration_02] CHECK (status IN ('ACTIVE', 'INACTIVE', 'RETIRED')),
+    [contact_id] NVARCHAR(64) NULL CONSTRAINT [FK_configuration_contact_id] REFERENCES psa.[contact]([contact_id]),
+    [site_id] NVARCHAR(64) NULL CONSTRAINT [FK_configuration_site_id] REFERENCES psa.[site]([site_id]),
+    [dns_name] NVARCHAR(400) NULL,
+    [os_name] NVARCHAR(400) NULL,
+    [os_version] NVARCHAR(32) NULL,
+    [manufacturer] NVARCHAR(400) NULL,
+    [model] NVARCHAR(400) NULL,
+    [serial_number] NVARCHAR(400) NULL,
+    [description] NVARCHAR(MAX) NULL,
+
+    -- The ScreenConnect session this machine's agent reports as. It is what a
+    -- launch link needs, and nothing here can read it from ScreenConnect, so it is
+    -- set on the configuration page (NOT VERIFIED: a bulk export route).
+    [remote_session_id] NVARCHAR(64) NULL,
+    [ad_object_guid] NVARCHAR(64) NULL,
+    [source] NVARCHAR(32) NOT NULL CONSTRAINT [CK_configuration_03] CHECK (source IN ('AD', 'SCREENCONNECT', 'MANUAL')),
+    [created_at] NVARCHAR(64) NOT NULL,
+    [last_synced_at] NVARCHAR(64) NULL,
+
+    -- AD's LastLogonDate, as a freshness hint
+    [last_seen_at] NVARCHAR(64) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END)),
+    [last_synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [last_synced_at], 126), CASE WHEN [last_synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [last_synced_at], 112) END)),
+    [last_seen_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [last_seen_at], 126), CASE WHEN [last_seen_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [last_seen_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ticket_configuration   (from schema/021_configurations.sql)
+-- Which configurations a ticket concerns, as ConnectWise's Configurations tab.
+IF OBJECT_ID(N'psa.[ticket_configuration]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ticket_configuration] (
+    [work_item_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ticket_configuration_work_item_id] REFERENCES psa.[ticket]([work_item_id]),
+    [configuration_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ticket_configuration_configuration_id] REFERENCES psa.[configuration]([configuration_id]),
+    [linked_at] NVARCHAR(64) NOT NULL,
+    [linked_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [linked_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [linked_at], 126), CASE WHEN [linked_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [linked_at], 112) END)),
+    CONSTRAINT [PK_ticket_configuration] PRIMARY KEY ([work_item_id], [configuration_id])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- integration_link   (from schema/021_configurations.sql)
+-- Links out to the tools the desk does not replace: ScreenConnect first, and
+-- anything else that can be opened by URL. A template names fields in braces,
+-- e.g. {remote_session_id}; each value is URL-encoded when the link is drawn,
+-- and a link whose field is empty is shown disabled with the reason. HTTPS only.
+-- The instance's own address is typed in Setup, never shipped here.
+IF OBJECT_ID(N'psa.[integration_link]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[integration_link] (
+    [link_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_integration_link] PRIMARY KEY,
+    [label] NVARCHAR(400) NOT NULL,
+    [applies_to] NVARCHAR(32) NOT NULL CONSTRAINT [CK_integration_link_01] CHECK (applies_to IN ('CONFIGURATION', 'CONTACT')),
+    [url_template] NVARCHAR(400) NOT NULL CONSTRAINT [CK_integration_link_02] CHECK (url_template LIKE 'https://%'),
+    [inactive] INT NOT NULL CONSTRAINT [DF_integration_link_inactive] DEFAULT (0) CONSTRAINT [CK_integration_link_03] CHECK (inactive IN (0, 1)),
+    [created_at] NVARCHAR(64) NOT NULL,
+    [created_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END))
+);
+END;
+
 -- ==========================================================================
 -- COLUMNS ADDED TO TABLES THAT ALREADY EXIST
 --
@@ -1675,6 +1764,13 @@ CREATE INDEX [ix_contact_email] ON psa.[contact] ([email]);
 -- of them, so NULL is kept out of the index (see the translator's emit_index).
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_contact_ad_guid' AND object_id = OBJECT_ID(N'psa.[contact]'))
 CREATE UNIQUE INDEX [ux_contact_ad_guid] ON psa.[contact] ([ad_object_guid]) WHERE [ad_object_guid] IS NOT NULL;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_configuration_entity' AND object_id = OBJECT_ID(N'psa.[configuration]'))
+CREATE INDEX [ix_configuration_entity] ON psa.[configuration] ([entity_id]);
+
+-- One configuration per AD object; manual ones have no GUID (see 020).
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_configuration_ad_guid' AND object_id = OBJECT_ID(N'psa.[configuration]'))
+CREATE UNIQUE INDEX [ux_configuration_ad_guid] ON psa.[configuration] ([ad_object_guid]) WHERE [ad_object_guid] IS NOT NULL;
 
 -- ==========================================================================
 -- THE GATE
@@ -1806,10 +1902,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_unique = 0 AND i.is_primary_key = 0;
 
-IF @Tables <> 55 OR @Triggers <> 4 OR @Indexes < 8
+IF @Tables <> 58 OR @Triggers <> 4 OR @Indexes < 10
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 55), %d triggers (expected 4), %d indexes (expected at least 8). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 58), %d triggers (expected 4), %d indexes (expected at least 10). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -1841,6 +1937,9 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[board] DROP CONSTRAINT IF EXISTS [FK_board_calendar_id];
     ALTER TABLE psa.[time_entry] DROP CONSTRAINT IF EXISTS [FK_time_entry_loop_reply_id];
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
+    DROP TABLE IF EXISTS psa.[integration_link];
+    DROP TABLE IF EXISTS psa.[ticket_configuration];
+    DROP TABLE IF EXISTS psa.[configuration];
     DROP TABLE IF EXISTS psa.[contact];
     DROP TABLE IF EXISTS psa.[api_alert];
     DROP TABLE IF EXISTS psa.[intake_message];

@@ -2483,6 +2483,70 @@ class WebWSGITest(unittest.TestCase):
             "SELECT contact_id FROM ticket WHERE work_item_id = 'ITO-1'").fetchone()["contact_id"])
         conn.close()
 
+    def _add_configuration(self):
+        conn = db.connect(self.db_path)
+        conn.execute(
+            "INSERT INTO configuration (configuration_id, entity_id, name, config_type, status,"
+            " remote_session_id, source, created_at) VALUES ('CF-1', 'PMC', 'WARD3-PC01',"
+            " 'WORKSTATION', 'ACTIVE', '0f9c3a0e-aaaa-4c2a-9a55-2b8f3c1d00ff', 'AD',"
+            " '2026-09-17 08:00')")
+        conn.commit()
+        conn.close()
+
+    def test_only_a_sysadmin_writes_where_every_click_goes(self):
+        form = {"label": "ScreenConnect", "applies_to": "CONFIGURATION",
+                "url_template": "https://x.screenconnect.com/Host#Access/All%20Machines//"
+                                "{remote_session_id}/Join"}
+        status, _, _ = self._call("POST", "/admin/integrations/add",
+                                  cookie=self._cookie_for("alice"), form=form)
+        self.assertTrue(status.startswith("403"))
+        root = self._cookie_for("root", is_sysadmin=True)
+        _, headers, _ = self._call("POST", "/admin/integrations/add", cookie=root, form=form)
+        self.assertIn("Link+added", dict(headers)["Location"])
+        _, headers, _ = self._call("POST", "/admin/integrations/add", cookie=root,
+                                   form=dict(form, url_template="http://evil.example/{name}"))
+        self.assertIn("err=", dict(headers)["Location"])
+
+    def test_a_ticket_attaches_a_configuration_and_launches_it(self):
+        self._add_configuration()
+        conn = db.connect(self.db_path)
+        from psaspine import configurations as cmdb
+        cmdb.add_link(conn, label="ScreenConnect", applies_to="CONFIGURATION",
+                      url_template="https://x.screenconnect.com/Host#Access/All%20Machines//"
+                                   "{remote_session_id}/Join",
+                      at=datetime(2026, 9, 17), actor="root")
+        conn.commit()
+        conn.close()
+        alice = self._cookie_for("alice")
+        status, _, _ = self._call("POST", "/ticket/ITO-1/config/add", cookie=alice,
+                                  form={"configuration_id": "CF-1"})
+        self.assertTrue(status.startswith("303"))
+        _, _, body = self._call("GET", "/ticket/ITO-1", cookie=alice)
+        self.assertIn("href='/configuration/CF-1'", body)
+        self.assertIn("https://x.screenconnect.com/Host#Access/All%20Machines//"
+                      "0f9c3a0e-aaaa-4c2a-9a55-2b8f3c1d00ff/Join", body)
+        self.assertIn("rel='noopener noreferrer'", body)
+        # carol only reads IT_HELP, so she cannot attach
+        status, _, _ = self._call("POST", "/ticket/ITO-1/config/remove",
+                                  cookie=self._cookie_for("carol"),
+                                  form={"configuration_id": "CF-1"})
+        self.assertFalse(status.startswith("303"))
+
+    def test_a_configuration_page_never_lists_a_restricted_ticket(self):
+        self._add_configuration()
+        conn = db.connect(self.db_path)
+        for wid in ("ITO-1", "ITO-9"):
+            conn.execute("INSERT INTO ticket_configuration VALUES (?, 'CF-1', '2026-09-17', 'a')",
+                         (wid,))
+        conn.commit()
+        conn.close()
+        _, _, body = self._call("GET", "/configuration/CF-1", cookie=self._cookie_for("alice"))
+        self.assertIn("ITO-1", body)
+        self.assertNotIn("ITO-9", body)
+        self.assertIn("1 more on restricted boards", body)
+        status, _, _ = self._call("GET", "/configuration/CF-1", cookie=self._cookie_for("dave"))
+        self.assertTrue(status.startswith("404"))
+
     def test_the_board_says_why_a_ticket_has_no_clock(self):
         _, _, body = self._call("GET", "/", cookie=self._cookie_for("alice"))
         self.assertIn("board not set up", body)
@@ -3910,6 +3974,165 @@ class ContactsTest(unittest.TestCase):
             code = cli_main(["import-contacts", str(dbp), str(path), "--company", "PMC"])
         self.assertEqual(code, 0)
         self.assertIn("1 rows: 1 new", out.getvalue())
+
+
+class ConfigurationsTest(unittest.TestCase):
+    """021 and psaspine.configurations: machines from AD, links out, ticket links."""
+
+    HEADER = ("ObjectGUID,Name,DNSHostName,OperatingSystem,OperatingSystemVersion,"
+              "Description,Enabled,LastLogonDate\r\n")
+    G1 = "7a1c3a0e-1111-4c2a-9a55-2b8f3c1d0001"
+    G2 = "7a1c3a0e-2222-4c2a-9a55-2b8f3c1d0002"
+    SESSION = "0f9c3a0e-aaaa-4c2a-9a55-2b8f3c1d00ff"
+
+    def setUp(self) -> None:
+        from psaspine import configurations
+        self.cmdb = configurations
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.at = datetime(2026, 9, 23, 9, 0)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _export(self, *rows: str) -> Path:
+        path = Path(self.tmp.name) / "computers.csv"
+        path.write_bytes(b"\xef\xbb\xbf" + (self.HEADER + "".join(r + "\r\n" for r in rows))
+                         .encode("utf-8"))
+        return path
+
+    def _row(self, guid, name="WARD3-PC01", os_name="Windows 11 Pro", enabled="True"):
+        return (f"{guid},{name},{name.lower()}.pmcne.ph,{os_name},10.0 (22631),"
+                f"Nurse station,{enabled},2026-09-22 07:10")
+
+    def _one(self):
+        return self.conn.execute("SELECT * FROM configuration").fetchone()
+
+    def test_computers_import_and_a_rerun_changes_nothing(self):
+        path = self._export(self._row(self.G1),
+                            self._row(self.G2, name="PMC-ORTHANC01",
+                                      os_name="Windows Server 2022 Standard"))
+        r = self.cmdb.import_ad_computers(self.conn, path, entity_id="PMC", at=self.at)
+        self.assertEqual((r["rows"], r["new"], r["skipped"]), (2, 2, 0))
+        kinds = dict(self.conn.execute("SELECT name, config_type FROM configuration").fetchall())
+        self.assertEqual(kinds, {"WARD3-PC01": "WORKSTATION", "PMC-ORTHANC01": "SERVER"})
+        again = self.cmdb.import_ad_computers(self.conn, path, entity_id="PMC", at=self.at)
+        self.assertEqual((again["new"], again["updated"], again["unchanged"]), (0, 0, 2))
+
+    def test_the_desk_owns_type_contact_and_retirement(self):
+        """A re-import refreshes what AD knows and nothing the desk decided."""
+        self.cmdb.import_ad_computers(self.conn, self._export(self._row(self.G1)),
+                                      entity_id="PMC", at=self.at)
+        cid = self._one()["configuration_id"]
+        self.cmdb.update(self.conn, cid, at=self.at, actor="t", config_type="LAPTOP",
+                         status="RETIRED")
+        self.cmdb.import_ad_computers(self.conn, self._export(self._row(self.G1, name="WARD3-LT01")),
+                                      entity_id="PMC", at=self.at)
+        row = self._one()
+        self.assertEqual((row["name"], row["config_type"], row["status"]),
+                         ("WARD3-LT01", "LAPTOP", "RETIRED"))
+
+    def test_disabled_in_ad_is_inactive(self):
+        self.cmdb.import_ad_computers(self.conn, self._export(self._row(self.G1)),
+                                      entity_id="PMC", at=self.at)
+        r = self.cmdb.import_ad_computers(
+            self.conn, self._export(self._row(self.G1, enabled="False")), entity_id="PMC", at=self.at)
+        self.assertEqual(r["deactivated"], 1)
+        self.assertEqual(self._one()["status"], "INACTIVE")
+
+    def test_every_row_is_accounted_for(self):
+        r = self.cmdb.import_ad_computers(
+            self.conn, self._export(self._row(self.G1), self._row("nope")),
+            entity_id="PMC", at=self.at)
+        self.assertEqual(r["new"] + r["updated"] + r["unchanged"] + r["skipped"], r["rows"])
+        self.assertEqual(r["reasons"], ["line 3: no usable ObjectGUID"])
+
+    def test_a_session_id_must_be_a_guid(self):
+        """So a pasted URL or note can never become part of a launch link."""
+        self.cmdb.import_ad_computers(self.conn, self._export(self._row(self.G1)),
+                                      entity_id="PMC", at=self.at)
+        cid = self._one()["configuration_id"]
+        with self.assertRaises(ValueError):
+            self.cmdb.update(self.conn, cid, at=self.at, actor="t",
+                             remote_session_id="https://evil.example/")
+        self.cmdb.update(self.conn, cid, at=self.at, actor="t",
+                         remote_session_id="{" + self.SESSION.upper() + "}")
+        self.assertEqual(self._one()["remote_session_id"], self.SESSION)
+        self.assertIsNotNone(self.conn.execute(
+            "SELECT 1 FROM audit_event WHERE action = 'CONFIGURATION_UPDATE'").fetchone())
+
+    def test_a_link_template_is_https_to_a_fixed_host_with_known_fields(self):
+        for bad in ("http://x.screenconnect.com/{remote_session_id}",
+                    "https://{name}.example/", "javascript:alert(1)//{name}",
+                    "https://x.screenconnect.com/{password}",
+                    "https://x.screenconnect.com/Host"):
+            with self.assertRaises(ValueError, msg=bad):
+                self.cmdb.check_template("CONFIGURATION", bad)
+        self.cmdb.check_template(
+            "CONFIGURATION",
+            "https://x.screenconnect.com/Host#Access/All%20Machines//{remote_session_id}/Join")
+
+    def test_a_link_is_filled_encoded_or_drawn_disabled_with_the_reason(self):
+        self.cmdb.import_ad_computers(self.conn, self._export(self._row(self.G1)),
+                                      entity_id="PMC", at=self.at)
+        self.cmdb.add_link(
+            self.conn, label="ScreenConnect", applies_to="CONFIGURATION", at=self.at, actor="t",
+            url_template="https://x.screenconnect.com/Host#Access/All%20Machines//"
+                         "{remote_session_id}/Join")
+        self.cmdb.add_link(self.conn, label="Search", applies_to="CONFIGURATION", at=self.at,
+                           actor="t", url_template="https://kb.example/q/{name}")
+        links = {x["label"]: x for x in self.cmdb.links_for(self.conn, "CONFIGURATION", self._one())}
+        self.assertIsNone(links["ScreenConnect"]["url"])
+        self.assertIn("remote session id", links["ScreenConnect"]["why"])
+        self.assertEqual(links["Search"]["url"], "https://kb.example/q/WARD3-PC01")
+        cid = self._one()["configuration_id"]
+        self.conn.execute("UPDATE configuration SET name = 'a b/c?d' WHERE configuration_id = ?",
+                          (cid,))
+        self.cmdb.update(self.conn, cid, at=self.at, actor="t", remote_session_id=self.SESSION)
+        links = {x["label"]: x for x in self.cmdb.links_for(self.conn, "CONFIGURATION", self._one())}
+        self.assertEqual(links["ScreenConnect"]["url"],
+                         "https://x.screenconnect.com/Host#Access/All%20Machines//"
+                         + self.SESSION + "/Join")
+        self.assertEqual(links["Search"]["url"], "https://kb.example/q/a%20b%2Fc%3Fd")
+
+    def test_attach_and_detach_are_recorded_on_the_ticket(self):
+        self.cmdb.import_ad_computers(self.conn, self._export(self._row(self.G1)),
+                                      entity_id="PMC", at=self.at)
+        cid = self._one()["configuration_id"]
+        wid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="PC slow", impact="I3",
+                                  urgency="U3", requested_by=None, at=self.at)
+        self.assertTrue(self.cmdb.attach(self.conn, wid, cid, at=self.at, actor="t"))
+        self.assertFalse(self.cmdb.attach(self.conn, wid, cid, at=self.at, actor="t"))
+        self.assertTrue(self.cmdb.detach(self.conn, wid, cid, at=self.at, actor="t"))
+        details = [r["detail"] for r in self.conn.execute(
+            "SELECT detail FROM ticket_event WHERE work_item_id = ? AND kind = 'UPDATED'", (wid,))]
+        self.assertEqual(details, [f"configuration {cid} attached", f"configuration {cid} removed"])
+
+
+class AdComputersScriptTest(unittest.TestCase):
+    """scripts/Export-PmcAdComputers.ps1: read-only, no address, no secret."""
+
+    SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "Export-PmcAdComputers.ps1"
+
+    def setUp(self) -> None:
+        self.text = self.SCRIPT.read_bytes().decode("ascii")
+
+    def test_it_never_writes_to_ad_and_reads_no_address_or_secret(self):
+        for shape in ("Set-AD", "New-AD", "Remove-AD", "Move-AD", "Disable-AD",
+                      "IPv4Address", "IPv6Address", "ms-Mcs-AdmPwd", "msLAPS",
+                      "msFVE-RecoveryInformation", "Get-Credential"):
+            self.assertNotIn(shape, self.text, shape)
+        self.assertIn("Get-ADComputer", self.text)
+
+    def test_nothing_is_written_without_apply(self):
+        self.assertLess(self.text.index("if (-not $Apply) {"), self.text.index("Export-Csv"))
+
+    def test_the_columns_are_the_ones_the_importer_reads(self):
+        from psaspine import configurations
+        for column in configurations.COLUMNS:
+            self.assertIn(f"        {column}", self.text, column)
 
 
 class AdContactsScriptTest(unittest.TestCase):

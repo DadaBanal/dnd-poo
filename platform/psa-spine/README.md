@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 332 tests
+python3 tests/test_spine.py          # 346 tests
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -125,6 +125,22 @@ checked against Zammad and HaloPSA:
   and never list a restricted board's tickets: those are read on their own
   board, where the read is audited.
 
+- **Configurations** (`/configurations`, `/configuration/<id>`, and a card on
+  every ticket, company and contact): the machines a ticket is about.
+  `scripts/Export-PmcAdComputers.ps1` reads AD's computer objects (no IP
+  address, no LAPS or BitLocker attribute, nothing written to AD) and
+  `psaspine import-computers` loads them by objectGUID. The desk owns a
+  configuration's type, contact and retirement; a re-import refreshes only
+  what AD knows.
+- **Integrations** (`/admin/integrations`, system administrator): links out
+  from a configuration or contact, as URL templates. ScreenConnect's is
+  `https://INSTANCE.screenconnect.com/Host#Access/All%20Machines//{remote_session_id}/Join`
+  (the shape its NinjaOne and Syncro integrations document). A template must
+  be HTTPS to a fixed host and name only known fields. Values are URL-encoded,
+  and a link with a missing field is drawn disabled with the reason. The
+  ScreenConnect session id is a GUID, set on the configuration page. How to
+  export them in bulk from ScreenConnect Cloud is NOT VERIFIED.
+
 Waiting statuses pause the **resolve** clock, never the respond clock. A board
 move keeps the ticket id and its clocks. A POST from another site is refused,
 on top of the `SameSite=Lax` session cookie.
@@ -153,6 +169,7 @@ Three ways in, each idempotent where it can be:
 ```bash
 python3 -m psaspine import-mail spine.db ./drop --channel helpdesk   # RFC 822 files
 python3 -m psaspine import-contacts spine.db ad-contacts.csv --company PMC
+python3 -m psaspine import-computers spine.db ad-computers.csv --company PMC
 python3 -m psaspine create-api-token spine.db --label "orthanc monitoring" --board IT_HELP
 ```
 

@@ -8,8 +8,8 @@ context, and return a Response.
 """
 from __future__ import annotations
 
-from .views import (admin, board, companies, dispatch, loop, oncall, portal, ticket,
-                    uplift)
+from .views import (admin, board, companies, configurations, dispatch, loop, oncall,
+                    portal, ticket, uplift)
 
 # (method, pattern, handler). The first pattern that matches the path wins,
 # so a literal segment must be listed before a <capture> in the same place.
@@ -24,12 +24,17 @@ ROUTES = [
     ("POST", "/ticket/<work_item_id>/update", ticket.update),
     ("POST", "/ticket/<work_item_id>/status", ticket.change_status),
     ("POST", "/ticket/<work_item_id>/note", ticket.add_note),
+    ("POST", "/ticket/<work_item_id>/config/add", configurations.attach),
+    ("POST", "/ticket/<work_item_id>/config/remove", configurations.detach),
     ("GET", "/ticket/<work_item_id>/loop", loop.form),
     ("POST", "/ticket/<work_item_id>/loop", loop.submit),
     ("GET", "/companies", companies.index),
     ("GET", "/company/<entity_id>", companies.detail),
     ("GET", "/contacts", companies.contacts_index),
     ("GET", "/contact/<contact_id>", companies.contact_detail),
+    ("GET", "/configurations", configurations.index),
+    ("GET", "/configuration/<configuration_id>", configurations.detail),
+    ("POST", "/configuration/<configuration_id>/update", configurations.update),
     ("GET", "/dispatch", dispatch.index),
     ("POST", "/dispatch/assign", dispatch.assign),
     ("GET", "/oncall", oncall.index),
@@ -44,6 +49,9 @@ ROUTES = [
     ("POST", "/admin/status/add", admin.add_status),
     ("POST", "/admin/member/add", admin.add_member),
     ("POST", "/admin/local/disable", admin.disable_local),
+    ("GET", "/admin/integrations", configurations.integrations),
+    ("POST", "/admin/integrations/add", configurations.integrations_add),
+    ("POST", "/admin/integrations/toggle", configurations.integrations_toggle),
     ("GET", "/admin/board/new", admin.new_board_form),
     ("POST", "/admin/board/new", admin.new_board_create),
     ("GET", "/admin/catalogue", admin.catalogue),

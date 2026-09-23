@@ -329,7 +329,10 @@ def detail(ctx, work_item_id):
         f"<dt>Desk ref</dt><dd>{t.esc(tk['external_ref'] or '—')}</dd>"
         f"<dt>Calendar</dt><dd>{t.esc(tk['calendar_name'] or '—')}</dd></dl></div>")
 
-    body = header + strip + f"<div class=rail>{left}<div>{fields}{time_card}{commercial}{details}</div></div>"
+    from . import configurations as cmdb_views
+    configs = cmdb_views.ticket_card(ctx, tk, can_work=can_work)
+    body = header + strip + (f"<div class=rail>{left}<div>{fields}{configs}{time_card}"
+                             f"{commercial}{details}</div></div>")
     return Response(body=t.page(work_item_id, body, user=ctx.user, active="board"))
 
 

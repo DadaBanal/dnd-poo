@@ -170,6 +170,11 @@ table.edit input,table.edit select{padding:5px 7px;font-size:13px}
 .dispatch-route select{width:auto;min-width:130px}
 em{font-style:italic}
 @media(max-width:900px){.tiles{grid-template-columns:repeat(2,1fr)}.slastrip{grid-template-columns:1fr}.grid2{grid-template-columns:1fr}}
+.linkrow{display:inline-flex;gap:6px;flex-wrap:wrap;vertical-align:middle}
+.linkrow .btn{padding:2px 8px;font-size:12px}
+ul.plain{list-style:none;padding:0;margin:0}
+ul.plain li{padding:6px 0;border-bottom:1px solid var(--line)}
+button.small{padding:0 8px;line-height:20px}
 """
 
 

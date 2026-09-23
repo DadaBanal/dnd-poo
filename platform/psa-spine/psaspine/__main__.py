@@ -87,6 +87,13 @@ def main(argv: list[str] | None = None) -> int:
     pac.add_argument("--company", required=True, dest="entity_id",
                      help="the company these people belong to, e.g. PMC")
 
+    pcf = sub.add_parser("import-computers",
+                         help="upsert configurations under one company from an AD "
+                              "computers export (scripts/Export-PmcAdComputers.ps1)")
+    pcf.add_argument("database")
+    pcf.add_argument("export_csv")
+    pcf.add_argument("--company", required=True, dest="entity_id")
+
     pu = sub.add_parser("setup-board",
                         help="give a board the starter statuses, calendar and SLA "
                              "targets (adds what is missing, never overwrites)")
@@ -177,6 +184,26 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{c['rows']} rows: {c['new']} new, {c['updated']} updated, "
               f"{c['unchanged']} unchanged, {c['skipped']} skipped "
               f"({c['deactivated']} disabled in AD, {c['reactivated']} re-enabled)")
+        for reason in c["reasons"]:
+            print("  skipped " + reason, file=sys.stderr)
+        if c["new"] + c["updated"] + c["unchanged"] + c["skipped"] != c["rows"]:
+            conn.rollback()
+            print("REFUSED: a row was neither placed nor counted", file=sys.stderr)
+            return 1
+        conn.commit()
+        return 0
+
+    if a.cmd == "import-computers":
+        from . import configurations
+        try:
+            c = configurations.import_ad_computers(conn, a.export_csv, entity_id=a.entity_id,
+                                                   at=datetime.now())
+        except (LookupError, ValueError) as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        print(f"{c['rows']} rows: {c['new']} new, {c['updated']} updated, "
+              f"{c['unchanged']} unchanged, {c['skipped']} skipped "
+              f"({c['deactivated']} disabled in AD)")
         for reason in c["reasons"]:
             print("  skipped " + reason, file=sys.stderr)
         if c["new"] + c["updated"] + c["unchanged"] + c["skipped"] != c["rows"]:

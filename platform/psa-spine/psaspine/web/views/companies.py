@@ -127,12 +127,14 @@ def index(ctx):
         "<div class=card><div class=tablewrap><table><thead><tr><th>Code</th><th>Company</th>"
         "<th>Agreement</th><th>Contacts</th><th>Open tickets</th></tr></thead>"
         f"<tbody>{body_rows}</tbody></table></div></div>"
-        "<p><a href='/contacts'>Search all contacts →</a></p>")
+        "<p><a href='/contacts'>Search all contacts →</a> · "
+        "<a href='/configurations'>All configurations →</a></p>")
     return Response(body=t.page("Companies", body, user=ctx.user, active="companies"))
 
 
 def detail(ctx, entity_id: str):
     from .. import HttpError, Response
+    from . import configurations as cmdb_views
     boards = _fulfiller(ctx)
     company = ctx.conn.execute("SELECT * FROM entity WHERE entity_id = ?", (entity_id,)).fetchone()
     if company is None:
@@ -149,7 +151,10 @@ def detail(ctx, entity_id: str):
         "<div class=card><h3>Contacts</h3>"
         f"<form method=get class=row style='margin-bottom:10px'><div><input name=q value='{t.esc(q)}' "
         "placeholder='name, email or department'></div><div style='flex:0 0 auto'>"
-        "<button type=submit>Search</button></div></form>" + _contact_table(people) + "</div>")
+        "<button type=submit>Search</button></div></form>" + _contact_table(people) + "</div>"
+        "<div class=card><h3>Configurations</h3>"
+        + cmdb_views.table(ctx, cmdb_views.search(ctx, entity_id=entity_id), with_company=False)
+        + "</div>")
     return Response(body=t.page(company["name"], body, user=ctx.user, active="companies"))
 
 
@@ -173,6 +178,7 @@ def contacts_index(ctx):
 
 def contact_detail(ctx, contact_id: str):
     from .. import HttpError, Response
+    from . import configurations as cmdb_views
     boards = _fulfiller(ctx)
     c = ctx.conn.execute(
         "SELECT c.*, e.name AS entity_name FROM contact c JOIN entity e"
@@ -193,6 +199,10 @@ def contact_detail(ctx, contact_id: str):
         f"<p class=sub><a href='/company/{t.esc(c['entity_id'])}'>{t.esc(c['entity_name'])}</a>"
         + ("" if c["inactive"] else f" · <a href='{t.esc(new_link)}'>+ New ticket for this contact</a>")
         + "</p>"
-        f"<div class=rail><div><div class=card><h3>Open tickets</h3>{table}{_hidden_note(hidden)}</div></div>"
+        f"<p>{cmdb_views.links_html(ctx, 'CONTACT', c)}</p>"
+        f"<div class=rail><div><div class=card><h3>Open tickets</h3>{table}{_hidden_note(hidden)}</div>"
+        "<div class=card><h3>Configurations</h3>"
+        + cmdb_views.table(ctx, cmdb_views.search(ctx, contact_id=contact_id), with_company=False)
+        + "</div></div>"
         f"<div><div class=card><h3>Contact</h3><dl class=kv>{kv}</dl></div></div></div>")
     return Response(body=t.page(c["display_name"], body, user=ctx.user, active="companies"))

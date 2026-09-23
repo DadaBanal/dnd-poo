@@ -81,6 +81,11 @@ def index(ctx):
                      "<thead><tr><th>Board</th><th>Setup</th><th>Tickets</th><th></th></tr></thead>"
                      "<tbody>" + "".join(rows) + "</tbody></table></div></div>")
     if ctx.user.is_sysadmin:
+        n_links = ctx.conn.execute("SELECT COUNT(*) FROM integration_link WHERE inactive = 0").fetchone()[0]
+        cards.append(
+            "<div class=card><h3>Integrations</h3><p class=sub>Links out from configurations and "
+            "contacts to the tools the desk does not replace: ScreenConnect first.</p>"
+            f"<a class='btn ghost' href='/admin/integrations'>Integrations ({n_links} on)</a></div>")
         cards.append(_local_accounts_card(ctx))
         cards.append(_config_overview_card(ctx))
     if not cards:
