@@ -41,7 +41,8 @@ def _load(ctx, work_item_id):
         "SELECT t.*, w.name AS summary, w.contract_basis, w.variation_id,"
         "       w.entity_id, e.name AS entity, s.name AS status_name,"
         "       s.escalation_status, b.display_name AS board_name,"
-        "       b.closed_loop_required, b.calendar_id, c.name AS calendar_name"
+        "       b.closed_loop_required, b.calendar_id, c.name AS calendar_name,"
+        "       b.kind AS board_kind"
         "  FROM ticket t"
         "  JOIN work_item w ON w.work_item_id = t.work_item_id"
         "  LEFT JOIN entity e ON e.entity_id = w.entity_id"
@@ -129,13 +130,26 @@ def _catalogue_select(conn, board_id, selected, *, disabled="") -> str:
     for type_, items in groups.items():
         opts.append(f"<optgroup label='{t.esc(type_)}'>")
         for c in items:
-            kind = "incident" if c["kind"] == "FAULT" else "request"
             opts.append(f"<option value='{t.esc(c['catalogue_item_id'])}'"
                         f"{' selected' if c['catalogue_item_id'] == selected else ''}>"
-                        f"{t.esc(c['subtype'])} › {t.esc(c['item'])} ({kind})</option>")
+                        f"{t.esc(c['subtype'])} › {t.esc(c['item'])}</option>")
         opts.append("</optgroup>")
-    return (f"<label>Type › Subtype › Item</label><select name=catalogue_item_id{disabled}>"
+    return (f"<label>Subtype › Item</label><select name=catalogue_item_id{disabled}>"
             + "".join(opts) + "</select>")
+
+
+def _type_select(conn, board_id: str | None, selected: str | None, *, disabled: str = "",
+                 blank: str | None = None) -> str:
+    """The board's Types (ConnectWise's Types tab): Incident, Request, Problem,
+    Event on a service board. With no board, every Type."""
+    from ... import itil
+    rows = [r["record_type"] for r in itil.boards_types(conn, board_id)] if board_id else []
+    types = rows or list(itil.RECORD_TYPES)
+    if selected and selected not in types:
+        types.insert(0, selected)
+    pairs = ([("", blank)] if blank else []) + [(x, itil.LABEL[x]) for x in types]
+    return (f"<label>Type</label><select name=record_type{disabled}>"
+            + _options(pairs, selected or "") + "</select>")
 
 
 def _options(pairs, selected) -> str:
@@ -159,15 +173,16 @@ def detail(ctx, work_item_id):
         why = f"computed: {who.lower()} × patient waiting: {wait.lower()}"
     else:
         why = f"set by {tk['priority_source'].replace('_', ' ').lower()}"
-    klass = ""
+    from ... import itil
+    parts = [itil.LABEL[tk["record_type"]]] if tk["record_type"] else ["Type not set"]
     if tk["catalogue_item_id"]:
         r = ctx.conn.execute(
-            "SELECT f.display_name AS ty, c.display_name AS st, a.display_name AS it"
+            "SELECT c.display_name AS st, a.display_name AS it"
             "  FROM catalogue_item i JOIN service_component c ON c.component_id = i.component_id"
-            "  JOIN service_family f ON f.family_id = c.family_id"
             "  JOIN service_action a ON a.action_id = i.action_id"
             " WHERE i.catalogue_item_id = ?", (tk["catalogue_item_id"],)).fetchone()
-        klass = f"{r['ty']} › {r['st']} › {r['it']}" if r else tk["catalogue_item_id"]
+        parts += [r["st"], r["it"]] if r else [tk["catalogue_item_id"]]
+    klass = " › ".join(parts)
     can_work = common.may_access_board(ctx, tk["board_id"], need="WORK")
     buttons = ""
     if can_work and tk["closed_loop_required"]:
@@ -306,6 +321,8 @@ def detail(ctx, work_item_id):
         f"<label>Contact</label><input name=requested_by list=contacts-ticket "
         f"value='{t.esc(tk['requested_by'] or '')}'{dis}>"
         + _contact_list(ctx.conn, "contacts-ticket", tk["entity_id"]) + person_line
+        + _type_select(ctx.conn, tk["board_id"], tk["record_type"], disabled=dis,
+                       blank=None if tk["record_type"] else "(not set)")
         + _catalogue_select(ctx.conn, tk["board_id"], tk["catalogue_item_id"], disabled=dis) +
         f"<label>Who is affected</label><select name=impact{dis}>{_options(WHO_IS_AFFECTED, tk['impact'])}</select>"
         f"<label>Is a patient waiting</label><select name=urgency{dis}>{_options(PATIENT_WAITING, tk['urgency'])}</select>"
@@ -323,7 +340,7 @@ def detail(ctx, work_item_id):
     commercial = (
         "<div class=card><h3>Commercial basis</h3><dl class=kv>"
         f"<dt>Contract basis</dt><dd>{t.esc(tk['contract_basis'])}</dd>"
-        f"<dt>Path</dt><dd>{t.esc(tk['path'])}</dd>"
+        f"<dt>Commercial path</dt><dd>{t.esc(tk['path'])}</dd>"
         f"<dt>Variation</dt><dd>{t.esc(tk['variation_id'] or '—')}</dd></dl></div>")
     details = (
         "<div class=card><h3>Details</h3><dl class=kv>"
@@ -335,6 +352,7 @@ def detail(ctx, work_item_id):
 
     from . import configurations as cmdb_views
     configs = cmdb_views.ticket_card(ctx, tk, can_work=can_work)
+    configs = _change_card(ctx, tk, can_work=can_work) + _links_card(ctx, tk, can_work=can_work) + configs
     body = header + strip + (f"<div class=rail>{left}<div>{fields}{configs}{time_card}"
                              f"{commercial}{details}</div></div>")
     return Response(body=t.page(work_item_id, body, user=ctx.user, active="board"))
@@ -390,18 +408,21 @@ def update(ctx, work_item_id):
     changed = []
     try:
         to_board = f.get("board_id", tk["board_id"])
+        want_type = f.get("record_type") if "record_type" in f else None
         if to_board and to_board != tk["board_id"]:
             common.require_board(ctx, to_board, need="WORK")
             engine.move(ctx.conn, work_item_id, to_board, at=ctx.now, actor=ctx.user.id,
-                        reason="moved on the ticket")
+                        reason="moved on the ticket", record_type=want_type or None)
             changed.append(f"moved to {to_board}")
+            want_type = None                      # settled by the move
         impact = f.get("impact") if f.get("impact") in dict(WHO_IS_AFFECTED) else None
         urgency = f.get("urgency") if f.get("urgency") in dict(PATIENT_WAITING) else None
         changed += engine.update_fields(
             ctx.conn, work_item_id, at=ctx.now, actor=ctx.user.id,
             owner=f.get("owner"), entity_id=f.get("entity_id") or None,
             requested_by=f.get("requested_by"), impact=impact, urgency=urgency,
-            catalogue_item_id=f.get("catalogue_item_id") if "catalogue_item_id" in f else None)
+            catalogue_item_id=f.get("catalogue_item_id") if "catalogue_item_id" in f else None,
+            record_type=want_type, **change_fields_from(f))
         to_status = f.get("to_status", "")
         now_status = ctx.conn.execute("SELECT board_status_id FROM ticket WHERE work_item_id = ?",
                                       (work_item_id,)).fetchone()[0]
@@ -452,6 +473,7 @@ def new_form(ctx, *, error: str = "", values: dict | None = None):
         f"<div><label>Contact</label><input name=requested_by list=contacts-new value='{t.esc(v.get('requested_by', ''))}' placeholder='start typing a name, or an email'>"
         + _contact_list(ctx.conn, "contacts-new") + "</div>"
         f"<div style='grid-column:1/-1'><label>Summary</label><input name=summary required value='{t.esc(v.get('summary', ''))}' placeholder='What is wrong, in one line'></div>"
+        + f"<div>{_type_select(ctx.conn, None, v.get('record_type', ''), blank='(the board default)')}</div><div></div>"
         + (f"<div style='grid-column:1/-1'>{_catalogue_select(ctx.conn, None, v.get('catalogue_item_id', ''))}</div>"
            if _catalogue_select(ctx.conn, None, "") else "") +
         "<div class=radiorow><label style='color:var(--muted);font-weight:600'>Who is affected?</label>"
@@ -494,7 +516,8 @@ def new_create(ctx):
             requested_by=f.get("requested_by", "").strip() or None, at=ctx.now,
             actor=ctx.user.id, description=description or None, entity_id=entity_id,
             owner=f.get("owner", "").strip() or None, source=source, event_kind="OPENED",
-            catalogue_item_id=f.get("catalogue_item_id") or None)
+            catalogue_item_id=f.get("catalogue_item_id") or None,
+            record_type=f.get("record_type") or None)
         for code, severity, detail in phi.scan_fields({"summary": summary,
                                                        "description": description}):
             ctx.conn.execute(
@@ -505,3 +528,158 @@ def new_create(ctx):
         ctx.conn.rollback()
         return new_form(ctx, error=f"Not created: {exc}", values=f)
     return redirect(f"/ticket/{wid}?msg=" + urllib.parse.quote(f"Created {wid}"))
+
+
+# ------------------------------------------------------ change and links
+
+AUTHORITY_LABEL = {"CHANGE_AUTHORITY": "Change authority", "CAB": "CAB",
+                   "ECAB": "Emergency CAB", "CLIENT": "Client (PMC)"}
+
+
+def _change_card(ctx, tk, *, can_work: bool) -> str:
+    """ITIL change enablement on a Change: its type, risk, window and backout
+    plan, the authorisation record, and (for a change authority who is not the
+    owner) the decision form."""
+    from ... import itil
+    if tk["record_type"] != "CHANGE":
+        return ""
+    wid = t.esc(tk["work_item_id"])
+    dis = "" if can_work else " disabled"
+    decisions = ctx.conn.execute("SELECT * FROM change_approval WHERE work_item_id = ?"
+                                 " ORDER BY approval_id", (tk["work_item_id"],)).fetchall()
+    kind = tk["change_type"] or "NORMAL"
+    last = decisions[-1]["decision"] if decisions else None
+    state = {"STANDARD": "Pre-authorised (standard change)",
+             "NORMAL": {"APPROVED": "Approved", "DECLINED": "Declined"}.get(
+                 last, "Needs approval before Approved / Scheduled / Implementing"),
+             "EMERGENCY": {"APPROVED": "Authorised after the fact"}.get(
+                 last, "Going ahead; authorise afterwards before it closes")}[kind]
+    log = "".join(
+        f"<li><b>{t.esc(d['decision'].title())}</b> by {t.esc(d['decided_by'])} "
+        f"({t.esc(AUTHORITY_LABEL.get(d['authority'], d['authority']))}) "
+        f"<span class=muted>{t.esc(d['decided_at'])}</span>"
+        + (f"<br><span class=muted>{t.esc(d['comment'])}</span>" if d["comment"] else "")
+        + "</li>" for d in decisions) or "<li class=muted>No decision recorded.</li>"
+    decide = ""
+    owner = (tk["owner"] or "").lower()
+    if kind != "STANDARD" and itil.may_authorise(ctx.conn, tk["board_id"], ctx.user.id) \
+            and owner != (ctx.user.id or "").lower():
+        decide = (
+            f"<form method=post action='/ticket/{wid}/change/decide' class=fields "
+            "style='margin-top:10px'><label>Record a decision</label>"
+            "<select name=authority>" + _options(list(AUTHORITY_LABEL.items()), "CAB") +
+            "</select><input name=comment placeholder='Reason or conditions (optional)'>"
+            "<div class=row style='margin-top:8px'><div style='flex:0 0 auto'>"
+            "<button type=submit name=decision value=APPROVED>Approve</button></div>"
+            "<div style='flex:0 0 auto'><button class=ghost type=submit name=decision "
+            "value=DECLINED>Decline</button></div></div></form>")
+    elif kind != "STANDARD":
+        decide = ("<p class=why>A change is authorised by the board's administrator or "
+                  "Service Manager, never by its owner.</p>")
+    return (
+        "<div class=card><h3>Change</h3>"
+        f"<p><span class=pill>{t.esc(state)}</span></p>"
+        f"<form method=post action='/ticket/{wid}/update' class=fields>"
+        f"<input type=hidden name=board_id value='{t.esc(tk['board_id'])}'>"
+        f"<label>Change type</label><select name=change_type{dis}>"
+        + _options([("STANDARD", "Standard (pre-authorised)"), ("NORMAL", "Normal"),
+                    ("EMERGENCY", "Emergency")], kind) + "</select>"
+        f"<label>Risk</label><select name=change_risk{dis}>"
+        + _options([("", "(not assessed)"), ("LOW", "Low"), ("MEDIUM", "Medium"),
+                    ("HIGH", "High")], tk["change_risk"] or "") + "</select>"
+        f"<label>Window starts</label><input name=planned_start{dis} placeholder='2026-09-26 22:00' "
+        f"value='{t.esc(tk['planned_start'] or '')}'>"
+        f"<label>Window ends</label><input name=planned_end{dis} placeholder='2026-09-26 23:30' "
+        f"value='{t.esc(tk['planned_end'] or '')}'>"
+        f"<label>Backout plan</label><textarea name=backout_plan{dis} "
+        "placeholder='How it is undone if it fails'>"
+        f"{t.esc(tk['backout_plan'] or '')}</textarea>"
+        + ("<div style='margin-top:10px'><button type=submit>Save change details</button></div>"
+           if can_work else "") + "</form>"
+        f"<h3 style='margin-top:14px'>Authorisation</h3><ul class=plain>{log}</ul>{decide}</div>")
+
+
+def _links_card(ctx, tk, *, can_work: bool) -> str:
+    """Incident -> problem -> change. A linked ticket on a board this user cannot
+    see is counted, never named."""
+    from ... import itil
+    wid = t.esc(tk["work_item_id"])
+    mine = common.board_ids_for(ctx)
+    items, hidden = [], 0
+    for l in itil.links_of(ctx.conn, tk["work_item_id"]):
+        if l["board_id"] not in mine or common.is_restricted(ctx, l["board_id"]):
+            hidden += 1
+            continue
+        remove = ""
+        if can_work and l["outgoing"]:
+            remove = (f"<form method=post action='/ticket/{wid}/unlink' style='display:inline'>"
+                      f"<input type=hidden name=linked_id value='{t.esc(l['other'])}'>"
+                      "<button class='ghost small' type=submit title='Remove link'>×</button></form>")
+        items.append(f"<li>{t.esc(l['reads'].capitalize())} "
+                     f"<a href='/ticket/{t.esc(l['other'])}'>{t.esc(l['other'])}</a> "
+                     f"<span class=muted>{t.esc(itil.LABEL.get(l['record_type'], ''))} · "
+                     f"{t.esc(l['name'])}</span> {remove}</li>")
+    add = ""
+    if can_work:
+        rels = [("CAUSED_BY", "Caused by problem"), ("FIXED_BY", "Fixed by change"),
+                ("RELATED", "Related to")]
+        add = (f"<form method=post action='/ticket/{wid}/link' class=row style='margin-top:8px'>"
+               f"<div><select name=relation>{_options(rels, 'CAUSED_BY')}</select></div>"
+               "<div><input name=linked_id placeholder='PMC-000123' required></div>"
+               "<div style='flex:0 0 auto'><button class=ghost type=submit>Link</button></div></form>")
+    body = (f"<ul class=plain>{''.join(items)}</ul>" if items else "<div class=muted>No links.</div>")
+    if hidden:
+        body += f"<p class=why>{hidden} more on boards you cannot see.</p>"
+    return f"<div class=card><h3>Links</h3>{body}{add}</div>"
+
+
+def change_fields_from(f) -> dict:
+    return {k: f.get(k) for k in ("change_type", "change_risk", "planned_start",
+                                  "planned_end", "backout_plan") if k in f}
+
+
+def decide_change(ctx, work_item_id):
+    from ... import itil
+    tk = _load(ctx, work_item_id)
+    f = ctx.request.form()
+    try:
+        itil.decide(ctx.conn, work_item_id, decision=f.get("decision", ""),
+                    authority=f.get("authority", ""), actor=ctx.user.id, at=ctx.now,
+                    comment=f.get("comment"))
+        ctx.conn.commit()
+    except (ValueError, PermissionError, LookupError) as exc:
+        ctx.conn.rollback()
+        return _back(work_item_id, err=f"Not recorded: {exc}")
+    return _back(work_item_id, msg=f"Change {f.get('decision', '').lower()}")
+
+
+def link(ctx, work_item_id):
+    from ... import itil
+    tk = _load(ctx, work_item_id)
+    common.require_board(ctx, tk["board_id"], need="WORK")
+    f = ctx.request.form()
+    other = f.get("linked_id", "").strip().upper()
+    target = ctx.conn.execute("SELECT board_id FROM ticket WHERE work_item_id = ?",
+                              (other,)).fetchone()
+    # Linking needs sight of the other ticket too: no linking blind into a
+    # board, restricted or not, that this user is not on.
+    if target is None or target["board_id"] not in common.board_ids_for(ctx):
+        return _back(work_item_id, err=f"Not linked: no ticket {other} on your boards")
+    try:
+        itil.link(ctx.conn, work_item_id, other, f.get("relation", ""), actor=ctx.user.id,
+                  at=ctx.now)
+        ctx.conn.commit()
+    except (ValueError, LookupError) as exc:
+        ctx.conn.rollback()
+        return _back(work_item_id, err=f"Not linked: {exc}")
+    return _back(work_item_id, msg=f"Linked to {other}")
+
+
+def unlink(ctx, work_item_id):
+    from ... import itil
+    tk = _load(ctx, work_item_id)
+    common.require_board(ctx, tk["board_id"], need="WORK")
+    itil.unlink(ctx.conn, work_item_id, ctx.request.form().get("linked_id", ""),
+                actor=ctx.user.id, at=ctx.now)
+    ctx.conn.commit()
+    return _back(work_item_id, msg="Link removed")

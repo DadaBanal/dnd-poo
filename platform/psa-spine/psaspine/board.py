@@ -364,7 +364,7 @@ def admit(conn: sqlite3.Connection, work_item_id: str, *, at: datetime) -> dict:
 
 def move(conn: sqlite3.Connection, work_item_id: str, to_board_id: str, *,
          at: datetime, actor: str, owner: str | None = None,
-         reason: str = "moved") -> dict:
+         reason: str = "moved", record_type: str | None = None) -> dict:
     """Move a ticket to another board. One ticket, one id, its clocks intact.
 
     ConnectWise documents that Auto Assign does not follow a ticket moved from
@@ -383,7 +383,22 @@ def move(conn: sqlite3.Connection, work_item_id: str, to_board_id: str, *,
     if conn.execute("SELECT 1 FROM board WHERE board_id = ?",
                     (to_board_id,)).fetchone() is None:
         raise LookupError(f"no board {to_board_id!r}")
-    if not itil.accepts(conn, to_board_id, ticket["record_type"]):
+    if record_type and record_type != ticket["record_type"]:
+        # Moving to a board of another kind usually means another Type too
+        # (an incident found to need a change): both in one step, checked
+        # against the destination.
+        if not itil.accepts(conn, to_board_id, record_type):
+            raise NotOnThisBoard(f"{to_board_id} does not take a "
+                                 f"{itil.LABEL.get(record_type, record_type).lower()}")
+        basis = conn.execute("SELECT contract_basis FROM work_item WHERE work_item_id = ?",
+                             (work_item_id,)).fetchone()[0]
+        conn.execute("UPDATE ticket SET record_type = ?, path = ?,"
+                     " change_type = CASE WHEN ? = 'CHANGE' THEN COALESCE(change_type, 'NORMAL')"
+                     " ELSE change_type END WHERE work_item_id = ?",
+                     (record_type, itil.derive_path(record_type, basis), record_type,
+                      work_item_id))
+        reason += f"; Type {itil.LABEL.get(ticket['record_type'], '-')} -> {itil.LABEL[record_type]}"
+    elif not itil.accepts(conn, to_board_id, ticket["record_type"]):
         raise NotOnThisBoard(
             f"{to_board_id} does not take a {itil.LABEL[ticket['record_type']].lower()}. "
             "Change the ticket's record type first, or move it to a board that takes it.")

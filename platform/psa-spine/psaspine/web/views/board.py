@@ -19,6 +19,7 @@ from __future__ import annotations
 import urllib.parse
 
 from ... import board as engine
+from ... import itil
 from .. import templates as t
 from . import common
 
@@ -48,9 +49,10 @@ def _load(ctx, boards):
         "                  WHERE ct.contact_id = t.contact_id), t.requested_by) AS requested_by,"
         "       t.source_ref, t.intake_source, w.name AS summary, e.name AS entity,"
         "       e.entity_id, s.name AS status_name,"
-        "       (SELECT f.display_name || ' › ' || c.display_name FROM catalogue_item i"
+        "       t.record_type,"
+        "       (SELECT c.display_name || ' › ' || a.display_name FROM catalogue_item i"
         "          JOIN service_component c ON c.component_id = i.component_id"
-        "          JOIN service_family f ON f.family_id = c.family_id"
+        "          JOIN service_action a ON a.action_id = i.action_id"
         "         WHERE i.catalogue_item_id = t.catalogue_item_id) AS klass,"
         "       (SELECT CASE e2.note_flag WHEN 'INTERNAL' THEN 'Internal: ' ELSE '' END"
         "               || e2.detail FROM ticket_event e2"
@@ -71,7 +73,7 @@ def index(ctx):
                               "member of any board yet. An administrator adds you "
                               "on the Setup page.</div></div>")
     q = ctx.request.query
-    f = {k: q.get(k, "") for k in ("board", "view", "owner", "pri", "src", "q",
+    f = {k: q.get(k, "") for k in ("board", "view", "owner", "pri", "src", "type", "q",
                                    "tile", "sort", "dir", "msg")}
     f["view"] = f["view"] or "open"
     f["sort"] = f["sort"] or "sla"
@@ -110,6 +112,10 @@ def index(ctx):
         shown = [x for x in shown if x["due"]]
     if f["pri"] in PRIORITY_ORDER:
         shown = [x for x in shown if x["r"]["priority"] == f["pri"]]
+    if f["type"] in itil.RECORD_TYPES:
+        shown = [x for x in shown if x["r"]["record_type"] == f["type"]]
+    elif f["type"] == "none":
+        shown = [x for x in shown if not x["r"]["record_type"]]
     if f["src"] in SOURCES:
         shown = [x for x in shown if x["r"]["intake_source"] == f["src"]]
     if f["q"].strip():
@@ -173,7 +179,7 @@ def _tiles(f, counts) -> str:
     out = []
     for key, label, cls in TILES:
         on = " on" if f["tile"] == key and (key or not any(
-            f[k] for k in ("tile", "owner", "pri", "src", "q"))) else ""
+            f[k] for k in ("tile", "owner", "pri", "src", "type", "q"))) else ""
         out.append(f"<a class='tile {cls}{on}' href='{t.esc(_link(f, tile=key, view='open'))}'>"
                    f"<div class=n>{counts[key]}</div><div class=l>{t.esc(label)}</div></a>")
     return "<div class=tiles>" + "".join(out) + "</div>"
@@ -200,6 +206,9 @@ def _filters(ctx, boards, f) -> str:
         + _options([("", "Anyone"), ("me", "Me"), ("none", "Unassigned")], f["owner"]) +
         "</select></div><div><label>Priority</label><select name=pri>"
         + _options([("", "Any")] + [(p, p) for p in PRIORITY_ORDER], f["pri"]) +
+        "</select></div><div><label>Type</label><select name=type>"
+        + _options([("", "Any")] + [(k, v) for k, v in itil.LABEL.items()]
+                   + [("none", "Not set")], f["type"]) +
         "</select></div><div><label>Source</label><select name=src>"
         + _options([("", "Any")] + [(s, s.replace("_", "-").title()) for s in SOURCES], f["src"]) +
         "</select></div>"
@@ -231,7 +240,9 @@ def _table(ctx, boards, shown, f) -> str:
             f"<td><input type=checkbox name=ids value='{t.esc(wid)}' form=bulk style='width:auto'></td>"
             f"<td><a href='/ticket/{t.esc(wid)}'>{t.esc(wid)}</a></td>"
             f"<td class=sum><a href='/ticket/{t.esc(wid)}' style='color:inherit'><b>{t.esc(r['summary'])}</b></a>"
-            + (f"<div class=last><span class=pill>{t.esc(r['klass'])}</span></div>" if r["klass"] else "")
+            + "<div class=last><span class=pill>" + t.esc(" › ".join(
+                [itil.LABEL.get(r["record_type"], "Type not set")] + ([r["klass"]] if r["klass"] else [])))
+            + "</span></div>"
             + (f"<div class=last>{t.esc(last)}</div>" if last else "") + "</td>"
             f"<td title='{t.esc(r['entity'] or '')}'>{t.esc(r['entity_id'] or '—')}</td>"
             f"<td class=muted>{t.esc(r['requested_by'] or '—')}</td>"

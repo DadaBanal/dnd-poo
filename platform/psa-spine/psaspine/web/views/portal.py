@@ -25,7 +25,7 @@ Two things it does that the fulfiller views deliberately do not:
 """
 from __future__ import annotations
 
-from ... import numbering, phi, tickets
+from ... import itil, numbering, phi, tickets
 from .. import templates as t
 
 # What a requester is allowed to see about their own ticket. Deliberately not
@@ -125,6 +125,8 @@ def _raise_form(error: str = "", notice: str = "") -> str:
             "<label>What do you need? "
             "<input name='summary' required maxlength='200' "
             "placeholder='Printer in ward 3 is offline'></label>"
+            + _radio_group("kind", "Is something broken, or do you need something?",
+                           KIND_CHOICES, required=False)
             + _radio_group("impact", "Who is affected?", WHO_IS_AFFECTED) +
             _radio_group("urgency", "Is a patient waiting?", PATIENT_WAITING) +
             "<label>Anything that would help us"
@@ -134,14 +136,19 @@ def _raise_form(error: str = "", notice: str = "") -> str:
             "<div><button type='submit'>Send it</button></div></form></div>")
 
 
-def _radio_group(name: str, legend: str, choices) -> str:
+# The requester never sees ITIL's words; the desk files the answer as the Type.
+KIND_CHOICES = (("INCIDENT", "Something is broken or not working"),
+                ("SERVICE_REQUEST", "I need something (access, a new user, a move)"))
+
+
+def _radio_group(name: str, legend: str, choices, *, required: bool = True) -> str:
     """One required question. `required` on the first radio makes the browser
     insist on an answer; the server insists again, because a browser is not a
     control."""
     opts = "".join(
         f"<label style='font-weight:400;color:var(--ink)'>"
         f"<input type='radio' name='{name}' value='{code}' style='width:auto'"
-        f"{' required' if i == 0 else ''}> {t.esc(text)}</label>"
+        f"{' required' if i == 0 and required else ''}> {t.esc(text)}</label>"
         for i, (code, text) in enumerate(choices))
     return (f"<fieldset style='border:none;padding:0;margin:0'>"
             f"<legend style='font-size:13px;font-weight:600;color:var(--muted)'>"
@@ -228,7 +235,9 @@ def create(ctx):
     ticket_id = tickets.open_ticket(
         ctx.conn, board_id=board["board_id"], summary=summary, impact=impact,
         urgency=urgency, requested_by=requester, description=description or None,
-        at=ctx.now, source="PORTAL")
+        at=ctx.now, source="PORTAL",
+        record_type=itil.fit(ctx.conn, board["board_id"], form.get("kind")
+                             if form.get("kind") in dict(KIND_CHOICES) else None))
 
     # §6.1: flagged, counted, and the requester is told -- not refused. Refusing
     # sends the same identifier to the telephone, where nothing records it.

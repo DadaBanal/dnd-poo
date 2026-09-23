@@ -1684,8 +1684,11 @@ END;
 
 -- --------------------------------------------------------------------------
 -- board_record_type   (from schema/022_record_type.sql)
--- Which record types a board takes. A board with no rows takes every type, so a
--- board set up before this migration behaves as it did.
+-- The board's Types: ConnectWise's Types tab. On a service board they are
+-- Incident, Request, Problem and Event, the four of ConnectWise's ITIL example
+-- and Dada's column A, and a ticket reads Type > Subtype > Item (Incident >
+-- Printers > Fix). A board with no rows takes every Type, so a board set up
+-- before this migration behaves as it did. ticket.record_type holds the Type.
 IF OBJECT_ID(N'psa.[board_record_type]', N'U') IS NULL
 BEGIN
 CREATE TABLE psa.[board_record_type] (
@@ -1836,6 +1839,15 @@ ALTER TABLE psa.[ticket] ADD [record_type] NVARCHAR(32) NULL CONSTRAINT [CK_tick
 -- (FAULT -> INCIDENT, REQUEST -> SERVICE_REQUEST).
 IF COL_LENGTH(N'psa.[catalogue_item]', N'record_type') IS NULL
 ALTER TABLE psa.[catalogue_item] ADD [record_type] NVARCHAR(32) NULL CONSTRAINT [CK_catalogue_item_record_type_01] CHECK (record_type IN ('INCIDENT', 'SERVICE_REQUEST', 'PROBLEM', 'EVENT', 'CHANGE', 'PROJECT'));
+
+-- The board's kind (Dada, 23 Sep 2026: "those are board types"). A SERVICE board
+-- is the front door for incidents, requests, problems and events; a CHANGE board
+-- runs the change lifecycle and its approval gate; a PROJECT board runs projects
+-- and no SLA clocks (ConnectWise's projectFlag: "SLA timers do not run on project
+-- tickets", VERIFIED, docs.connectwise.com/ConnectWise_Documentation/090/020/140/
+-- 010/020). NULL reads as SERVICE, so every board made before this is one.
+IF COL_LENGTH(N'psa.[board]', N'kind') IS NULL
+ALTER TABLE psa.[board] ADD [kind] NVARCHAR(32) NULL CONSTRAINT [CK_board_kind_01] CHECK (kind IN ('SERVICE', 'CHANGE', 'PROJECT'));
 
 -- ------------------------------------------------------------ change enablement
 --

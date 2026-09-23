@@ -35,7 +35,7 @@ import secrets
 import sqlite3
 from datetime import datetime
 
-from .. import db, numbering, phi, tickets
+from .. import db, itil, numbering, phi, tickets
 
 TOKEN_PREFIX = "psa_"
 OPEN_STATES = ("NEW", "TRIAGED", "IN_PROGRESS", "WAITING_CLIENT", "WAITING_VENDOR")
@@ -227,7 +227,9 @@ def _create(conn, token, request, *, now: datetime):
 
     ticket_id = tickets.open_ticket(
         conn, board_id=board_id, summary=summary, impact=impact, urgency=urgency,
-        requested_by=actor, description=description or None, at=now, source="API")
+        requested_by=actor, description=description or None, at=now, source="API",
+        # A machine raised it: ITIL's Event, where the board takes Events.
+        record_type=itil.fit(conn, board_id, "EVENT"))
     row = conn.execute("SELECT priority, priority_source FROM ticket"
                        " WHERE work_item_id = ?", (ticket_id,)).fetchone()
     priority, source = row["priority"], row["priority_source"]

@@ -42,8 +42,20 @@ ALTER TABLE ticket ADD COLUMN record_type TEXT
 ALTER TABLE catalogue_item ADD COLUMN record_type TEXT
   CHECK (record_type IN ('INCIDENT', 'SERVICE_REQUEST', 'PROBLEM', 'EVENT', 'CHANGE', 'PROJECT'));
 
--- Which record types a board takes. A board with no rows takes every type, so a
--- board set up before this migration behaves as it did.
+-- The board's kind (Dada, 23 Sep 2026: "those are board types"). A SERVICE board
+-- is the front door for incidents, requests, problems and events; a CHANGE board
+-- runs the change lifecycle and its approval gate; a PROJECT board runs projects
+-- and no SLA clocks (ConnectWise's projectFlag: "SLA timers do not run on project
+-- tickets", VERIFIED, docs.connectwise.com/ConnectWise_Documentation/090/020/140/
+-- 010/020). NULL reads as SERVICE, so every board made before this is one.
+ALTER TABLE board ADD COLUMN kind TEXT
+  CHECK (kind IN ('SERVICE', 'CHANGE', 'PROJECT'));
+
+-- The board's Types: ConnectWise's Types tab. On a service board they are
+-- Incident, Request, Problem and Event, the four of ConnectWise's ITIL example
+-- and Dada's column A, and a ticket reads Type > Subtype > Item (Incident >
+-- Printers > Fix). A board with no rows takes every Type, so a board set up
+-- before this migration behaves as it did. ticket.record_type holds the Type.
 CREATE TABLE board_record_type (
   board_id    TEXT NOT NULL REFERENCES board(board_id),
   record_type TEXT NOT NULL CHECK (record_type IN

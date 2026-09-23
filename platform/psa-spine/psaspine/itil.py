@@ -1,4 +1,10 @@
-"""ITIL record types, the boards that take them, change approval and ticket links.
+"""Board kinds and board Types (ITIL), change approval and ticket links.
+
+A board is one of three kinds: SERVICE, CHANGE or PROJECT (board.kind). A
+board's Types are ConnectWise's Types tab, and on a service board they are the
+ITIL four: Incident, Request, Problem, Event. A ticket reads Type > Subtype >
+Item. The Type is stored as ticket.record_type; "record type" in this module
+means the board Type.
 
 One vocabulary, six words: INCIDENT, SERVICE_REQUEST, PROBLEM, EVENT, CHANGE,
 PROJECT. The first four are ConnectWise's own ITIL example Types for a service
@@ -22,7 +28,7 @@ import sqlite3
 from datetime import datetime
 
 RECORD_TYPES = ("INCIDENT", "SERVICE_REQUEST", "PROBLEM", "EVENT", "CHANGE", "PROJECT")
-LABEL = {"INCIDENT": "Incident", "SERVICE_REQUEST": "Service request", "PROBLEM": "Problem",
+LABEL = {"INCIDENT": "Incident", "SERVICE_REQUEST": "Request", "PROBLEM": "Problem",
          "EVENT": "Event", "CHANGE": "Change", "PROJECT": "Project"}
 # ConnectWise's Type category: Reactive or Proactive. The commercial path in 005
 # predates this and uses INCIDENT / SERVICE_REQUEST for the same split.
@@ -142,12 +148,11 @@ def set_board_types(conn: sqlite3.Connection, board_id: str, types, *,
 
 
 def profile_of(conn: sqlite3.Connection, board_id: str) -> str | None:
-    """Which profile a board's rows match, if any: for labels, never for rules."""
-    types = tuple(sorted(r["record_type"] for r in boards_types(conn, board_id)))
-    for name, profile in PROFILES.items():
-        if types == tuple(sorted(profile)):
-            return name
-    return None
+    """The board's kind: SERVICE, CHANGE or PROJECT. NULL reads as SERVICE."""
+    row = conn.execute("SELECT kind FROM board WHERE board_id = ?", (board_id,)).fetchone()
+    if row is None:
+        return None
+    return row["kind"] or "SERVICE"
 
 
 # ------------------------------------------------------------- SLA targets
@@ -254,7 +259,8 @@ def link(conn: sqlite3.Connection, work_item_id: str, linked_id: str, relation: 
                        (work_item_id, linked_id, relation, stamp, actor))
     if cur.rowcount:
         _event(conn, work_item_id, stamp, "LINKED", actor, f"{reads} {linked_id}")
-        _event(conn, linked_id, stamp, "LINKED", actor, f"{work_item_id} is {reads} this")
+        back = {"CAUSED_BY": "causes", "FIXED_BY": "fixes", "RELATED": "related to"}[relation]
+        _event(conn, linked_id, stamp, "LINKED", actor, f"{back} {work_item_id}")
         touch(conn, work_item_id, at)
     return bool(cur.rowcount)
 

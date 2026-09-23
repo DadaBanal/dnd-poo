@@ -168,8 +168,10 @@ def no_clock_reason(conn, board_id: str, source_ref) -> str:
     """Why a ticket has no clock, in words, instead of a bare 'no clock'."""
     if source_ref:
         return "imported"
-    row = conn.execute("SELECT calendar_id FROM board WHERE board_id = ?",
+    row = conn.execute("SELECT calendar_id, kind FROM board WHERE board_id = ?",
                        (board_id,)).fetchone()
+    if row is not None and row["kind"] in ("CHANGE", "PROJECT"):
+        return f"a {row['kind'].lower()} board runs no SLA clock"
     if row is None or row["calendar_id"] is None:
         return "board not set up"
     return "no target"

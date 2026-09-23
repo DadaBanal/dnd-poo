@@ -124,7 +124,9 @@ def apply_starter(conn: sqlite3.Connection, board_id: str, *, actor: str,
         raise LookupError(f"no board {board_id!r}")
     profile = profile or itil.profile_of(conn, board_id) or "SERVICE"
     if profile not in itil.PROFILES:
-        raise ValueError(f"unknown board profile {profile!r}")
+        raise ValueError(f"unknown board kind {profile!r}")
+    conn.execute("UPDATE board SET kind = ? WHERE board_id = ? AND kind IS NULL",
+                 (profile, board_id))
     ensure_calendars(conn)
     types_set = False
     if not itil.boards_types(conn, board_id):
@@ -225,6 +227,9 @@ def create_board(conn: sqlite3.Connection, *, display_name: str, fulfiller_group
         apply_starter(conn, bid, actor=creator, at=at, profile=profile)
     elif copy_from:
         copy_setup(conn, copy_from, bid)
+    conn.execute("UPDATE board SET kind = COALESCE(kind, ?) WHERE board_id = ?", (
+        conn.execute("SELECT kind FROM board WHERE board_id = ?", (copy_from,)).fetchone()[0]
+        if copy_from and copy_from != "starter" else profile, bid))
     db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=creator,
              action="BOARD_CREATE", subject_kind="board", subject_id=bid,
              detail=f"created {display_name!r} from {copy_from or 'nothing'}")

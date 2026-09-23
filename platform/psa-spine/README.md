@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 346 tests
+python3 tests/test_spine.py          # 366 tests
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -140,6 +140,39 @@ checked against Zammad and HaloPSA:
   and a link with a missing field is drawn disabled with the reason. The
   ScreenConnect session id is a GUID, set on the configuration page. How to
   export them in bulk from ScreenConnect Cloud is NOT VERIFIED.
+
+### Board kinds and board Types (ITIL, 23 Sep 2026)
+
+Boards are split by who does the work and how it flows, never by incident
+versus request. The evidence: ITIL 4's service desk takes both incidents and
+requests through one front door. ConnectWise's own "ITIL Example" Types are
+**Event, Incident, Problem, Request**, as Types on one board. That is Dada's
+workbook column A. (Sources are in `schema/022_record_type.sql`.)
+
+- **Board kind** (`board.kind`): **Service**, **Change** or **Project**, chosen on
+  *New board*. It sets the starter statuses. Only a service board gets SLA
+  targets; ConnectWise: "SLA timers do not run on project tickets".
+- **The board's Types** (Setup › *Types* tab): a service board takes Incident,
+  Request, Problem and Event. A ticket reads **Type › Subtype › Item**
+  (*Incident › Printer › Fix*). Ticking Change on a service board is Dada's
+  other phrasing, and is configuration only. A move to a board that does not
+  take the ticket's Type is refused.
+- **Requests keep their own SLA.** `sla_target_type` holds targets for one
+  Type on a board, so the old Request board's numbers are Request targets on
+  IT Help.
+- **Change enablement.** Standard changes are pre-authorised. A normal change
+  cannot enter Approved, Scheduled, Implementing or Implemented until a
+  change authority approves it. An emergency change goes ahead but cannot
+  close until someone records an authorisation afterwards. The owner never
+  authorises their own change. Each change has a type, risk, window and
+  backout plan, and every decision is append-only.
+- **Links:** incident *caused by* problem, anything *fixed by* change, or
+  *related*. A link closes nothing and moves no clock. That avoids the
+  ConnectWise child-ticket SLA trap. It is not handover: one fault stays one
+  ticket that moves.
+- The commercial path (VARIATION) is derived, never passed in. This closes a
+  bypass where a variation item opened as INCIDENT could have time booked
+  against it.
 
 Waiting statuses pause the **resolve** clock, never the respond clock. A board
 move keeps the ticket id and its clocks. A POST from another site is refused,

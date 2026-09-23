@@ -2446,7 +2446,7 @@ class WebWSGITest(unittest.TestCase):
         _, headers, _ = self._call("POST", "/admin/catalogue/template", cookie=admin)
         self.assertIn("Template+applied", dict(headers)["Location"])
         _, _, body = self._call("GET", "/admin/catalogue", cookie=admin)
-        self.assertIn("Service request", body)
+        self.assertIn("Request", body)
 
     # ------------------------------------------------ companies and contacts
 
@@ -2515,6 +2515,61 @@ class WebWSGITest(unittest.TestCase):
         self.assertIsNone(conn.execute(
             "SELECT contact_id FROM ticket WHERE work_item_id = 'ITO-1'").fetchone()["contact_id"])
         conn.close()
+
+    # ------------------------------------------ board kinds, Types, changes, links
+
+    def test_the_types_tab_sets_what_a_board_takes(self):
+        alice = self._cookie_for("alice")
+        _, _, body = self._call("GET", "/admin/board/IT_HELP", cookie=alice, query="tab=types")
+        self.assertIn("Incident", body)
+        self.assertIn("service</b> board", body)
+        body_form = "types=INCIDENT&types=SERVICE_REQUEST&default=SERVICE_REQUEST".encode()
+        env = self._environ("POST", "/admin/board/IT_HELP/types", cookie=alice, body=body_form)
+        captured = {}
+        b"".join(self.raw(env, lambda st, h, e=None: captured.update(status=st)))
+        self.assertTrue(captured["status"].startswith("303"))
+        conn = db.connect(self.db_path)
+        from psaspine import itil
+        self.assertEqual(itil.board_default(conn, "IT_HELP"), "SERVICE_REQUEST")
+        self.assertFalse(itil.accepts(conn, "IT_HELP", "PROBLEM"))
+        conn.close()
+        status, _, _ = self._call("POST", "/admin/board/IT_HELP/types",
+                                  cookie=self._cookie_for("carol"), form={"types": "EVENT"})
+        self.assertFalse(status.startswith("303"))          # READ only: refused
+
+    def test_a_change_is_approved_on_the_ticket_by_an_admin_not_its_owner(self):
+        conn = db.connect(self.db_path)
+        conn.execute("UPDATE ticket SET record_type = 'CHANGE', change_type = 'NORMAL',"
+                     " owner = 'alice' WHERE work_item_id = 'ITO-1'")
+        conn.execute("INSERT INTO board_member (board_id, member, access) VALUES"
+                     " ('IT_HELP', 'lead', 'ADMIN')")
+        conn.commit()
+        conn.close()
+        _, _, body = self._call("GET", "/ticket/ITO-1", cookie=self._cookie_for("alice"))
+        self.assertIn("never by its owner", body)          # alice owns it: no form
+        _, _, body = self._call("GET", "/ticket/ITO-1", cookie=self._cookie_for("lead"))
+        self.assertIn("/ticket/ITO-1/change/decide", body)
+        _, headers, _ = self._call("POST", "/ticket/ITO-1/change/decide",
+                                   cookie=self._cookie_for("alice"),
+                                   form={"decision": "APPROVED", "authority": "CAB"})
+        self.assertIn("err=", dict(headers)["Location"])
+        _, headers, _ = self._call("POST", "/ticket/ITO-1/change/decide",
+                                   cookie=self._cookie_for("lead"),
+                                   form={"decision": "APPROVED", "authority": "CAB"})
+        self.assertIn("msg=", dict(headers)["Location"])
+
+    def test_linking_never_reaches_a_ticket_on_a_board_you_cannot_see(self):
+        conn = db.connect(self.db_path)
+        conn.execute("UPDATE ticket SET record_type = 'PROBLEM' WHERE work_item_id = 'ITO-9'")
+        conn.commit()
+        conn.close()
+        _, headers, _ = self._call("POST", "/ticket/ITO-1/link", cookie=self._cookie_for("carol"),
+                                   form={"linked_id": "ITO-9", "relation": "CAUSED_BY"})
+        self.assertNotIn("Linked", dict(headers).get("Location", ""))
+
+    def test_the_portal_asks_broken_or_need_and_files_the_type(self):
+        _, _, body = self._call("GET", "/my", cookie=self._cookie_for("dave"))
+        self.assertIn("Is something broken, or do you need something?", body)
 
     def _add_configuration(self):
         conn = db.connect(self.db_path)
@@ -3806,7 +3861,7 @@ class ManyBoardsTest(unittest.TestCase):
             setup.create_board(self.conn, display_name="IT Help", fulfiller_group="x",
                                creator="dada", at=self.at, board_id="IT_HELP")
 
-    def test_the_connectwise_template_is_itil_shaped_not_help_and_request(self):
+    def test_the_connectwise_template_is_board_kinds_not_help_and_request(self):
         """23 Sep direction: no Help/Request split. One service board takes the
         four ITIL service-desk types; changes and projects get their own boards."""
         from psaspine import itil
@@ -3891,9 +3946,10 @@ class MailPickupScriptTest(unittest.TestCase):
         self.assertLess(failed, saved)
 
 
-class ItilRecordTypeTest(unittest.TestCase):
-    """022 and psaspine.itil: record types per ticket, the types a board takes,
-    change enablement, and incident -> problem -> change links."""
+class BoardKindAndTypeTest(unittest.TestCase):
+    """022 and psaspine.itil: board kinds (Service, Change, Project), the board's
+    Types (Incident, Request, Problem, Event), change enablement, and incident ->
+    problem -> change links."""
 
     def setUp(self) -> None:
         from psaspine import itil
@@ -3928,6 +3984,16 @@ class ItilRecordTypeTest(unittest.TestCase):
         wid = self._open(board="IT_CHANGE")
         self.assertEqual((self._row(wid)["record_type"], self._row(wid)["change_type"]),
                          ("CHANGE", "NORMAL"))          # the safe default needs approval
+
+    def test_a_board_has_a_kind_and_a_change_board_runs_no_sla(self):
+        kinds = dict(self.conn.execute("SELECT board_id, kind FROM board WHERE board_id IN"
+                                       " ('IT_HELP','IT_CHANGE')").fetchall())
+        self.assertEqual(kinds, {"IT_HELP": "SERVICE", "IT_CHANGE": "CHANGE"})
+        names = [r[0] for r in self.conn.execute(
+            "SELECT name FROM board_status WHERE board_id = 'IT_CHANGE' ORDER BY sort_order")]
+        self.assertIn("Awaiting Approval", names)
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) FROM sla_target WHERE board_id = 'IT_CHANGE'").fetchone()[0], 0)
 
     def test_either_of_dadas_phrasings_is_configuration(self):
         self.itil.set_board_types(self.conn, "IT_HELP", list(self.itil.PROFILES["SERVICE"])

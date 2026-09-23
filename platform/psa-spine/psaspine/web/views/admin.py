@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 
-from ... import db
+from ... import db, itil
 from .. import templates as t
 from . import common
 
@@ -63,19 +63,23 @@ def index(ctx):
         n_items = ctx.conn.execute("SELECT COUNT(*) FROM catalogue_item").fetchone()[0]
         cards.append(
             "<div class=card><h3>Boards and the service catalogue</h3>"
-            "<p class=sub>Create a board for each group that runs its own queue — IT Help, "
-            "IT Requests, Biomedical, Facilities — each with its own statuses, SLA, members "
-            "and teams, as ConnectWise does. A person can be on as many boards as they work.</p>"
+            "<p class=sub>Boards are split by who does the work and how it flows, as ConnectWise "
+            "advises, never by incident versus request. A <b>service</b> board's Types are "
+            "Incident, Request, Problem and Event (ITIL's service desk takes both incidents and "
+            "requests); a <b>change</b> board runs assessment, approval and scheduling; a "
+            "<b>project</b> board runs projects with no SLA clocks. A person can be on as many "
+            "boards as they work.</p>"
             "<div class=row><div style='flex:0 0 auto'><a class=btn href='/admin/board/new'>"
             "+ New board</a></div>"
             "<div style='flex:0 0 auto'><form method=post action='/admin/catalogue/template'>"
             "<button class=ghost type=submit>Load the ConnectWise template</button></form></div>"
             f"<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/catalogue'>Type / Subtype / "
             f"Item ({n_items})</a></div></div>"
-            "<p class=why style='margin-top:10px'>The template is Dada's ConnectWise design: a Help "
-            "board and a Request board, and the Type › Subtype › Item catalogue from his workbook. "
-            "Items for boards that do not exist yet wait until those boards are created. It adds "
-            "what is missing and never overwrites.</p></div>")
+            "<p class=why style='margin-top:10px'>The template is Dada's ConnectWise design on the "
+            "ITIL model: IT Help as the service board with his Subtype › Item catalogue, plus an "
+            "IT Change board and an IT Projects board. His Request-board SLA numbers become "
+            "Request targets on IT Help. Items for boards that do not exist yet wait until those "
+            "boards are created. It adds what is missing and never overwrites.</p></div>")
     if rows:
         cards.append("<div class=card><h3>Your boards</h3><div class=tablewrap><table>"
                      "<thead><tr><th>Board</th><th>Setup</th><th>Tickets</th><th></th></tr></thead>"
@@ -98,8 +102,17 @@ def index(ctx):
     return Response(body=t.page("Setup", body, user=ctx.user, active="admin"))
 
 
-TABS = (("board", "Board"), ("statuses", "Statuses"), ("sla", "SLA"), ("members", "Members & roles"))
+TABS = (("board", "Board"), ("types", "Types"), ("statuses", "Statuses"), ("sla", "SLA"),
+        ("members", "Members & roles"))
 ROLES = ("SERVICE_MANAGER", "DISPATCH", "ON_CALL", "DUTY_MANAGER")
+TYPE_HELP = {
+    "INCIDENT": "Something is broken: restore the service.",
+    "SERVICE_REQUEST": "Something is needed: access, a new user, a move.",
+    "PROBLEM": "The cause behind one or more incidents.",
+    "EVENT": "Raised by monitoring, not a person.",
+    "CHANGE": "A change to a system: assessed and approved before it is made.",
+    "PROJECT": "Planned work with a start and an end. No SLA clocks.",
+}
 ESC_LABEL = {"NOT_RESPONDED": "Not responded", "RESPONDED": "Responded",
              "RESOLUTION_PLAN": "Resolution plan", "RESOLVED": "Resolved",
              "NO_ESCALATION": "Waiting (pauses resolve)"}
@@ -154,6 +167,26 @@ def board_setup(ctx, board_id):
             "<button class=ghost type=submit>Apply the starter setup</button> "
             "<span class=why>Adds any missing statuses, calendars and SLA targets. Never overwrites.</span>"
             "</form></div>")
+    elif tab == "types":
+        kind = itil.profile_of(ctx.conn, board_id) or "SERVICE"
+        rows = {r["record_type"]: r["is_default"] for r in itil.boards_types(ctx.conn, board_id)}
+        default = next((k for k, v in rows.items() if v), None)
+        lines = "".join(
+            "<tr><td><label style='color:var(--ink);font-weight:500'>"
+            f"<input type=checkbox name=types value={k} style='width:auto'"
+            f"{' checked' if k in rows else ''}> {t.esc(itil.LABEL[k])}</label></td>"
+            f"<td><input type=radio name=default value={k} style='width:auto'"
+            f"{' checked' if k == default else ''} aria-label='default {t.esc(itil.LABEL[k])}'></td>"
+            f"<td class=muted>{t.esc(TYPE_HELP[k])}</td></tr>" for k in itil.RECORD_TYPES)
+        content = (
+            f"<div class=card><h3>Types</h3><p class=sub>This is a <b>{t.esc(kind.lower())}</b> "
+            "board. Its Types are ConnectWise's Types tab: a ticket here reads Type › Subtype › "
+            "Item. None ticked means the board takes every Type. The default is what a ticket "
+            "gets when nothing else says (an email, say).</p>"
+            f"<form method=post action='/admin/board/{bid}/types'><div class=tablewrap><table>"
+            "<thead><tr><th>Type</th><th>Default</th><th></th></tr></thead>"
+            f"<tbody>{lines}</tbody></table></div>"
+            "<div style='margin-top:12px'><button type=submit>Save Types</button></div></form></div>")
     elif tab == "sla":
         targets = {(r["priority"], r["clock"]): r["target_minutes"] for r in ctx.conn.execute(
             "SELECT priority, clock, target_minutes FROM sla_target WHERE board_id = ?", (board_id,))}
@@ -286,6 +319,22 @@ def apply_starter(ctx, board_id):
     ctx.conn.commit()
     return _done(board_id, "statuses", f"Starter applied: {r['statuses']} statuses, "
                                        f"{r['targets']} SLA targets added")
+
+
+def save_types(ctx, board_id):
+    from ... import db
+    common.require_board(ctx, board_id, need="ADMIN")
+    types = [x for x in ctx.request.form_list("types") if x in itil.RECORD_TYPES]
+    default = ctx.request.form().get("default") or None
+    if default not in types:
+        default = None
+    itil.set_board_types(ctx.conn, board_id, types, default=default)
+    db.audit(ctx.conn, at=ctx.now.isoformat(sep=" ", timespec="minutes"), actor=ctx.user.id,
+             action="BOARD_TYPES", subject_kind="board", subject_id=board_id,
+             detail=("takes " + "/".join(types) + f"; default {default or types[0]}") if types
+             else "takes every Type")
+    ctx.conn.commit()
+    return _done(board_id, "types", "Types saved")
 
 
 def save_calendar(ctx, board_id):
@@ -426,6 +475,9 @@ def new_board_form(ctx, *, error: str = "", values: dict | None = None):
         f"<div><label>Name</label><input name=display_name required value='{t.esc(v.get('display_name', ''))}' placeholder='e.g. Biomedical & Clinical Equipment'></div>"
         f"<div><label>Board id (optional)</label><input name=board_id value='{t.esc(v.get('board_id', ''))}' placeholder='made from the name'></div>"
         f"<div><label>Fulfiller group</label><input name=fulfiller_group value='{t.esc(v.get('fulfiller_group', ''))}' placeholder='who works it'></div>"
+        f"<div><label>Kind</label><select name=kind>"
+        + "".join(f"<option value={k}{' selected' if v.get('kind', 'SERVICE') == k else ''}>"
+                  f"{t.esc(itil.PROFILE_LABEL[k])}</option>" for k in itil.PROFILES) + "</select></div>"
         f"<div><label>Start from</label><select name=copy_from>{copy_opts}</select></div>"
         f"<div style='grid-column:1/-1'><label>Description</label><input name=description value='{t.esc(v.get('description', ''))}'></div>"
         "<div><label style='color:var(--ink);font-weight:500'><input type=checkbox name=restricted value=1 style='width:auto'> "
@@ -448,7 +500,8 @@ def new_board_create(ctx):
             restricted=f.get("restricted") == "1",
             closed_loop_required=f.get("closed_loop_required") == "1",
             description=f.get("description", "").strip() or None,
-            copy_from=f.get("copy_from") if f.get("copy_from") is not None else "starter")
+            copy_from=f.get("copy_from") if f.get("copy_from") is not None else "starter",
+            profile=f.get("kind") if f.get("kind") in itil.PROFILES else "SERVICE")
         ctx.conn.commit()
     except (ValueError, LookupError) as exc:
         ctx.conn.rollback()
@@ -517,7 +570,7 @@ def catalogue(ctx):
     rows = ctx.conn.execute(
         "SELECT i.catalogue_item_id, f.display_name AS type, c.display_name AS subtype,"
         "       a.display_name AS item, a.kind, b.display_name AS board, i.default_contract_basis,"
-        "       i.min_priority, i.clinical_impact, i.is_draft"
+        "       i.min_priority, i.clinical_impact, i.is_draft, i.record_type"
         "  FROM catalogue_item i JOIN service_component c ON c.component_id = i.component_id"
         "  JOIN service_family f ON f.family_id = c.family_id"
         "  JOIN service_action a ON a.action_id = i.action_id"
@@ -526,7 +579,7 @@ def catalogue(ctx):
     trs = "".join(
         f"<tr{' style=opacity:.55' if r['is_draft'] else ''}><td>{t.esc(r['type'])}</td>"
         f"<td>{t.esc(r['subtype'])}</td><td>{t.esc(r['item'])}</td>"
-        f"<td>{'Incident' if r['kind'] == 'FAULT' else 'Service request'}</td>"
+        f"<td>{t.esc(itil.LABEL.get(r['record_type']) or ('Incident' if r['kind'] == 'FAULT' else 'Request'))}</td>"
         f"<td>{t.esc(r['board'])}</td><td>{t.esc(r['default_contract_basis'])}</td>"
         f"<td>{t.esc(r['min_priority'] or '')}{' · clinical' if r['clinical_impact'] else ''}</td>"
         f"<td><form method=post action='/admin/catalogue/toggle' class=inline>"
@@ -535,14 +588,16 @@ def catalogue(ctx):
         "</button></form></td></tr>" for r in rows)
     body = ((f"<div class='banner ok'>{t.esc(msg)}</div>" if msg else "") +
             "<h1>Type · Subtype · Item</h1><p class=sub>ConnectWise's three-level ticket "
-            "classification, kept as one tree across boards (build scope §2.4): each item knows "
-            "whether it is an incident or a service request, which board it lands on, its "
-            "contract basis and any priority floor. <a href='/admin'>Setup</a></p>"
+            "classification. The Type is the board's (Incident, Request, Problem, Event on a "
+            "service board; set on each board's Types tab). Subtype and Item are one tree across "
+            "boards (build scope §2.4), grouped here by area: each item gives the Type it "
+            "defaults to, the board it lands on, its contract basis and any priority floor. "
+            "<a href='/admin'>Setup</a></p>"
             "<div class=card><form method=post action='/admin/catalogue/template' class=inline>"
             "<button type=submit>Load the ConnectWise template</button></form> "
             f"<span class=why>{len(rows)} item(s) loaded.</span></div>"
-            "<div class=card><div class=tablewrap><table><thead><tr><th>Type</th><th>Subtype</th>"
-            "<th>Item</th><th>Kind</th><th>Board</th><th>Basis</th><th>Floor</th><th></th></tr></thead>"
+            "<div class=card><div class=tablewrap><table><thead><tr><th>Area</th><th>Subtype</th>"
+            "<th>Item</th><th>Default Type</th><th>Board</th><th>Basis</th><th>Floor</th><th></th></tr></thead>"
             f"<tbody>{trs or '<tr><td colspan=8 class=muted>Empty. Load the template, or add items by CLI.</td></tr>'}"
             "</tbody></table></div></div>")
     return Response(body=t.page("Catalogue", body, user=ctx.user, active="admin"))
