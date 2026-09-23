@@ -151,3 +151,10 @@ only; no install, no `-Apply`, no `@Apply = 1` without an explicit go-ahead.
 - Step 4: a go-ahead for `npm ci` (registry egress, Playwright) and the build under Node 22.
 - Step 5: the operator runs the readiness probe with the Orthanc sign-in.
 - Step 3: a go-ahead to diagnose the nine failures.
+
+**Follow-up, 2026-09-23 01:43 UTC:** step 3 is **DONE**. I pulled `claude/psa-ticketing-build`
+at `bbb89ac` (a fast-forward from `ed2b7d4`) and ran
+`C:\PMC\Python312\python.exe -m unittest discover -s tests -p "test_*.py"` in
+`platform/psa-spine` on `DND-SQL01`. Result: **Ran 269 tests in 30.9 s, OK**, exit 0, with 0
+FAIL or ERROR lines (MEASURED). The nine `EmailIntakeTest` failures recorded above are fixed
+by `bbb89ac`.
