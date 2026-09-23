@@ -263,6 +263,12 @@ def close_loop(conn: sqlite3.Connection, work_item_id: str, to_status_id: str, *
              1 if counts_to_capacity else 0, charge_method, authority_source,
              loop_reply_id))
 
+    # The reply is what the requester reads on the portal, so it is a
+    # Resolution note on the ticket as well as a loop_reply row.
+    conn.execute(
+        "INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail,"
+        " note_flag) VALUES (?,?,'LOOP_REPLY',?,?,'RESOLUTION')",
+        (work_item_id, stamp, sent_by, body))
     result = change_status(conn, work_item_id, to_status_id, at=at,
                            actor=actor or sent_by)
     return {"loop_reply_id": loop_reply_id, "effort_minutes": effort_minutes,
@@ -391,3 +397,132 @@ def move(conn: sqlite3.Connection, work_item_id: str, to_board_id: str, *,
     touch(conn, work_item_id, at)
     return {"work_item_id": work_item_id, "board_id": to_board_id,
             "board_status_id": landed}
+
+
+NOTE_FLAGS = ("DISCUSSION", "INTERNAL", "RESOLUTION")
+CHARGE_METHODS = ("INCLUDED_IN_MONTHLY_FEE", "CAPACITY_UPLIFT", "SEPARATE_CHARGE",
+                  "PASS_THROUGH", "NON_CHARGEABLE")
+# The bands effort is recorded in (003_delivery: time_entry.band_hours).
+BANDS = (0.5, 2, 4, 8, 20)
+
+
+def _event(conn, work_item_id, stamp, kind, actor, detail, flag=None):
+    conn.execute(
+        "INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail,"
+        " note_flag) VALUES (?,?,?,?,?,?)",
+        (work_item_id, stamp, kind, actor, detail, flag))
+
+
+def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: str,
+             actor: str, at: datetime, band_hours: float | None = None,
+             charge_method: str | None = None, to_status_id: str | None = None) -> dict:
+    """One note, the way ConnectWise takes one: flagged, optionally with time
+    against it, optionally moving the status in the same action.
+
+    Discussion and Resolution notes are the requester's to read on the portal;
+    Internal ones never leave the desk. Time goes through both effort gates
+    before anything is written, so a refused booking leaves no half-note.
+    """
+    if flag not in NOTE_FLAGS:
+        raise ValueError(f"a note is Discussion, Internal or Resolution, not {flag!r}")
+    body = (body or "").strip()
+    if not body:
+        raise ValueError("a note needs some words")
+    ticket = conn.execute(
+        "SELECT w.entity_id FROM ticket t JOIN work_item w USING (work_item_id)"
+        " WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
+    if ticket is None:
+        raise LookupError(f"no ticket {work_item_id!r}")
+
+    if band_hours is not None:
+        if band_hours not in BANDS:
+            raise EffortRefused(f"effort is banded: one of {', '.join(f'{b:g}' for b in BANDS)} hours")
+        if charge_method not in CHARGE_METHODS:
+            raise EffortRefused("say how the time is charged; it is never assumed")
+        ok, why = may_book_effort(conn, work_item_id)
+        if not ok:
+            raise EffortRefused(why)
+        if not ticket["entity_id"]:
+            raise EffortRefused("set the ticket's company before booking time against it")
+
+    stamp = at.isoformat(sep=" ", timespec="minutes")
+    _event(conn, work_item_id, stamp, "NOTE", actor, body, flag)
+    if band_hours is not None:
+        conn.execute(
+            "INSERT INTO time_entry (work_item_id, entity_id, worked_on, band_hours,"
+            " performed_by, entered_by, charge_method, authority_source, note)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
+            (work_item_id, ticket["entity_id"], at.date().isoformat(), band_hours,
+             actor, actor, charge_method, "ticket note", body[:500]))
+    status = None
+    if to_status_id:
+        status = change_status(conn, work_item_id, to_status_id, at=at, actor=actor)
+    touch(conn, work_item_id, at)
+    return {"flag": flag, "band_hours": band_hours, "status": status}
+
+
+def update_fields(conn: sqlite3.Connection, work_item_id: str, *, at: datetime,
+                  actor: str, owner: str | None = None, entity_id: str | None = None,
+                  requested_by: str | None = None, impact: str | None = None,
+                  urgency: str | None = None) -> list[str]:
+    """Change the ticket's editable fields and write down every change.
+
+    Priority is never set here. Changing impact or urgency re-runs the matrix,
+    as ConnectWise's SLA matrix does, and the running clocks take the new
+    priority's targets. A priority someone OVERRODE (with a named role and a
+    reason, 005) is not undone by a field edit: the override stands and only
+    the axes are recorded.
+    """
+    from .tickets import compute_priority
+
+    row = conn.execute(
+        "SELECT t.*, w.entity_id FROM ticket t JOIN work_item w USING (work_item_id)"
+        " WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
+    if row is None:
+        raise LookupError(f"no ticket {work_item_id!r}")
+    stamp = at.isoformat(sep=" ", timespec="minutes")
+    changed: list[str] = []
+
+    def norm(v):
+        v = (v or "").strip()
+        return v or None
+
+    if owner is not None and norm(owner) != row["owner"]:
+        conn.execute("UPDATE ticket SET owner = ? WHERE work_item_id = ?",
+                     (norm(owner), work_item_id))
+        changed.append(f"owner {row['owner'] or '-'} -> {norm(owner) or '-'}")
+    if requested_by is not None and norm(requested_by) != row["requested_by"]:
+        conn.execute("UPDATE ticket SET requested_by = ? WHERE work_item_id = ?",
+                     (norm(requested_by), work_item_id))
+        changed.append(f"contact {row['requested_by'] or '-'} -> {norm(requested_by) or '-'}")
+    if entity_id and entity_id != row["entity_id"]:
+        if conn.execute("SELECT 1 FROM entity WHERE entity_id = ?", (entity_id,)).fetchone() is None:
+            raise LookupError(f"no company {entity_id!r}")
+        conn.execute("UPDATE work_item SET entity_id = ? WHERE work_item_id = ?",
+                     (entity_id, work_item_id))
+        changed.append(f"company {row['entity_id'] or '-'} -> {entity_id}")
+
+    new_i = impact or row["impact"]
+    new_u = urgency or row["urgency"]
+    if (new_i, new_u) != (row["impact"], row["urgency"]):
+        conn.execute("UPDATE ticket SET impact = ?, urgency = ? WHERE work_item_id = ?",
+                     (new_i, new_u, work_item_id))
+        changed.append(f"impact/urgency {row['impact']}/{row['urgency']} -> {new_i}/{new_u}")
+        if row["priority_source"] != "OVERRIDE":
+            priority, source = compute_priority(new_i, new_u)
+            if priority != row["priority"]:
+                conn.execute("UPDATE ticket SET priority = ?, priority_source = ?"
+                             " WHERE work_item_id = ?", (priority, source, work_item_id))
+                changed.append(f"priority {row['priority']} -> {priority} ({source})")
+                for target in conn.execute(
+                        "SELECT clock, target_minutes FROM sla_target"
+                        " WHERE board_id = ? AND priority = ?", (row["board_id"], priority)):
+                    conn.execute(
+                        "UPDATE ticket_clock SET target_minutes = ? WHERE work_item_id = ?"
+                        " AND clock = ? AND stopped_at IS NULL",
+                        (target["target_minutes"], work_item_id, target["clock"]))
+
+    if changed:
+        _event(conn, work_item_id, stamp, "UPDATED", actor, "; ".join(changed))
+        touch(conn, work_item_id, at)
+    return changed
