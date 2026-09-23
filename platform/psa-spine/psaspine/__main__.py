@@ -102,6 +102,18 @@ def main(argv: list[str] | None = None) -> int:
                               "over every open ticket; the server runs this every minute")
     prr.add_argument("database")
 
+    pob = sub.add_parser("outbox-pending",
+                         help="print due notifications as JSON for the Graph sender; "
+                              "unresolvable or out-of-domain recipients are marked NO_SENDER")
+    pob.add_argument("database")
+    pob.add_argument("--allowed-domain", action="append", required=True,
+                     help="only addresses in this domain are released (repeatable)")
+    pob.add_argument("--dry-run", action="store_true", help="change nothing (the sender's preview)")
+    pom = sub.add_parser("outbox-mark", help="record what the sender did with one notification")
+    pom.add_argument("database")
+    pom.add_argument("--id", type=int, required=True)
+    pom.add_argument("--status", choices=("SENT", "FAILED"), required=True)
+
     pu = sub.add_parser("setup-board",
                         help="give a board the starter statuses, calendar and SLA "
                              "targets (adds what is missing, never overwrites)")
@@ -229,6 +241,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{c['tickets']} tickets with timed rules: {c['acted']} actions taken, "
               f"{c['errors']} errors (see workflow_run)")
         return 1 if c["errors"] else 0
+
+    if a.cmd == "outbox-pending":
+        from . import outbox
+        print(outbox.as_json(outbox.pending(conn, allowed_domains=tuple(a.allowed_domain),
+                                            dry_run=a.dry_run)))
+        return 0
+
+    if a.cmd == "outbox-mark":
+        from . import outbox
+        ok = outbox.mark(conn, a.id, a.status, at=datetime.now())
+        if not ok:
+            print(f"refused: notification {a.id} is not pending", file=sys.stderr)
+        return 0 if ok else 1
 
     if a.cmd == "setup-board":
         from . import setup

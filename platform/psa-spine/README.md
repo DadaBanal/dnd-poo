@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 378 tests
+python3 tests/test_spine.py          # 383 tests
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -200,6 +200,13 @@ Where this desk differs from ConnectWise:
 - **Failures:** an action that fails rolls its whole event back and is
   recorded as ERROR.
 - **No chains:** a rule's own actions never fire further rules.
+- **Sending:** the desk holds no mail credential.
+  `scripts/Send-PmcNotifications.ps1` on DND-SQL01 takes due notifications
+  from `psaspine outbox-pending` and sends them through Graph from the
+  helpdesk mailbox. It signs in with a certificate, and Exchange RBAC scopes
+  `Application Mail.Send` to that one mailbox. It sends only to addresses in
+  `pmcne.ph`, and never puts a ticket summary in a subject. Setup:
+  `docs/handoffs/HANDOFF-cloud-sql01-WS36-20260923-rules.md`.
 
 Waiting statuses pause the **resolve** clock, never the respond clock. A board
 move keeps the ticket id and its clocks. A POST from another site is refused,

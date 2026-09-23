@@ -228,7 +228,10 @@ def _act(conn, event, action, row, *, at: datetime) -> None:
             "INSERT INTO notification (work_item_id, event_id, recipient, recipient_role,"
             " subject, body, created_at, status) VALUES (?,?,?,?,?,?,?,'PENDING')",
             (wid, event["event_id"], who, role,
-             f"{subject_token(wid)} {kind.title()}: {row.get('summary') or row['priority']}",
+             # No summary: a subject leaves the desk, and a summary can carry
+             # what 6.1 keeps out of mail. The token and the priority are enough
+             # to open the ticket.
+             f"{subject_token(wid)} {kind.title()}: {row['priority']} on {row['board_id']}",
              said, stamp))
         board._event(conn, wid, stamp, kind, by, f"{kind.lower()} {who}"
                      + (f" ({role.replace('_', ' ').lower()})" if role else "") + f": {said}")

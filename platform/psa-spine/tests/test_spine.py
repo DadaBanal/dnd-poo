@@ -4340,6 +4340,70 @@ class WorkflowRunnerTest(unittest.TestCase):
         self.assertIn("no one holds that role", run[0][1])
 
 
+class OutboxTest(unittest.TestCase):
+    """024 notification outbox and psaspine.outbox: only resolvable, in-domain
+    addresses are released; nothing sits PENDING for ever; a preview changes nothing."""
+
+    def setUp(self) -> None:
+        from psaspine import outbox
+        self.outbox = outbox
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn.execute(
+            "INSERT INTO contact (contact_id, entity_id, display_name, email, sam_account, source,"
+            " inactive, created_at) VALUES ('CT-1','PMC','Dada','dada@pmcne.ph','dada','MANUAL',0,'2026')")
+        for who in ("dada", "mgr@pmcne.ph", "someone@gmail.com", "ghost"):
+            self.conn.execute("INSERT INTO notification (recipient, subject, body, created_at)"
+                              " VALUES (?, '[PMC-000001] Escalate: P1 on IT_HELP', 'x', '2026')", (who,))
+        self.conn.commit()
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def test_only_resolvable_in_domain_addresses_are_released(self):
+        preview = self.outbox.pending(self.conn, allowed_domains=("pmcne.ph",), dry_run=True)
+        self.assertEqual(sorted(i["to"] for i in preview), ["dada@pmcne.ph", "mgr@pmcne.ph"])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM notification WHERE status ="
+                                           " 'PENDING'").fetchone()[0], 4)   # preview: untouched
+        due = self.outbox.pending(self.conn, allowed_domains=("pmcne.ph",))
+        self.assertEqual(len(due), 2)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM notification WHERE status ="
+                                           " 'NO_SENDER'").fetchone()[0], 2)  # gmail and ghost
+        self.assertTrue(self.outbox.mark(self.conn, due[0]["id"], "SENT", at=datetime(2026, 9, 23)))
+        self.assertFalse(self.outbox.mark(self.conn, due[0]["id"], "SENT", at=datetime(2026, 9, 23)))
+
+
+class NotificationSenderScriptTest(unittest.TestCase):
+    """scripts/Send-PmcNotifications.ps1: ASCII, certificate not secret, preview
+    unless -Apply, domain checked again before sending, counts-only logs."""
+
+    SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "Send-PmcNotifications.ps1"
+
+    def setUp(self) -> None:
+        self.text = self.SCRIPT.read_bytes().decode("ascii")
+
+    def test_it_holds_no_secret(self):
+        lowered = self.text.lower()
+        for shape in ("client_secret", "password", "convertto-securestring", "apikey"):
+            self.assertNotIn(shape, lowered, shape)
+        self.assertIn("client-assertion-type:jwt-bearer", self.text)
+
+    def test_nothing_is_sent_without_apply(self):
+        self.assertLess(self.text.index("if (-not $Apply) {"), self.text.index("Send-One $item"))
+        self.assertIn("'--dry-run'", self.text)
+
+    def test_the_domain_is_checked_again_before_sending(self):
+        self.assertLess(self.text.index("EndsWith('@' + $AllowedDomain"),
+                        self.text.index("Send-One $item"))
+
+    def test_logs_carry_no_address_or_subject(self):
+        for line in self.text.splitlines():
+            if "Write-Log" in line and "function" not in line:
+                self.assertNotIn("$item.to", line)
+                self.assertNotIn("$item.subject", line)
+
+
 class ContactsTest(unittest.TestCase):
     """020 and psaspine.contacts: the people who ask, from what AD already holds."""
 
