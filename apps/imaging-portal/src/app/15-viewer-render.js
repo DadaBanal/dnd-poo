@@ -234,6 +234,10 @@ function frameLabel(pane) {
   if (f.kind === 'pixels') return 'pixel data';
   if (f.flat) return 'preview only';
   if (se?.pixelMode === 'no') return 'server rendered';
+  // A run on its way is a wait with an end, and it says so -- rather than
+  // looking like a viewer that is merely slow, which is how it was reported.
+  const run = Runs.loading(se?.frames[pane.index]?.instance);
+  if (run) return `server rendered · loading ${run.frames}-frame run${run.total ? ` · ${Math.floor(100 * run.got / run.total)}%` : ''}`;
   if (se?.pixelFailed) return 'server rendered · values unavailable';
   return se?.pixelInFlight?.size ? 'server rendered · reading values' : 'server rendered';
 }

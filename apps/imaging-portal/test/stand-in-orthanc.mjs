@@ -12,7 +12,13 @@
  *    /numpy hands back a genuine .npy buffer, so the viewer's two data paths are
  *    both exercised. Series 3 of every study answers 415 on /numpy, which is how
  *    a transfer syntax Orthanc cannot decode to an array behaves -- the viewer
- *    must fall back to /rendered rather than show nothing.
+ *    must fall back to /rendered rather than show nothing;
+ *  - a cathlab run is ONE multi-frame instance, as it is at PMC (MEASURED 9 Sep:
+ *    56 frames behind one id), and both numpy routes answer in the shapes Orthanc
+ *    1.13.0 was MEASURED to use on 23 Sep 2026 (orthancteam/orthanc:26.9.1,
+ *    SQLite, invented data): the whole instance (frames, rows, columns, samples),
+ *    one frame (rows, columns, samples), and float32 in modality units unless
+ *    rescale=0 is asked for, because rescale defaults to true.
  *
  * Every request is recorded so a test can assert on what the page did NOT send.
  */
@@ -50,20 +56,41 @@ const PREVIEW = png();
 const PHANTOM = { rows: 96, cols: 96, slope: 1, intercept: -1024, wc: 40, ww: 400,
   spacing: '0.6\\0.6', thickness: '1.5' };
 
-function phantomFrame(frame = 0) {
-  const { rows, cols } = PHANTOM;
+/* An XA series is one run: 40 frames of 96 rows by 128 columns. Not square, so
+   a frame cut with rows and columns swapped reads wrong; and a bar across the
+   top-left corner carries the frame number, so a frame cut from the wrong offset
+   reads wrong there as well as at the disc.
+
+   Study 008's run is the long one: 72 frames of 860 x 860, about the 1,478 KB a
+   frame measured at PMC, so 102 MB of stored values -- over the viewer's cap of
+   96 MB, which must keep it on the one-frame-at-a-time path.                   */
+export const RUN = { frames: 40, rows: 96, cols: 128, bar: true };
+export const LONG_RUN = { study: 'study-008', frames: 72, rows: 860, cols: 860, bar: false };
+
+/** The phantom's value in HU at one pixel of one frame. Exported, so a check can
+    work out what the viewer should read wherever its probe happens to land. */
+export function phantomHu(frame, x, y, { rows = PHANTOM.rows, cols = PHANTOM.cols, bar = false } = {}) {
+  if (bar && y < 6 && x < 32) return 1000 + frame;           // the frame number, top left
+  const r = Math.hypot(x - (cols - 1) / 2, y - (rows - 1) / 2);
+  if (r > 42) return -1000;                       // air outside the phantom
+  if (r > 36) return 800;                         // bone-density ring
+  if (r < 8) return -100 + frame * 40;            // the disc that steps per frame
+  return 40;                                      // soft tissue
+}
+
+function phantomFrame(frame = 0, shape = {}) {
+  const { rows = PHANTOM.rows, cols = PHANTOM.cols } = shape;
   const out = new Int16Array(rows * cols);
-  const cx = (cols - 1) / 2, cy = (rows - 1) / 2;
   for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
-    const r = Math.hypot(x - cx, y - cy);
-    let hu;
-    if (r > 42) hu = -1000;                       // air outside the phantom
-    else if (r > 36) hu = 800;                    // bone-density ring
-    else if (r < 8) hu = -100 + frame * 40;       // the disc that steps per frame
-    else hu = 40;                                 // soft tissue
-    out[y * cols + x] = hu - PHANTOM.intercept;   // store, do not window
+    out[y * cols + x] = phantomHu(frame, x, y, shape) - PHANTOM.intercept;   // store, do not window
   }
   return out;
+}
+
+/** What sits behind one series: forty single-frame images, or one run. */
+function seriesShape(st) {
+  if (st._mod !== 'XA') return { multi: false, count: 40, frames: 1, rows: PHANTOM.rows, cols: PHANTOM.cols };
+  return { multi: true, count: 1, ...(st.ID === LONG_RUN.study ? LONG_RUN : RUN) };
 }
 
 /** Encode a greyscale 8-bit PNG. Same chunk writer as png(), one channel. */
@@ -130,7 +157,7 @@ function buildArchive() {
         PatientSex: i % 2 ? 'F' : 'M', PatientBirthDate: `19${60 + (i % 40)}0${1 + (i % 9)}15` },
       Series: Array.from({ length: nSeries }, (_, k) => `${id}-series-${k}`),
       RequestedTags: { ModalitiesInStudy: mod, NumberOfStudyRelatedSeries: String(nSeries),
-        NumberOfStudyRelatedInstances: String(nSeries * 40) },
+        NumberOfStudyRelatedInstances: String(nSeries * (mod === 'XA' ? 1 : 40)) },
       _mod: mod
     });
   }
@@ -153,8 +180,13 @@ const PLUGIN_INFO = {
   transfers: { Version: '1.7', Description: 'Transfers accelerator' }
 };
 
+/*  runDelayMs holds back a whole-instance answer, so a check can look at the
+    viewer while a run is still on its way; renderedDelayMs slows every picture,
+    the way PMC's 430 ms does; wholeRefused answers the whole-instance route with
+    a 500 while single frames still come back.                                 */
 export function startStandInOrthanc({ portalHtml, config = null, expandSupported = true,
-                                     childExpandSupported = true, findExpandSupported = true } = {}) {
+                                     childExpandSupported = true, findExpandSupported = true,
+                                     runDelayMs = 0, renderedDelayMs = 0, wholeRefused = false } = {}) {
   const studies = buildArchive();
   const requests = [];
   const json = (res, body, code = 200) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
@@ -164,7 +196,7 @@ export function startStandInOrthanc({ portalHtml, config = null, expandSupported
     const path = decodeURIComponent(url.pathname).replace(/^\/+/, '');
     let body = '';
     for await (const c of req) body += c;
-    requests.push({ method: req.method, path, search: url.search, body });
+    requests.push({ method: req.method, path, search: url.search, body, t: Date.now() });
 
     // --- the portal itself, served exactly where Orthanc's ServeFolders puts it
     if (path === 'pmc/' || path === 'pmc/index.html') {
@@ -218,44 +250,64 @@ export function startStandInOrthanc({ portalHtml, config = null, expandSupported
     // entirely, which is the shape the portal still has to survive.
     const expanded = () => childExpandSupported && url.searchParams.has('expand');
 
+    // NumberOfFrames is in a multi-frame instance's own MainDicomTags and absent
+    // from a single frame's, in a listing and when resolved alone (MEASURED,
+    // Orthanc 1.13.0, 23 Sep 2026).
+    const framesTag = shape => (shape.multi ? { NumberOfFrames: String(shape.frames) } : {});
+
     let m;
     if ((m = path.match(/^studies\/([^/]+)\/series$/))) {
       const st = studies.find(s => s.ID === m[1]); if (!st) { res.writeHead(404); return res.end(); }
       if (!expanded()) return json(res, st.Series);
+      const { count } = seriesShape(st);
       return json(res, st.Series.map((sid, k) => ({ ID: sid, MainDicomTags: { SeriesNumber: String(k + 1),
         SeriesDescription: `${st._mod} series ${k + 1}`, Modality: st._mod },
-        Instances: Array.from({ length: 40 }, (_, i) => `${sid}-inst-${i}`) })));
+        Instances: Array.from({ length: count }, (_, i) => `${sid}-inst-${i}`) })));
     }
     // Resolving one child by id, which is what the portal falls back to.
     if ((m = path.match(/^series\/(study-\d+-series-\d+)$/))) {
       const q = /^(study-\d+)-series-(\d+)$/.exec(m[1]);
       const st = studies.find(s => s.ID === q[1]); if (!st) { res.writeHead(404); return res.end(); }
+      const { count } = seriesShape(st);
       return json(res, { ID: m[1], MainDicomTags: { SeriesNumber: String(+q[2] + 1),
         SeriesDescription: `${st._mod} series ${+q[2] + 1}`, Modality: st._mod },
-        Instances: Array.from({ length: 40 }, (_, i) => `${m[1]}-inst-${i}`) });
+        Instances: Array.from({ length: count }, (_, i) => `${m[1]}-inst-${i}`) });
     }
     if ((m = path.match(/^instances\/(study-\d+-series-\d+-inst-\d+)$/))) {
-      const q = /-inst-(\d+)$/.exec(m[1]);
-      return json(res, { ID: m[1], IndexInSeries: +q[1] + 1,
-        MainDicomTags: { InstanceNumber: String(+q[1] + 1) } });
+      const q = /^(study-\d+)-series-\d+-inst-(\d+)$/.exec(m[1]);
+      const st = studies.find(s => s.ID === q[1]); if (!st) { res.writeHead(404); return res.end(); }
+      return json(res, { ID: m[1], IndexInSeries: +q[2] + 1,
+        MainDicomTags: { InstanceNumber: String(+q[2] + 1), ...framesTag(seriesShape(st)) } });
     }
     // Every instance id carries its own coordinates: <study>-series-<k>-inst-<i>.
     const parseInst = id => { const q = /^(study-\d+)-series-(\d+)-inst-(\d+)$/.exec(id || '');
       return q ? { study: q[1], serie: +q[2], index: +q[3] } : null; };
+    /** What a pixel route is asking about. A run numbers its frames within its one
+        instance; a single-frame series' "frame" is which of its images this is. */
+    const pixelTarget = (id, frame) => {
+      const inst = parseInst(id); const st = inst && studies.find(s => s.ID === inst.study);
+      if (!st) return null;
+      const shape = seriesShape(st);
+      return { inst, st, shape, frame: shape.multi ? +(frame ?? 0) : inst.index };
+    };
     if ((m = path.match(/^series\/([^/]+)\/instances$/))) {
       const q = /^(study-\d+)-series-(\d+)$/.exec(m[1]); if (!q) { res.writeHead(404); return res.end(); }
       const st = studies.find(s => s.ID === q[1]); if (!st) { res.writeHead(404); return res.end(); }
-      if (!expanded()) return json(res, Array.from({ length: 40 }, (_, i) => `${m[1]}-inst-${i}`));
-      return json(res, Array.from({ length: 40 }, (_, i) => ({
-        ID: `${m[1]}-inst-${i}`, IndexInSeries: i + 1,
+      const shape = seriesShape(st);
+      const ids = Array.from({ length: shape.count }, (_, i) => `${m[1]}-inst-${i}`);
+      if (!expanded()) return json(res, ids);
+      return json(res, ids.map((ID, i) => ({
+        ID, IndexInSeries: i + 1,
         MainDicomTags: { InstanceNumber: String(i + 1), SOPInstanceUID: `1.2.826.0.1.3680043.8.498.9${q[2]}${String(i).padStart(3, '0')}`,
+          ...framesTag(shape),
           ImagePositionPatient: `0\\0\\${(i * 1.5).toFixed(1)}`, ImageOrientationPatient: '1\\0\\0\\0\\1\\0' } })));
     }
     if ((m = path.match(/^instances\/([^/]+)\/(simplified-tags|tags)$/))) {
       const inst = parseInst(m[1]); if (!inst) { res.writeHead(404); return res.end(); }
       const st = studies.find(s => s.ID === inst.study); if (!st) { res.writeHead(404); return res.end(); }
-      return json(res, { Modality: st._mod, Rows: String(PHANTOM.rows), Columns: String(PHANTOM.cols),
-        PixelSpacing: PHANTOM.spacing, SliceThickness: PHANTOM.thickness, NumberOfFrames: '1',
+      const shape = seriesShape(st);
+      return json(res, { Modality: st._mod, Rows: String(shape.rows), Columns: String(shape.cols),
+        PixelSpacing: PHANTOM.spacing, SliceThickness: PHANTOM.thickness, NumberOfFrames: String(shape.frames),
         WindowCenter: String(PHANTOM.wc), WindowWidth: String(PHANTOM.ww),
         RescaleSlope: String(PHANTOM.slope), RescaleIntercept: String(PHANTOM.intercept),
         PhotometricInterpretation: 'MONOCHROME2', BitsAllocated: '16', BitsStored: '16', PixelRepresentation: '1',
@@ -266,25 +318,44 @@ export function startStandInOrthanc({ portalHtml, config = null, expandSupported
         InstanceNumber: String(inst.index + 1), KVP: '120', XRayTubeCurrent: '200' });
     }
     if ((m = path.match(/^instances\/([^/]+)\/frames$/))) {
-      if (!parseInst(m[1])) { res.writeHead(404); return res.end(); }
-      return json(res, [0]);
+      const t = pixelTarget(m[1]); if (!t) { res.writeHead(404); return res.end(); }
+      return json(res, Array.from({ length: t.shape.frames }, (_, k) => k));
     }
     if ((m = path.match(/^instances\/([^/]+)\/(?:frames\/(\d+)\/)?rendered$/))) {
-      const inst = parseInst(m[1]); if (!inst) { res.writeHead(404); return res.end(); }
+      const t = pixelTarget(m[1], m[2]); if (!t) { res.writeHead(404); return res.end(); }
       const wc = url.searchParams.has('window-center') ? +url.searchParams.get('window-center') : PHANTOM.wc;
       const ww = url.searchParams.has('window-width') ? +url.searchParams.get('window-width') : PHANTOM.ww;
-      const px = windowTo8bit(phantomFrame(inst.index), wc, ww);
+      const px = windowTo8bit(phantomFrame(t.frame, t.shape), wc, ww);
+      if (renderedDelayMs) await new Promise(r => setTimeout(r, renderedDelayMs));
       res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
-      return res.end(greyPng(px, PHANTOM.cols, PHANTOM.rows));
+      return res.end(greyPng(px, t.shape.cols, t.shape.rows));
     }
-    if ((m = path.match(/^instances\/([^/]+)\/(?:frames\/(\d+)\/)?numpy$/))) {
-      const inst = parseInst(m[1]); if (!inst) { res.writeHead(404); return res.end(); }
+    if ((m = path.match(/^instances\/([^/]+)\/(frames\/(\d+)\/)?numpy$/))) {
+      const t = pixelTarget(m[1], m[3]); if (!t) { res.writeHead(404); return res.end(); }
       // Series 3 stands in for a transfer syntax Orthanc will not decode to an
       // array. The viewer must notice and drop to the server-rendered path.
-      if (inst.serie === 2) { res.writeHead(415, { 'Content-Type': 'text/plain' });
+      if (t.inst.serie === 2) { res.writeHead(415, { 'Content-Type': 'text/plain' });
         return res.end('Cannot decode this image to a numpy array'); }
-      res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
-      return res.end(npy(phantomFrame(inst.index), [1, PHANTOM.rows, PHANTOM.cols, 1], '<i2'));
+      const whole = !m[2];
+      if (whole && wholeRefused) return json(res, { HttpError: 'Internal Server Error', HttpStatus: 500,
+        Message: 'Not implemented yet', OrthancError: 'Not implemented yet' }, 500);
+      if (!whole && +m[3] >= (t.shape.multi ? t.shape.frames : 1)) return json(res, { HttpError: 'Bad Request',
+        HttpStatus: 400, Message: 'Parameter out of range', OrthancError: 'Parameter out of range' }, 400);
+      const { rows, cols } = t.shape, size = rows * cols;
+      const frames = whole && t.shape.multi ? Array.from({ length: t.shape.frames }, (_, k) => k) : [t.frame];
+      // rescale defaults to TRUE on both routes (MEASURED): float32 in modality
+      // units unless rescale=0 is asked for. A viewer that forgot to ask would
+      // apply the rescale twice, and the probe checks would say so.
+      const rescale = !/^(0|false)$/i.test(url.searchParams.get('rescale') ?? 'true');
+      const data = rescale ? new Float32Array(frames.length * size) : new Int16Array(frames.length * size);
+      frames.forEach((k, j) => {
+        const stored = phantomFrame(k, t.shape);
+        for (let i = 0; i < size; i++) data[j * size + i] = rescale ? stored[i] * PHANTOM.slope + PHANTOM.intercept : stored[i];
+      });
+      const out = npy(data, whole ? [frames.length, rows, cols, 1] : [rows, cols, 1], rescale ? '<f4' : '<i2');
+      if (whole && runDelayMs) await new Promise(r => setTimeout(r, runDelayMs));
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': out.length });
+      return res.end(out);
     }
     if ((m = path.match(/^studies\/([^/]+)$/))) {
       const st = studies.find(s => s.ID === m[1]); if (!st) { res.writeHead(404); return res.end(); }

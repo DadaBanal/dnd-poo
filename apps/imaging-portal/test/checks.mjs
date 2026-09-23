@@ -15,7 +15,7 @@ import { createRequire } from 'node:module';
 import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startStandInOrthanc } from './stand-in-orthanc.mjs';
+import { startStandInOrthanc, phantomHu, RUN, LONG_RUN } from './stand-in-orthanc.mjs';
 
 let chromium;
 try {
@@ -777,6 +777,228 @@ check('MPR refuses a series it cannot honestly reconstruct', async (b, s) => {
   eq(await page.locator('.pane[data-serie]').count(), 1, 'a reconstruction was built anyway');
   ok(/pixel-data path/.test(await page.textContent('#toasts')), 'the refusal did not say why');
   await ctx.close();
+});
+
+
+/* ------------------------------------------------------- a run is one file ---
+   A cathlab run is one multi-frame instance. Fetching it a frame per request is
+   what made cine "frame after frame" on 9 Sep (MEASURED: 56 frames, 152 ms a
+   frame warm, where 12 fps needs one every 83 ms). These are about the whole-run
+   path that replaced it, and about the cases that must stay on the old one.
+   Study 000 is a 40-frame XA run of 96 rows by 128 columns; study 008 is a run
+   too big for the cap; study 001 is a CT of single-frame images.             */
+
+const isWhole = r => /^instances\/[^/]+\/numpy$/.test(r.path);
+const isFrameNumpy = r => /^instances\/[^/]+\/frames\/\d+\/numpy$/.test(r.path);
+
+/** Step the active pane to frame k with the keyboard, and wait until it is on screen. */
+async function goToFrame(page, k) {
+  await page.keyboard.press('Home');
+  for (let i = 0; i < Math.floor(k / 10); i++) await page.keyboard.press('PageDown');
+  for (let i = 0; i < k % 10; i++) await page.keyboard.press('ArrowRight');
+  await page.waitForFunction(i => document.querySelector('.pane')?.dataset.index === String(i), k, { timeout: 8000 });
+}
+/** The probe's readout as numbers: the image pixel it landed on, and the value there. */
+async function probeAt(page, dx, dy) {
+  const text = await probe(page, dx, dy);
+  const m = /^(\d+), (\d+)\s+(-?[\d.]+)/.exec(text.trim());
+  ok(m, `the probe gave no reading: "${text}"`);
+  return { x: +m[1], y: +m[2], value: +m[3] };
+}
+/** Mean and spread of the first pane's canvas. */
+async function canvasStats(page) {
+  return page.evaluate(() => {
+    const c = document.querySelector('.pane canvas');
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let sum = 0, min = 255, max = 0;
+    for (let i = 0; i < d.length; i += 4) { sum += d[i]; if (d[i] < min) min = d[i]; if (d[i] > max) max = d[i]; }
+    return { mean: Math.round(sum / (d.length / 4)), spread: max - min };
+  });
+}
+/** Wait, on this side, for something the stand-in has seen. */
+async function until(cond, what, timeout = 8000) {
+  const end = Date.now() + timeout;
+  while (!cond()) {
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await new Promise(r => setTimeout(r, 50));
+  }
+}
+
+check('a multi-frame run is fetched whole, once, after its first picture', async (b, s) => {
+  const { page, ctx, pageErrors } = await openViewer(b, s, 'ACC100000');
+  await awaitPixels(page);
+  const whole = s.requests.filter(isWhole);
+  eq(whole.length, 1, 'whole-instance requests for one run');
+  // Stored values in a plain .npy: rescale defaults to true on 1.13.0 and
+  // compress=1 answers a zip (both MEASURED), so neither may be left out.
+  ok(/rescale=0/.test(whole[0].search) && /compress=0/.test(whole[0].search),
+    `the run was not asked for as stored values in a plain .npy: ${whole[0].search}`);
+  eq(s.requests.filter(isFrameNumpy).length, 0, 'single-frame numpy requests for a run that came whole');
+  const picture = s.requests.findIndex(r => /^instances\/[^/]+\/frames\/0\/rendered$/.test(r.path));
+  const run = s.requests.findIndex(isWhole);
+  ok(picture >= 0 && picture < run, `the run went out before the first picture (picture #${picture}, run #${run})`);
+  eq(pageErrors.length, 0, `page errors: ${pageErrors.join(' | ')}`);
+  await ctx.close();
+});
+
+check('the frames cut from a run are the frames the archive holds', async (b, s) => {
+  const { page, ctx } = await openViewer(b, s, 'ACC100000');
+  await awaitPixels(page);
+  await page.click('#viewer [data-act="one"]');      // 1:1, so an offset from the centre is image pixels
+  // First, middle and last frame, three points on each: the disc, which steps
+  // 40 HU a frame; the bar at the top left, which reads 1000 + the frame number;
+  // and the same rows past the bar, which are air. A frame cut from the wrong
+  // offset misreads the first two; one cut with rows and columns swapped misses
+  // the bar. The expected value is the stand-in's own, wherever the probe lands.
+  const points = [
+    [0, 0, 'the disc', p => Math.hypot(p.x - 63.5, p.y - 47.5) < 8],
+    [-48, -45, 'the bar', p => p.x < 32 && p.y < 6],
+    [48, -45, 'air beside the bar', p => p.x >= 32 && p.y < 6]
+  ];
+  for (const k of [0, 20, RUN.frames - 1]) {
+    await goToFrame(page, k);
+    for (const [dx, dy, where, inside] of points) {
+      const at = await probeAt(page, dx, dy);
+      ok(inside(at), `frame ${k}: the probe meant for ${where} landed at (${at.x}, ${at.y})`);
+      eq(at.value, phantomHu(k, at.x, at.y, RUN), `frame ${k}, ${where} at (${at.x}, ${at.y})`);
+    }
+  }
+  eq(s.requests.filter(isWhole).length, 1, 'whole-instance requests');
+  eq(s.requests.filter(isFrameNumpy).length, 0, 'single-frame numpy requests');
+  await ctx.close();
+});
+
+check('once a run is in memory, scrubbing and cine send nothing to the archive', async (b, s) => {
+  const { page, ctx } = await openViewer(b, s, 'ACC100000');
+  await awaitPixels(page);
+  await page.waitForTimeout(300);          // pictures asked for before the run landed may still be arriving
+  const n = s.requests.length;
+  await goToFrame(page, RUN.frames - 1);
+  await goToFrame(page, 7);
+  await page.click('#vwrCine');
+  await page.waitForTimeout(1000);         // about twelve frames at 12 fps
+  await page.click('#vwrCine');
+  await page.waitForTimeout(150);
+  ok(+(await page.getAttribute('.pane', 'data-index')) !== 7, 'cine did not advance');
+  ok(/pixel data/.test(await page.textContent('#vwrFoot')), 'cine left the pixel-data path');
+  eq(s.requests.length, n, `requests while scrubbing and playing a run already in memory: ${s.requests.slice(n).map(r => r.path).join(' ')}`);
+  await ctx.close();
+});
+
+check('window and level on a run in memory send nothing either', async (b, s) => {
+  const { page, ctx } = await openViewer(b, s, 'ACC100000');
+  await awaitPixels(page);
+  await page.waitForTimeout(300);
+  await goToFrame(page, 20);
+  const before = (await canvasStats(page)).mean;
+  const n = s.requests.length;
+  const c = await paneCentre(page);
+  await page.mouse.move(c.x, c.y);
+  await page.mouse.down({ button: 'right' });
+  await page.mouse.move(c.x + 160, c.y + 90, { steps: 8 });
+  await page.mouse.up({ button: 'right' });
+  await page.waitForTimeout(150);
+  const after = (await canvasStats(page)).mean;
+  ok(Math.abs(after - before) > 4, `window/level did not change the image (${before} -> ${after})`);
+  eq(s.requests.length, n, `window/level on a run went back to the archive: ${s.requests.slice(n).map(r => r.path).join(' ')}`);
+  await ctx.close();
+});
+
+check('a run over the cap is still read one frame at a time', async (b, s) => {
+  // Study 008: 72 frames of 860 x 860 x 2 bytes, 102 MB of stored values against
+  // a cap of 96 MB, half the viewer's 192 MB frame cache. It must never be asked
+  // for whole -- and if the fixture or the cap moves, this says so first.
+  ok(LONG_RUN.frames * LONG_RUN.rows * LONG_RUN.cols * 2 > 96 * 1024 * 1024, 'the long run is no longer over the cap');
+  ok(portalHtml.includes('FrameCache.maxBytes / 2') && portalHtml.includes('maxBytes: 192 * 1024 * 1024'),
+    'the cap is no longer half of a 192 MB cache; this check\'s premise needs revisiting');
+  const { page, ctx } = await openViewer(b, s, 'ACC100008');
+  await awaitPixels(page);
+  const c = await paneCentre(page);
+  await page.mouse.move(c.x, c.y);
+  await page.mouse.wheel(0, 120);
+  await until(() => s.requests.some(r => /\/frames\/1\/numpy$/.test(r.path)), 'frame 1 read on its own');
+  eq(s.requests.filter(isWhole).length, 0, 'whole-instance requests for a run over the cap');
+  ok(s.requests.some(r => /\/frames\/0\/numpy$/.test(r.path)), 'frame 0 was not read on its own');
+  ok(!/loading/.test(await page.textContent('#vwrFoot')), 'a run that is not being loaded is said to be');
+  await ctx.close();
+});
+
+check('single-frame images are never asked for as a whole instance', async (b, s) => {
+  const { page, ctx } = await openViewer(b, s);        // study 001: CT, forty single-frame images a series
+  await awaitPixels(page);
+  const c = await paneCentre(page);
+  await page.mouse.move(c.x, c.y);
+  await page.mouse.wheel(0, 120);
+  await until(() => s.requests.some(r => /-inst-1\/frames\/0\/numpy$/.test(r.path)), 'the second image read on its own');
+  eq(s.requests.filter(isWhole).length, 0, 'whole-instance requests for single-frame images');
+  await ctx.close();
+});
+
+check('a run still loading says so, over a first picture already painted', async (b, s, browser) => {
+  // The run is held back 2.5 s and every picture 500 ms: long enough to look at
+  // the viewer in between, and to see which of the two was asked for first.
+  const slow = await startStandInOrthanc({ portalHtml, runDelayMs: 2500, renderedDelayMs: 500 });
+  try {
+    const { page, ctx } = await openViewer(browser, slow, 'ACC100000');
+    await page.waitForFunction(() => /loading 40-frame run/.test(document.querySelector('#vwrFoot')?.textContent || ''),
+      null, { timeout: 10000 });
+    // "server rendered" is only ever said of a frame that is on the canvas.
+    ok(/server rendered · loading 40-frame run/.test(await page.textContent('#vwrFoot')),
+      `the footer does not say what is on screen: ${await page.textContent('#vwrFoot')}`);
+    const { mean } = await canvasStats(page);
+    ok(mean > 15, `the pane is dark while the run loads (mean ${mean}); the first picture should be on it`);
+    // Asked for once the first picture is in -- and at once, not a round trip
+    // later behind the pictures prefetched after it.
+    await until(() => slow.requests.some(isWhole), 'the run to be asked for');
+    const picture = slow.requests.find(r => /^instances\/[^/]+\/frames\/0\/rendered$/.test(r.path));
+    const run = slow.requests.find(isWhole);
+    const gap = run.t - picture.t;
+    ok(gap >= 450 && gap < 850, `the run went out ${gap} ms after the first picture was asked for; ` +
+      'it must wait for that picture (500 ms) and then not for another');
+    await awaitPixels(page);
+    ok(!/loading/.test(await page.textContent('#vwrFoot')), 'the footer still says loading after the run landed');
+    await ctx.close();
+  } finally { await slow.close(); }
+});
+
+check('a run the archive will not hand over whole falls back to one frame at a time', async (b, s, browser) => {
+  const refusing = await startStandInOrthanc({ portalHtml, wholeRefused: true });
+  try {
+    const { page, ctx, pageErrors } = await openViewer(browser, refusing, 'ACC100000');
+    await awaitPixels(page);
+    const c = await paneCentre(page);
+    await page.mouse.move(c.x, c.y);
+    await page.mouse.wheel(0, 120);
+    await until(() => refusing.requests.some(r => /\/frames\/1\/numpy$/.test(r.path)), 'frame 1 read on its own');
+    eq(refusing.requests.filter(isWhole).length, 1, 'whole-instance requests after the archive refused one');
+    ok(refusing.requests.some(r => /\/frames\/0\/numpy$/.test(r.path)), 'frame 0 was not read on its own after the refusal');
+    eq(pageErrors.length, 0, `page errors: ${pageErrors.join(' | ')}`);
+    await ctx.close();
+  } finally { await refusing.close(); }
+});
+
+check('cine on the rendered path reads twelve frames ahead, and each picture once', async (b, s, browser) => {
+  // Study 003 is an ultrasound of single-frame images: there is no run to take,
+  // so cine lives on pictures fetched ahead of it. Each is held 150 ms, slow
+  // enough that a window asked for afresh on every tick would ask twice.
+  const slow = await startStandInOrthanc({ portalHtml, renderedDelayMs: 150 });
+  try {
+    const { page, ctx } = await openViewer(browser, slow, 'ACC100003');
+    await page.waitForTimeout(400);
+    await page.click('#vwrCine');
+    await page.waitForTimeout(600);
+    await page.click('#vwrCine');
+    await page.waitForTimeout(500);
+    const at = +(await page.getAttribute('.pane', 'data-index'));
+    const frameOf = r => +(/^instances\/study-003-series-0-inst-(\d+)\/frames\/0\/rendered$/.exec(r.path) || [])[1];
+    const asked = slow.requests.map(frameOf).filter(Number.isInteger);
+    ok(at > 0, 'cine did not advance');
+    ok(Math.max(...asked) >= at + 10,
+      `playing at frame ${at}, pictures were read only as far as ${Math.max(...asked)}; twelve ahead reaches ${at + 12}`);
+    const twice = [...new Set(asked.filter((v, i) => asked.indexOf(v) !== i))];
+    eq(twice.length, 0, `pictures asked for more than once: ${twice.join(', ')}`);
+    await ctx.close();
+  } finally { await slow.close(); }
 });
 
 // ---------------------------------------------------------------- the runner

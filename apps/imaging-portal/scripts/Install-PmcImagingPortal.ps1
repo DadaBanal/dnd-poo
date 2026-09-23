@@ -58,7 +58,7 @@ $Stamp   = Get-Date -Format 'yyyyMMdd-HHmmss'
 
 # The page this script installs, and the only bytes it will accept.
 $PortalFile   = Join-Path $Here 'PMC_Imaging_Portal.html'
-$ExpectedHash = '035cbfa33ca9c41fd378b9c008743dc302555586274c663110b29beeb75edb9e'
+$ExpectedHash = '0c093dd88d83e9b5fe155e01048a096aaa57a7bf8a08ceff04b9e75cb00b08ed'
 
 $script:Changes = @()
 # ServeFolders reads the page off disk on every request, so replacing the file

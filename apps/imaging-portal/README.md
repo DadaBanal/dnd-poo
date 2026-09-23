@@ -9,9 +9,9 @@ has.
 Four screens — **Worklist**, **Study**, **Devices**, **Activity / System** — and
 a **viewer**. It speaks only Orthanc's published REST API: `/tools/find`,
 `/studies/…`, `/series/…/instances`, `/instances/…/simplified-tags`,
-`/instances/…/frames/…/{numpy,rendered,preview}`, `/modalities`, `/changes`,
-`/jobs`, `/statistics`, `/plugins`, `/system`. When the engine underneath is
-replaced, the front end keeps working.
+`/instances/…/frames/…/{numpy,rendered,preview}`, `/instances/…/numpy`,
+`/modalities`, `/changes`, `/jobs`, `/statistics`, `/plugins`, `/system`. When
+the engine underneath is replaced, the front end keeps working.
 
 ## The viewer
 
@@ -32,6 +32,17 @@ Endpoints and parameter names **VERIFIED 9 Sep 2026** against Orthanc's own
 OpenAPI (<https://orthanc.uclouvain.be/api/orthanc-openapi.json>). `/numpy`
 needs Orthanc 1.11.0+; PMC-ORTHANC01 runs **1.13.0** (MEASURED, cutover handoff
 2 Sep 2026).
+
+**A run is one file.** A multi-frame instance — an XA run, a US cine — is asked
+for whole, `/instances/{id}/numpy?rescale=0&compress=0`, in one request once its
+first picture is on screen, and its frames are cut out of it here: cine,
+scrubbing and window/level then send nothing. Only under 96 MB, half the frame
+cache, so two panes can each hold a run; above that, or when the tags do not
+give the size, it is one frame per request as before, and cine prefetches the
+next twelve pictures. A run that is loading says so on screen, with how far it
+has got. What the two numpy routes return — shapes, `rescale` defaulting to
+**true**, `compress=1` answering a zip — was MEASURED on Orthanc 1.13.0 on
+23 Sep 2026; see `docs/WS23-cine-whole-run-20260923.md`.
 
 Window/level with presets · magnifier · zoom, pan, fit, 1:1 and calibrated true
 size · invert, rotate, flip · sharpen and smooth · length, angle, rectangular and
@@ -82,7 +93,7 @@ build/package.mjs       the deployment zip: page, installer, probe, instructions
 scripts/*.ps1           what an operator runs on PMC-ORTHANC01
 build/baseline.mjs      deliberately move the reference hash
 test/stand-in-orthanc.mjs  a fake Orthanc that refuses OrderBy, like the real one
-test/checks.mjs         24 checks driven through Chromium
+test/checks.mjs         55 checks driven through Chromium
 dist/                   the artifact. Generated. Never hand-edit.
 ```
 
@@ -103,7 +114,7 @@ any output that does not match the recorded reference.
 ```bash
 npm run build            # assemble dist/PMC_Imaging_Portal.html, verify it
 npm run check            # verify only; fails if dist/ is stale (this is what CI runs)
-npm test                 # build, then run the 24 browser checks
+npm test                 # build, then run the 55 browser checks
 npm run payload          # emit dist/payload.gz.b64 and the sha256 an installer needs
 npm run verify-installer <installer.ps1>   # what does that installer ACTUALLY carry?
 npm run baseline         # after a deliberate change: move the reference hash
@@ -123,7 +134,8 @@ matter: 64 studies, real PNG previews, an index that answers HTTP 500 to
 `OrderBy`, one modality that answers C-ECHO and one that is silent, and
 `/modalities/{name}` returning **child resources** rather than settings (the
 misread that caused a false alarm and a forced restart of a live archive on
-8 Sep 2026).
+8 Sep 2026). Its cathlab runs are single multi-frame instances, as PMC's are,
+and its numpy routes answer in the shapes Orthanc 1.13.0 was measured to use.
 
 The suite covers the behaviour the portal was signed off on, plus the three
 faults this code has actually hit: previews painting behind their placeholder,

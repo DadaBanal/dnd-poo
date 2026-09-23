@@ -110,7 +110,7 @@ KNOWN BEFORE YOU RUN IT
   Orthanc install media. It will not download a plugin onto a clinical box.
 
 WHAT HAS AND HAS NOT BEEN PROVEN
-  MEASURED: 42 of 42 browser checks pass against a stand-in Orthanc that refuses
+  MEASURED: 55 of 55 browser checks pass against a stand-in Orthanc that refuses
   OrderBy the way the ODBC index 1.3 does.
   NOT VERIFIED: nothing here has been run against PMC-ORTHANC01. Step 1 exists
   precisely to close that gap before step 3.

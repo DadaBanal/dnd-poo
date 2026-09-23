@@ -10,7 +10,7 @@ const V = {
   layout: { r: 1, c: 1 }, tool: 'wl', overlay: true,
   notes: new Map(), selected: null,
   link: { scroll: false, wl: false },
-  cine: { on: false, fps: 12, bounce: false, raf: 0, last: 0 },
+  cine: { on: false, fps: 12, bounce: false, raf: 0, last: 0, dir: 1 },
   priors: [], busy: 0
 };
 
@@ -126,14 +126,25 @@ async function showFrame(pane, index) {
   prefetch(pane);
 }
 
-/** Warm the frames on either side, so a scroll does not wait on the network. */
+/** Warm the frames about to be wanted, so a scroll does not wait on the network.
+    Cine wants more than a scroll does. At 12 fps a frame is due every 83 ms and
+    the archive took 430 ms to render one, warm (MEASURED, 9 Sep), so four either
+    side run dry a third of a second after play is pressed. While it plays, the
+    window is the next twelve in the direction of play, wrapping as the loop
+    does. Once a whole run is in memory has() answers for every frame of it, and
+    none of this asks for anything. */
 function prefetch(pane) {
-  if (!pane.serie) return;
-  for (const d of [1, -1, 2, -2, 3, 4]) {
-    const i = pane.index + d;
-    if (i < 0 || i >= pane.serie.frames.length) continue;
-    const f = pane.serie.frames[i];
-    if (!FrameCache.has(f.instance, f.frame)) loadFrame(pane.serie, i).catch(() => {});
+  const s = pane.serie;
+  if (!s) return;
+  const n = s.frames.length;
+  const playing = V.cine.on && pane === activePane();
+  const ahead = playing ? Array.from({ length: 12 }, (_, k) => (k + 1) * V.cine.dir) : [1, -1, 2, -2, 3, 4];
+  for (const d of ahead) {
+    let i = pane.index + d;
+    if (playing && !V.cine.bounce) i = ((i % n) + n) % n;
+    if (i < 0 || i >= n || i === pane.index) continue;
+    const f = s.frames[i];
+    if (!FrameCache.has(f.instance, f.frame)) loadFrame(s, i).catch(() => {});
   }
 }
 
@@ -322,16 +333,16 @@ function cine(on) {
   vq('#vwrCine').setAttribute('aria-pressed', String(V.cine.on));
   cancelAnimationFrame(V.cine.raf);
   if (!V.cine.on) return;
-  let dir = 1;
+  V.cine.dir = 1;                        // shared, so the prefetch knows which way to look
   const tick = t => {
     if (!V.cine.on) return;
     if (t - V.cine.last >= 1000 / V.cine.fps) {
       V.cine.last = t;
       const p = activePane();
       if (p?.serie) {
-        let next = p.index + dir;
-        if (next >= p.serie.frames.length) { if (V.cine.bounce) { dir = -1; next = p.index - 1; } else next = 0; }
-        if (next < 0) { if (V.cine.bounce) { dir = 1; next = 1; } else next = p.serie.frames.length - 1; }
+        let next = p.index + V.cine.dir;
+        if (next >= p.serie.frames.length) { if (V.cine.bounce) { V.cine.dir = -1; next = p.index - 1; } else next = 0; }
+        if (next < 0) { if (V.cine.bounce) { V.cine.dir = 1; next = 1; } else next = p.serie.frames.length - 1; }
         showFrame(p, next);
       }
     }
@@ -497,7 +508,7 @@ async function openPrior(studyId) {
 
 async function openViewer(study) {
   V.study = study;
-  V.notes.clear(); FrameCache.clear();
+  V.notes.clear(); FrameCache.clear(); Runs.reset();
   vq('#vwrName').textContent = study.name;
   vq('#vwrSub').textContent = [study.pid, study.sex, age(study.dob, study.date), study.desc, when(study.date)]
     .filter(Boolean).join('  ·  ');
@@ -545,6 +556,8 @@ function closeViewer() {
   vq('#viewer').setAttribute('aria-hidden', 'true');
   delete vq('#viewer').dataset.ready;
   document.body.classList.remove('vwr-open');
+  // An 81 MB run still arriving for a closed viewer is 81 MB nobody will look at.
+  Runs.reset();
   FrameCache.clear();
 }
 
@@ -680,4 +693,18 @@ function wireViewer() {
   };
   vq('#calClear').onclick = () => { store.set('viewer.pxPerMm', null); vq('#calDlg').close(); toast('Calibration cleared'); };
   addEventListener('resize', () => { if (V.open) paintAll(); });
+  // A run's progress, and its arrival, are news for every pane showing that
+  // instance -- not only for the one whose frame happened to ask for it.
+  Runs.onChange = inst => {
+    for (const p of V.panes) {
+      const f = p.serie?.frames[p.index];
+      if (f?.instance !== inst) continue;
+      const px = FrameCache.get(f.instance, f.frame);
+      if (px?.kind === 'pixels' && p.frame && p.frame.kind !== 'pixels') {
+        p.frame = px; p.frameKey = `${f.instance}#${f.frame}`; p.offKey = null;
+      }
+      paint(p);
+    }
+    updateFoot();
+  };
 }
