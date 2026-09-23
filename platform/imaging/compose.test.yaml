@@ -1,15 +1,25 @@
 # Test overlay for ci/run.sh. Never used on-prem.
 #
-# Shortens the two timers the tests wait on, and adds the test runner: a
-# container on the engine network that plays the modalities and the viewer.
-# The runner image is built by ci/run.sh (it may need a build proxy that
-# compose cannot pass conditionally).
+# Shortens the two timers the tests wait on, seals the edge network, and adds
+# two runners:
+#   tests    Python, on the engine network: plays the modalities over DICOM
+#            and reads back over REST and DICOMweb (M1).
+#   browser  Playwright + Chromium, on the edge network only: a person at a
+#            PC, who can reach the front door and nothing else (M2).
+# Both images are built by ci/run.sh (it may need a build proxy that compose
+# cannot pass conditionally).
 
 services:
   orthanc:
     environment:
       ORTHANC__STABLE_AGE: "5"
       ORTHANC__WORKLISTS__HOUSEKEEPING_INTERVAL: "5"
+
+  front:
+    networks:
+      engine: {}
+      edge:
+        aliases: ["${PMC_HOSTNAME:-imaging.pmcne.test}"]
 
   tests:
     image: pmc-imaging/tests:local
@@ -29,3 +39,27 @@ services:
     volumes:
       - ./.results:/results
     networks: [engine]
+
+  browser:
+    image: pmc-imaging/browser:local
+    pull_policy: never
+    profiles: [test]
+    depends_on:
+      front: { condition: service_started }
+    environment:
+      PMC_HOSTNAME: ${PMC_HOSTNAME:-imaging.pmcne.test}
+      RESULTS_DIR: /results
+      RUN_PHASE: ${RUN_PHASE:-first}
+      # ci/run.sh runs this as the invoking user, who has no home in the image.
+      HOME: /tmp
+    volumes:
+      - ./.results:/results
+    # Chromium wants more shared memory than Docker's 64 MB default.
+    shm_size: 1gb
+    networks: [edge]
+
+networks:
+  edge:
+    # In the test, nothing on the edge can reach the internet either, so a
+    # request that tries to leave shows up as a failure.
+    internal: true

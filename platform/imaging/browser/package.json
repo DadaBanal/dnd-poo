@@ -1,0 +1,13 @@
+{
+  "name": "pmc-imaging-browser-tests",
+  "private": true,
+  "description": "The platform through a browser: Chromium on the edge network, reaching only the front door.",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "pngjs": "7.0.0"
+  }
+}

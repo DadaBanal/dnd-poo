@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
-# Start the engine, test it, restart it from its volumes alone, test again.
+# Start the platform, test it, restart it from its volumes alone, test again.
 # The same script runs in the cloud build and in GitHub Actions.
 #
 #   ci/run.sh          run everything, then remove the test stack and its volumes
 #   KEEP=1 ci/run.sh   leave the test stack running afterwards, to look around
 #
-# It runs as its own compose project (pmc-imaging-test), so it can never
-# touch the volumes of a real engine, which runs as pmc-imaging.
+# It runs as its own compose project (pmc-imaging-test) with its own throwaway
+# secrets (.test-secrets/) and a test hostname, so it can never touch a real
+# platform's volumes, secrets or certificate.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$here"
 
+export PMC_SECRETS="$here/.test-secrets"
+export PMC_HOSTNAME="imaging.pmcne.test"   # RFC 2606 .test: never a real site
+
 compose=(docker compose -p pmc-imaging-test -f compose.yaml -f compose.test.yaml)
-runner=("${compose[@]}" --profile test run --rm --user "$(id -u):$(id -g)" tests)
+as_me=(--user "$(id -u):$(id -g)")
 
 step() { printf '\n== %s\n' "$*"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -21,8 +25,8 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 finish() {
   local status=$?
   if [[ $status -ne 0 ]]; then
-    step "engine and index logs (last 200 lines each)"
-    "${compose[@]}" logs --no-color --tail 200 orthanc pg-index || true
+    step "logs (last 150 lines each)"
+    "${compose[@]}" logs --no-color --tail 150 orthanc pg-index viewer front || true
   fi
   if [[ "${KEEP:-0}" != 1 ]]; then
     "${compose[@]}" --profile test down -v --remove-orphans >/dev/null 2>&1 || true
@@ -31,11 +35,13 @@ finish() {
 }
 trap finish EXIT
 
-step "secrets"
+step "throwaway secrets and a test certificate for $PMC_HOSTNAME"
+rm -rf "$PMC_SECRETS"
 tools/make-secrets.sh
+tools/make-test-tls.sh
 
-step "test runner image"
-build=(docker build -t pmc-imaging/tests:local)
+step "test runner images"
+build=(docker build)
 if [[ -n "${HTTPS_PROXY:-}" ]]; then
   # A build host behind a proxy (the cloud build): let the build reach it,
   # and trust its CA for the one install step.
@@ -43,13 +49,14 @@ if [[ -n "${HTTPS_PROXY:-}" ]]; then
   ca="${PIP_CERT:-${SSL_CERT_FILE:-}}"
   if [[ -n "$ca" && -s "$ca" ]]; then build+=(--secret "id=build-ca,src=$ca"); fi
 fi
-"${build[@]}" tests
+"${build[@]}" -t pmc-imaging/tests:local tests
+"${build[@]}" -t pmc-imaging/browser:local browser
 
-step "engine and index, from empty volumes"
+step "the platform, from empty volumes"
 "${compose[@]}" --profile test down -v --remove-orphans >/dev/null 2>&1 || true
+rm -rf .results
 mkdir -p .results
-rm -f .results/*.json
-"${compose[@]}" up -d --wait pg-index orthanc
+"${compose[@]}" up -d --wait
 
 step "the index: PostgreSQL 18.6, data checksums on, built-in C.UTF-8 collation"
 sql() { "${compose[@]}" exec -T pg-index psql -U orthanc -d orthanc -Atc "$1"; }
@@ -70,17 +77,22 @@ if "${compose[@]}" exec -T orthanc python3 -c \
 fi
 echo "ok: no SQLite index, no route out"
 
-step "tests against a fresh engine"
-"${runner[@]}" -m "not after_restart"
+step "engine tests (DICOM, REST, DICOMweb) against a fresh engine"
+"${compose[@]}" --profile test run --rm "${as_me[@]}" tests -m "not after_restart"
+
+step "browser tests: the front door and the viewer"
+"${compose[@]}" --profile test run --rm "${as_me[@]}" --entrypoint python tests seed.py
+"${compose[@]}" --profile test run --rm "${as_me[@]}" browser
 
 step "remove the containers, keep the volumes, start again"
 "${compose[@]}" --profile test down --remove-orphans
-"${compose[@]}" up -d --wait pg-index orthanc
+"${compose[@]}" up -d --wait
 
-step "tests after the restart"
-RUN_PHASE=after_restart "${runner[@]}" -m after_restart
+step "after the restart"
+RUN_PHASE=after_restart "${compose[@]}" --profile test run --rm "${as_me[@]}" tests -m after_restart
+RUN_PHASE=after_restart "${compose[@]}" --profile test run --rm "${as_me[@]}" browser -g "cathlab run opens playing"
 
 step "measured on synthetic data, on this host"
-cat .results/measurements-first.json
+cat .results/measurements-first.json .results/measurements-browser-first.json
 echo
 step "PASS"

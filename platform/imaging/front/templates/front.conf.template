@@ -1,0 +1,91 @@
+# The front door: the only way in (Path A, M2). One origin, ${PMC_HOSTNAME},
+# over TLS and HTTP/2:
+#
+#   /dicom-web/, /wado   the engine's DICOMweb, read-only, never cached
+#   everything else      the viewer (OHIF 3.13), static files
+#
+# The engine's own REST API, its explorer and the index are not routed at all.
+#
+# M2.1: sign-in is not built yet. Until M2.2 the front door presents the one
+# engine account to the engine itself (secrets/front-engine-auth.conf). That
+# means anyone who reaches this port can read images. It is fit for the
+# off-prem build only and must never be deployed.
+
+upstream engine {
+  server orthanc:8042;
+  keepalive 32;
+}
+
+upstream viewer {
+  server viewer:80;
+  keepalive 8;
+}
+
+server {
+  listen 80 default_server;
+  server_name _;
+  return 301 https://${PMC_HOSTNAME}$request_uri;
+}
+
+server {
+  listen 443 ssl default_server;
+  http2 on;
+  http2_max_concurrent_streams 128;
+  server_name ${PMC_HOSTNAME};
+
+  ssl_certificate      /run/secrets/tls.crt;
+  ssl_certificate_key  /run/secrets/tls.key;
+  ssl_protocols        TLSv1.2 TLSv1.3;
+  ssl_session_cache    shared:TLS:10m;
+  ssl_session_timeout  1d;
+  ssl_session_tickets  off;
+
+  # Same-origin everything. connect-src 'self' means the viewer can talk to
+  # nothing but this front door: that is the control that keeps images from
+  # leaving. 'unsafe-eval' is there because the viewer's image decoders need
+  # it (MEASURED: without it every frame fails to decode). COOP and COEP let
+  # the viewer use shared memory for volumes. The referrer is never sent:
+  # URLs carry study UIDs.
+  add_header Strict-Transport-Security "max-age=31536000" always;
+  add_header X-Content-Type-Options "nosniff" always;
+  add_header Referrer-Policy "no-referrer" always;
+  add_header Cross-Origin-Opener-Policy "same-origin" always;
+  add_header Cross-Origin-Embedder-Policy "require-corp" always;
+  add_header Cross-Origin-Resource-Policy "same-origin" always;
+  add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'" always;
+
+  gzip on;
+  gzip_proxied any;
+  gzip_min_length 1024;
+  gzip_types application/dicom+json application/json;
+
+  # ---- the engine: DICOMweb, read-only until sign-in decides who may write --
+  location ~ ^/(dicom-web/|wado$) {
+    limit_except GET { deny all; }
+    proxy_pass http://engine;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-Host $host;
+    include /run/secrets/front-engine-auth.conf;
+    proxy_read_timeout 300s;
+    # Images never touch a disk on the way through: no temp files here, and
+    # no-store tells shared ward PCs not to keep them either.
+    proxy_max_temp_file_size 0;
+    proxy_hide_header Cache-Control;
+    add_header Cache-Control "no-store" always;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Cross-Origin-Resource-Policy "same-origin" always;
+  }
+
+  # ---- the viewer ------------------------------------------------------------
+  location / {
+    limit_except GET { deny all; }
+    proxy_pass http://viewer;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $host;
+  }
+}

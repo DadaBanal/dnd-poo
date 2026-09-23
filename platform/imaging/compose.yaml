@@ -1,16 +1,25 @@
-# PMC imaging engine: Path A, milestone M1 (WS23).
+# PMC imaging platform: Path A (WS23).
 #
-# The engine (Orthanc) and its index (PostgreSQL), pinned by digest, on a
-# network with no route out and no port published. Built and proven
-# off-prem first; nothing here goes on-prem until the whole platform is
-# built and Dada says so. Read README.md before changing anything.
+#   M1  the engine (Orthanc) and its index (PostgreSQL)
+#   M2  the front door (nginx: TLS, HTTP/2) and the viewer (OHIF)
 #
-#   tools/make-secrets.sh            generate the secrets (once, never committed)
-#   docker compose up -d --wait      start the engine
+# Every image is pinned by digest. The engine and its index sit on a network
+# with no route out. The front door is the only service on the edge network,
+# and the only way in. Built and proven off-prem first; nothing here goes
+# on-prem until the whole platform is built and Dada says so. Read README.md
+# before changing anything.
+#
+#   tools/make-secrets.sh            generate the secrets (never committed)
+#   docker compose up -d --wait      start the platform
 #   ci/run.sh                        start it, test it, restart it, test again
 #
 # Site values are compose variables with safe defaults. None is a secret.
-#   PMC_DICOM_AET   the engine's AE title (default PMC-IMAGING)
+#   PMC_HOSTNAME   the front door's name (default imaging.pmcne.ph)
+#   PMC_DICOM_AET  the engine's AE title (default PMC-IMAGING)
+#   PMC_SECRETS    where the secrets are (default ./secrets)
+#   PMC_LIBRARY    where official images are pulled from (default Docker Hub).
+#                  The digest pins the content, so a mirror serves the
+#                  identical image.
 
 name: pmc-imaging
 
@@ -21,7 +30,7 @@ x-logging: &logging
 
 services:
   pg-index:
-    image: postgres:18.6-trixie@sha256:86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae
+    image: ${PMC_LIBRARY:-docker.io/library}/postgres:18.6-trixie@sha256:86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae
     environment:
       POSTGRES_DB: orthanc
       POSTGRES_USER: orthanc
@@ -54,8 +63,8 @@ services:
     environment:
       TZ: Asia/Manila
       ORTHANC__DICOM_AET: ${PMC_DICOM_AET:-PMC-IMAGING}
-      # Explorer 2 is on by default in this image. The user-facing surface
-      # is decided in M2; until then it stays off.
+      # Explorer 2 is on by default in this image. ICT's admin surface is
+      # decided with sign-in (M2.2); until then it stays off.
       ORTHANC_EXPLORER_2_ENABLED: "false"
     secrets:
       - source: pg-index-password
@@ -77,12 +86,68 @@ services:
     logging: *logging
     networks: [engine]
 
+  viewer:
+    # The stock OHIF image, reached only through the front door. PMC's
+    # configuration is viewer/app-config.js and its server block is
+    # viewer/nginx.conf. The image serves pre-compressed files, so the config
+    # is compressed into place at start; the image's own entrypoint is not used.
+    image: ohif/app:v3.13.10@sha256:559a820cf7c423e2b15aa6db9ba15aaee966e519c6f899432c1abace92b3b07a
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        gzip -9 -c /pmc/app-config.js > /usr/share/nginx/html/app-config.js.gz &&
+        : > /usr/share/nginx/html/app-config.js &&
+        exec nginx -g 'daemon off;'
+    volumes:
+      - ./viewer/app-config.js:/pmc/app-config.js:ro
+      - ./viewer/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1/]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    logging: *logging
+    networks: [engine]
+
+  front:
+    image: ${PMC_LIBRARY:-docker.io/library}/nginx:1.30.5@sha256:0aa2d81d65bc0cac0407e738b8f07d312c8685a84225fcb4db7bcbdd8c9bdf11
+    depends_on:
+      orthanc: { condition: service_healthy }
+      viewer: { condition: service_healthy }
+    environment:
+      TZ: Asia/Manila
+      PMC_HOSTNAME: ${PMC_HOSTNAME:-imaging.pmcne.ph}
+    secrets:
+      - source: tls-certificate
+        target: tls.crt
+      - source: tls-key
+        target: tls.key
+      - source: front-engine-auth
+        target: front-engine-auth.conf
+    volumes:
+      - ./front/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./front/templates:/etc/nginx/templates:ro
+    healthcheck:
+      # The TLS server answers for the site's name. (If the template failed to
+      # render, nginx would start with no server at all; this catches it.)
+      test: [CMD-SHELL, 'curl -fsk -o /dev/null --resolve "$$PMC_HOSTNAME:443:127.0.0.1" "https://$$PMC_HOSTNAME/"']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    logging: *logging
+    networks: [engine, edge]
+
 networks:
   engine:
-    # No route out. Nothing on it can call the internet, and nothing is
-    # published to the host. The front door (M2) joins it and is the only
-    # way in.
+    # No route out. Nothing on it can call the internet, and nothing on it is
+    # published to the host.
     internal: true
+  edge:
+    # Where people arrive. Only the front door is on it.
+    {}
 
 volumes:
   pg-index-data: {}
@@ -90,6 +155,12 @@ volumes:
 
 secrets:
   pg-index-password:
-    file: ./secrets/pg-index-password
+    file: ${PMC_SECRETS:-./secrets}/pg-index-password
   orthanc-users:
-    file: ./secrets/orthanc-users.json
+    file: ${PMC_SECRETS:-./secrets}/orthanc-users.json
+  front-engine-auth:
+    file: ${PMC_SECRETS:-./secrets}/front-engine-auth.conf
+  tls-certificate:
+    file: ${PMC_SECRETS:-./secrets}/tls/tls.crt
+  tls-key:
+    file: ${PMC_SECRETS:-./secrets}/tls/tls.key

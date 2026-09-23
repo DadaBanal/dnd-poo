@@ -1,8 +1,9 @@
 name: imaging-platform
 
-# The Path A engine (platform/imaging), started from empty volumes, tested as
-# a modality and a viewer would use it, restarted from its volumes alone, and
-# tested again. Synthetic DICOM only. Nothing here reaches PMC.
+# The Path A platform (platform/imaging), started from empty volumes, tested
+# as a modality, a viewer and a person with a browser would use it, restarted
+# from its volumes alone, and tested again. Synthetic DICOM only. Nothing here
+# reaches PMC.
 #
 # Same trigger pattern as imaging-portal: push covers main, pull_request covers
 # everything else, so each commit is tested once.
@@ -20,10 +21,10 @@ permissions:
 jobs:
   engine:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
       # Secrets are generated inside the run and destroyed with its volumes.
-      - name: Engine and index, tested fresh and after a restart
+      - name: Engine, front door and viewer, tested fresh and after a restart
         run: platform/imaging/ci/run.sh
