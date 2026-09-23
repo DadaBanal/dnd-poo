@@ -29,7 +29,8 @@ def _slug(name: str) -> str:
 
 def _admin_boards(ctx) -> list:
     return ctx.conn.execute(
-        "SELECT b.board_id, b.display_name, b.calendar_id, b.restricted, b.is_unrouted"
+        "SELECT b.board_id, b.display_name, b.calendar_id, b.restricted, b.is_unrouted,"
+        "       b.inactive, b.is_live"
         "  FROM board b JOIN board_member m ON m.board_id = b.board_id"
         " WHERE m.member = ? AND m.access = 'ADMIN' ORDER BY b.display_name",
         (ctx.user.id,)).fetchall()
@@ -49,12 +50,32 @@ def index(ctx):
         state = ("<span class='chip sla-ok'>ready</span>" if not missing else
                  "<span class='chip sla-warn'>needs: " + t.esc("; ".join(missing)) + "</span>")
         flags = (" <span class=pill>restricted</span>" if b["restricted"] else "") + \
-                (" <span class=pill>unrouted queue</span>" if b["is_unrouted"] else "")
+                (" <span class=pill>unrouted queue</span>" if b["is_unrouted"] else "") + \
+                (" <span class=pill>retired</span>" if b["inactive"] else "") + \
+                (" <span class='pill' style='background:#e6f4ea;color:#137333'>live</span>"
+                 if b["is_live"] else "")
         rows.append(f"<tr><td><a href='/admin/board/{t.esc(b['board_id'])}'><b>"
                     f"{t.esc(b['display_name'])}</b></a>{flags}</td><td>{state}</td>"
                     f"<td>{n}</td><td><a class='btn ghost' href='/admin/board/{t.esc(b['board_id'])}'>"
                     "Set up</a></td></tr>")
     cards = []
+    if ctx.user.is_sysadmin:
+        n_items = ctx.conn.execute("SELECT COUNT(*) FROM catalogue_item").fetchone()[0]
+        cards.append(
+            "<div class=card><h3>Boards and the service catalogue</h3>"
+            "<p class=sub>Create a board for each group that runs its own queue — IT Help, "
+            "IT Requests, Biomedical, Facilities — each with its own statuses, SLA, members "
+            "and teams, as ConnectWise does. A person can be on as many boards as they work.</p>"
+            "<div class=row><div style='flex:0 0 auto'><a class=btn href='/admin/board/new'>"
+            "+ New board</a></div>"
+            "<div style='flex:0 0 auto'><form method=post action='/admin/catalogue/template'>"
+            "<button class=ghost type=submit>Load the ConnectWise template</button></form></div>"
+            f"<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/catalogue'>Type / Subtype / "
+            f"Item ({n_items})</a></div></div>"
+            "<p class=why style='margin-top:10px'>The template is Dada's ConnectWise design: a Help "
+            "board and a Request board, and the Type › Subtype › Item catalogue from his workbook. "
+            "Items for boards that do not exist yet wait until those boards are created. It adds "
+            "what is missing and never overwrites.</p></div>")
     if rows:
         cards.append("<div class=card><h3>Your boards</h3><div class=tablewrap><table>"
                      "<thead><tr><th>Board</th><th>Setup</th><th>Tickets</th><th></th></tr></thead>"
@@ -104,12 +125,23 @@ def board_setup(ctx, board_id):
         cal_opts = "<option value=''>(none — no clocks)</option>" + "".join(
             f"<option value='{t.esc(c['calendar_id'])}'{' selected' if c['calendar_id'] == b['calendar_id'] else ''}>"
             f"{t.esc(c['name'])}</option>" for c in cals)
+        def chk(name, v, label):
+            return (f"<label style='display:block;margin-top:8px;color:var(--ink);font-weight:500'>"
+                    f"<input type=checkbox name={name} value=1 style='width:auto'"
+                    f"{' checked' if v else ''}> {label}</label>")
         content = (
-            "<div class=card><h3>Board</h3><dl class=kv>"
-            f"<dt>Name</dt><dd>{t.esc(b['display_name'])}</dd>"
-            f"<dt>Fulfiller group</dt><dd>{t.esc(b['fulfiller_group'])}</dd>"
-            f"<dt>Restricted</dt><dd>{'yes — members only, every read audited' if b['restricted'] else 'no'}</dd>"
-            f"<dt>Closed loop required</dt><dd>{'yes' if b['closed_loop_required'] else 'no'}</dd></dl>"
+            "<div class=card><h3>Board</h3>"
+            f"<form method=post action='/admin/board/{bid}/settings'><div class=grid2>"
+            f"<div><label>Name</label><input name=display_name value='{t.esc(b['display_name'])}' required></div>"
+            f"<div><label>Fulfiller group</label><input name=fulfiller_group value='{t.esc(b['fulfiller_group'])}'></div>"
+            f"<div><label>Owner</label><input name=owner value='{t.esc(b['owner'] or '')}' placeholder='a named person'></div>"
+            f"<div><label>Deputy</label><input name=deputy value='{t.esc(b['deputy'] or '')}' placeholder='a named person'></div>"
+            f"<div style='grid-column:1/-1'><label>Description</label><input name=description value='{t.esc(b['description'] or '')}'></div>"
+            "<div>" + chk("restricted", b["restricted"], "Restricted — members only, every read audited")
+            + chk("closed_loop_required", b["closed_loop_required"], "Closed loop required")
+            + "</div><div>" + chk("is_live", b["is_live"], "Live (needs an owner and a deputy)")
+            + chk("inactive", b["inactive"], "Retired — no new tickets; history kept") + "</div>"
+            "</div><div style='margin-top:12px'><button type=submit>Save board</button></div></form>"
             f"<form method=post action='/admin/board/{bid}/calendar' class=row style='margin-top:14px'>"
             f"<div><label>Calendar the SLA clocks run on</label><select name=calendar_id>{cal_opts}</select></div>"
             "<div style='flex:0 0 auto'><button type=submit>Save</button></div></form>"
@@ -135,25 +167,46 @@ def board_setup(ctx, board_id):
             f"<tbody>{rows}</tbody></table><div style='margin-top:12px'>"
             "<button type=submit>Save targets</button></div></form></div>")
     elif tab == "members":
-        members = ctx.conn.execute("SELECT member, access FROM board_member WHERE board_id = ?"
-                                   " ORDER BY member", (board_id,)).fetchall()
         named = {r["role"]: r["member"] for r in ctx.conn.execute(
             "SELECT role, member FROM board_role WHERE board_id = ?", (board_id,))}
-        member_rows = "".join(f"<tr><td>{t.esc(m['member'])}</td><td>{t.esc(m['access'])}</td></tr>"
+        teams = ctx.conn.execute("SELECT team_id, name, team_leader, is_default FROM board_team"
+                                 " WHERE board_id = ? ORDER BY name", (board_id,)).fetchall()
+        team_name = {tm["team_id"]: tm["name"] for tm in teams}
+        members = ctx.conn.execute("SELECT member, access, team_id FROM board_member WHERE board_id = ?"
+                                   " ORDER BY member", (board_id,)).fetchall()
+        member_rows = "".join(f"<tr><td>{t.esc(m['member'])}</td><td>{t.esc(m['access'])}</td>"
+                              f"<td>{t.esc(team_name.get(m['team_id'], '—'))}</td></tr>"
                               for m in members)
+        team_opts = "<option value=''>(no team)</option>" + "".join(
+            f"<option value='{t.esc(tm['team_id'])}'>{t.esc(tm['name'])}</option>" for tm in teams)
+        team_rows = "".join(f"<tr><td>{t.esc(tm['name'])}</td><td>{t.esc(tm['team_leader'] or '—')}</td>"
+                            f"<td>{'default' if tm['is_default'] else ''}</td></tr>" for tm in teams)
         role_rows = "".join(
             f"<div><label>{t.esc(r.replace('_', ' ').title())}</label>"
             f"<input name='{r}' value='{t.esc(named.get(r, ''))}' placeholder='a named person'></div>"
             for r in ROLES)
         content = (
-            "<div class=card><h3>Members</h3><div class=tablewrap><table><thead><tr><th>Member</th>"
-            f"<th>Access</th></tr></thead><tbody>{member_rows}</tbody></table></div>"
+            "<div class=card><h3>Members</h3><p class=sub>A person can belong to any number of "
+            "boards. READ sees the board; WORK works its tickets; ADMIN sets it up.</p>"
+            "<div class=tablewrap><table><thead><tr><th>Member</th>"
+            f"<th>Access</th><th>Team</th></tr></thead><tbody>{member_rows}</tbody></table></div>"
             "<form method=post action='/admin/member/add' class=row style='margin-top:12px'>"
             f"<input type=hidden name=board_id value='{bid}'><input type=hidden name=back value='members'>"
             "<div><label>Member</label><input name=member required></div>"
             "<div><label>Access</label><select name=access><option>READ</option><option selected>WORK"
             "</option><option>ADMIN</option></select></div>"
+            f"<div><label>Team</label><select name=team_id>{team_opts}</select></div>"
             "<div style='flex:0 0 auto'><button type=submit>Add or change</button></div></form></div>"
+            "<div class=card><h3>Teams</h3><p class=sub>Teams inside a board — who a queue "
+            "falls to when nobody owns a ticket.</p><div class=tablewrap><table><thead><tr>"
+            f"<th>Team</th><th>Leader</th><th></th></tr></thead><tbody>{team_rows or '<tr><td colspan=3 class=muted>No teams yet.</td></tr>'}"
+            "</tbody></table></div>"
+            f"<form method=post action='/admin/board/{bid}/team' class=row style='margin-top:12px'>"
+            "<div><label>Team name</label><input name=name required></div>"
+            "<div><label>Team leader</label><input name=team_leader placeholder='a named person'></div>"
+            "<div style='flex:0 0 auto'><label>Default</label><select name=is_default><option value=0>no"
+            "</option><option value=1>yes</option></select></div>"
+            "<div style='flex:0 0 auto'><button type=submit>Add team</button></div></form></div>"
             "<div class=card><h3>The four board roles</h3><p class=sub>ConnectWise's own: Service "
             "Manager, Dispatch, On-Call and Duty Manager (who is told when On-Call does not "
             "answer). The rota on the On-call page overrides the named On-Call.</p>"
@@ -351,6 +404,173 @@ def save_roles(ctx, board_id):
     return _done(board_id, "members", "Roles saved")
 
 
+def new_board_form(ctx, *, error: str = "", values: dict | None = None):
+    from .. import Response
+    common.require_sysadmin(ctx)
+    v = values or {}
+    boards = ctx.conn.execute("SELECT board_id, display_name FROM board ORDER BY display_name").fetchall()
+    copy_opts = ("<option value='starter'>The starter setup (statuses, calendar, SLA placeholders)</option>"
+                 + "".join(f"<option value='{t.esc(b['board_id'])}'>Copy the setup of {t.esc(b['display_name'])}</option>"
+                           for b in boards) + "<option value=''>Empty — I will set it up</option>")
+    body = (
+        (f"<div class='banner err'>{t.esc(error)}</div>" if error else "") +
+        "<h1>New board</h1><p class=sub>A board is the bucket a group's tickets live in, with its "
+        "own statuses, SLA, members and teams. You become its administrator; add the people who "
+        "work it on its Members tab.</p><div class=card><form method=post action='/admin/board/new'>"
+        "<div class=grid2>"
+        f"<div><label>Name</label><input name=display_name required value='{t.esc(v.get('display_name', ''))}' placeholder='e.g. Biomedical & Clinical Equipment'></div>"
+        f"<div><label>Board id (optional)</label><input name=board_id value='{t.esc(v.get('board_id', ''))}' placeholder='made from the name'></div>"
+        f"<div><label>Fulfiller group</label><input name=fulfiller_group value='{t.esc(v.get('fulfiller_group', ''))}' placeholder='who works it'></div>"
+        f"<div><label>Start from</label><select name=copy_from>{copy_opts}</select></div>"
+        f"<div style='grid-column:1/-1'><label>Description</label><input name=description value='{t.esc(v.get('description', ''))}'></div>"
+        "<div><label style='color:var(--ink);font-weight:500'><input type=checkbox name=restricted value=1 style='width:auto'> "
+        "Restricted — members only, every read audited (PHI-bearing boards)</label></div>"
+        "<div><label style='color:var(--ink);font-weight:500'><input type=checkbox name=closed_loop_required value=1 style='width:auto'> "
+        "Closed loop required</label></div></div>"
+        "<div style='margin-top:14px'><button type=submit>Create board</button> "
+        "<a class='btn ghost' href='/admin'>Cancel</a></div></form></div>")
+    return Response(body=t.page("New board", body, user=ctx.user, active="admin"))
+
+
+def new_board_create(ctx):
+    from ... import setup
+    common.require_sysadmin(ctx)
+    f = ctx.request.form()
+    try:
+        bid = setup.create_board(
+            ctx.conn, display_name=f.get("display_name", ""), board_id=f.get("board_id") or None,
+            fulfiller_group=f.get("fulfiller_group", ""), creator=ctx.user.id, at=ctx.now,
+            restricted=f.get("restricted") == "1",
+            closed_loop_required=f.get("closed_loop_required") == "1",
+            description=f.get("description", "").strip() or None,
+            copy_from=f.get("copy_from") if f.get("copy_from") is not None else "starter")
+        ctx.conn.commit()
+    except (ValueError, LookupError) as exc:
+        ctx.conn.rollback()
+        return new_board_form(ctx, error=str(exc), values=f)
+    return _done(bid, "members", "Board created. Add the people who work it.")
+
+
+def save_settings(ctx, board_id):
+    common.require_board(ctx, board_id, need="ADMIN")
+    f = ctx.request.form()
+    name = f.get("display_name", "").strip()
+    if not name:
+        return _done(board_id, "board", "A board needs a name")
+    owner = f.get("owner", "").strip() or None
+    deputy = f.get("deputy", "").strip() or None
+    live = 1 if f.get("is_live") == "1" else 0
+    if live and not (owner and deputy):
+        return _done(board_id, "board", "Not saved: a live board needs an owner and a deputy")
+    unrouted = ctx.conn.execute("SELECT is_unrouted FROM board WHERE board_id = ?",
+                                (board_id,)).fetchone()[0]
+    inactive = 1 if f.get("inactive") == "1" else 0
+    if inactive and unrouted:
+        return _done(board_id, "board", "Not saved: the unrouted queue cannot be retired")
+    try:
+        ctx.conn.execute(
+            "UPDATE board SET display_name = ?, fulfiller_group = ?, owner = ?, deputy = ?,"
+            " description = ?, restricted = ?, closed_loop_required = ?, is_live = ?, inactive = ?"
+            " WHERE board_id = ?",
+            (name, f.get("fulfiller_group", "").strip() or "Unassigned", owner, deputy,
+             f.get("description", "").strip() or None, 1 if f.get("restricted") == "1" else 0,
+             1 if f.get("closed_loop_required") == "1" else 0, live, inactive, board_id))
+        _audit(ctx, board_id, f"settings saved: live={live} inactive={inactive}")
+        ctx.conn.commit()
+    except Exception as exc:                                 # noqa: BLE001
+        ctx.conn.rollback()
+        return _done(board_id, "board", f"Not saved: {exc}")
+    return _done(board_id, "board", "Board saved")
+
+
+def add_team(ctx, board_id):
+    common.require_board(ctx, board_id, need="ADMIN")
+    f = ctx.request.form()
+    name = f.get("name", "").strip()
+    if not name:
+        return _done(board_id, "members", "A team needs a name")
+    team_id = f"{board_id}.{_slug(name)}"
+    try:
+        if f.get("is_default") == "1":
+            ctx.conn.execute("UPDATE board_team SET is_default = 0 WHERE board_id = ?", (board_id,))
+        ctx.conn.execute("INSERT INTO board_team (team_id, board_id, name, team_leader, is_default)"
+                         " VALUES (?,?,?,?,?)", (team_id, board_id, name,
+                                                 f.get("team_leader", "").strip() or None,
+                                                 1 if f.get("is_default") == "1" else 0))
+        _audit(ctx, board_id, f"team added: {name}")
+        ctx.conn.commit()
+    except Exception as exc:                                 # noqa: BLE001
+        ctx.conn.rollback()
+        return _done(board_id, "members", f"Not added: {exc}")
+    return _done(board_id, "members", f"Team {name} added")
+
+
+def catalogue(ctx):
+    from .. import Response
+    common.require_sysadmin(ctx)
+    msg = ctx.request.query.get("msg", "")
+    rows = ctx.conn.execute(
+        "SELECT i.catalogue_item_id, f.display_name AS type, c.display_name AS subtype,"
+        "       a.display_name AS item, a.kind, b.display_name AS board, i.default_contract_basis,"
+        "       i.min_priority, i.clinical_impact, i.is_draft"
+        "  FROM catalogue_item i JOIN service_component c ON c.component_id = i.component_id"
+        "  JOIN service_family f ON f.family_id = c.family_id"
+        "  JOIN service_action a ON a.action_id = i.action_id"
+        "  JOIN board b ON b.board_id = i.default_board_id"
+        " ORDER BY f.display_name, c.display_name, a.display_name").fetchall()
+    trs = "".join(
+        f"<tr{' style=opacity:.55' if r['is_draft'] else ''}><td>{t.esc(r['type'])}</td>"
+        f"<td>{t.esc(r['subtype'])}</td><td>{t.esc(r['item'])}</td>"
+        f"<td>{'Incident' if r['kind'] == 'FAULT' else 'Service request'}</td>"
+        f"<td>{t.esc(r['board'])}</td><td>{t.esc(r['default_contract_basis'])}</td>"
+        f"<td>{t.esc(r['min_priority'] or '')}{' · clinical' if r['clinical_impact'] else ''}</td>"
+        f"<td><form method=post action='/admin/catalogue/toggle' class=inline>"
+        f"<input type=hidden name=catalogue_item_id value='{t.esc(r['catalogue_item_id'])}'>"
+        f"<button class=ghost type=submit style='padding:3px 10px'>{'Use' if r['is_draft'] else 'Retire'}"
+        "</button></form></td></tr>" for r in rows)
+    body = ((f"<div class='banner ok'>{t.esc(msg)}</div>" if msg else "") +
+            "<h1>Type · Subtype · Item</h1><p class=sub>ConnectWise's three-level ticket "
+            "classification, kept as one tree across boards (build scope §2.4): each item knows "
+            "whether it is an incident or a service request, which board it lands on, its "
+            "contract basis and any priority floor. <a href='/admin'>Setup</a></p>"
+            "<div class=card><form method=post action='/admin/catalogue/template' class=inline>"
+            "<button type=submit>Load the ConnectWise template</button></form> "
+            f"<span class=why>{len(rows)} item(s) loaded.</span></div>"
+            "<div class=card><div class=tablewrap><table><thead><tr><th>Type</th><th>Subtype</th>"
+            "<th>Item</th><th>Kind</th><th>Board</th><th>Basis</th><th>Floor</th><th></th></tr></thead>"
+            f"<tbody>{trs or '<tr><td colspan=8 class=muted>Empty. Load the template, or add items by CLI.</td></tr>'}"
+            "</tbody></table></div></div>")
+    return Response(body=t.page("Catalogue", body, user=ctx.user, active="admin"))
+
+
+def catalogue_template(ctx):
+    from .. import redirect
+    from ... import setup
+    import urllib.parse
+    common.require_sysadmin(ctx)
+    r = setup.apply_cw_template(ctx.conn, actor=ctx.user.id, at=ctx.now)
+    ctx.conn.commit()
+    waiting = sum(r["waiting"].values())
+    msg = (f"Template applied: {r['items']} item(s) loaded, {r['targets']} SLA target(s)"
+           + (f", boards created: {', '.join(r['created'])}" if r["created"] else "")
+           + (f"; {waiting} item(s) wait for boards not yet created "
+              f"({', '.join(sorted(r['waiting']))})" if waiting else ""))
+    return redirect("/admin/catalogue?" + urllib.parse.urlencode({"msg": msg}))
+
+
+def catalogue_toggle(ctx):
+    from .. import redirect
+    common.require_sysadmin(ctx)
+    cid = ctx.request.form().get("catalogue_item_id", "")
+    ctx.conn.execute("UPDATE catalogue_item SET is_draft = 1 - is_draft WHERE catalogue_item_id = ?",
+                     (cid,))
+    db.audit(ctx.conn, at=ctx.now.isoformat(sep=" ", timespec="minutes"), actor=ctx.user.id,
+             action="CATALOGUE_CONFIG", subject_kind="catalogue_item", subject_id=cid,
+             detail="retired/used toggled")
+    ctx.conn.commit()
+    return redirect("/admin/catalogue")
+
+
 def _local_accounts_card(ctx) -> str:
     rows = ctx.conn.execute(
         "SELECT username, is_sysadmin, disabled, last_login_at FROM local_account"
@@ -419,11 +639,15 @@ def add_member(ctx):
     common.require_board(ctx, board_id, need="ADMIN")
     member = f.get("member", "").strip()
     access = f.get("access", "READ")
+    team_id = f.get("team_id") or None
+    if team_id and ctx.conn.execute("SELECT 1 FROM board_team WHERE team_id = ? AND board_id = ?",
+                                    (team_id, board_id)).fetchone() is None:
+        team_id = None
     if member and access in ("READ", "WORK", "ADMIN"):
         try:
             ctx.conn.execute(
-                "INSERT OR REPLACE INTO board_member (board_id, member, access)"
-                " VALUES (?,?,?)", (board_id, member, access))
+                "INSERT OR REPLACE INTO board_member (board_id, member, team_id, access)"
+                " VALUES (?,?,?,?)", (board_id, member, team_id, access))
             _audit(ctx, board_id, f"member {member} -> {access}")
             ctx.conn.commit()
         except Exception:

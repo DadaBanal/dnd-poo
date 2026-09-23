@@ -464,7 +464,8 @@ def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: st
 def update_fields(conn: sqlite3.Connection, work_item_id: str, *, at: datetime,
                   actor: str, owner: str | None = None, entity_id: str | None = None,
                   requested_by: str | None = None, impact: str | None = None,
-                  urgency: str | None = None) -> list[str]:
+                  urgency: str | None = None,
+                  catalogue_item_id: str | None = None) -> list[str]:
     """Change the ticket's editable fields and write down every change.
 
     Priority is never set here. Changing impact or urgency re-runs the matrix,
@@ -502,25 +503,44 @@ def update_fields(conn: sqlite3.Connection, work_item_id: str, *, at: datetime,
                      (entity_id, work_item_id))
         changed.append(f"company {row['entity_id'] or '-'} -> {entity_id}")
 
+    item_changed = False
+    if catalogue_item_id is not None and (catalogue_item_id or None) != row["catalogue_item_id"]:
+        if catalogue_item_id and conn.execute(
+                "SELECT 1 FROM catalogue_item WHERE catalogue_item_id = ?",
+                (catalogue_item_id,)).fetchone() is None:
+            raise LookupError(f"no catalogue item {catalogue_item_id!r}")
+        conn.execute("UPDATE ticket SET catalogue_item_id = ? WHERE work_item_id = ?",
+                     (catalogue_item_id or None, work_item_id))
+        changed.append(f"type/subtype/item {row['catalogue_item_id'] or '-'} -> "
+                       f"{catalogue_item_id or '-'}")
+        item_changed = True
+
     new_i = impact or row["impact"]
     new_u = urgency or row["urgency"]
-    if (new_i, new_u) != (row["impact"], row["urgency"]):
+    axes_changed = (new_i, new_u) != (row["impact"], row["urgency"])
+    if axes_changed:
         conn.execute("UPDATE ticket SET impact = ?, urgency = ? WHERE work_item_id = ?",
                      (new_i, new_u, work_item_id))
         changed.append(f"impact/urgency {row['impact']}/{row['urgency']} -> {new_i}/{new_u}")
-        if row["priority_source"] != "OVERRIDE":
-            priority, source = compute_priority(new_i, new_u)
-            if priority != row["priority"]:
-                conn.execute("UPDATE ticket SET priority = ?, priority_source = ?"
-                             " WHERE work_item_id = ?", (priority, source, work_item_id))
-                changed.append(f"priority {row['priority']} -> {priority} ({source})")
-                for target in conn.execute(
-                        "SELECT clock, target_minutes FROM sla_target"
-                        " WHERE board_id = ? AND priority = ?", (row["board_id"], priority)):
-                    conn.execute(
-                        "UPDATE ticket_clock SET target_minutes = ? WHERE work_item_id = ?"
-                        " AND clock = ? AND stopped_at IS NULL",
-                        (target["target_minutes"], work_item_id, target["clock"]))
+    if (axes_changed or item_changed) and row["priority_source"] != "OVERRIDE":
+        item = conn.execute(
+            "SELECT i.min_priority, i.clinical_impact FROM ticket t JOIN catalogue_item i"
+            " ON i.catalogue_item_id = t.catalogue_item_id WHERE t.work_item_id = ?",
+            (work_item_id,)).fetchone()
+        priority, source = compute_priority(
+            new_i, new_u, min_priority=item["min_priority"] if item else None,
+            clinical_impact=item["clinical_impact"] if item else 0)
+        if priority != row["priority"]:
+            conn.execute("UPDATE ticket SET priority = ?, priority_source = ?"
+                         " WHERE work_item_id = ?", (priority, source, work_item_id))
+            changed.append(f"priority {row['priority']} -> {priority} ({source})")
+            for target in conn.execute(
+                    "SELECT clock, target_minutes FROM sla_target"
+                    " WHERE board_id = ? AND priority = ?", (row["board_id"], priority)):
+                conn.execute(
+                    "UPDATE ticket_clock SET target_minutes = ? WHERE work_item_id = ?"
+                    " AND clock = ? AND stopped_at IS NULL",
+                    (target["target_minutes"], work_item_id, target["clock"]))
 
     if changed:
         _event(conn, work_item_id, stamp, "UPDATED", actor, "; ".join(changed))

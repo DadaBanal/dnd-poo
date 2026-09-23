@@ -61,6 +61,7 @@ STARTER_TARGETS = {
     "P4": (480, 1440, 4320),
 }
 CLOCKS = ("RESPOND", "RESOLUTION_PLAN", "RESOLVE")
+STARTER_NOTE = "starter placeholder: set by the Service Manager"
 
 
 def status_id(board_id: str, name: str) -> str:
@@ -108,9 +109,8 @@ def apply_starter(conn: sqlite3.Connection, board_id: str, *, actor: str,
             cur = conn.execute(
                 "INSERT OR IGNORE INTO sla_target (board_id, priority, clock,"
                 " target_minutes, calendar, enforced, note)"
-                " VALUES (?,?,?,?, 'CLINICAL_24x7', 0,"
-                " 'starter placeholder: set by the Service Manager')",
-                (board_id, priority, clock, target))
+                " VALUES (?,?,?,?, 'CLINICAL_24x7', 0, ?)",
+                (board_id, priority, clock, target, STARTER_NOTE))
             added_targets += cur.rowcount
 
     cur = conn.execute("UPDATE board SET calendar_id = 'ALL_HOURS'"
@@ -141,3 +141,176 @@ def readiness(conn: sqlite3.Connection, board_id: str) -> list[str]:
     if not q("SELECT 1 FROM board WHERE board_id = ? AND calendar_id IS NOT NULL"):
         missing.append("a calendar for the SLA clocks")
     return missing
+
+
+# ------------------------------------------------------------------ many boards
+
+def board_id_for(name: str) -> str:
+    return re.sub(r"[^A-Z0-9]+", "_", name.upper()).strip("_")[:40] or "BOARD"
+
+
+def create_board(conn: sqlite3.Connection, *, display_name: str, fulfiller_group: str,
+                 creator: str, at: datetime, board_id: str | None = None,
+                 restricted: bool = False, closed_loop_required: bool = False,
+                 description: str | None = None, copy_from: str | None = "starter") -> str:
+    """A new board, the way ConnectWise adds one to the Service Board setup table.
+
+    `copy_from` is "starter" (the starter statuses, calendar and targets), the id
+    of an existing board (its statuses, calendar and targets are copied, so a
+    second board runs exactly like the first), or None (an empty board). The
+    creator becomes its administrator. It is created not live: a board is live
+    when it has an owner and a deputy, which the CHECK in 004 insists on.
+    """
+    display_name = (display_name or "").strip()
+    if not display_name:
+        raise ValueError("a board needs a name")
+    bid = board_id_for(board_id or display_name)
+    if conn.execute("SELECT 1 FROM board WHERE board_id = ?", (bid,)).fetchone():
+        raise ValueError(f"a board {bid!r} already exists")
+    conn.execute(
+        "INSERT INTO board (board_id, display_name, phase, fulfiller_group, restricted,"
+        " is_live, is_unrouted, closed_loop_required, description)"
+        " VALUES (?,?, '2', ?, ?, 0, 0, ?, ?)",
+        (bid, display_name, (fulfiller_group or "").strip() or "Unassigned",
+         1 if restricted else 0, 1 if closed_loop_required else 0, description))
+    conn.execute("INSERT INTO board_member (board_id, member, access) VALUES (?,?,'ADMIN')",
+                 (bid, creator))
+    if copy_from == "starter":
+        apply_starter(conn, bid, actor=creator, at=at)
+    elif copy_from:
+        copy_setup(conn, copy_from, bid)
+    db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=creator,
+             action="BOARD_CREATE", subject_kind="board", subject_id=bid,
+             detail=f"created {display_name!r} from {copy_from or 'nothing'}")
+    return bid
+
+
+def copy_setup(conn: sqlite3.Connection, from_board: str, to_board: str) -> None:
+    """Copy statuses (re-keyed to the new board), SLA targets and the calendar."""
+    if conn.execute("SELECT 1 FROM board WHERE board_id = ?", (from_board,)).fetchone() is None:
+        raise LookupError(f"no board {from_board!r} to copy from")
+    for s in conn.execute("SELECT * FROM board_status WHERE board_id = ?", (from_board,)).fetchall():
+        conn.execute(
+            "INSERT OR IGNORE INTO board_status (board_status_id, board_id, name,"
+            " customer_description, escalation_status, is_default, is_closed,"
+            " time_entry_allowed, display_on_board, sort_order, inactive)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (status_id(to_board, s["name"]), to_board, s["name"], s["customer_description"],
+             s["escalation_status"], s["is_default"], s["is_closed"], s["time_entry_allowed"],
+             s["display_on_board"], s["sort_order"], s["inactive"]))
+    conn.execute(
+        "INSERT OR IGNORE INTO sla_target (board_id, priority, clock, target_minutes, calendar,"
+        " attainment_percent, enforced, note) SELECT ?, priority, clock, target_minutes, calendar,"
+        " attainment_percent, 0, 'copied from ' || board_id FROM sla_target WHERE board_id = ?",
+        (to_board, from_board))
+    conn.execute("UPDATE board SET calendar_id = (SELECT calendar_id FROM board WHERE board_id = ?)"
+                 " WHERE board_id = ? AND calendar_id IS NULL", (from_board, to_board))
+
+
+# ---------------------------------------------------- the ConnectWise template
+
+def _sample(name: str) -> list[dict]:
+    import csv
+    with (db.SEED_DIR / "sample" / name).open(encoding="utf-8-sig", newline="") as fh:
+        return list(csv.DictReader(fh))
+
+
+def apply_cw_template(conn: sqlite3.Connection, *, actor: str, at: datetime) -> dict:
+    """Dada's ConnectWise design: a Help board and a Request board, and the
+    Type / Subtype / Item catalogue from his workbook (seed/sample/, derived
+    from "CW service types and items", Sep 2025).
+
+    - Help ("it is broken, please fix it") is IT_HELP, which already exists.
+    - Request ("a change to the agreement or the fee") is created as IT_REQUEST
+      if it is missing, with the starter statuses.
+    - Types, subtypes and item verbs are loaded whole. A catalogue item is loaded
+      only when its default board exists; the rest are counted and wait for the
+      board (Biomedical, Facilities, ...) to be created, then load on a re-run.
+      That keeps the 9 Sep direction: boards are made when someone runs them.
+    - SLA targets from the sample are added where a board has none for that
+      priority and clock. Every one is enforced = 0.
+
+    Re-running adds only what is missing and never overwrites.
+    """
+    created = []
+    if conn.execute("SELECT 1 FROM board WHERE board_id = 'IT_REQUEST'").fetchone() is None:
+        create_board(conn, board_id="IT_REQUEST", display_name="IT Service Request",
+                     fulfiller_group="Dada IT + on-site Windows team", creator=actor, at=at,
+                     description="Requests and changes: a new service, an adjustment, access, "
+                                 "a decommission. The Request board of Dada's ConnectWise design.",
+                     copy_from="starter")
+        created.append("IT_REQUEST")
+    for bid in ("IT_HELP",):
+        if conn.execute("SELECT 1 FROM board WHERE board_id = ?", (bid,)).fetchone() and \
+                not conn.execute("SELECT 1 FROM board_status WHERE board_id = ?", (bid,)).fetchone():
+            apply_starter(conn, bid, actor=actor, at=at)
+
+    def blank(v):
+        return v if (v or "").strip() else None
+
+    for r in _sample("service_families.csv"):
+        conn.execute("INSERT OR IGNORE INTO service_family (family_id, display_name, raw_name, note)"
+                     " VALUES (?,?,?,?)", (r["family_id"], r["display_name"], blank(r["raw_name"]),
+                                           blank(r["note"])))
+    for r in _sample("service_components.csv"):
+        conn.execute("INSERT OR IGNORE INTO service_component (component_id, family_id, display_name,"
+                     " raw_name, is_draft, note) VALUES (?,?,?,?,?,?)",
+                     (r["component_id"], r["family_id"], r["display_name"], blank(r["raw_name"]),
+                      int(r["is_draft"]), blank(r["note"])))
+    for r in _sample("service_actions.csv"):
+        conn.execute("INSERT OR IGNORE INTO service_action (action_id, display_name, raw_name, kind,"
+                     " implies_impact, note) VALUES (?,?,?,?,?,?)",
+                     (r["action_id"], r["display_name"], blank(r["raw_name"]), r["kind"],
+                      blank(r["implies_impact"]), blank(r["note"])))
+    boards = {r[0] for r in conn.execute("SELECT board_id FROM board")}
+    loaded, waiting = 0, {}
+    for r in _sample("catalogue_items.csv"):
+        if r["default_board_id"] not in boards:
+            waiting[r["default_board_id"]] = waiting.get(r["default_board_id"], 0) + 1
+            continue
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO catalogue_item (catalogue_item_id, component_id, action_id,"
+            " default_board_id, default_scope_item_id, default_contract_basis, clinical_impact,"
+            " min_priority, restricted, is_draft, note) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (r["catalogue_item_id"], r["component_id"], r["action_id"], r["default_board_id"],
+             blank(r["default_scope_item_id"]), r["default_contract_basis"],
+             int(r["clinical_impact"]), blank(r["min_priority"]), int(r["restricted"]),
+             int(r["is_draft"]), blank(r["note"])))
+        loaded += cur.rowcount
+    targets = 0
+    sample_targets = [r for r in _sample("sla_targets.csv") if r["board_id"] in boards]
+    # The starter's numbers are placeholders by its own label; Dada's workbook
+    # numbers replace them. A target anyone has saved is never touched.
+    for bid in {r["board_id"] for r in sample_targets}:
+        conn.execute("DELETE FROM sla_target WHERE board_id = ? AND note = ?", (bid, STARTER_NOTE))
+    for r in sample_targets:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO sla_target (board_id, priority, clock, target_minutes, calendar,"
+            " attainment_percent, enforced, note) VALUES (?,?,?,?,?,?,0,?)",
+            (r["board_id"], r["priority"], r["clock"], int(r["target_minutes"]), r["calendar"],
+             float(r["attainment_percent"]) if r["attainment_percent"] else None,
+             blank(r["note"]) or "from Dada's ConnectWise workbook"))
+        targets += cur.rowcount
+    db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor,
+             action="CW_TEMPLATE", subject_kind="catalogue", subject_id="ConnectWise",
+             detail=f"boards created {created or '-'}; {loaded} items loaded; waiting {waiting or '-'}")
+    return {"created": created, "items": loaded, "targets": targets, "waiting": waiting}
+
+
+def catalogue_choices(conn: sqlite3.Connection, board_id: str | None = None) -> list[dict]:
+    """Every live catalogue item as Type › Subtype › Item, for the pickers.
+    With a board, its own items first; ConnectWise scopes types per board,
+    the record keeps one tree (§2.4), so every item is offered and the board's
+    are marked."""
+    rows = conn.execute(
+        "SELECT i.catalogue_item_id, f.display_name AS type, c.display_name AS subtype,"
+        "       a.display_name AS item, a.kind, i.default_board_id, i.min_priority,"
+        "       i.clinical_impact"
+        "  FROM catalogue_item i"
+        "  JOIN service_component c ON c.component_id = i.component_id"
+        "  JOIN service_family f ON f.family_id = c.family_id"
+        "  JOIN service_action a ON a.action_id = i.action_id"
+        " WHERE i.is_draft = 0 ORDER BY f.display_name, c.display_name, a.display_name").fetchall()
+    out = [dict(r) | {"label": f"{r['type']} › {r['subtype']} › {r['item']}",
+                      "on_board": r["default_board_id"] == board_id} for r in rows]
+    return sorted(out, key=lambda x: (not x["on_board"], x["label"])) if board_id else out

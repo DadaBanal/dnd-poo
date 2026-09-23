@@ -39,6 +39,7 @@ def index(ctx):
         "SELECT b.board_id, b.display_name FROM board b"
         " JOIN board_member m ON m.board_id = b.board_id"
         " WHERE m.member = ? AND m.access IN ('WORK','ADMIN') AND b.is_unrouted = 0"
+        " AND COALESCE(b.inactive, 0) = 0"
         " ORDER BY b.display_name", (ctx.user.id,)).fetchall()
     target_opts = "".join(
         f"<option value='{t.esc(b['board_id'])}'>{t.esc(b['display_name'])}</option>"

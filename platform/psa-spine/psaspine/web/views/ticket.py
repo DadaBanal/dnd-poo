@@ -94,6 +94,29 @@ def _initials(name) -> str:
     return "".join(p[0] for p in parts[:2]).upper() or "?"
 
 
+def _catalogue_select(conn, board_id, selected, *, disabled="") -> str:
+    """Type › Subtype › Item, grouped by Type (ConnectWise's three levels). The
+    board's own items are listed first within each group."""
+    from ... import setup
+    choices = setup.catalogue_choices(conn, board_id)
+    if not choices:
+        return ""
+    groups: dict[str, list] = {}
+    for c in sorted(choices, key=lambda x: (x["type"], not x["on_board"], x["subtype"], x["item"])):
+        groups.setdefault(c["type"], []).append(c)
+    opts = ["<option value=''>(not classified)</option>"]
+    for type_, items in groups.items():
+        opts.append(f"<optgroup label='{t.esc(type_)}'>")
+        for c in items:
+            kind = "incident" if c["kind"] == "FAULT" else "request"
+            opts.append(f"<option value='{t.esc(c['catalogue_item_id'])}'"
+                        f"{' selected' if c['catalogue_item_id'] == selected else ''}>"
+                        f"{t.esc(c['subtype'])} › {t.esc(c['item'])} ({kind})</option>")
+        opts.append("</optgroup>")
+    return (f"<label>Type › Subtype › Item</label><select name=catalogue_item_id{disabled}>"
+            + "".join(opts) + "</select>")
+
+
 def _options(pairs, selected) -> str:
     return "".join(f"<option value='{t.esc(v)}'{' selected' if v == selected else ''}>"
                    f"{t.esc(label)}</option>" for v, label in pairs)
@@ -115,6 +138,15 @@ def detail(ctx, work_item_id):
         why = f"computed: {who.lower()} × patient waiting: {wait.lower()}"
     else:
         why = f"set by {tk['priority_source'].replace('_', ' ').lower()}"
+    klass = ""
+    if tk["catalogue_item_id"]:
+        r = ctx.conn.execute(
+            "SELECT f.display_name AS ty, c.display_name AS st, a.display_name AS it"
+            "  FROM catalogue_item i JOIN service_component c ON c.component_id = i.component_id"
+            "  JOIN service_family f ON f.family_id = c.family_id"
+            "  JOIN service_action a ON a.action_id = i.action_id"
+            " WHERE i.catalogue_item_id = ?", (tk["catalogue_item_id"],)).fetchone()
+        klass = f"{r['ty']} › {r['st']} › {r['it']}" if r else tk["catalogue_item_id"]
     can_work = common.may_access_board(ctx, tk["board_id"], need="WORK")
     buttons = ""
     if can_work and tk["closed_loop_required"]:
@@ -126,7 +158,8 @@ def detail(ctx, work_item_id):
         f"<h1>{wid} · {t.esc(tk['summary'])}</h1>"
         f"<p class=sub>{t.esc(tk['board_name'])} · "
         f"{t.chip(tk['status_name'] or tk['state'].replace('_', ' ').title())} · "
-        f"{t.badge(tk['priority'])} <span class=why>{t.esc(why)}</span></p></div>"
+        f"{t.badge(tk['priority'])} <span class=why>{t.esc(why)}</span>"
+        + (f" · <span class=pill>{t.esc(klass)}</span>" if klass else "") + "</p></div>"
         f"<div>{buttons}</div></div>")
 
     # ----------------------------------------------------------- SLA strip
@@ -220,7 +253,7 @@ def detail(ctx, work_item_id):
     boards = ctx.conn.execute(
         "SELECT b.board_id, b.display_name FROM board b JOIN board_member m"
         " ON m.board_id = b.board_id WHERE m.member = ? AND m.access IN ('WORK','ADMIN')"
-        " ORDER BY b.display_name", (ctx.user.id,)).fetchall()
+        " AND COALESCE(b.inactive, 0) = 0 ORDER BY b.display_name", (ctx.user.id,)).fetchall()
     board_pairs = [(b["board_id"], b["display_name"]) for b in boards]
     if tk["board_id"] not in dict(board_pairs):
         board_pairs.insert(0, (tk["board_id"], tk["board_name"]))
@@ -236,6 +269,7 @@ def detail(ctx, work_item_id):
         f"<label>Company</label><select name=entity_id{dis}>"
         f"{_options([(e['entity_id'], e['name']) for e in entities], tk['entity_id'] or '')}</select>"
         f"<label>Contact</label><input name=requested_by value='{t.esc(tk['requested_by'] or '')}'{dis}>"
+        + _catalogue_select(ctx.conn, tk["board_id"], tk["catalogue_item_id"], disabled=dis) +
         f"<label>Who is affected</label><select name=impact{dis}>{_options(WHO_IS_AFFECTED, tk['impact'])}</select>"
         f"<label>Is a patient waiting</label><select name=urgency{dis}>{_options(PATIENT_WAITING, tk['urgency'])}</select>"
         f"<label>Priority</label><div class=ro>{t.badge(tk['priority'])} from the matrix — never typed</div>"
@@ -326,7 +360,8 @@ def update(ctx, work_item_id):
         changed += engine.update_fields(
             ctx.conn, work_item_id, at=ctx.now, actor=ctx.user.id,
             owner=f.get("owner"), entity_id=f.get("entity_id") or None,
-            requested_by=f.get("requested_by"), impact=impact, urgency=urgency)
+            requested_by=f.get("requested_by"), impact=impact, urgency=urgency,
+            catalogue_item_id=f.get("catalogue_item_id") if "catalogue_item_id" in f else None)
         to_status = f.get("to_status", "")
         now_status = ctx.conn.execute("SELECT board_status_id FROM ticket WHERE work_item_id = ?",
                                       (work_item_id,)).fetchone()[0]
@@ -350,7 +385,8 @@ def new_form(ctx, *, error: str = "", values: dict | None = None):
     boards = ctx.conn.execute(
         "SELECT b.board_id, b.display_name FROM board b JOIN board_member m"
         " ON m.board_id = b.board_id WHERE m.member = ? AND m.access IN ('WORK','ADMIN')"
-        " ORDER BY b.is_unrouted, b.display_name", (ctx.user.id,)).fetchall()
+        " AND COALESCE(b.inactive, 0) = 0 ORDER BY b.is_unrouted, b.display_name",
+        (ctx.user.id,)).fetchall()
     if not boards:
         body = ("<h1>New ticket</h1><div class=card><div class=empty>You are not a working "
                 "member of any board. To ask IT for something, use "
@@ -373,6 +409,8 @@ def new_form(ctx, *, error: str = "", values: dict | None = None):
         f"<div><label>Company</label><select name=entity_id>{_options([(e['entity_id'], e['name']) for e in entities], v.get('entity_id', 'PMC'))}</select></div>"
         f"<div><label>Contact</label><input name=requested_by value='{t.esc(v.get('requested_by', ''))}' placeholder='name or email of who asked'></div>"
         f"<div style='grid-column:1/-1'><label>Summary</label><input name=summary required value='{t.esc(v.get('summary', ''))}' placeholder='What is wrong, in one line'></div>"
+        + (f"<div style='grid-column:1/-1'>{_catalogue_select(ctx.conn, None, v.get('catalogue_item_id', ''))}</div>"
+           if _catalogue_select(ctx.conn, None, "") else "") +
         "<div class=radiorow><label style='color:var(--muted);font-weight:600'>Who is affected?</label>"
         f"{radios('impact', WHO_IS_AFFECTED, v.get('impact', ''))}</div>"
         "<div class=radiorow><label style='color:var(--muted);font-weight:600'>Is a patient waiting?</label>"
@@ -412,7 +450,8 @@ def new_create(ctx):
             ctx.conn, board_id=board_id, summary=summary, impact=impact, urgency=urgency,
             requested_by=f.get("requested_by", "").strip() or None, at=ctx.now,
             actor=ctx.user.id, description=description or None, entity_id=entity_id,
-            owner=f.get("owner", "").strip() or None, source=source, event_kind="OPENED")
+            owner=f.get("owner", "").strip() or None, source=source, event_kind="OPENED",
+            catalogue_item_id=f.get("catalogue_item_id") or None)
         for code, severity, detail in phi.scan_fields({"summary": summary,
                                                        "description": description}):
             ctx.conn.execute(

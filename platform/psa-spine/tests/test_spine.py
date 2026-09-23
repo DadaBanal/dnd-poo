@@ -2335,6 +2335,51 @@ class WebWSGITest(unittest.TestCase):
             status, _, _ = self._call("GET", "/", cookie=cookie, query=f"sort={key}&dir=asc")
             self.assertTrue(status.startswith("200"), key)
 
+    def test_a_sysadmin_creates_a_board_and_a_member_works_many_boards(self):
+        admin = self._cookie_for("root", is_sysadmin=True)
+        status, headers, _ = self._call("POST", "/admin/board/new", cookie=admin, form={
+            "display_name": "Biomedical", "fulfiller_group": "Biomed", "copy_from": "starter"})
+        self.assertTrue(status.startswith("303"), status)
+        self._call("POST", "/admin/board/BIOMEDICAL/team", cookie=admin,
+                   form={"name": "Ward rounds", "team_leader": "reyes", "is_default": "1"})
+        self._call("POST", "/admin/member/add", cookie=admin, form={
+            "board_id": "BIOMEDICAL", "member": "alice", "access": "WORK",
+            "team_id": "BIOMEDICAL.WARD_ROUNDS", "back": "members"})
+        conn = self._db()
+        self.assertEqual(sorted(r[0] for r in conn.execute(
+            "SELECT board_id FROM board_member WHERE member = 'alice'")),
+            ["BIOMEDICAL", "IT_HELP", "PHI"])
+        self.assertEqual(conn.execute("SELECT team_id FROM board_member WHERE member='alice'"
+                                      " AND board_id='BIOMEDICAL'").fetchone()[0],
+                         "BIOMEDICAL.WARD_ROUNDS")
+        conn.close()
+        _, _, body = self._call("GET", "/ticket/new", cookie=self._cookie_for("alice"))
+        self.assertIn("Biomedical", body)
+
+    def test_only_a_sysadmin_creates_boards(self):
+        status, _, _ = self._call("POST", "/admin/board/new", cookie=self._cookie_for("alice"),
+                                  form={"display_name": "Rogue", "fulfiller_group": "x"})
+        self.assertTrue(status.startswith("403"))
+
+    def test_a_live_board_needs_an_owner_and_deputy_and_a_retired_one_takes_no_tickets(self):
+        cookie = self._cookie_for("alice")
+        _, headers, _ = self._call("POST", "/admin/board/IT_HELP/settings", cookie=cookie,
+                                   form={"display_name": "IT Help", "is_live": "1",
+                                         "owner": "", "deputy": ""})
+        self.assertIn("owner+and+a+deputy", dict(headers)["Location"])
+        self._call("POST", "/admin/board/IT_HELP/settings", cookie=cookie,
+                   form={"display_name": "IT Help", "inactive": "1"})
+        _, _, body = self._call("GET", "/ticket/new", cookie=cookie)
+        self.assertNotIn("<option value='IT_HELP'", body)   # retired: not offered
+        self.assertIn("<option value='PHI'", body)          # her other board still is
+
+    def test_the_catalogue_page_loads_the_template(self):
+        admin = self._cookie_for("root", is_sysadmin=True)
+        _, headers, _ = self._call("POST", "/admin/catalogue/template", cookie=admin)
+        self.assertIn("Template+applied", dict(headers)["Location"])
+        _, _, body = self._call("GET", "/admin/catalogue", cookie=admin)
+        self.assertIn("Service request", body)
+
     def test_the_board_says_why_a_ticket_has_no_clock(self):
         _, _, body = self._call("GET", "/", cookie=self._cookie_for("alice"))
         self.assertIn("board not set up", body)
@@ -3515,6 +3560,86 @@ class BoardSetupTest(unittest.TestCase):
             self.assertEqual(main(["setup-board", path, "--board", "IT_HELP"]), 0)
             self.assertEqual(main(["setup-board", path, "--board", "NOPE"]), 1)
         self.assertIn("ready", out.getvalue())
+
+
+class ManyBoardsTest(unittest.TestCase):
+    """019 and setup.create_board / apply_cw_template — many boards, the way an
+    MSP runs ConnectWise: a Help board and a Request board to start, then one per
+    group that runs its own queue, each with its own statuses, SLA and people."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.at = datetime(2026, 9, 23, 9, 0)
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def test_a_new_board_gets_the_starter_and_its_creator_as_admin(self):
+        bid = setup.create_board(self.conn, display_name="Facilities & Engineering",
+                                 fulfiller_group="Engineering", creator="dada", at=self.at)
+        self.assertEqual(bid, "FACILITIES_ENGINEERING")
+        self.assertEqual(setup.readiness(self.conn, bid), [])
+        self.assertEqual(self.conn.execute(
+            "SELECT access FROM board_member WHERE board_id = ? AND member = 'dada'",
+            (bid,)).fetchone()[0], "ADMIN")
+        # Not live until someone owns it (the CHECK in 004).
+        self.assertEqual(self.conn.execute("SELECT is_live FROM board WHERE board_id = ?",
+                                           (bid,)).fetchone()[0], 0)
+
+    def test_a_board_can_copy_another_boards_setup(self):
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        self.conn.execute("UPDATE sla_target SET target_minutes = 5 WHERE board_id='IT_HELP'"
+                          " AND priority='P1' AND clock='RESPOND'")
+        bid = setup.create_board(self.conn, display_name="Biomedical", fulfiller_group="Biomed",
+                                 creator="dada", at=self.at, copy_from="IT_HELP")
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) FROM board_status WHERE board_id = ?", (bid,)).fetchone()[0], 8)
+        self.assertEqual(self.conn.execute(
+            "SELECT target_minutes FROM sla_target WHERE board_id = ? AND priority='P1'"
+            " AND clock='RESPOND'", (bid,)).fetchone()[0], 5)
+
+    def test_a_duplicate_board_is_refused(self):
+        with self.assertRaises(ValueError):
+            setup.create_board(self.conn, display_name="IT Help", fulfiller_group="x",
+                               creator="dada", at=self.at, board_id="IT_HELP")
+
+    def test_the_connectwise_template_makes_help_and_request_boards_and_the_catalogue(self):
+        r = setup.apply_cw_template(self.conn, actor="dada", at=self.at)
+        self.assertEqual(r["created"], ["IT_REQUEST"])
+        self.assertEqual(r["items"], 31)                 # 15 Help + 16 Request
+        self.assertIn("BIOMEDICAL", r["waiting"])        # waits for its board
+        again = setup.apply_cw_template(self.conn, actor="dada", at=self.at)
+        self.assertEqual((again["created"], again["items"]), ([], 0))
+        setup.create_board(self.conn, display_name="Biomedical", board_id="BIOMEDICAL",
+                           fulfiller_group="Biomed", creator="dada", at=self.at)
+        self.assertEqual(setup.apply_cw_template(self.conn, actor="dada", at=self.at)["items"], 4)
+
+    def test_the_template_replaces_placeholders_but_never_a_saved_target(self):
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        self.conn.execute("UPDATE sla_target SET target_minutes = 7, note = 'set on the Setup page'"
+                          " WHERE board_id='IT_HELP' AND priority='P1' AND clock='RESPOND'")
+        setup.apply_cw_template(self.conn, actor="dada", at=self.at)
+        t = {(r[0], r[1]): r[2] for r in self.conn.execute(
+            "SELECT priority, clock, target_minutes FROM sla_target WHERE board_id='IT_HELP'")}
+        self.assertEqual(t[("P1", "RESPOND")], 7)        # kept
+        self.assertEqual(t[("P3", "RESOLVE")], 1920)     # from the workbook
+        self.assertNotIn(("P3", "RESOLUTION_PLAN"), t)   # placeholder gone
+
+    def test_an_items_floor_takes_part_in_priority(self):
+        setup.apply_cw_template(self.conn, actor="dada", at=self.at)
+        self.conn.execute("UPDATE catalogue_item SET min_priority = 'P2' WHERE catalogue_item_id ="
+                          " (SELECT catalogue_item_id FROM catalogue_item WHERE default_board_id="
+                          "'IT_HELP' LIMIT 1)")
+        item = self.conn.execute("SELECT catalogue_item_id FROM catalogue_item WHERE min_priority"
+                                 " = 'P2'").fetchone()[0]
+        tid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="x", impact="I3",
+                                  urgency="U3", requested_by="a", at=self.at,
+                                  catalogue_item_id=item)
+        row = self.conn.execute("SELECT priority, priority_source, catalogue_item_id FROM ticket"
+                                " WHERE work_item_id = ?", (tid,)).fetchone()
+        self.assertEqual(tuple(row), ("P2", "CATALOGUE_FLOOR", item))
 
 
 class MailPickupScriptTest(unittest.TestCase):

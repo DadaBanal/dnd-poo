@@ -499,7 +499,8 @@ def open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
                 actor: str | None = None, description: str | None = None,
                 entity_id: str | None = None, owner: str | None = None,
                 path: str = "INCIDENT", event_kind: str = "INTAKE",
-                min_priority: str | None = None, source: str = "DESK") -> str:
+                min_priority: str | None = None, source: str = "DESK",
+                catalogue_item_id: str | None = None) -> str:
     """Open one ticket, the same way whichever door it came in by.
 
     The portal, email intake, the machine API and a fulfiller's New Ticket all
@@ -514,19 +515,37 @@ def open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
     """
     from . import board, numbering
 
-    priority, priority_source = compute_priority(impact, urgency,
-                                                 min_priority=min_priority)
+    item = None
+    if catalogue_item_id:
+        item = conn.execute("SELECT * FROM catalogue_item WHERE catalogue_item_id = ?",
+                            (catalogue_item_id,)).fetchone()
+        if item is None:
+            raise LookupError(f"no catalogue item {catalogue_item_id!r}")
+    # The item's floors take part in the one priority rule (catalogue floor,
+    # clinical impact); nobody chooses a priority.
+    priority, priority_source = compute_priority(
+        impact, urgency,
+        min_priority=min_priority or (item["min_priority"] if item else None),
+        clinical_impact=item["clinical_impact"] if item else 0)
+    basis = item["default_contract_basis"] if item else "UNKNOWN"
     ticket_id = numbering.issue(conn, at=at)
     stamp = at.isoformat(sep=" ", timespec="minutes")
     conn.execute(
-        "INSERT INTO work_item (work_item_id, source, name, entity_id, contract_basis)"
-        " VALUES (?,'desk',?,?,'UNKNOWN')", (ticket_id, summary, entity_id))
+        "INSERT INTO work_item (work_item_id, source, name, entity_id, contract_basis,"
+        " contract_basis_raw) VALUES (?,'desk',?,?,?,?)",
+        (ticket_id, summary, entity_id, basis,
+         f"defaulted from catalogue item {item['catalogue_item_id']}" if item else None))
+    if item and item["default_scope_item_id"]:
+        conn.execute("INSERT OR IGNORE INTO work_item_scope_item (work_item_id, scope_item_id,"
+                     " relation, raw) VALUES (?,?,'PRIMARY',?)",
+                     (ticket_id, item["default_scope_item_id"],
+                      f"defaulted from catalogue item {item['catalogue_item_id']}"))
     conn.execute(
-        "INSERT INTO ticket (work_item_id, board_id, path, impact, urgency, priority,"
-        " priority_source, requested_by, requested_at, owner, opened_at, state,"
-        " intake_source) VALUES (?,?,?,?,?,?,?,?,?,?,?,'NEW',?)",
-        (ticket_id, board_id, path, impact, urgency, priority, priority_source,
-         requested_by, stamp, owner, stamp, source))
+        "INSERT INTO ticket (work_item_id, board_id, catalogue_item_id, path, impact, urgency,"
+        " priority, priority_source, requested_by, requested_at, owner, opened_at, state,"
+        " intake_source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'NEW',?)",
+        (ticket_id, board_id, catalogue_item_id, path, impact, urgency, priority,
+         priority_source, requested_by, stamp, owner, stamp, source))
     numbering.bind(conn, ticket_id)
     if description:
         conn.execute(

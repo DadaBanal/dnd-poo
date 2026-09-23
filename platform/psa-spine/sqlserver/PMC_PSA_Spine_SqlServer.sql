@@ -1597,6 +1597,14 @@ ALTER TABLE psa.[ticket] ADD [updated_at] NVARCHAR(64) NULL;
 IF COL_LENGTH(N'psa.[ticket]', N'intake_source') IS NULL
 ALTER TABLE psa.[ticket] ADD [intake_source] NVARCHAR(32) NULL CONSTRAINT [CK_ticket_intake_source_01] CHECK (intake_source IN ('EMAIL', 'PHONE', 'WALK_UP', 'PORTAL', 'API', 'DESK', 'IMPORT'));
 
+-- Nullable, as every added column must be (the port refuses to invent values
+-- for rows that already exist): NULL and 0 both mean active.
+IF COL_LENGTH(N'psa.[board]', N'inactive') IS NULL
+ALTER TABLE psa.[board] ADD [inactive] INT NULL CONSTRAINT [CK_board_inactive_01] CHECK (inactive IN (0, 1));
+
+IF COL_LENGTH(N'psa.[board]', N'description') IS NULL
+ALTER TABLE psa.[board] ADD [description] NVARCHAR(MAX) NULL;
+
 -- --------------------------------------------------------------------------
 -- indexes
 

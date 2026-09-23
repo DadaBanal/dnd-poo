@@ -46,6 +46,10 @@ def _load(ctx, boards):
         "       t.state, t.owner, t.opened_at, t.updated_at, t.requested_by,"
         "       t.source_ref, t.intake_source, w.name AS summary, e.name AS entity,"
         "       e.entity_id, s.name AS status_name,"
+        "       (SELECT f.display_name || ' › ' || c.display_name FROM catalogue_item i"
+        "          JOIN service_component c ON c.component_id = i.component_id"
+        "          JOIN service_family f ON f.family_id = c.family_id"
+        "         WHERE i.catalogue_item_id = t.catalogue_item_id) AS klass,"
         "       (SELECT CASE e2.note_flag WHEN 'INTERNAL' THEN 'Internal: ' ELSE '' END"
         "               || e2.detail FROM ticket_event e2"
         "         WHERE e2.work_item_id = t.work_item_id AND e2.note_flag IS NOT NULL"
@@ -225,6 +229,7 @@ def _table(ctx, boards, shown, f) -> str:
             f"<td><input type=checkbox name=ids value='{t.esc(wid)}' form=bulk style='width:auto'></td>"
             f"<td><a href='/ticket/{t.esc(wid)}'>{t.esc(wid)}</a></td>"
             f"<td class=sum><a href='/ticket/{t.esc(wid)}' style='color:inherit'><b>{t.esc(r['summary'])}</b></a>"
+            + (f"<div class=last><span class=pill>{t.esc(r['klass'])}</span></div>" if r["klass"] else "")
             + (f"<div class=last>{t.esc(last)}</div>" if last else "") + "</td>"
             f"<td title='{t.esc(r['entity'] or '')}'>{t.esc(r['entity_id'] or '—')}</td>"
             f"<td class=muted>{t.esc(r['requested_by'] or '—')}</td>"
@@ -260,7 +265,7 @@ def _bulk_bar(ctx, boards, f) -> str:
     work_boards = ctx.conn.execute(
         "SELECT b.board_id, b.display_name FROM board b JOIN board_member m"
         " ON m.board_id = b.board_id WHERE m.member = ? AND m.access IN ('WORK','ADMIN')"
-        " ORDER BY b.display_name", (ctx.user.id,)).fetchall()
+        " AND COALESCE(b.inactive, 0) = 0 ORDER BY b.display_name", (ctx.user.id,)).fetchall()
     move_opts = "<option value=''>(board)</option>" + "".join(
         f"<option value='{t.esc(b['board_id'])}'>{t.esc(b['display_name'])}</option>"
         for b in work_boards)
