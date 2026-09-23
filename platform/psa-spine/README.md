@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 298 tests
+python3 tests/test_spine.py          # 332 tests
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -114,6 +114,17 @@ checked against Zammad and HaloPSA:
   (`psaspine setup-board`) adds what is missing and never overwrites. Every
   change is audited.
 
+- **Companies and contacts** (`/companies`, `/company/<id>`, `/contacts`,
+  `/contact/<id>`): ConnectWise's Company › Contacts. Contacts come from Active
+  Directory, not typing: `scripts/Export-PmcAdContacts.ps1` reads AD as an
+  ordinary user and changes nothing in it; `psaspine import-contacts` loads the CSV,
+  keyed by the AD objectGUID so a renamed person stays one contact. A disabled
+  account becomes an inactive contact, never a deleted one. A new ticket
+  whose requester's address is exactly one active contact is filed under that
+  person and their company automatically. These pages are for fulfillers only,
+  and never list a restricted board's tickets: those are read on their own
+  board, where the read is audited.
+
 Waiting statuses pause the **resolve** clock, never the respond clock. A board
 move keeps the ticket id and its clocks. A POST from another site is refused,
 on top of the `SameSite=Lax` session cookie.
@@ -141,6 +152,7 @@ Three ways in, each idempotent where it can be:
 
 ```bash
 python3 -m psaspine import-mail spine.db ./drop --channel helpdesk   # RFC 822 files
+python3 -m psaspine import-contacts spine.db ad-contacts.csv --company PMC
 python3 -m psaspine create-api-token spine.db --label "orthanc monitoring" --board IT_HELP
 ```
 

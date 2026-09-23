@@ -8,7 +8,8 @@ context, and return a Response.
 """
 from __future__ import annotations
 
-from .views import admin, board, dispatch, loop, oncall, portal, ticket, uplift
+from .views import (admin, board, companies, dispatch, loop, oncall, portal, ticket,
+                    uplift)
 
 # (method, pattern, handler). The first pattern that matches the path wins,
 # so a literal segment must be listed before a <capture> in the same place.
@@ -25,6 +26,10 @@ ROUTES = [
     ("POST", "/ticket/<work_item_id>/note", ticket.add_note),
     ("GET", "/ticket/<work_item_id>/loop", loop.form),
     ("POST", "/ticket/<work_item_id>/loop", loop.submit),
+    ("GET", "/companies", companies.index),
+    ("GET", "/company/<entity_id>", companies.detail),
+    ("GET", "/contacts", companies.contacts_index),
+    ("GET", "/contact/<contact_id>", companies.contact_detail),
     ("GET", "/dispatch", dispatch.index),
     ("POST", "/dispatch/assign", dispatch.assign),
     ("GET", "/oncall", oncall.index),

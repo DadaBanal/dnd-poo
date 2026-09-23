@@ -311,6 +311,7 @@ def page(title: str, body: str, *, user=None, active: str = "") -> str:
     nav_items = [
         ("board", "/", "Service Board"),
         ("dispatch", "/dispatch", "Dispatch"),
+        ("companies", "/companies", "Companies"),
         ("oncall", "/oncall", "On-call"),
         ("uplift", "/uplift", "Uplift"),
         ("admin", "/admin", "Setup"),

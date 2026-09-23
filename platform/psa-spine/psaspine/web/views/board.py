@@ -43,7 +43,9 @@ def _load(ctx, boards):
     marks = ",".join("?" * len(boards))
     return ctx.conn.execute(
         "SELECT t.work_item_id, t.board_id, b.display_name AS board_name, t.priority,"
-        "       t.state, t.owner, t.opened_at, t.updated_at, t.requested_by,"
+        "       t.state, t.owner, t.opened_at, t.updated_at,"
+        "       COALESCE((SELECT ct.display_name FROM contact ct"
+        "                  WHERE ct.contact_id = t.contact_id), t.requested_by) AS requested_by,"
         "       t.source_ref, t.intake_source, w.name AS summary, e.name AS entity,"
         "       e.entity_id, s.name AS status_name,"
         "       (SELECT f.display_name || ' › ' || c.display_name FROM catalogue_item i"

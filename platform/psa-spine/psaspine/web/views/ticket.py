@@ -94,6 +94,23 @@ def _initials(name) -> str:
     return "".join(p[0] for p in parts[:2]).upper() or "?"
 
 
+def _contact_list(conn, list_id: str, entity_id: str | None = None) -> str:
+    """A <datalist> of active contacts as 'Name <email>', which is exactly the
+    shape contacts.resolve() matches. Plain HTML: the browser offers the names
+    as the user types, with no script."""
+    sql = ("SELECT display_name, email FROM contact WHERE inactive = 0 AND email IS NOT NULL")
+    params: list = []
+    if entity_id and entity_id != "UNCLASSIFIED":
+        sql += " AND entity_id = ?"
+        params.append(entity_id)
+    rows = conn.execute(sql + " ORDER BY display_name LIMIT 2000", params).fetchall()
+    if not rows:
+        return ""
+    return (f"<datalist id={list_id}>" + "".join(
+        f"<option value='{t.esc(r['display_name'])} &lt;{t.esc(r['email'])}&gt;'>" for r in rows)
+        + "</datalist>")
+
+
 def _catalogue_select(conn, board_id, selected, *, disabled="") -> str:
     """Type › Subtype › Item, grouped by Type (ConnectWise's three levels). The
     board's own items are listed first within each group."""
@@ -259,6 +276,20 @@ def detail(ctx, work_item_id):
         board_pairs.insert(0, (tk["board_id"], tk["board_name"]))
     entities = ctx.conn.execute("SELECT entity_id, name FROM entity ORDER BY name").fetchall()
     dis = "" if can_work else " disabled"
+    person = (ctx.conn.execute("SELECT * FROM contact WHERE contact_id = ?",
+                               (tk["contact_id"],)).fetchone() if tk["contact_id"] else None)
+    if person is not None:
+        bits = " · ".join(t.esc(x) for x in (person["department"], person["title"],
+                                              person["phone"]) if x)
+        person_line = (f"<div class=why style='margin:4px 0 0'><a href='/contact/"
+                       f"{t.esc(person['contact_id'])}'>{t.esc(person['display_name'])}</a>"
+                       + (f" · {bits}" if bits else "")
+                       + (" · <b>inactive</b>" if person["inactive"] else "") + "</div>")
+    elif tk["requested_by"]:
+        person_line = ("<div class=why style='margin:4px 0 0'>Not matched to a contact: "
+                       "pick one from the list, or import contacts from AD.</div>")
+    else:
+        person_line = ""
     fields = (
         "<div class='card fields'><h3>Ticket</h3>"
         f"<form method=post action='/ticket/{wid}/update'>"
@@ -268,7 +299,9 @@ def detail(ctx, work_item_id):
         f"<label>Owner</label><input name=owner value='{t.esc(tk['owner'] or '')}'{dis}>"
         f"<label>Company</label><select name=entity_id{dis}>"
         f"{_options([(e['entity_id'], e['name']) for e in entities], tk['entity_id'] or '')}</select>"
-        f"<label>Contact</label><input name=requested_by value='{t.esc(tk['requested_by'] or '')}'{dis}>"
+        f"<label>Contact</label><input name=requested_by list=contacts-ticket "
+        f"value='{t.esc(tk['requested_by'] or '')}'{dis}>"
+        + _contact_list(ctx.conn, "contacts-ticket", tk["entity_id"]) + person_line
         + _catalogue_select(ctx.conn, tk["board_id"], tk["catalogue_item_id"], disabled=dis) +
         f"<label>Who is affected</label><select name=impact{dis}>{_options(WHO_IS_AFFECTED, tk['impact'])}</select>"
         f"<label>Is a patient waiting</label><select name=urgency{dis}>{_options(PATIENT_WAITING, tk['urgency'])}</select>"
@@ -381,7 +414,9 @@ def update(ctx, work_item_id):
 
 def new_form(ctx, *, error: str = "", values: dict | None = None):
     from .. import Response
-    v = values or {}
+    # From a company or contact page the link carries who is asking.
+    v = values or {k: ctx.request.query[k] for k in ("board_id", "entity_id", "requested_by")
+                   if ctx.request.query.get(k)}
     boards = ctx.conn.execute(
         "SELECT b.board_id, b.display_name FROM board b JOIN board_member m"
         " ON m.board_id = b.board_id WHERE m.member = ? AND m.access IN ('WORK','ADMIN')"
@@ -407,7 +442,8 @@ def new_form(ctx, *, error: str = "", values: dict | None = None):
         f"<div><label>Board</label><select name=board_id>{_options([(b['board_id'], b['display_name']) for b in boards], v.get('board_id', ''))}</select></div>"
         f"<div><label>Source</label><select name=source>{_options(SOURCES, v.get('source', 'PHONE'))}</select></div>"
         f"<div><label>Company</label><select name=entity_id>{_options([(e['entity_id'], e['name']) for e in entities], v.get('entity_id', 'PMC'))}</select></div>"
-        f"<div><label>Contact</label><input name=requested_by value='{t.esc(v.get('requested_by', ''))}' placeholder='name or email of who asked'></div>"
+        f"<div><label>Contact</label><input name=requested_by list=contacts-new value='{t.esc(v.get('requested_by', ''))}' placeholder='start typing a name, or an email'>"
+        + _contact_list(ctx.conn, "contacts-new") + "</div>"
         f"<div style='grid-column:1/-1'><label>Summary</label><input name=summary required value='{t.esc(v.get('summary', ''))}' placeholder='What is wrong, in one line'></div>"
         + (f"<div style='grid-column:1/-1'>{_catalogue_select(ctx.conn, None, v.get('catalogue_item_id', ''))}</div>"
            if _catalogue_select(ctx.conn, None, "") else "") +

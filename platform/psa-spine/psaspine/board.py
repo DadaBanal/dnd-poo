@@ -19,7 +19,7 @@ import sqlite3
 import uuid
 from datetime import datetime
 
-from . import clocks
+from . import clocks, contacts
 
 # The universal lifecycle a board status maps onto. `state` is what the variation
 # gate in 005 tests, so it cannot depend on a vocabulary each board edits.
@@ -317,13 +317,16 @@ def admit(conn: sqlite3.Connection, work_item_id: str, *, at: datetime) -> dict:
     that opened a ticket ever started one.
 
     - the board's default status, if the ticket has none;
+    - the contact, when the requester's address is exactly one active contact,
+      and that contact's company if intake named none;
     - a company: the catch-all if intake could not tell;
     - the SLA clocks the board's targets call for, on the board's calendar,
       started at the moment the ticket was opened. A board that is not set up
       starts none, and the board view says so.
     """
     ticket = conn.execute(
-        "SELECT t.board_id, t.board_status_id, t.opened_at, b.calendar_id"
+        "SELECT t.board_id, t.board_status_id, t.opened_at, t.contact_id,"
+        "       t.requested_by, b.calendar_id"
         "  FROM ticket t JOIN board b ON b.board_id = t.board_id"
         " WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
     if ticket is None:
@@ -336,6 +339,16 @@ def admit(conn: sqlite3.Connection, work_item_id: str, *, at: datetime) -> dict:
             conn.execute("UPDATE ticket SET board_status_id = ? WHERE work_item_id = ?",
                          (landed, work_item_id))
 
+    contact_id = ticket["contact_id"]
+    if contact_id is None:
+        person = contacts.resolve(conn, ticket["requested_by"])
+        if person is not None:
+            contact_id = person["contact_id"]
+            conn.execute("UPDATE ticket SET contact_id = ? WHERE work_item_id = ?",
+                         (contact_id, work_item_id))
+            conn.execute("UPDATE work_item SET entity_id = ? WHERE work_item_id = ?"
+                         " AND entity_id IS NULL", (person["entity_id"], work_item_id))
+
     conn.execute("UPDATE work_item SET entity_id = ? WHERE work_item_id = ?"
                  " AND entity_id IS NULL", (UNKNOWN_ENTITY, work_item_id))
 
@@ -346,7 +359,7 @@ def admit(conn: sqlite3.Connection, work_item_id: str, *, at: datetime) -> dict:
                               calendar_id=ticket["calendar_id"])
     touch(conn, work_item_id, at)
     return {"work_item_id": work_item_id, "board_status_id": landed,
-            "clocks_started": len(started)}
+            "contact_id": contact_id, "clocks_started": len(started)}
 
 
 def move(conn: sqlite3.Connection, work_item_id: str, to_board_id: str, *,
@@ -493,9 +506,18 @@ def update_fields(conn: sqlite3.Connection, work_item_id: str, *, at: datetime,
                      (norm(owner), work_item_id))
         changed.append(f"owner {row['owner'] or '-'} -> {norm(owner) or '-'}")
     if requested_by is not None and norm(requested_by) != row["requested_by"]:
-        conn.execute("UPDATE ticket SET requested_by = ? WHERE work_item_id = ?",
-                     (norm(requested_by), work_item_id))
+        # The resolved person follows the text: a contact that no longer matches
+        # what the ticket says is cleared, never left pointing at someone else.
+        person = contacts.resolve(conn, norm(requested_by))
+        conn.execute("UPDATE ticket SET requested_by = ?, contact_id = ? WHERE work_item_id = ?",
+                     (norm(requested_by), person["contact_id"] if person else None,
+                      work_item_id))
         changed.append(f"contact {row['requested_by'] or '-'} -> {norm(requested_by) or '-'}")
+        # A ticket filed under the catch-all takes the contact's company, unless
+        # the same save names a different company of its own.
+        if (person is not None and row["entity_id"] in (None, UNKNOWN_ENTITY)
+                and entity_id in (None, "", row["entity_id"])):
+            entity_id = person["entity_id"]
     if entity_id and entity_id != row["entity_id"]:
         if conn.execute("SELECT 1 FROM entity WHERE entity_id = ?", (entity_id,)).fetchone() is None:
             raise LookupError(f"no company {entity_id!r}")

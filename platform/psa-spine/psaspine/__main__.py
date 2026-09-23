@@ -79,6 +79,14 @@ def main(argv: list[str] | None = None) -> int:
     pb.add_argument("database")
     pb.add_argument("destination")
 
+    pac = sub.add_parser("import-contacts",
+                         help="upsert contacts under one company from an AD export "
+                              "(scripts/Export-PmcAdContacts.ps1)")
+    pac.add_argument("database")
+    pac.add_argument("export_csv")
+    pac.add_argument("--company", required=True, dest="entity_id",
+                     help="the company these people belong to, e.g. PMC")
+
     pu = sub.add_parser("setup-board",
                         help="give a board the starter statuses, calendar and SLA "
                              "targets (adds what is missing, never overwrites)")
@@ -156,6 +164,26 @@ def main(argv: list[str] | None = None) -> int:
         if placed != c["files"]:
             print("REFUSED: a message was neither placed nor counted", file=sys.stderr)
             return 1
+        return 0
+
+    if a.cmd == "import-contacts":
+        from . import contacts
+        try:
+            c = contacts.import_csv(conn, a.export_csv, entity_id=a.entity_id,
+                                    at=datetime.now())
+        except (LookupError, ValueError) as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        print(f"{c['rows']} rows: {c['new']} new, {c['updated']} updated, "
+              f"{c['unchanged']} unchanged, {c['skipped']} skipped "
+              f"({c['deactivated']} disabled in AD, {c['reactivated']} re-enabled)")
+        for reason in c["reasons"]:
+            print("  skipped " + reason, file=sys.stderr)
+        if c["new"] + c["updated"] + c["unchanged"] + c["skipped"] != c["rows"]:
+            conn.rollback()
+            print("REFUSED: a row was neither placed nor counted", file=sys.stderr)
+            return 1
+        conn.commit()
         return 0
 
     if a.cmd == "setup-board":

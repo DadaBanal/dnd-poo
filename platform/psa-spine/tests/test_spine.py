@@ -2415,6 +2415,74 @@ class WebWSGITest(unittest.TestCase):
         _, _, body = self._call("GET", "/admin/catalogue", cookie=admin)
         self.assertIn("Service request", body)
 
+    # ------------------------------------------------ companies and contacts
+
+    def _add_contact(self, contact_id="CT-1", email="ward3@pmcne.ph"):
+        conn = db.connect(self.db_path)
+        conn.execute(
+            "INSERT INTO contact (contact_id, entity_id, display_name, email, department,"
+            " source, inactive, created_at) VALUES (?, 'PMC', 'Ward Three Station', ?,"
+            " 'Ward 3', 'AD', 0, '2026-09-17 08:00')", (contact_id, email))
+        conn.execute("UPDATE ticket SET contact_id = ? WHERE work_item_id IN ('ITO-1','ITO-9')",
+                     (contact_id,))
+        conn.commit()
+        conn.close()
+
+    def test_companies_and_contacts_are_for_fulfillers_only(self):
+        """Contacts are staff details; a requester with no board gets a 404."""
+        for path in ("/companies", "/company/PMC", "/contacts"):
+            status, _, _ = self._call("GET", path, cookie=self._cookie_for("dave"))
+            self.assertTrue(status.startswith("404"), path)
+            status, _, _ = self._call("GET", path, cookie=self._cookie_for("carol"))
+            self.assertTrue(status.startswith("200"), path)
+
+    def test_a_company_page_never_lists_a_restricted_ticket(self):
+        """Restricted tickets are read on their own board, where the read is
+        audited; a company page is not a side door round that."""
+        self._add_contact()
+        _, _, body = self._call("GET", "/company/PMC", cookie=self._cookie_for("alice"))
+        self.assertIn("ITO-1", body)
+        self.assertNotIn("ITO-9", body)
+        self.assertNotIn("Sensitive", body)
+        self.assertIn("1 more on restricted boards", body)
+        _, _, body = self._call("GET", "/contact/CT-1", cookie=self._cookie_for("alice"))
+        self.assertIn("Ward Three Station", body)
+        self.assertIn("ITO-1", body)
+        self.assertNotIn("ITO-9", body)
+        conn = db.connect(self.db_path)
+        self.assertIsNone(conn.execute(
+            "SELECT 1 FROM audit_event WHERE action = 'RESTRICTED_READ'").fetchone())
+        conn.close()
+
+    def test_the_ticket_shows_its_contact_and_offers_the_list(self):
+        self._add_contact()
+        _, _, body = self._call("GET", "/ticket/ITO-1", cookie=self._cookie_for("alice"))
+        self.assertIn("href='/contact/CT-1'", body)
+        self.assertIn("<datalist id=contacts-ticket>", body)
+        self.assertIn("Ward Three Station &lt;ward3@pmcne.ph&gt;", body)
+
+    def test_new_ticket_from_a_contact_is_prefilled(self):
+        _, _, body = self._call("GET", "/ticket/new", cookie=self._cookie_for("alice"),
+                                query="entity_id=PMC&requested_by=ward3%40pmcne.ph")
+        self.assertIn("value='ward3@pmcne.ph'", body)
+
+    def test_editing_the_contact_re_resolves_the_person(self):
+        self._add_contact()
+        conn = db.connect(self.db_path)
+        conn.execute("UPDATE work_item SET entity_id = 'UNCLASSIFIED' WHERE work_item_id = 'ITO-1'")
+        conn.execute("UPDATE ticket SET contact_id = NULL WHERE work_item_id = 'ITO-1'")
+        conn.commit()
+        board.update_fields(conn, "ITO-1", at=datetime(2026, 9, 17, 10, 0), actor="alice",
+                            requested_by="Ward 3 <ward3@pmcne.ph>", entity_id="UNCLASSIFIED")
+        row = conn.execute("SELECT t.contact_id, w.entity_id FROM ticket t JOIN work_item w"
+                           " USING (work_item_id) WHERE work_item_id = 'ITO-1'").fetchone()
+        self.assertEqual((row["contact_id"], row["entity_id"]), ("CT-1", "PMC"))
+        board.update_fields(conn, "ITO-1", at=datetime(2026, 9, 17, 10, 5), actor="alice",
+                            requested_by="someone at the front desk")
+        self.assertIsNone(conn.execute(
+            "SELECT contact_id FROM ticket WHERE work_item_id = 'ITO-1'").fetchone()["contact_id"])
+        conn.close()
+
     def test_the_board_says_why_a_ticket_has_no_clock(self):
         _, _, body = self._call("GET", "/", cookie=self._cookie_for("alice"))
         self.assertIn("board not set up", body)
@@ -3709,6 +3777,171 @@ class MailPickupScriptTest(unittest.TestCase):
         failed = self.text.index("if ($code -ne 0) {")
         saved = self.text.index("Set-Content -Path $DeltaFile")
         self.assertLess(failed, saved)
+
+
+class ContactsTest(unittest.TestCase):
+    """020 and psaspine.contacts: the people who ask, from what AD already holds."""
+
+    HEADER = ("ObjectGUID,DisplayName,Mail,UserPrincipalName,SamAccountName,"
+              "Department,Title,Office,TelephoneNumber,Enabled\r\n")
+    G1 = "0f9c3a0e-1111-4c2a-9a55-2b8f3c1d0001"
+    G2 = "0f9c3a0e-2222-4c2a-9a55-2b8f3c1d0002"
+
+    def setUp(self) -> None:
+        from psaspine import contacts
+        self.contacts = contacts
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.at = datetime(2026, 9, 23, 9, 0)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _export(self, *rows: str, bom: bool = True) -> Path:
+        path = Path(self.tmp.name) / "ad.csv"
+        body = self.HEADER + "".join(r + "\r\n" for r in rows)
+        path.write_bytes((b"\xef\xbb\xbf" if bom else b"") + body.encode("utf-8"))
+        return path
+
+    def _row(self, guid, name="Ward Three Nurse Station", mail="ward3@pmcne.ph",
+             dept="Ward 3", enabled="True"):
+        return f"{guid},{name},{mail},{mail},ward3,{dept},Charge Nurse,Main,100,{enabled}"
+
+    def test_an_export_imports_and_a_rerun_changes_nothing(self):
+        path = self._export(self._row(self.G1), self._row(self.G2, name="IT Office",
+                                                          mail="it@pmcne.ph", dept="IT"))
+        first = self.contacts.import_csv(self.conn, path, entity_id="PMC", at=self.at)
+        self.assertEqual((first["rows"], first["new"], first["skipped"]), (2, 2, 0))
+        again = self.contacts.import_csv(self.conn, path, entity_id="PMC", at=self.at)
+        self.assertEqual((again["new"], again["updated"], again["unchanged"]), (0, 0, 2))
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) c FROM contact").fetchone()["c"], 2)
+        self.assertIsNotNone(self.conn.execute(
+            "SELECT 1 FROM audit_event WHERE action = 'CONTACT_IMPORT'").fetchone())
+
+    def test_a_renamed_person_is_the_same_contact(self):
+        """The objectGUID is the identity; a new name or mailbox is an update."""
+        self.contacts.import_csv(self.conn, self._export(self._row(self.G1)),
+                                 entity_id="PMC", at=self.at)
+        r = self.contacts.import_csv(
+            self.conn, self._export(self._row(self.G1.upper(), name="Ward 3 Station",
+                                              mail="Ward3.Station@pmcne.ph")),
+            entity_id="PMC", at=self.at)
+        self.assertEqual((r["new"], r["updated"]), (0, 1))
+        row = self.conn.execute("SELECT display_name, email FROM contact").fetchone()
+        self.assertEqual((row["display_name"], row["email"]),
+                         ("Ward 3 Station", "ward3.station@pmcne.ph"))
+
+    def test_disabled_in_ad_is_inactive_never_deleted(self):
+        self.contacts.import_csv(self.conn, self._export(self._row(self.G1)),
+                                 entity_id="PMC", at=self.at)
+        r = self.contacts.import_csv(self.conn, self._export(self._row(self.G1, enabled="False")),
+                                     entity_id="PMC", at=self.at)
+        self.assertEqual(r["deactivated"], 1)
+        self.assertEqual(self.conn.execute("SELECT inactive FROM contact").fetchone()["inactive"], 1)
+
+    def test_absence_from_an_export_is_not_a_departure(self):
+        """An export scoped to one OU says nothing about anybody else."""
+        self.contacts.import_csv(self.conn, self._export(self._row(self.G1), self._row(
+            self.G2, mail="it@pmcne.ph")), entity_id="PMC", at=self.at)
+        self.contacts.import_csv(self.conn, self._export(self._row(self.G1)),
+                                 entity_id="PMC", at=self.at)
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) c FROM contact WHERE inactive = 0").fetchone()["c"], 2)
+
+    def test_every_row_is_accounted_for_and_a_skip_says_why(self):
+        r = self.contacts.import_csv(self.conn, self._export(
+            self._row(self.G1), self._row("not-a-guid"), self._row(self.G2, enabled="maybe")),
+            entity_id="PMC", at=self.at)
+        self.assertEqual(r["new"] + r["updated"] + r["unchanged"] + r["skipped"], r["rows"])
+        self.assertEqual(r["skipped"], 2)
+        self.assertEqual(len(r["reasons"]), 2)
+        self.assertTrue(all(reason.startswith("line ") for reason in r["reasons"]))
+
+    def test_a_file_that_is_not_an_export_is_refused(self):
+        path = Path(self.tmp.name) / "other.csv"
+        path.write_bytes(b"Name,Email\r\nA,a@b.c\r\n")
+        with self.assertRaises(ValueError):
+            self.contacts.import_csv(self.conn, path, entity_id="PMC", at=self.at)
+        with self.assertRaises(LookupError):
+            self.contacts.import_csv(self.conn, self._export(), entity_id="NOPE", at=self.at)
+
+    def test_a_new_ticket_finds_its_contact_and_company(self):
+        self.contacts.import_csv(self.conn, self._export(self._row(self.G1)),
+                                 entity_id="PMC", at=self.at)
+        wid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="Printer down",
+                                  impact="I2", urgency="U2", at=self.at,
+                                  requested_by="Ward 3 <WARD3@pmcne.ph>")
+        row = self.conn.execute(
+            "SELECT t.contact_id, w.entity_id FROM ticket t JOIN work_item w"
+            " ON w.work_item_id = t.work_item_id WHERE t.work_item_id = ?", (wid,)).fetchone()
+        self.assertIsNotNone(row["contact_id"])
+        self.assertEqual(row["entity_id"], "PMC")
+
+    def test_an_ambiguous_or_unknown_requester_resolves_to_nobody(self):
+        """A ticket under the wrong person is worse than one under nobody."""
+        self.contacts.import_csv(self.conn, self._export(
+            self._row(self.G1), self._row(self.G2, name="Other")), entity_id="PMC", at=self.at)
+        self.assertIsNone(self.contacts.resolve(self.conn, "ward3@pmcne.ph"))
+        self.assertIsNone(self.contacts.resolve(self.conn, "stranger@example.org"))
+        self.assertIsNone(self.contacts.resolve(self.conn, "Ward Three Nurse Station"))
+        wid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="x", impact="I2",
+                                  urgency="U2", at=self.at, requested_by="ward3@pmcne.ph")
+        row = self.conn.execute(
+            "SELECT t.contact_id, w.entity_id FROM ticket t JOIN work_item w"
+            " ON w.work_item_id = t.work_item_id WHERE t.work_item_id = ?", (wid,)).fetchone()
+        self.assertIsNone(row["contact_id"])
+        self.assertEqual(row["entity_id"], "UNCLASSIFIED")
+
+    def test_an_inactive_contact_is_never_resolved(self):
+        self.contacts.import_csv(self.conn, self._export(self._row(self.G1, enabled="False")),
+                                 entity_id="PMC", at=self.at)
+        self.assertIsNone(self.contacts.resolve(self.conn, "ward3@pmcne.ph"))
+
+    def test_the_cli_imports_and_counts(self):
+        dbp = Path(self.tmp.name) / "cli.db"
+        db.init(dbp).close()
+        path = self._export(self._row(self.G1))
+        import contextlib
+        from psaspine.__main__ import main as cli_main
+        out = _io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = cli_main(["import-contacts", str(dbp), str(path), "--company", "PMC"])
+        self.assertEqual(code, 0)
+        self.assertIn("1 rows: 1 new", out.getvalue())
+
+
+class AdContactsScriptTest(unittest.TestCase):
+    """scripts/Export-PmcAdContacts.ps1 runs against AD, which nothing here can
+    reach. Its fences are asserted as text: pure ASCII for PowerShell 5.1,
+    read-only against AD, preview unless -Apply, and the header the importer reads."""
+
+    SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "Export-PmcAdContacts.ps1"
+
+    def setUp(self) -> None:
+        self.text = self.SCRIPT.read_bytes().decode("ascii")   # raises if not ASCII
+
+    def test_it_never_writes_to_ad(self):
+        for verb in ("Set-AD", "New-AD", "Remove-AD", "Move-AD", "Enable-AD",
+                     "Disable-AD", "Add-AD", "Rename-AD"):
+            self.assertNotIn(verb, self.text)
+        self.assertIn("Get-ADUser", self.text)
+
+    def test_it_asks_for_no_credential_and_exports_no_secret(self):
+        lowered = self.text.lower()
+        for shape in ("get-credential", "-credential", "convertto-securestring",
+                      "memberof", "pwdlastset", "unicodepwd"):
+            self.assertNotIn(shape, lowered, shape)
+
+    def test_nothing_is_written_without_apply(self):
+        self.assertIn("[switch] $Apply", self.text)
+        self.assertLess(self.text.index("if (-not $Apply) {"), self.text.index("Export-Csv"))
+
+    def test_the_columns_are_the_ones_the_importer_reads(self):
+        from psaspine import contacts
+        for column in list(contacts.COLUMNS) + ["Enabled"]:
+            self.assertIn(f"        {column}", self.text, column)
 
 
 class MarkdownRenderTest(unittest.TestCase):
