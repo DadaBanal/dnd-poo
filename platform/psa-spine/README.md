@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 384 tests
+python3 tests/test_spine.py          # 389 tests
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -173,6 +173,17 @@ workbook column A. (Sources are in `schema/022_record_type.sql`.)
 - The commercial path (VARIATION) is derived, never passed in. This closes a
   bypass where a variation item opened as INCIDENT could have time booked
   against it.
+
+### Tasks and templates
+
+- **Tasks:** a ticket has a checklist, as ConnectWise's Tasks tab does.
+  Ticking a task records who and when, and unticking it is recorded too.
+- **Templates:** each board has templates (Setup › *Templates*). A template
+  holds a summary, a Type, a Subtype › Item, a description and tasks.
+- **Using a template:** start a ticket from one (*New ticket › Use
+  template*), apply one to an open ticket, or have a workflow rule apply one
+  (*Apply a ticket template*). Applying the same template twice adds nothing
+  twice.
 
 ### Workflow rules (Setup › Workflow rules)
 
