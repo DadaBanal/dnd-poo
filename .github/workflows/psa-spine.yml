@@ -44,71 +44,12 @@ jobs:
       - name: sqlserver/ is in step with schema/
         run: python3 tools/sqlite_to_tsql.py --check
 
-      # The commercial record must not lose a row. Prove the whole path runs.
-      - name: End-to-end on the synthetic register
-        run: |
-          python3 -m psaspine init /tmp/spine.db
-          python3 -m psaspine import /tmp/spine.db tests/fixtures/register-sample.csv --run-id ci --as-of 2026-09-09
-          python3 -m psaspine import-tickets /tmp/spine.db tests/fixtures/desk-export-sample.csv --run-id desk --as-of 2026-09-09
-          python3 -m psaspine report /tmp/spine.db --out /tmp/out --run-id desk --as-of 2026-09-09
-          # The board engine is not finished when its tests pass. It is finished
-          # when it RUNS. BUILT-NOT-RUN is a live status in this programme's own
-          # register, so the walkthrough runs on every commit.
-          python3 -m psaspine walkthrough /tmp/spine.db | tee /tmp/walkthrough.txt
-          grep -q "within target" /tmp/walkthrough.txt
-          grep -q "firing 4 of 4" /tmp/walkthrough.txt
-          test -f /tmp/out/PMC_AnnexB_Variation_Register_20260909.md
-          test -f /tmp/out/PMC_Instrument_Exception_Report_20260909.md
-          test -f /tmp/out/PMC_Uplift_Evidence_20260909.md
-          ls /tmp/out/notices/*.md >/dev/null
-          # Escrow under WAL goes through the backup API and proves its copy;
-          # a second run onto the same destination must refuse, not overwrite.
-          python3 -m psaspine backup /tmp/spine.db /tmp/escrow.db
-          if python3 -m psaspine backup /tmp/spine.db /tmp/escrow.db; then
-            echo "FAIL: backup overwrote an existing escrow copy"; exit 1
-          fi
-
-      # Intake is idempotent or it is the double-creation all over again. Run it
-      # on a synthetic drop twice: the first run opens two tickets and threads a
-      # reply; the second must open nothing.
-      - name: Email intake runs, and a re-run is a no-op
-        run: |
-          python3 -m psaspine init /tmp/mail.db
-          python3 -m psaspine import-mail /tmp/mail.db tests/fixtures/mail-drop --run-id m1 --as-of 2026-09-22 | tee /tmp/m1.txt
-          grep -q "2 new, 1 appended" /tmp/m1.txt
-          python3 -m psaspine import-mail /tmp/mail.db tests/fixtures/mail-drop --run-id m2 --as-of 2026-09-22 | tee /tmp/m2.txt
-          grep -q "0 new, 0 appended, 0 duplicate, 0 unclassified, 3 already seen" /tmp/m2.txt
-
-      # The fulfiller desk is not finished when its tests pass; it is finished
-      # when the server RUNS. So CI starts it and hits it, the same rule the
-      # walkthrough answers for the engine. An unauthenticated request must get
-      # the sign-in page with a 401 — that proves the app booted, routed, and
-      # ran the auth edge, not that a socket merely opened.
-      - name: The desk boots and answers
-        run: |
-          python3 -m psaspine init /tmp/desk.db
-          python3 -m psaspine serve /tmp/desk.db --host 127.0.0.1 --port 8137 &
-          SERVER_PID=$!
-          for i in $(seq 1 20); do
-            python3 -c "import socket,sys; sys.exit(0 if socket.socket().connect_ex(('127.0.0.1',8137))==0 else 1)" && break
-            sleep 0.5
-          done
-          # 401 with the sign-in page proves the app booted, routed, and ran the
-          # auth edge — not merely that a socket opened.
-          STATUS=$(python3 tests/desk_probe.py http://127.0.0.1:8137/)
-          kill $SERVER_PID 2>/dev/null || true
-          echo "unauthenticated GET / -> $STATUS"
-          test "$STATUS" = "401"
-
-      # serve must refuse a public bind. The pilot is LAN only and Dada IT only;
-      # a bind to every interface is a way to put an unfinished desk on a
-      # hospital network, so it is refused, and CI proves the refusal holds.
-      - name: The desk refuses a public bind
-        run: |
-          if python3 -m psaspine serve /tmp/desk.db --host 0.0.0.0 --port 8138; then
-            echo "FAIL: serve bound to 0.0.0.0"; exit 1
-          fi
-          echo "ok: 0.0.0.0 refused"
+      # The whole path, as a person types it: import, reports, walkthrough,
+      # email intake twice (the second must be a no-op), escrow backup, the desk
+      # booting and challenging, and the refusal of a public bind. One Python
+      # file, so the Windows pilot host runs exactly what CI runs.
+      - name: End-to-end smoke run
+        run: python3 tests/smoke.py
 
       # The fence: no real register, no addresses, no commercial amounts in git.
       - name: Repository fence
@@ -135,5 +76,7 @@ jobs:
           python-version: '3.12'
       - name: Tests
         run: python tests/test_spine.py
+      - name: End-to-end smoke run
+        run: python tests/smoke.py
       - name: sqlserver/ is in step with schema/
         run: python tools/sqlite_to_tsql.py --check
