@@ -73,6 +73,12 @@ def main(argv: list[str] | None = None) -> int:
     pk.add_argument("--board", required=True, dest="board_id",
                     help="the one board this token may raise tickets onto")
 
+    pb = sub.add_parser("backup",
+                        help="escrow copy via SQLite's backup API (safe under WAL); "
+                             "refuses to overwrite, proves the copy")
+    pb.add_argument("database")
+    pb.add_argument("destination")
+
     pr = sub.add_parser("report", help="write Annex B, dependency notices and the exception report")
     pr.add_argument("database")
     pr.add_argument("--out", required=True)
@@ -84,6 +90,23 @@ def main(argv: list[str] | None = None) -> int:
                     help="declared available capacity per month — the uplift denominator")
 
     a = p.parse_args(argv)
+
+    if a.cmd == "backup":
+        # Before connect(): a backup must not create the database it was asked
+        # to copy, and must not open the destination as a spine.
+        try:
+            r = db.backup(a.database, a.destination)
+        except (FileNotFoundError, FileExistsError, ValueError) as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        rows = ", ".join(f"{t} {n}" for t, n in r["counts"].items())
+        print(f"{r['path']}: {r['bytes']} bytes, sha256 {r['sha256']}")
+        print(f"integrity {r['integrity']}; rows: {rows}")
+        if not r["ok"]:
+            print(f"FAILED: the copy does not match the source {r['mismatched']}",
+                  file=sys.stderr)
+            return 1
+        return 0
 
     if a.cmd == "init":
         db.init(a.database).close()

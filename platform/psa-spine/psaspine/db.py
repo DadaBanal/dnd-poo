@@ -53,6 +53,65 @@ def close(conn: sqlite3.Connection) -> None:
     conn.close()
 
 
+# The tables whose row counts must match between the live database and an escrow
+# copy for the copy to be called good. The commercial record and the desk.
+ESCROW_CHECK_TABLES = ("work_item", "ticket", "ticket_event", "time_entry",
+                       "variation", "audit_event")
+
+
+def backup(src_path: str | Path, dest_path: str | Path) -> dict:
+    """Escrow copy of a live database, taken the only safe way under WAL.
+
+    A copy of the .db file alone can miss commits that still live in the -wal
+    file; SQLite's online backup API copies a consistent snapshot even while
+    the desk is writing. Three refusals and one proof:
+
+      * refuses to overwrite an existing file -- a backup that replaces another
+        backup halves the number of backups;
+      * refuses to back a database up onto itself;
+      * refuses a source that does not exist, rather than creating an empty one;
+      * proves the copy: PRAGMA integrity_check must say 'ok', and the row
+        counts of the commercial and desk tables must equal the source's.
+
+    The copy is left in DELETE journal mode, so the escrow is ONE self-contained
+    file that can be moved to client-controlled storage as it is.
+    """
+    import hashlib
+
+    src = Path(src_path)
+    dest = Path(dest_path)
+    if not src.is_file():
+        raise FileNotFoundError(f"no database at {src}; nothing was written")
+    if dest.exists():
+        raise FileExistsError(
+            f"{dest} already exists; a backup that overwrites another halves the "
+            "number of backups")
+    if dest.resolve() == src.resolve():
+        raise ValueError("refusing to back a database up onto itself")
+
+    live = connect(src)
+    copy = sqlite3.connect(str(dest))
+    try:
+        live.backup(copy)
+        copy.execute("PRAGMA journal_mode = DELETE")
+        integrity = copy.execute("PRAGMA integrity_check").fetchone()[0]
+        counts = {}
+        for table in ESCROW_CHECK_TABLES:
+            a = live.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            b = copy.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            counts[table] = (a, b)
+    finally:
+        copy.close()
+        close(live)
+
+    mismatched = {t: c for t, c in counts.items() if c[0] != c[1]}
+    ok = integrity == "ok" and not mismatched
+    digest = hashlib.sha256(dest.read_bytes()).hexdigest()
+    return {"ok": ok, "integrity": integrity, "mismatched": mismatched,
+            "counts": {t: c[1] for t, c in counts.items()},
+            "bytes": dest.stat().st_size, "sha256": digest, "path": str(dest)}
+
+
 def create(conn: sqlite3.Connection) -> None:
     """Apply every migration in name order, in write-ahead-log mode.
 

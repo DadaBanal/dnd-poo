@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 266 tests
+python3 tests/test_spine.py          # 269 tests
 ```
 
 Python 3.11+, standard library only. No packages and no network; the Phase B
@@ -199,7 +199,9 @@ currently disappears.
 Advice written after the decision is worth nothing, so the schema refuses it.
 
 **SQLite, deliberately.** No server, no provisioning, no procurement, and one
-file that can be escrowed nightly to client-controlled storage. It is also still
+file that can be escrowed nightly to client-controlled storage -- with
+`python3 -m psaspine backup spine.db <dest>`, which uses SQLite's backup API
+because the database runs in WAL mode. It is also still
 the source of the SQL Server schema rather than a thing that was replaced by it —
 see the port above. Nothing here has been run against SQL Server, and that
 remains **NOT VERIFIED**; what changed is that the T-SQL is now generated and

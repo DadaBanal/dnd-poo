@@ -3141,6 +3141,40 @@ class DatabaseSettingsTest(unittest.TestCase):
         self.assertEqual(conn.execute("PRAGMA synchronous").fetchone()[0], 2)  # FULL
         conn.close()
 
+    def test_backup_copies_a_consistent_single_file_and_proves_it(self):
+        conn = db.connect(self.path)
+        conn.execute("INSERT INTO entity (entity_id, name) VALUES ('X-B','x')")
+        conn.commit()          # left open: the commit may still be in the WAL
+        dest = Path(self.tmp.name) / "escrow" / "spine-escrow.db"
+        dest.parent.mkdir()
+        r = db.backup(self.path, dest)
+        conn.close()
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["integrity"], "ok")
+        self.assertEqual(len(r["sha256"]), 64)
+        check = sqlite3.connect(str(dest))
+        self.assertEqual(check.execute(
+            "SELECT COUNT(*) FROM entity WHERE entity_id='X-B'").fetchone()[0], 1)
+        self.assertEqual(check.execute("PRAGMA journal_mode").fetchone()[0].lower(),
+                         "delete")
+        check.close()
+        # One file: no -wal or -shm beside the escrow copy.
+        self.assertEqual(sorted(p.name for p in dest.parent.iterdir()),
+                         ["spine-escrow.db"])
+
+    def test_backup_refuses_to_overwrite_an_existing_backup(self):
+        dest = Path(self.tmp.name) / "escrow.db"
+        db.backup(self.path, dest)
+        with self.assertRaises(FileExistsError):
+            db.backup(self.path, dest)
+
+    def test_backup_refuses_itself_and_a_missing_source(self):
+        with self.assertRaises((ValueError, FileExistsError)):
+            db.backup(self.path, self.path)
+        with self.assertRaises(FileNotFoundError):
+            db.backup(Path(self.tmp.name) / "nope.db", Path(self.tmp.name) / "x.db")
+        self.assertFalse((Path(self.tmp.name) / "nope.db").exists())
+
     def test_the_backup_api_captures_a_commit_still_in_the_wal(self):
         """Why escrow must use Connection.backup and not a copy of the .db file."""
         conn = db.connect(self.path)

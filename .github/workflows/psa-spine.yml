@@ -61,6 +61,12 @@ jobs:
           test -f /tmp/out/PMC_Instrument_Exception_Report_20260909.md
           test -f /tmp/out/PMC_Uplift_Evidence_20260909.md
           ls /tmp/out/notices/*.md >/dev/null
+          # Escrow under WAL goes through the backup API and proves its copy;
+          # a second run onto the same destination must refuse, not overwrite.
+          python3 -m psaspine backup /tmp/spine.db /tmp/escrow.db
+          if python3 -m psaspine backup /tmp/spine.db /tmp/escrow.db; then
+            echo "FAIL: backup overwrote an existing escrow copy"; exit 1
+          fi
 
       # Intake is idempotent or it is the double-creation all over again. Run it
       # on a synthetic drop twice: the first run opens two tickets and threads a
