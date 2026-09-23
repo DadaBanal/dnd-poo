@@ -1,0 +1,4 @@
+# Mail fixtures are byte-exact RFC 822: CRLF on disk on every platform, never
+# converted on checkout. Intake keys a message with no Message-ID by the sha256
+# of its raw bytes, so a line-ending conversion would change its identity.
+*.eml -text

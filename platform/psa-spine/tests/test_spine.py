@@ -2541,7 +2541,10 @@ class EmailIntakeTest(unittest.TestCase):
         if in_reply_to:
             headers.append(f"In-Reply-To: {in_reply_to}")
         raw = "\r\n".join(headers) + "\r\n\r\n" + body + "\r\n"
-        (self.drop / (name or f"{self.n:03d}.eml")).write_text(raw, encoding="utf-8")
+        # Bytes, not write_text: on Windows write_text turns each "\n" into
+        # "\r\n", so "\r\n" lands on disk as "\r\r\n" and the parser ends the
+        # headers after the first line. An .eml is bytes; write it as bytes.
+        (self.drop / (name or f"{self.n:03d}.eml")).write_bytes(raw.encode("utf-8"))
         return mid
 
     def _run(self, run_id="i1"):
@@ -2652,7 +2655,7 @@ class EmailIntakeTest(unittest.TestCase):
     def test_a_message_with_no_message_id_is_still_identified_once(self):
         raw = ("From: ward3@pmcne.ph\r\nSubject: No id\r\n"
                "Date: Tue, 22 Sep 2026 09:00:00 +0800\r\n\r\nbody\r\n")
-        (self.drop / "noid.eml").write_text(raw, encoding="utf-8")
+        (self.drop / "noid.eml").write_bytes(raw.encode("utf-8"))
         self.assertEqual(self._run()["new"], 1)
         self.assertEqual(self._run(run_id="i2")["already_seen"], 1)
         self.assertTrue(self._rows()[0]["message_id"].startswith("sha256:"))

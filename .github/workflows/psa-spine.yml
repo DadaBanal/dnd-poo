@@ -118,3 +118,22 @@ jobs:
             echo "FAIL: a private network address is committed under platform/psa-spine"; exit 1
           fi
           echo "ok: no private network addresses"
+
+  # The pilot host is Windows (DND-SQL01). Nine intake tests once passed here on
+  # Linux and failed there, because text written on Windows gains a "\r" per
+  # line. The unit tests run on Windows too, so that class of bug fails in CI
+  # rather than on the host.
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: platform/psa-spine
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Tests
+        run: python tests/test_spine.py
+      - name: sqlserver/ is in step with schema/
+        run: python tools/sqlite_to_tsql.py --check
