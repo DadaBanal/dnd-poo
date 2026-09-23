@@ -103,4 +103,51 @@ address in any file, commit or reply. Label MEASURED / VERIFIED / INFERRED / NOT
 
 ## Reply
 
-*(appended once by SQL01)*
+**SQL01: BLOCKED in part. 2026-09-23, 01:02 UTC.** A local Claude Code session on
+`DND-SQL01`, Remote Control on. Ticketing at `D:\dnd-poo` (`claude/psa-ticketing-build`,
+`a4b6c8e`), imaging at `D:\dnd-poo-imaging` (`claude/imaging-app-build-nqhh6f`, `fe4de35`).
+Both equal origin (`git ls-remote`, MEASURED). Operator's rule for this sitting: preview
+only; no install, no `-Apply`, no `@Apply = 1` without an explicit go-ahead.
+
+| Step | State | Evidence |
+|---|---|---|
+| 1 Prove the row | **DONE** | `hostname` prints `DND-SQL01` (MEASURED) |
+| 2 Route to `PMC_SS` | **BLOCKED** | `sqlcmd` refused twice by this repo's own deny rule, `.claude/settings.json` line 144: `Bash(sqlcmd *)` and `Bash(Invoke-Sqlcmd*)` (MEASURED). Not worked around. Server name and version: NOT VERIFIED |
+| 3 Ticketing tests | **RAN, FAILING** | Python **3.12.10** at `C:\PMC\Python312\python.exe`, not on PATH (MEASURED). `C:\PMC\Python312\python.exe -m unittest discover -s tests -p "test_*.py"` in `platform/psa-spine`: **269 run, 8 failures, 1 error**, exit 1 (MEASURED, reproduced by an independent re-run). All nine are in `EmailIntakeTest`, and in every one intake records nothing: `new` = 0 in six (1 expected), `appended` = 0 in one, `duplicate` = 0 in one. The error is `TypeError: 'NoneType' object is not subscriptable` at `tests/test_spine.py:2570`, where no intake event row exists (MEASURED). Cause not diagnosed (NOT VERIFIED). No tracked file changed |
+| 4 Imaging build | **HELD** | System Node **v20.20.0**; the record says production services run on it and it must not be upgraded in place (`pmc-estate` §12). Node **22.23.2** side by side at `C:\PMC\_tools\node22`, not on PATH (MEASURED). `apps/imaging-portal` has no `node_modules`, and Playwright is not installed globally for either Node either, which is the fallback `test/checks.mjs` tries, so Playwright is absent (MEASURED). `npm ci` needs registry egress and installs packages: held for the go-ahead. The operator stopped the build before it ran. No `npm test` result, no built `dist` sha256 |
+| 5 Orthanc route | **BLOCKED** | `Test-PmcPortalReadiness.ps1` has no preview mode. It is read-only by design but calls `Get-Credential` for an Orthanc sign-in (MEASURED, source). This session enters no credentials, so the operator runs it. Route from `DND-SQL01` to `PMC-ORTHANC01`: NOT VERIFIED. `Install-PmcImagingPortal.ps1` not run |
+| 6 Index backup (WS23 step 1) | **HELD** | Even the preview of `Backup-PmcImagingIndex.ps1` opens SQL connections through `System.Data.SqlClient`: it queries `sys.databases` and `sys.master_files` before the `-Apply` gate (MEASURED, source). The repo's deny rule does not literally match this, because it matches only the `sqlcmd` and `Invoke-Sqlcmd` command lines. It was held with step 2 by judgement, as the same kind of SQL contact that rule exists to fence (INFERRED). No run, no `-Apply`, no backup, no manifest. The script is identical on both branches (MEASURED) |
+| 7 Spine on SQL Server | **NOT RUN** | Outside this sitting, as the handoff says |
+
+**Against "Done means"**
+
+- Master `ENVIRONMENT.md`, SQL01 row: **not updated**, because there is no row to update. No
+  file of that name is in the local OneDrive `Documents` tree (`find`, MEASURED). Whether it
+  exists online and is not synced here: NOT VERIFIED. The record's write lock is not missing:
+  `pmc_lock.py`, named in record commit `19e5e80`, was superseded on 22 Sep by the user-level
+  hook `~\.claude\hooks\pmc_session.py`, which takes the `docs/locks/` lock automatically on
+  every Write or Edit into the record (MEASURED, source and user settings). No record write
+  was made.
+- psa-spine count: above. Imaging `npm test` and `dist` sha256: none, step 4 held. Index
+  manifest: none, step 6 held.
+
+**Found in passing** (not acted on)
+
+- `gh` 2.101.0 is installed at `C:\Program Files\GitHub CLI` and was logged in this sitting
+  as `DadaBanal`; `gh auth status` showed scopes `gist`, `read:org`, `repo` (MEASURED).
+- **Nothing in settings fences `dist/` on this host.** The `claude` CLI warns that the deny
+  rule `Write(//home/user/dnd-poo/apps/imaging-portal/dist/**)` is never matched by file
+  permission checks, and that only `Edit(...)` rules are (MEASURED, CLI output). Both that rule
+  and the `Edit(...)` rule beside it are also pinned to the cloud path `/home/user/dnd-poo`, so
+  neither matches `D:\dnd-poo` or `D:\dnd-poo-imaging` (INFERRED from the path text). The
+  build's own hash gate and CI still stand.
+- A status message was sent one-way from this host on 23 Sep to the cloud sessions titled
+  "WS23 Imaging app build" and "WS36 PSA ticketing build" (send accepted, MEASURED). The cloud
+  row reports it did not arrive, so delivery is NOT VERIFIED. This Reply is the durable copy.
+
+**What unblocks each, all the operator's call**
+
+- Steps 2 and 6: allow `sqlcmd` for this repo on this host, or run them and paste the output.
+- Step 4: a go-ahead for `npm ci` (registry egress, Playwright) and the build under Node 22.
+- Step 5: the operator runs the readiness probe with the Orthanc sign-in.
+- Step 3: a go-ahead to diagnose the nine failures.
