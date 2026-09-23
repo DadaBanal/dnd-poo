@@ -109,7 +109,7 @@ def index(ctx):
 
 
 TABS = (("board", "Board"), ("types", "Types"), ("statuses", "Statuses"), ("sla", "SLA"),
-        ("members", "Members & roles"))
+        ("templates", "Templates"), ("members", "Members & roles"))
 ROLES = ("SERVICE_MANAGER", "DISPATCH", "ON_CALL", "DUTY_MANAGER")
 TYPE_HELP = {
     "INCIDENT": "Something is broken: restore the service.",
@@ -174,6 +174,42 @@ def board_setup(ctx, board_id):
             "<button class=ghost type=submit>Apply the starter setup</button> "
             "<span class=why>Adds any missing statuses, calendars and SLA targets. Never overwrites.</span>"
             "</form></div>")
+    elif tab == "templates":
+        from ... import setup as _setup
+        tpls = ctx.conn.execute(
+            "SELECT tt.*, (SELECT COUNT(*) FROM ticket_template_task x WHERE x.template_id ="
+            " tt.template_id) AS n FROM ticket_template tt WHERE board_id = ? ORDER BY name",
+            (board_id,)).fetchall()
+        trs = "".join(
+            f"<tr><td><a href='/ticket/new?template={t.esc(x['template_id'])}'>{t.esc(x['name'])}</a>"
+            + (" <span class=chip>retired</span>" if x["inactive"] else "") + "</td>"
+            f"<td>{t.esc(itil.LABEL.get(x['record_type'], '—'))}</td><td>{x['n']}</td>"
+            f"<td><form method=post action='/admin/board/{bid}/template/toggle' class=inline>"
+            f"<input type=hidden name=template_id value='{t.esc(x['template_id'])}'>"
+            f"<button class=ghost type=submit style='padding:3px 10px'>{'Use' if x['inactive'] else 'Retire'}"
+            "</button></form></td></tr>" for x in tpls) or \
+            "<tr><td colspan=4 class=muted>No templates yet.</td></tr>"
+        types = [(r["record_type"], itil.LABEL[r["record_type"]]) for r in itil.boards_types(ctx.conn, board_id)] \
+            or [(k, v) for k, v in itil.LABEL.items()]
+        items = [(c["catalogue_item_id"], c["label"]) for c in _setup.catalogue_choices(ctx.conn, board_id)]
+        opt = lambda pairs: "".join(f"<option value='{t.esc(k)}'>{t.esc(v)}</option>" for k, v in pairs)  # noqa: E731
+        content = (
+            "<div class=card><h3>Ticket templates</h3><p class=sub>Recipes for repeatable work on this "
+            "board, as ConnectWise's service templates: a summary, a Type, a Subtype › Item, a description "
+            "and a checklist. Start a ticket from one (New ticket › Use template), apply one to an open "
+            "ticket, or have a workflow rule apply one.</p><div class=tablewrap><table><thead><tr>"
+            "<th>Template</th><th>Type</th><th>Tasks</th><th></th></tr></thead>"
+            f"<tbody>{trs}</tbody></table></div></div>"
+            f"<div class=card><h3>New template</h3><form method=post action='/admin/board/{bid}/template'>"
+            "<div class=grid2><div><label>Name</label><input name=name required placeholder='e.g. New starter'></div>"
+            "<div><label>Ticket summary</label><input name=summary placeholder='e.g. New starter: account and badge'></div>"
+            f"<div><label>Type</label><select name=record_type><option value=''>(board default)</option>{opt(types)}</select></div>"
+            f"<div><label>Subtype › Item</label><select name=catalogue_item_id><option value=''>(not classified)</option>{opt(items)}</select></div>"
+            "<div style='grid-column:1/-1'><label>Description</label><textarea name=description "
+            "placeholder='No patient names or case numbers.'></textarea></div>"
+            "<div style='grid-column:1/-1'><label>Tasks, one per line</label><textarea name=tasks "
+            "placeholder='Create the AD account&#10;Add to HIS roles&#10;Issue the badge'></textarea></div>"
+            "</div><div style='margin-top:12px'><button type=submit>Save template</button></div></form></div>")
     elif tab == "types":
         kind = itil.profile_of(ctx.conn, board_id) or "SERVICE"
         rows = {r["record_type"]: r["is_default"] for r in itil.boards_types(ctx.conn, board_id)}
@@ -369,6 +405,35 @@ def save_reply_policy(ctx, board_id):
                     + (f" within {days} days" if days else ""))
     ctx.conn.commit()
     return _done(board_id, "board", "Reply policy saved")
+
+
+def save_template(ctx, board_id):
+    from ... import tasks
+    common.require_board(ctx, board_id, need="ADMIN")
+    f = ctx.request.form()
+    try:
+        tasks.save_template(ctx.conn, board_id=board_id, name=f.get("name", ""), actor=ctx.user.id,
+                            at=ctx.now, summary=f.get("summary"), record_type=f.get("record_type") or None,
+                            catalogue_item_id=f.get("catalogue_item_id") or None,
+                            description=f.get("description"),
+                            task_lines=f.get("tasks", "").splitlines())
+    except (ValueError, LookupError) as exc:
+        ctx.conn.rollback()
+        return _done(board_id, "templates", f"Not saved: {exc}")
+    ctx.conn.commit()
+    return _done(board_id, "templates", "Template saved")
+
+
+def toggle_template(ctx, board_id):
+    common.require_board(ctx, board_id, need="ADMIN")
+    tid = ctx.request.form().get("template_id", "")
+    cur = ctx.conn.execute("UPDATE ticket_template SET inactive = 1 - inactive WHERE template_id = ?"
+                           " AND board_id = ?", (tid, board_id))
+    if cur.rowcount:
+        db.audit(ctx.conn, at=ctx.now.isoformat(sep=" ", timespec="minutes"), actor=ctx.user.id,
+                 action="TEMPLATE_TOGGLE", subject_kind="ticket_template", subject_id=tid)
+        ctx.conn.commit()
+    return _done(board_id, "templates", "Saved")
 
 
 def save_types(ctx, board_id):

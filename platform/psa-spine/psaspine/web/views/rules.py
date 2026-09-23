@@ -34,7 +34,8 @@ OPS = (("EQ", "is"), ("NE", "is not"), ("IN", "is one of"), ("NOT_IN", "is none 
        ("IS_NOT_NULL", "is set"), ("CONTAINS", "contains"))
 ACTIONS = (("NOTIFY", "Notify"), ("ESCALATE", "Escalate to"), ("SET_STATUS", "Set status"),
            ("SET_BOARD", "Move to board"), ("ASSIGN_OWNER", "Assign owner"),
-           ("ADD_NOTE", "Add an internal note"), ("FLAG", "Flag for review"))
+           ("ADD_NOTE", "Add an internal note"), ("APPLY_TEMPLATE", "Apply a ticket template"),
+           ("FLAG", "Flag for review"))
 ROLES = ("SERVICE_MANAGER", "DISPATCH", "ON_CALL", "DUTY_MANAGER", "TEAM_LEADER", "OWNER",
          "REQUESTER")
 UNITS = ("MINUTES", "HOURS", "DAYS")
@@ -81,6 +82,9 @@ def _event_form(ctx, action_url: str, board_id: str | None) -> str:
         " ORDER BY sort_order", (board_id or "",))]
     boards = [(r["board_id"], r["display_name"]) for r in ctx.conn.execute(
         "SELECT board_id, display_name FROM board ORDER BY display_name")]
+    templates = [(r["template_id"], r["name"]) for r in ctx.conn.execute(
+        "SELECT template_id, name FROM ticket_template WHERE inactive = 0 AND"
+        " (board_id = ? OR ? = '') ORDER BY name", (board_id or "", board_id or ""))]
     conds = "".join(
         "<div class=row>"
         + (f"<div style='flex:0 0 90px'><select name=conj{i}>{_opts([('AND', 'and'), ('OR', 'or')])}"
@@ -95,6 +99,7 @@ def _event_form(ctx, action_url: str, board_id: str | None) -> str:
         f"<div><select name=role{i}>{_opts([('', '(who)')] + [(r, r.replace('_', ' ').title()) for r in ROLES])}</select></div>"
         f"<div><select name=status{i}>{_opts([('', '(status)')] + statuses)}</select></div>"
         f"<div><select name=board{i}>{_opts([('', '(board)')] + boards)}</select></div>"
+        f"<div><select name=template{i}>{_opts([('', '(template)')] + templates)}</select></div>"
         f"<div><input name=member{i} placeholder='a named person (optional)'></div>"
         f"<div><input name=detail{i} placeholder='what it says'></div></div>"
         for i in range(2))
@@ -208,7 +213,7 @@ def detail(ctx, workflow_id):
             f"<li>{t.esc(dict(ACTIONS).get(a['action'], a['action']))} "
             f"{t.esc((a['notify_role'] or '').replace('_', ' ').lower())} "
             f"{t.esc(a['target_member'] or '')} {t.esc(a['target_status_id'] or '')} "
-            f"{t.esc(a['target_board_id'] or '')}"
+            f"{t.esc(a['target_board_id'] or '')} {t.esc(a['target_template_id'] or '')}"
             + (f" <span class=muted>“{t.esc(a['detail'])}”</span>" if a["detail"] else "") + "</li>"
             for a in ctx.conn.execute("SELECT * FROM workflow_action WHERE event_id = ?"
                                       " ORDER BY sort_order", (e["event_id"],)))
@@ -287,10 +292,12 @@ def add_event(ctx, workflow_id):
             if f.get(f"act{i}"):
                 ctx.conn.execute(
                     "INSERT INTO workflow_action (event_id, action, notify_role, target_status_id,"
-                    " target_board_id, target_member, detail, sort_order) VALUES (?,?,?,?,?,?,?,?)",
+                    " target_board_id, target_member, detail, sort_order, target_template_id)"
+                    " VALUES (?,?,?,?,?,?,?,?,?)",
                     (ev, f[f"act{i}"], f.get(f"role{i}") or None, f.get(f"status{i}") or None,
                      f.get(f"board{i}") or None, f.get(f"member{i}", "").strip() or None,
-                     f.get(f"detail{i}", "").strip() or None, i))
+                     f.get(f"detail{i}", "").strip() or None, i,
+                     f.get(f"template{i}") or None))
     except Exception as exc:                                  # noqa: BLE001
         ctx.conn.rollback()
         hint = (" A repeating event needs an interval, and 'a number of times' needs a limit."

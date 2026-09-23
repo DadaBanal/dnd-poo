@@ -236,6 +236,11 @@ def _act(conn, event, action, row, *, at: datetime) -> None:
         board._event(conn, wid, stamp, kind, by, f"{kind.lower()} {who}"
                      + (f" ({role.replace('_', ' ').lower()})" if role else "") + f": {said}")
         return
+    elif kind == "APPLY_TEMPLATE":
+        from . import tasks
+        if not action["target_template_id"]:
+            raise LookupError("apply template: no template named on the action")
+        tasks.apply_template(conn, wid, action["target_template_id"], actor=by, at=at)
     elif kind == "FLAG":
         conn.execute("INSERT INTO data_quality (run_id, subject_kind, subject_id, code, detail,"
                      " severity) VALUES (?,?,?,?,?,?)",

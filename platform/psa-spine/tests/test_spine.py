@@ -2617,6 +2617,31 @@ class WebWSGITest(unittest.TestCase):
         status, _, _ = self._call("GET", f"/admin/rules/{wid}", cookie=self._cookie_for("carol"))
         self.assertTrue(status.startswith("403"))
 
+    def test_tasks_and_templates_on_the_desk(self):
+        alice = self._cookie_for("alice")
+        self._call("POST", "/admin/board/IT_HELP/template", cookie=alice, form={
+            "name": "Printer swap", "summary": "Swap a ward printer",
+            "tasks": "Unplug the old one\nFit the new one\nTest a wristband"})
+        _, _, body = self._call("GET", "/ticket/new", cookie=alice, query="template=TPL_PRINTER_SWAP")
+        self.assertIn("value='Swap a ward printer'", body)
+        self.assertIn("name=template_id value='TPL_PRINTER_SWAP'", body)
+        self._call("POST", "/ticket/ITO-1/template", cookie=alice,
+                   form={"template_id": "TPL_PRINTER_SWAP"})
+        self._call("POST", "/ticket/ITO-1/task/add", cookie=alice, form={"text": "Tell the ward"})
+        _, _, body = self._call("GET", "/ticket/ITO-1", cookie=alice)
+        self.assertIn("Tasks · 0 of 4", body)
+        conn = db.connect(self.db_path)
+        first = conn.execute("SELECT task_id FROM ticket_task WHERE work_item_id = 'ITO-1'"
+                             " ORDER BY sort_order").fetchone()[0]
+        conn.close()
+        self._call("POST", "/ticket/ITO-1/task/toggle", cookie=alice,
+                   form={"task_id": str(first), "done": "1"})
+        _, _, body = self._call("GET", "/ticket/ITO-1", cookie=alice)
+        self.assertIn("Tasks · 1 of 4", body)
+        status, _, _ = self._call("POST", "/ticket/ITO-1/task/add", cookie=self._cookie_for("carol"),
+                                  form={"text": "x"})
+        self.assertFalse(status.startswith("303"))         # READ only
+
     def _add_configuration(self):
         conn = db.connect(self.db_path)
         conn.execute(
@@ -4425,6 +4450,72 @@ class NotificationSenderScriptTest(unittest.TestCase):
             if "Write-Log" in line and "function" not in line:
                 self.assertNotIn("$item.to", line)
                 self.assertNotIn("$item.subject", line)
+
+
+class TasksTemplatesTest(unittest.TestCase):
+    """026 and psaspine.tasks: a ticket's checklist, and board templates."""
+
+    def setUp(self) -> None:
+        from psaspine import tasks
+        self.tasks = tasks
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.at = datetime(2026, 9, 23, 9, 0)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        self.tpl = tasks.save_template(
+            self.conn, board_id="IT_HELP", name="New starter", actor="lead", at=self.at,
+            summary="New starter: account and badge", record_type="SERVICE_REQUEST",
+            task_lines=["Create the AD account", "", "Add to HIS roles", "Issue the badge"])
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def test_a_ticket_from_a_template_has_its_type_summary_and_checklist(self):
+        wid = self.tasks.open_from_template(self.conn, self.tpl, impact="I3", urgency="U3",
+                                            requested_by=None, at=self.at, actor="t")
+        row = self.conn.execute("SELECT t.record_type, w.name FROM ticket t JOIN work_item w"
+                                " USING (work_item_id) WHERE work_item_id = ?", (wid,)).fetchone()
+        self.assertEqual(tuple(row), ("SERVICE_REQUEST", "New starter: account and badge"))
+        self.assertEqual([r["text"] for r in self.tasks.tasks_of(self.conn, wid)],
+                         ["Create the AD account", "Add to HIS roles", "Issue the badge"])
+        self.assertEqual(self.tasks.apply_template(self.conn, wid, self.tpl, actor="t", at=self.at), 0)
+
+    def test_ticking_a_task_records_who_and_unticking_says_so(self):
+        wid = self.tasks.open_from_template(self.conn, self.tpl, impact="I3", urgency="U3",
+                                            requested_by=None, at=self.at, actor="t")
+        first = self.tasks.tasks_of(self.conn, wid)[0]["task_id"]
+        self.tasks.set_done(self.conn, first, True, actor="alice", at=self.at)
+        self.assertEqual(self.tasks.progress(self.conn, wid), (1, 3))
+        self.tasks.set_done(self.conn, first, False, actor="alice", at=self.at)
+        details = [r[0] for r in self.conn.execute(
+            "SELECT detail FROM ticket_event WHERE work_item_id = ? AND kind = 'TASK'", (wid,))]
+        self.assertEqual(details, ["task done: Create the AD account",
+                                   "task reopened: Create the AD account"])
+
+    def test_a_template_type_must_be_one_the_board_takes(self):
+        from psaspine import itil
+        with self.assertRaises(itil.NotAccepted):
+            self.tasks.save_template(self.conn, board_id="IT_HELP", name="Change", actor="t",
+                                     at=self.at, record_type="CHANGE")
+
+    def test_a_workflow_rule_can_apply_a_template(self):
+        from psaspine import workflow
+        workflow.ensure_vocabulary(self.conn)
+        self.conn.execute("INSERT INTO workflow (workflow_id, board_id, name, table_type) VALUES"
+                          " ('W', 'IT_HELP', 'Starter checklist', 'TICKET')")
+        self.conn.execute("INSERT INTO workflow_event (event_id, workflow_id, fires_on) VALUES"
+                          " ('E', 'W', 'ON_CREATE')")
+        self.conn.execute("INSERT INTO workflow_condition (event_id, trigger_id, operator, value)"
+                          " VALUES ('E', 'TICKET.RECORD_TYPE', 'EQ', 'SERVICE_REQUEST')")
+        self.conn.execute("INSERT INTO workflow_action (event_id, action, target_template_id)"
+                          " VALUES ('E', 'APPLY_TEMPLATE', ?)", (self.tpl,))
+        workflow.test_event(self.conn, "E", at=self.at)
+        workflow.activate(self.conn, "W", actor="t", at=self.at)
+        wid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="New nurse starts Monday",
+                                  impact="I3", urgency="U3", requested_by=None, at=self.at,
+                                  record_type="SERVICE_REQUEST")
+        self.assertEqual(self.tasks.progress(self.conn, wid), (0, 3))
 
 
 class ContactsTest(unittest.TestCase):

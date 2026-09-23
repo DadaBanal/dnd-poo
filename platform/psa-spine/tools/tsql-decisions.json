@@ -527,6 +527,25 @@
     "notification.body": "FREE",
     "notification.created_at": "TIMESTAMP_TEXT",
     "notification.status": "CODE",
-    "notification.sent_at": "TIMESTAMP_TEXT"
+    "notification.sent_at": "TIMESTAMP_TEXT",
+    "ticket_template.template_id": "ID",
+    "ticket_template.board_id": "ID",
+    "ticket_template.name": "NAME",
+    "ticket_template.summary": "NAME",
+    "ticket_template.record_type": "CODE",
+    "ticket_template.catalogue_item_id": "ID",
+    "ticket_template.description": "FREE",
+    "ticket_template.created_at": "TIMESTAMP_TEXT",
+    "ticket_template.created_by": "PERSON",
+    "ticket_template_task.template_id": "ID",
+    "ticket_template_task.text": "NAME",
+    "ticket_task.work_item_id": "ID",
+    "ticket_task.text": "NAME",
+    "ticket_task.template_id": "ID",
+    "ticket_task.created_at": "TIMESTAMP_TEXT",
+    "ticket_task.created_by": "PERSON",
+    "ticket_task.done_at": "TIMESTAMP_TEXT",
+    "ticket_task.done_by": "PERSON",
+    "workflow_action.target_template_id": "ID"
   }
 }

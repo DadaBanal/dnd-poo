@@ -364,7 +364,8 @@ def detail(ctx, work_item_id):
 
     from . import configurations as cmdb_views
     configs = cmdb_views.ticket_card(ctx, tk, can_work=can_work)
-    configs = _change_card(ctx, tk, can_work=can_work) + _links_card(ctx, tk, can_work=can_work) + configs
+    configs = (_change_card(ctx, tk, can_work=can_work) + _tasks_card(ctx, tk, can_work=can_work)
+               + _links_card(ctx, tk, can_work=can_work) + configs)
     body = header + strip + (f"<div class=rail>{left}<div>{fields}{configs}{time_card}"
                              f"{commercial}{details}</div></div>")
     return Response(body=t.page(work_item_id, body, user=ctx.user, active="board"))
@@ -458,6 +459,15 @@ def new_form(ctx, *, error: str = "", values: dict | None = None):
     # From a company or contact page the link carries who is asking.
     v = values or {k: ctx.request.query[k] for k in ("board_id", "entity_id", "requested_by")
                    if ctx.request.query.get(k)}
+    # Starting from a template fills the form; its tasks are added on create.
+    tpl_id = (values or {}).get("template_id") or ctx.request.query.get("template", "")
+    tpl = ctx.conn.execute("SELECT * FROM ticket_template WHERE template_id = ? AND inactive = 0",
+                           (tpl_id,)).fetchone() if tpl_id else None
+    if tpl is not None and not values:
+        v.update({k: tpl[k] or "" for k in ("summary", "record_type", "catalogue_item_id",
+                                           "description")})
+        v["board_id"] = tpl["board_id"]
+        v["template_id"] = tpl["template_id"]
     boards = ctx.conn.execute(
         "SELECT b.board_id, b.display_name FROM board b JOIN board_member m"
         " ON m.board_id = b.board_id WHERE m.member = ? AND m.access IN ('WORK','ADMIN')"
@@ -477,9 +487,12 @@ def new_form(ctx, *, error: str = "", values: dict | None = None):
 
     body = (
         (f"<div class='banner err'>{t.esc(error)}</div>" if error else "") +
+        _template_picker(ctx, tpl["template_id"] if tpl is not None else "") +
         "<h1>New ticket</h1><p class=sub>For the desk: a call, a walk-up, something you saw. "
         "Priority is computed from the two questions, never chosen.</p>"
-        "<div class=card><form method=post action='/ticket/new'><div class=grid2>"
+        "<div class=card><form method=post action='/ticket/new'>"
+        + (f"<input type=hidden name=template_id value='{t.esc(v.get('template_id', ''))}'>"
+           if v.get("template_id") else "") + "<div class=grid2>"
         f"<div><label>Board</label><select name=board_id>{_options([(b['board_id'], b['display_name']) for b in boards], v.get('board_id', ''))}</select></div>"
         f"<div><label>Source</label><select name=source>{_options(SOURCES, v.get('source', 'PHONE'))}</select></div>"
         f"<div><label>Company</label><select name=entity_id>{_options([(e['entity_id'], e['name']) for e in entities], v.get('entity_id', 'PMC'))}</select></div>"
@@ -531,6 +544,12 @@ def new_create(ctx):
             owner=f.get("owner", "").strip() or None, source=source, event_kind="OPENED",
             catalogue_item_id=f.get("catalogue_item_id") or None,
             record_type=f.get("record_type") or None)
+        tpl_id = f.get("template_id") or ""
+        if tpl_id and ctx.conn.execute(
+                "SELECT 1 FROM ticket_template WHERE template_id = ? AND board_id = ?",
+                (tpl_id, board_id)).fetchone():
+            from ... import tasks
+            tasks.apply_template(ctx.conn, wid, tpl_id, actor=ctx.user.id, at=ctx.now)
         for code, severity, detail in phi.scan_fields({"summary": summary,
                                                        "description": description}):
             ctx.conn.execute(
@@ -696,3 +715,99 @@ def unlink(ctx, work_item_id):
                 actor=ctx.user.id, at=ctx.now)
     ctx.conn.commit()
     return _back(work_item_id, msg="Link removed")
+
+
+# ------------------------------------------------------------------ tasks
+
+def _tasks_card(ctx, tk, *, can_work: bool) -> str:
+    """ConnectWise's Tasks tab: the ticket's checklist, and templates to fill it."""
+    from ... import tasks
+    wid = t.esc(tk["work_item_id"])
+    rows = tasks.tasks_of(ctx.conn, tk["work_item_id"])
+    done, total = tasks.progress(ctx.conn, tk["work_item_id"])
+    dis = "" if can_work else " disabled"
+    items = "".join(
+        f"<li><form method=post action='/ticket/{wid}/task/toggle' style='display:inline'>"
+        f"<input type=hidden name=task_id value='{r['task_id']}'>"
+        f"<input type=hidden name=done value='{0 if r['done_at'] else 1}'>"
+        f"<button class='ghost small' type=submit{dis} aria-label='{'Reopen' if r['done_at'] else 'Done'}: "
+        f"{t.esc(r['text'])}'>{'☑' if r['done_at'] else '☐'}</button></form> "
+        + (f"<s>{t.esc(r['text'])}</s> <span class=muted>{t.esc(r['done_by'])}</span>" if r["done_at"]
+           else t.esc(r["text"])) + "</li>" for r in rows)
+    add = ""
+    if can_work:
+        tpls = ctx.conn.execute("SELECT template_id, name FROM ticket_template WHERE board_id = ?"
+                                " AND inactive = 0 ORDER BY name", (tk["board_id"],)).fetchall()
+        add = (f"<form method=post action='/ticket/{wid}/task/add' class=row style='margin-top:8px'>"
+               "<div><input name=text required placeholder='Add a task'></div>"
+               "<div style='flex:0 0 auto'><button class=ghost type=submit>Add</button></div></form>")
+        if tpls:
+            add += (f"<form method=post action='/ticket/{wid}/template' class=row style='margin-top:6px'>"
+                    "<div><select name=template_id>"
+                    + _options([(x["template_id"], x["name"]) for x in tpls], "") +
+                    "</select></div><div style='flex:0 0 auto'><button class=ghost type=submit>"
+                    "Apply template</button></div></form>")
+    head = f"Tasks · {done} of {total}" if total else "Tasks"
+    return (f"<div class=card><h3>{head}</h3>"
+            + (f"<ul class=plain>{items}</ul>" if items else "<div class=muted>No tasks.</div>")
+            + add + "</div>")
+
+
+def task_add(ctx, work_item_id):
+    from ... import tasks
+    tk = _load(ctx, work_item_id)
+    common.require_board(ctx, tk["board_id"], need="WORK")
+    try:
+        tasks.add_task(ctx.conn, work_item_id, ctx.request.form().get("text", ""),
+                       actor=ctx.user.id, at=ctx.now)
+        ctx.conn.commit()
+    except ValueError as exc:
+        return _back(work_item_id, err=f"Not added: {exc}")
+    return _back(work_item_id, msg="Task added")
+
+
+def task_toggle(ctx, work_item_id):
+    from .. import HttpError
+    from ... import tasks
+    tk = _load(ctx, work_item_id)
+    common.require_board(ctx, tk["board_id"], need="WORK")
+    f = ctx.request.form()
+    task_id = int(f["task_id"]) if f.get("task_id", "").isdigit() else -1
+    row = ctx.conn.execute("SELECT work_item_id FROM ticket_task WHERE task_id = ?",
+                           (task_id,)).fetchone()
+    if row is None or row["work_item_id"] != work_item_id:
+        raise HttpError("404 Not Found", "No such task on this ticket.")
+    tasks.set_done(ctx.conn, task_id, f.get("done") == "1", actor=ctx.user.id, at=ctx.now)
+    ctx.conn.commit()
+    return _back(work_item_id, msg="Task updated")
+
+
+def template_apply(ctx, work_item_id):
+    from ... import tasks
+    tk = _load(ctx, work_item_id)
+    common.require_board(ctx, tk["board_id"], need="WORK")
+    tid = ctx.request.form().get("template_id", "")
+    ok = ctx.conn.execute("SELECT 1 FROM ticket_template WHERE template_id = ? AND board_id = ?"
+                          " AND inactive = 0", (tid, tk["board_id"])).fetchone()
+    if not ok:
+        return _back(work_item_id, err="Not applied: no such template on this board")
+    n = tasks.apply_template(ctx.conn, work_item_id, tid, actor=ctx.user.id, at=ctx.now)
+    ctx.conn.commit()
+    return _back(work_item_id, msg=f"Template applied: {n} task(s)" if n
+                 else "That template is already on this ticket")
+
+
+def _template_picker(ctx, selected: str) -> str:
+    """ConnectWise's "new ticket from template": a plain GET, so it works with no script."""
+    rows = ctx.conn.execute(
+        "SELECT tt.template_id, tt.name, b.display_name FROM ticket_template tt"
+        "  JOIN board b ON b.board_id = tt.board_id JOIN board_member m ON m.board_id = tt.board_id"
+        " WHERE m.member = ? AND m.access IN ('WORK','ADMIN') AND tt.inactive = 0"
+        " ORDER BY b.display_name, tt.name", (ctx.user.id,)).fetchall()
+    if not rows:
+        return ""
+    opts = _options([("", "(blank ticket)")] + [(r["template_id"], f"{r['display_name']}: {r['name']}")
+                                                for r in rows], selected)
+    return ("<form method=get action='/ticket/new' class=row style='float:right;margin-top:4px'>"
+            f"<div><select name=template aria-label='Start from a template'>{opts}</select></div>"
+            "<div style='flex:0 0 auto'><button class=ghost type=submit>Use template</button></div></form>")

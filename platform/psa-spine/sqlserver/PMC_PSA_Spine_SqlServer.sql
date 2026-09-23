@@ -152,6 +152,9 @@ BEGIN
     PRINT N'    psa.change_approval';
     PRINT N'    psa.ticket_link';
     PRINT N'    psa.notification';
+    PRINT N'    psa.ticket_template';
+    PRINT N'    psa.ticket_template_task';
+    PRINT N'    psa.ticket_task';
     PRINT N'    psa.ix_fee_line_effective';
     PRINT N'    psa.ix_time_entry_period';
     PRINT N'    psa.ix_workflow_run_event';
@@ -164,12 +167,13 @@ BEGIN
     PRINT N'    psa.ux_configuration_ad_guid';
     PRINT N'    psa.ix_change_approval_ticket';
     PRINT N'    psa.ix_notification_status';
+    PRINT N'    psa.ix_ticket_task_ticket';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  63 tables, 12 indexes, 4 triggers.';
+    PRINT N'  66 tables, 13 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -1811,6 +1815,65 @@ CREATE TABLE psa.[notification] (
 );
 END;
 
+-- --------------------------------------------------------------------------
+-- ticket_template   (from schema/026_tasks_templates.sql)
+IF OBJECT_ID(N'psa.[ticket_template]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ticket_template] (
+    [template_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_ticket_template] PRIMARY KEY,
+    [board_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ticket_template_board_id] REFERENCES psa.[board]([board_id]),
+    [name] NVARCHAR(400) NOT NULL,
+    [summary] NVARCHAR(400) NULL,
+    [record_type] NVARCHAR(32) NULL CONSTRAINT [CK_ticket_template_01] CHECK (record_type IN ('INCIDENT', 'SERVICE_REQUEST', 'PROBLEM', 'EVENT', 'CHANGE', 'PROJECT')),
+    [catalogue_item_id] NVARCHAR(64) NULL CONSTRAINT [FK_ticket_template_catalogue_item_id] REFERENCES psa.[catalogue_item]([catalogue_item_id]),
+    [description] NVARCHAR(MAX) NULL,
+    [inactive] INT NOT NULL CONSTRAINT [DF_ticket_template_inactive] DEFAULT (0) CONSTRAINT [CK_ticket_template_02] CHECK (inactive IN (0, 1)),
+    [created_at] NVARCHAR(64) NOT NULL,
+    [created_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ticket_template_task   (from schema/026_tasks_templates.sql)
+IF OBJECT_ID(N'psa.[ticket_template_task]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ticket_template_task] (
+    [template_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ticket_template_task_template_id] REFERENCES psa.[ticket_template]([template_id]),
+    [sort_order] INT NOT NULL,
+    [text] NVARCHAR(400) NOT NULL,
+    CONSTRAINT [PK_ticket_template_task] PRIMARY KEY ([template_id], [sort_order])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ticket_task   (from schema/026_tasks_templates.sql)
+-- A ticket's checklist. Done is a time and a person, never a bare flag: who
+-- ticked it off is what an audit asks.
+IF OBJECT_ID(N'psa.[ticket_task]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ticket_task] (
+    [task_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_ticket_task] PRIMARY KEY,
+    [work_item_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ticket_task_work_item_id] REFERENCES psa.[ticket]([work_item_id]),
+    [text] NVARCHAR(400) NOT NULL,
+    [sort_order] INT NOT NULL CONSTRAINT [DF_ticket_task_sort_order] DEFAULT (0),
+    [template_id] NVARCHAR(64) NULL CONSTRAINT [FK_ticket_task_template_id] REFERENCES psa.[ticket_template]([template_id]),
+    [created_at] NVARCHAR(64) NOT NULL,
+    [created_by] NVARCHAR(200) NOT NULL,
+    [done_at] NVARCHAR(64) NULL,
+    [done_by] NVARCHAR(200) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END)),
+    [done_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [done_at], 126), CASE WHEN [done_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [done_at], 112) END)),
+    CONSTRAINT [CK_ticket_task_01] CHECK ((done_at IS NULL) = (done_by IS NULL))
+);
+END;
+
 -- ==========================================================================
 -- COLUMNS ADDED TO TABLES THAT ALREADY EXIST
 --
@@ -1940,6 +2003,10 @@ ALTER TABLE psa.[workflow_event] ADD [tested_matches] INT NULL;
 IF COL_LENGTH(N'psa.[ticket_event]', N'is_resolution') IS NULL
 ALTER TABLE psa.[ticket_event] ADD [is_resolution] INT NULL CONSTRAINT [CK_ticket_event_is_resolution_01] CHECK (is_resolution IN (0, 1));
 
+-- Which template a workflow rule's APPLY_TEMPLATE action applies.
+IF COL_LENGTH(N'psa.[workflow_action]', N'target_template_id') IS NULL
+ALTER TABLE psa.[workflow_action] ADD [target_template_id] NVARCHAR(64) NULL CONSTRAINT [FK_workflow_action_target_template_id] REFERENCES psa.[ticket_template]([template_id]);
+
 -- --------------------------------------------------------------------------
 -- indexes
 
@@ -1985,6 +2052,9 @@ CREATE INDEX [ix_change_approval_ticket] ON psa.[change_approval] ([work_item_id
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_notification_status' AND object_id = OBJECT_ID(N'psa.[notification]'))
 CREATE INDEX [ix_notification_status] ON psa.[notification] ([status]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ticket_task_ticket' AND object_id = OBJECT_ID(N'psa.[ticket_task]'))
+CREATE INDEX [ix_ticket_task_ticket] ON psa.[ticket_task] ([work_item_id]);
 
 -- ==========================================================================
 -- THE GATE
@@ -2116,10 +2186,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 63 OR @Triggers <> 4 OR @Indexes < 12
+IF @Tables <> 66 OR @Triggers <> 4 OR @Indexes < 13
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 63), %d triggers (expected 4), %d indexes (expected at least 12). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 66), %d triggers (expected 4), %d indexes (expected at least 13). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -2147,11 +2217,15 @@ PRINT N'target is enforced until somebody with the authority says so.';
     DROP TRIGGER IF EXISTS psa.[ticket_close_requires_a_variation];
     DROP TRIGGER IF EXISTS psa.[patient_reference_needs_a_restricted_board];
     DROP TRIGGER IF EXISTS psa.[patient_reference_stays_on_a_restricted_board];
+    ALTER TABLE psa.[workflow_action] DROP CONSTRAINT IF EXISTS [FK_workflow_action_target_template_id];
     ALTER TABLE psa.[board] DROP CONSTRAINT IF EXISTS [FK_board_reopen_status_id];
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_contact_id];
     ALTER TABLE psa.[board] DROP CONSTRAINT IF EXISTS [FK_board_calendar_id];
     ALTER TABLE psa.[time_entry] DROP CONSTRAINT IF EXISTS [FK_time_entry_loop_reply_id];
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
+    DROP TABLE IF EXISTS psa.[ticket_task];
+    DROP TABLE IF EXISTS psa.[ticket_template_task];
+    DROP TABLE IF EXISTS psa.[ticket_template];
     DROP TABLE IF EXISTS psa.[notification];
     DROP TABLE IF EXISTS psa.[ticket_link];
     DROP TABLE IF EXISTS psa.[change_approval];
