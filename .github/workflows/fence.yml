@@ -13,7 +13,7 @@ jobs:
   fence:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Private IPv4 ranges, four octets. RFC 5737 documentation addresses
       # (192.0.2.x) are allowed; they are what the demo fallback uses.

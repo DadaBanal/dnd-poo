@@ -21,10 +21,13 @@ jobs:
       run:
         working-directory: apps/imaging-portal
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # v7 and Node 24: the v4 actions ran on Node 20, which GitHub removed
+      # from its runners on 2026-09-23. This is build tooling only; nothing
+      # here reaches PMC-ORTHANC01, which serves the built file as before.
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          node-version: '24'
 
       # The artifact goes onto a live clinical archive, so the committed dist/
       # must be exactly what src/ builds -- no hand edits, no drift.
@@ -32,7 +35,7 @@ jobs:
         run: npm run check
 
       - name: Install Playwright (Chromium only)
-        run: npm install --no-save playwright@1.56.1 && npx playwright install --with-deps chromium
+        run: npm install --no-save playwright@1.63.0 && npx playwright install --with-deps chromium
 
       - name: Browser checks against a stand-in Orthanc
         run: node test/checks.mjs
@@ -48,7 +51,7 @@ jobs:
 
       # Named per run, so two runs can never collide over one artifact name, and
       # loud if the build produced nothing to publish.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: pmc-imaging-portal-${{ github.run_id }}
           if-no-files-found: error
