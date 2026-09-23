@@ -4833,6 +4833,79 @@ class AttachmentsWebTest(unittest.TestCase):
         self.assertTrue(captured["status"].startswith("413"))
 
 
+class RequesterMailTest(unittest.TestCase):
+    """The requester's email: opened or updated, a link, and never the words."""
+
+    def setUp(self) -> None:
+        from psaspine import outbox
+        self.outbox = outbox
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.at = datetime(2026, 9, 23, 9, 0)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _open(self, requester="Nurse.Ward3@pmcne.ph", source="PORTAL"):
+        return tickets.open_ticket(self.conn, board_id="IT_HELP", impact="I3", urgency="U3",
+                                   summary="SUMMARY-CANARY cannot open HIS", requested_by=requester,
+                                   at=self.at, source=source)
+
+    def _mail(self, wid):
+        return self.conn.execute("SELECT * FROM notification WHERE work_item_id = ? AND"
+                                 " recipient_role = 'REQUESTER' ORDER BY notification_id",
+                                 (wid,)).fetchall()
+
+    def _note(self, wid, flag, body="NOTE-CANARY reset the HIS role."):
+        board.add_note(self.conn, wid, body=body, flag=flag, actor="alice", at=self.at)
+
+    def test_opening_a_ticket_tells_the_requester_without_the_summary(self):
+        wid = self._open()
+        [n] = self._mail(wid)
+        self.assertEqual(n["subject"], f"[{wid}] We have your request")
+        self.assertNotIn("CANARY", n["subject"] + n["body"])
+        [item] = self.outbox.pending(self.conn, allowed_domains=("pmcne.ph",),
+                                     portal_url="https://imaging.pmcne.ph/")
+        self.assertEqual(item["to"], "nurse.ward3@pmcne.ph")
+        self.assertIn(f"https://imaging.pmcne.ph/my/{wid}", item["body"])
+        self.assertNotIn("CANARY", item["body"])
+        self.assertNotIn("on the desk", item["body"])
+
+    def test_a_readable_note_sends_one_update_and_an_internal_note_sends_none(self):
+        wid = self._open()
+        self.outbox.mark(self.conn, self._mail(wid)[0]["notification_id"], "SENT", at=self.at)
+        self._note(wid, "INTERNAL")
+        self.assertEqual(len(self._mail(wid)), 1)
+        self._note(wid, "DISCUSSION")
+        self._note(wid, "DISCUSSION", body="And again.")
+        mails = self._mail(wid)
+        self.assertEqual(len(mails), 2)                 # the second update waits on the first
+        self.assertEqual(mails[1]["subject"], f"[{wid}] Your request has been updated")
+        self.assertNotIn("CANARY", mails[1]["body"])
+        self.outbox.mark(self.conn, mails[1]["notification_id"], "SENT", at=self.at)
+        self._note(wid, "RESOLUTION", body="Fixed.")
+        self.assertEqual(len(self._mail(wid)), 3)
+
+    def test_nothing_is_sent_where_it_should_not_be(self):
+        self.assertEqual(self._mail(self._open(source="API")), [])
+        self.assertEqual(self._mail(self._open(requester="nobody-we-know")), [])
+        self.assertEqual(self._mail(self._open(requester=None)), [])
+        self.conn.execute("UPDATE board SET notify_requester = 0 WHERE board_id = 'IT_HELP'")
+        wid = self._open()
+        self._note(wid, "DISCUSSION")
+        self.assertEqual(self._mail(wid), [])
+
+    def test_the_portal_link_must_be_https_and_is_optional(self):
+        self._open()
+        with self.assertRaises(ValueError):
+            self.outbox.pending(self.conn, allowed_domains=("pmcne.ph",), dry_run=True,
+                                portal_url="http://imaging.pmcne.ph")
+        [item] = self.outbox.pending(self.conn, allowed_domains=("pmcne.ph",), dry_run=True)
+        self.assertIn("the IT portal, under Your requests", item["body"])
+
+
 class ContactsTest(unittest.TestCase):
     """020 and psaspine.contacts: the people who ask, from what AD already holds."""
 

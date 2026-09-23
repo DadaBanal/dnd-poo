@@ -24,6 +24,10 @@
 
     Logs counts only. Never a subject, an address or a body.
 
+    -PortalUrl is the https:// address of the requester portal, used for the
+    link in "your request was updated" emails. It is deployment config, passed
+    here or set as PSA_PORTAL_URL, and never written into the repository.
+
 .EXAMPLE
     .\Send-PmcNotifications.ps1 -TenantId <guid> -ClientId <guid> -CertThumbprint <thumb> `
         -Mailbox helpdesk@pmcne.ph -Database D:\psa\spine.db -StateDir D:\psa\mail-state
@@ -39,6 +43,7 @@ param(
     [Parameter(Mandatory = $true)] [string] $Database,
     [Parameter(Mandatory = $true)] [string] $StateDir,
     [string] $AllowedDomain = 'pmcne.ph',
+    [string] $PortalUrl,
     [string] $SpineDir = (Join-Path $PSScriptRoot '..'),
     [string] $PythonExe = 'C:\PMC\Python312\python.exe',
     [int] $IntervalSeconds = 60,
@@ -169,6 +174,7 @@ function Send-One($Item) {
 function Invoke-Pass {
     $args1 = @('outbox-pending', $Database, '--allowed-domain', $AllowedDomain)
     if (-not $Apply) { $args1 += '--dry-run' }
+    if ($PortalUrl) { $args1 += @('--portal-url', $PortalUrl) }
     $r = Invoke-Spine $args1
     if ($r.Code -ne 0) { throw "outbox-pending failed (exit $($r.Code))" }
     $items = @()

@@ -109,6 +109,9 @@ def main(argv: list[str] | None = None) -> int:
     pob.add_argument("--allowed-domain", action="append", required=True,
                      help="only addresses in this domain are released (repeatable)")
     pob.add_argument("--dry-run", action="store_true", help="change nothing (the sender's preview)")
+    pob.add_argument("--portal-url",
+                     help="https:// address of the requester portal for the link in requester "
+                          "emails (else PSA_PORTAL_URL; never committed)")
     pom = sub.add_parser("outbox-mark", help="record what the sender did with one notification")
     pom.add_argument("database")
     pom.add_argument("--id", type=int, required=True)
@@ -246,8 +249,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if a.cmd == "outbox-pending":
         from . import outbox
-        print(outbox.as_json(outbox.pending(conn, allowed_domains=tuple(a.allowed_domain),
-                                            dry_run=a.dry_run)))
+        try:
+            items = outbox.pending(conn, allowed_domains=tuple(a.allowed_domain),
+                                   dry_run=a.dry_run, portal_url=a.portal_url)
+        except ValueError as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        print(outbox.as_json(items))
         return 0
 
     if a.cmd == "outbox-mark":

@@ -163,6 +163,8 @@ def board_setup(ctx, board_id):
             f"<div style='grid-column:1/-1'><label>Description</label><input name=description value='{t.esc(b['description'] or '')}'></div>"
             "<div>" + chk("restricted", b["restricted"], "Restricted — members only, every read audited")
             + chk("closed_loop_required", b["closed_loop_required"], "Closed loop required")
+            + chk("notify_requester", b["notify_requester"] != 0,
+                  "Email the requester when their ticket is opened or updated (no note text)")
             + "</div><div>" + chk("is_live", b["is_live"], "Live (needs an owner and a deputy)")
             + chk("inactive", b["inactive"], "Retired — no new tickets; history kept") + "</div>"
             "</div><div style='margin-top:12px'><button type=submit>Save board</button></div></form>"
@@ -643,11 +645,12 @@ def save_settings(ctx, board_id):
     try:
         ctx.conn.execute(
             "UPDATE board SET display_name = ?, fulfiller_group = ?, owner = ?, deputy = ?,"
-            " description = ?, restricted = ?, closed_loop_required = ?, is_live = ?, inactive = ?"
-            " WHERE board_id = ?",
+            " description = ?, restricted = ?, closed_loop_required = ?, is_live = ?, inactive = ?,"
+            " notify_requester = ? WHERE board_id = ?",
             (name, f.get("fulfiller_group", "").strip() or "Unassigned", owner, deputy,
              f.get("description", "").strip() or None, 1 if f.get("restricted") == "1" else 0,
-             1 if f.get("closed_loop_required") == "1" else 0, live, inactive, board_id))
+             1 if f.get("closed_loop_required") == "1" else 0, live, inactive,
+             1 if f.get("notify_requester") == "1" else 0, board_id))
         _audit(ctx, board_id, f"settings saved: live={live} inactive={inactive}")
         ctx.conn.commit()
     except Exception as exc:                                 # noqa: BLE001

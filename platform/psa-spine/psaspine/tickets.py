@@ -570,4 +570,6 @@ def open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
     board.admit(conn, ticket_id, at=at)
     from . import workflow
     workflow.fire(conn, ticket_id, "ON_CREATE", at=at)
+    from . import outbox
+    outbox.queue_requester(conn, ticket_id, "OPENED", at=at)
     return ticket_id

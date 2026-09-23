@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 404 tests
+python3 tests/test_spine.py          # 408 tests
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -214,6 +214,24 @@ workbook column A. (Sources are in `schema/022_record_type.sql`.)
   `EMAIL`. A refused file is written on the ticket and in data quality
   (`ATTACHMENT_REFUSED`); small inline signature images are counted
   (`INLINE_IMAGE_SKIPPED`), not kept.
+
+### Emails to the requester
+
+- **When:** the ticket is opened (portal, email, phone, walk-up or desk;
+  never API or import), and when a fulfiller writes a Discussion or
+  Resolution note. Internal notes never send.
+- **What:** `[PMC-000123] We have your request` or `… Your request has been
+  updated`, one fixed sentence and a link to `/my/PMC-000123` on the
+  portal. Never the summary and never the note: those stay behind sign-in
+  and the §6.1 controls. Replying to the email threads back onto the ticket
+  by its subject token.
+- **Not twice:** while one requester email for a ticket is still unsent, a
+  further update adds none. Only an address that resolves is queued.
+- **Off switch:** per board, *Email the requester…* on the board's settings
+  (unset means on).
+- **The link** is deployment config: `outbox-pending --portal-url https://…`
+  or `PSA_PORTAL_URL` (`Send-PmcNotifications.ps1 -PortalUrl`). It must be
+  https; without one the email says to sign in to the IT portal.
 
 ### Workflow rules (Setup › Workflow rules)
 

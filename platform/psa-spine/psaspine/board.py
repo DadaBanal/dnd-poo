@@ -511,6 +511,10 @@ def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: st
     touch(conn, work_item_id, at)
     from . import workflow
     workflow.fire(conn, work_item_id, "ON_NOTE_ADDED", at=at)
+    if flag != "INTERNAL":
+        # The requester can read this note on the portal: tell them it is there.
+        from . import outbox
+        outbox.queue_requester(conn, work_item_id, "UPDATED", at=at)
     return {"flag": flag, "band_hours": band_hours, "status": status}
 
 
