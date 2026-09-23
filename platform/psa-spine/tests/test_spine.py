@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
 from psaspine import (board, clocks, db, intake, numbering, phi,  # noqa: E402
-                      register, reports, rules, tickets, walkthrough)
+                      register, reports, rules, setup, tickets, walkthrough)
 import sqlite_to_tsql  # noqa: E402
 from sqlite_ddl import Unsupported  # noqa: E402
 
@@ -1453,8 +1453,24 @@ class BoardEngineTest(unittest.TestCase):
         self._move("IT_HELP.PARTS", datetime(2026, 11, 16, 9, 0))
         again = self._move("IT_HELP.PARTS", datetime(2026, 11, 16, 10, 0))
         self.assertEqual(again["paused"], [])
+        # One: the RESOLVE clock. RESPOND never pauses (see the next test).
         self.assertEqual(self.conn.execute(
-            "SELECT COUNT(*) c FROM ticket_clock_pause").fetchone()["c"], 2)  # one per clock
+            "SELECT COUNT(*) c FROM ticket_clock_pause").fetchone()["c"], 1)
+
+    def test_a_waiting_status_never_pauses_the_respond_clock(self):
+        """Parking a ticket before anyone answered is not a response.
+
+        Otherwise a New ticket moved straight to 'waiting for parts' would stop
+        accruing response time and a missed response would never show. The
+        record's §5.5 pauses the RESOLVE clock in a waiting status, not RESPOND.
+        """
+        result = self._move("IT_HELP.PARTS", datetime(2026, 11, 16, 9, 0))
+        self.assertEqual(result["paused"], ["RESOLVE"])
+        respond = self.conn.execute(
+            "SELECT clock_id FROM ticket_clock WHERE clock = 'RESPOND'").fetchone()
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) c FROM ticket_clock_pause WHERE clock_id = ?",
+            (respond["clock_id"],)).fetchone()["c"], 0)
 
     def test_closing_from_a_pause_closes_the_pause_first(self):
         """Otherwise the paused interval runs on past the moment it stopped."""
@@ -3190,6 +3206,131 @@ class DatabaseSettingsTest(unittest.TestCase):
         target.close()
         db.close(conn)
         self.assertEqual(got, 1)
+
+
+class BoardSetupTest(unittest.TestCase):
+    """017 and psaspine.setup — a board runs the way a ConnectWise board does.
+
+    The gap these close is the one the first preview showed: every ticket read
+    "no clock" because nothing that opened a ticket ever started one, and a fresh
+    board had no statuses to move a ticket into.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.at = datetime(2026, 9, 23, 9, 0)
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _open(self, board_id="IT_HELP", impact="I1", urgency="U1", **kw):
+        return tickets.open_ticket(self.conn, board_id=board_id, summary="Printer down",
+                                   impact=impact, urgency=urgency,
+                                   requested_by="ward3@pmcne.ph", at=self.at, **kw)
+
+    def test_init_seeds_no_statuses_or_targets(self):
+        """Dada's direction (9 Sep): a PSA does not arrive configured."""
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) c FROM board_status").fetchone()["c"], 0)
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) c FROM sla_target").fetchone()["c"], 0)
+        self.assertIn("a default status for new tickets", setup.readiness(self.conn, "IT_HELP"))
+
+    def test_the_starter_makes_a_board_ready(self):
+        r = setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        self.assertEqual((r["statuses"], r["targets"]), (8, 12))
+        self.assertEqual(setup.readiness(self.conn, "IT_HELP"), [])
+        # Every starter target is measured, never promised.
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) c FROM sla_target WHERE enforced <> 0").fetchone()["c"], 0)
+        self.assertIsNotNone(self.conn.execute(
+            "SELECT 1 FROM audit_event WHERE action = 'BOARD_SETUP'").fetchone())
+
+    def test_reapplying_never_overwrites_an_administrators_change(self):
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        self.conn.execute("UPDATE sla_target SET target_minutes = 7"
+                          " WHERE board_id='IT_HELP' AND priority='P1' AND clock='RESPOND'")
+        self.conn.execute("UPDATE board SET calendar_id = 'BUSINESS' WHERE board_id='IT_HELP'")
+        again = setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        self.assertEqual((again["statuses"], again["targets"]), (0, 0))
+        self.assertEqual(self.conn.execute(
+            "SELECT target_minutes FROM sla_target WHERE board_id='IT_HELP'"
+            " AND priority='P1' AND clock='RESPOND'").fetchone()[0], 7)
+        self.assertEqual(self.conn.execute(
+            "SELECT calendar_id FROM board WHERE board_id='IT_HELP'").fetchone()[0], "BUSINESS")
+
+    def test_a_new_ticket_lands_in_the_default_status_with_its_clocks_running(self):
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        tid = self._open()
+        row = self.conn.execute(
+            "SELECT t.board_status_id, t.priority, w.entity_id FROM ticket t"
+            " JOIN work_item w USING (work_item_id) WHERE work_item_id = ?", (tid,)).fetchone()
+        self.assertEqual(row["board_status_id"], "IT_HELP.NEW")
+        self.assertEqual(row["priority"], "P1")
+        clocks_ = {r["clock"]: r["target_minutes"] for r in self.conn.execute(
+            "SELECT clock, target_minutes FROM ticket_clock WHERE work_item_id = ?", (tid,))}
+        self.assertEqual(clocks_, {"RESPOND": 15, "RESOLUTION_PLAN": 60, "RESOLVE": 240})
+
+    def test_a_ticket_with_no_known_company_goes_to_the_catch_all_not_to_pmc(self):
+        """Guessing PMC would put effort against the wrong entity."""
+        tid = self._open()
+        self.assertEqual(self.conn.execute(
+            "SELECT entity_id FROM work_item WHERE work_item_id = ?", (tid,)).fetchone()[0],
+            "UNCLASSIFIED")
+        named = self._open(entity_id="PMC")
+        self.assertEqual(self.conn.execute(
+            "SELECT entity_id FROM work_item WHERE work_item_id = ?", (named,)).fetchone()[0],
+            "PMC")
+
+    def test_a_board_that_is_not_set_up_starts_no_clock_and_says_why(self):
+        tid = self._open()
+        self.assertIsNone(self.conn.execute(
+            "SELECT board_status_id FROM ticket WHERE work_item_id = ?", (tid,)).fetchone()[0])
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) c FROM ticket_clock WHERE work_item_id = ?", (tid,)).fetchone()[0], 0)
+
+    def test_the_requesters_words_are_a_discussion_note(self):
+        tid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="x", impact="I3",
+                                  urgency="U3", requested_by="a@pmcne.ph", at=self.at,
+                                  description="It flashes red.")
+        self.assertEqual(self.conn.execute(
+            "SELECT note_flag FROM ticket_event WHERE work_item_id = ?", (tid,)).fetchone()[0],
+            "DISCUSSION")
+
+    def test_moving_boards_keeps_the_id_the_clocks_and_the_milestone(self):
+        """ConnectWise's Auto Assign does not follow a moved ticket; ours keeps
+        everything, because one id across a handover is the point."""
+        for bid in ("IT_HELP", "UNROUTED"):
+            setup.apply_starter(self.conn, bid, actor="t", at=self.at)
+        tid = self._open(board_id="UNROUTED")
+        board.change_status(self.conn, tid, "UNROUTED.IN_PROGRESS",
+                            at=self.at + timedelta(minutes=5), actor="t")
+        before = self.conn.execute("SELECT clock_id, stopped_at FROM ticket_clock"
+                                   " WHERE work_item_id = ? ORDER BY clock", (tid,)).fetchall()
+        board.move(self.conn, tid, "IT_HELP", at=self.at + timedelta(minutes=9),
+                   actor="t", owner="cadano")
+        row = self.conn.execute("SELECT board_id, board_status_id, owner FROM ticket"
+                                " WHERE work_item_id = ?", (tid,)).fetchone()
+        self.assertEqual(tuple(row), ("IT_HELP", "IT_HELP.IN_PROGRESS", "cadano"))
+        after = self.conn.execute("SELECT clock_id, stopped_at FROM ticket_clock"
+                                  " WHERE work_item_id = ? ORDER BY clock", (tid,)).fetchall()
+        self.assertEqual([tuple(r) for r in before], [tuple(r) for r in after])
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) c FROM ticket_handover WHERE work_item_id = ?", (tid,)).fetchone()[0], 1)
+
+    def test_setup_board_cli(self):
+        import io
+        from contextlib import redirect_stdout, redirect_stderr
+        from psaspine.__main__ import main
+        path = str(Path(self.tmp.name) / "cli.db")
+        db.init(path).close()
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            self.assertEqual(main(["setup-board", path, "--board", "IT_HELP"]), 0)
+            self.assertEqual(main(["setup-board", path, "--board", "NOPE"]), 1)
+        self.assertIn("ready", out.getvalue())
 
 
 class MarkdownRenderTest(unittest.TestCase):

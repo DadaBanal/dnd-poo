@@ -492,3 +492,45 @@ def import_tickets(conn: sqlite3.Connection, export_path: str | Path, *,
     conn.commit()
     return {"rows_in": len(rows), "rows_out": rows_out,
             "findings": len(findings), "written": imported}
+
+
+def open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
+                impact: str, urgency: str, requested_by: str | None, at,
+                actor: str | None = None, description: str | None = None,
+                entity_id: str | None = None, owner: str | None = None,
+                path: str = "INCIDENT", event_kind: str = "INTAKE",
+                min_priority: str | None = None) -> str:
+    """Open one ticket, the same way whichever door it came in by.
+
+    The portal, email intake, the machine API and a fulfiller's New Ticket all
+    come through here, so every ticket gets a number from the one sequence (D4),
+    a priority the matrix computed rather than one somebody chose, the requester's
+    words as the first Discussion note, and — through `board.admit` — the board's
+    default status, a company and its SLA clocks. Four copies of this were how
+    tickets came to exist with no clock at all.
+
+    Does not commit: the caller owns the transaction, so a PHI flag or a dedup
+    row written alongside lands or rolls back with the ticket.
+    """
+    from . import board, numbering
+
+    priority, source = compute_priority(impact, urgency, min_priority=min_priority)
+    ticket_id = numbering.issue(conn, at=at)
+    stamp = at.isoformat(sep=" ", timespec="minutes")
+    conn.execute(
+        "INSERT INTO work_item (work_item_id, source, name, entity_id, contract_basis)"
+        " VALUES (?,'desk',?,?,'UNKNOWN')", (ticket_id, summary, entity_id))
+    conn.execute(
+        "INSERT INTO ticket (work_item_id, board_id, path, impact, urgency, priority,"
+        " priority_source, requested_by, requested_at, owner, opened_at, state)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,'NEW')",
+        (ticket_id, board_id, path, impact, urgency, priority, source, requested_by,
+         stamp, owner, stamp))
+    numbering.bind(conn, ticket_id)
+    if description:
+        conn.execute(
+            "INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail,"
+            " note_flag) VALUES (?,?,?,?,?,'DISCUSSION')",
+            (ticket_id, stamp, event_kind, actor or requested_by, description))
+    board.admit(conn, ticket_id, at=at)
+    return ticket_id

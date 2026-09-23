@@ -104,6 +104,7 @@ def index(ctx):
 def assign(ctx):
     from .. import redirect
     from .. import HttpError
+    from ... import board as engine
     f = ctx.request.form()
     work_item_id = f.get("work_item_id", "")
     to_board = f.get("to_board", "")
@@ -116,19 +117,7 @@ def assign(ctx):
     common.require_board(ctx, tk["board_id"])                 # may see the source
     common.require_board(ctx, to_board, need="WORK")          # may route into target
 
-    stamp = ctx.now.isoformat(sep=" ", timespec="minutes")
-    ctx.conn.execute(
-        "INSERT INTO ticket_handover (work_item_id, from_board_id, to_board_id,"
-        " handover_at, to_owner, reason) VALUES (?,?,?,?,?,?)",
-        (work_item_id, tk["board_id"], to_board, stamp, owner, "routed from dispatch"))
-    ctx.conn.execute(
-        "UPDATE ticket SET board_id = ?, owner = COALESCE(?, owner),"
-        " board_status_id = NULL WHERE work_item_id = ?",
-        (to_board, owner, work_item_id))
-    ctx.conn.execute(
-        "INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail)"
-        " VALUES (?,?,'ROUTED',?,?)",
-        (work_item_id, stamp, ctx.user.id,
-         f"routed to {to_board}" + (f", owner {owner}" if owner else "")))
+    engine.move(ctx.conn, work_item_id, to_board, at=ctx.now, actor=ctx.user.id,
+                owner=owner, reason="routed from dispatch")
     ctx.conn.commit()
     return redirect("/dispatch")

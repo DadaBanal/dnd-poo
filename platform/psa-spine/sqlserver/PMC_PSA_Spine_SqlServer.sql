@@ -1579,6 +1579,21 @@ ALTER TABLE psa.[time_entry] ADD [loop_reply_id] NVARCHAR(64) NULL CONSTRAINT [F
 IF COL_LENGTH(N'psa.[ticket]', N'patient_reference') IS NULL
 ALTER TABLE psa.[ticket] ADD [patient_reference] NVARCHAR(64) NULL;
 
+IF COL_LENGTH(N'psa.[board]', N'calendar_id') IS NULL
+ALTER TABLE psa.[board] ADD [calendar_id] NVARCHAR(64) NULL CONSTRAINT [FK_board_calendar_id] REFERENCES psa.[calendar]([calendar_id]);
+
+-- ConnectWise flags every note: Discussion (the requester sees it), Internal
+-- (fulfillers only) and Resolution (the answer, which the requester sees).
+-- NULL is a system event: a status change, an import, a routing.
+IF COL_LENGTH(N'psa.[ticket_event]', N'note_flag') IS NULL
+ALTER TABLE psa.[ticket_event] ADD [note_flag] NVARCHAR(32) NULL CONSTRAINT [CK_ticket_event_note_flag_01] CHECK (note_flag IN ('DISCUSSION', 'INTERNAL', 'RESOLUTION'));
+
+-- Who the ticket is for, in ConnectWise's words the contact. requested_by
+-- already carries it; this is the time of the last touch, for the board's
+-- "Updated" column and for sorting by it.
+IF COL_LENGTH(N'psa.[ticket]', N'updated_at') IS NULL
+ALTER TABLE psa.[ticket] ADD [updated_at] NVARCHAR(64) NULL;
+
 -- --------------------------------------------------------------------------
 -- indexes
 

@@ -79,6 +79,12 @@ def main(argv: list[str] | None = None) -> int:
     pb.add_argument("database")
     pb.add_argument("destination")
 
+    pu = sub.add_parser("setup-board",
+                        help="give a board the starter statuses, calendar and SLA "
+                             "targets (adds what is missing, never overwrites)")
+    pu.add_argument("database")
+    pu.add_argument("--board", required=True, dest="board_id")
+
     pr = sub.add_parser("report", help="write Annex B, dependency notices and the exception report")
     pr.add_argument("database")
     pr.add_argument("--out", required=True)
@@ -150,6 +156,22 @@ def main(argv: list[str] | None = None) -> int:
         if placed != c["files"]:
             print("REFUSED: a message was neither placed nor counted", file=sys.stderr)
             return 1
+        return 0
+
+    if a.cmd == "setup-board":
+        from . import setup
+        try:
+            r = setup.apply_starter(conn, a.board_id, actor="cli", at=datetime.now())
+            conn.commit()
+        except LookupError as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        print(f"{a.board_id}: added {r['statuses']} statuses, {r['targets']} SLA targets"
+              + (", calendar ALL_HOURS" if r["calendar_set"] else ""))
+        print("SLA targets are starter placeholders, enforced = 0. The Service Manager "
+              "sets the real numbers on the Admin surface.", file=sys.stderr)
+        missing = setup.readiness(conn, a.board_id)
+        print("ready" if not missing else "still missing: " + "; ".join(missing))
         return 0
 
     if a.cmd == "walkthrough":

@@ -434,6 +434,9 @@
     "api_alert.dedup_key": "REF",
     "api_alert.work_item_id": "ID",
     "api_alert.first_seen": "TIMESTAMP_TEXT",
-    "api_alert.last_seen": "TIMESTAMP_TEXT"
+    "api_alert.last_seen": "TIMESTAMP_TEXT",
+    "board.calendar_id": "ID",
+    "ticket_event.note_flag": "CODE",
+    "ticket.updated_at": "TIMESTAMP_TEXT"
   }
 }

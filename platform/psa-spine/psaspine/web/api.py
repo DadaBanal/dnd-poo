@@ -225,21 +225,12 @@ def _create(conn, token, request, *, now: datetime):
             return "200 OK", {"id": alert["work_item_id"], "duplicate": True,
                               "times": times}
 
-    priority, source = tickets.compute_priority(impact, urgency)
-    ticket_id = numbering.issue(conn, at=now)
-    conn.execute(
-        "INSERT INTO work_item (work_item_id, source, name, contract_basis)"
-        " VALUES (?,'desk',?,'UNKNOWN')", (ticket_id, summary))
-    conn.execute(
-        "INSERT INTO ticket (work_item_id, board_id, path, impact, urgency, priority,"
-        " priority_source, requested_by, requested_at, opened_at, state)"
-        " VALUES (?,?,'INCIDENT',?,?,?,?,?,?,?,'NEW')",
-        (ticket_id, board_id, impact, urgency, priority, source, actor, stamp, stamp))
-    numbering.bind(conn, ticket_id)
-    if description:
-        conn.execute(
-            "INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail)"
-            " VALUES (?,?,'INTAKE',?,?)", (ticket_id, stamp, actor, description))
+    ticket_id = tickets.open_ticket(
+        conn, board_id=board_id, summary=summary, impact=impact, urgency=urgency,
+        requested_by=actor, description=description or None, at=now)
+    row = conn.execute("SELECT priority, priority_source FROM ticket"
+                       " WHERE work_item_id = ?", (ticket_id,)).fetchone()
+    priority, source = row["priority"], row["priority_source"]
     if dedup_key:
         # Replace any row pointing at a ticket that has since been resolved: a
         # fault that returns after being fixed is a new fault.

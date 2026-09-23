@@ -40,7 +40,7 @@ import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import db, numbering, phi
+from . import db, phi
 
 # How close in time two messages from the same requester with the same subject
 # have to be before the second is read as a resend rather than a new request.
@@ -261,30 +261,26 @@ def import_drop(conn: sqlite3.Connection, drop_dir, *, run_id: str,
 
 def _open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
                  requester: str, body: str, at: datetime) -> str:
-    """One ticket, numbered from the one sequence (D4)."""
-    ticket_id = numbering.issue(conn, at=at)
-    stamp = at.isoformat(sep=" ", timespec="minutes")
-    conn.execute(
-        "INSERT INTO work_item (work_item_id, source, name, contract_basis)"
-        " VALUES (?,'desk',?, 'UNKNOWN')", (ticket_id, summary))
-    conn.execute(
-        "INSERT INTO ticket (work_item_id, board_id, path, impact, urgency,"
-        " priority, priority_source, requested_by, requested_at, opened_at, state)"
-        " VALUES (?,?,'INCIDENT','I3','U3','P4','MATRIX',?,?,?,'NEW')",
-        (ticket_id, board_id, requester, stamp, stamp))
-    numbering.bind(conn, ticket_id)
-    if body:
-        conn.execute(
-            "INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail)"
-            " VALUES (?,?,'INTAKE',?,?)", (ticket_id, stamp, requester, body))
-    return ticket_id
+    """One ticket, numbered from the one sequence (D4), admitted to its board.
+
+    An email says nothing about who is affected or whether a patient is
+    waiting, so it opens at I3/U3 (P4) and triage raises it — the same rule the
+    record set for intake, now through the one door every ticket uses.
+    """
+    from . import tickets
+    return tickets.open_ticket(conn, board_id=board_id, summary=summary,
+                               impact="I3", urgency="U3", requested_by=requester,
+                               description=body or None, at=at)
 
 
 def _append_note(conn: sqlite3.Connection, work_item_id: str, body: str,
                  actor: str, stamp: str) -> None:
     conn.execute(
-        "INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail)"
-        " VALUES (?,?,'INTAKE_REPLY',?,?)", (work_item_id, stamp, actor, body))
+        "INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail,"
+        " note_flag) VALUES (?,?,'INTAKE_REPLY',?,?,'DISCUSSION')",
+        (work_item_id, stamp, actor, body))
+    conn.execute("UPDATE ticket SET updated_at = ? WHERE work_item_id = ?",
+                 (stamp, work_item_id))
 
 
 def _record(conn: sqlite3.Connection, message_id: str, stamp: str, sender: str,

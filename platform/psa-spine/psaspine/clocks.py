@@ -40,6 +40,13 @@ STOPS = {
 
 PAUSES = "NO_ESCALATION"
 
+# Clocks a waiting status never pauses. Parking a ticket "waiting on the
+# requester" before anybody has answered them is not a response, and pausing the
+# respond clock there would let a missed response vanish from the numbers. The
+# record's own §5.5 pauses the RESOLVE clock in a waiting status; ITFlow documents
+# the same rule ("On Hold pauses the resolution clock, not the response clock").
+NEVER_PAUSED = {"RESPOND", "ACKNOWLEDGE"}
+
 
 def parse_clock_time(text: str | None) -> int | None:
     """'08:00' -> 480. '24:00' -> 1440, meaning midnight at the end of the day.
@@ -185,8 +192,12 @@ def stops_clock(escalation_status: str, clock: str) -> bool:
     return escalation_status in STOPS.get(clock, set())
 
 
-def is_pause(escalation_status: str) -> bool:
-    return escalation_status == PAUSES
+def is_pause(escalation_status: str, clock: str | None = None) -> bool:
+    """Does entering this status pause this clock? Without `clock`, whether the
+    status is a waiting status at all."""
+    if escalation_status != PAUSES:
+        return False
+    return clock not in NEVER_PAUSED
 
 
 def state_of(conn: sqlite3.Connection, clock_id: int, *,

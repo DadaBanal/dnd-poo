@@ -125,7 +125,7 @@ def change_status(conn: sqlite3.Connection, work_item_id: str, to_status_id: str
                 "UPDATE ticket_clock SET stopped_at = ?, stopped_by_status = ?"
                 " WHERE clock_id = ?", (stamp, to_status_id, clock["clock_id"]))
             stopped.append(clock["clock"])
-        elif clocks.is_pause(escalation):
+        elif clocks.is_pause(escalation, clock["clock"]):
             if not open_pause:
                 conn.execute(
                     "INSERT INTO ticket_clock_pause (clock_id, paused_at, board_status_id)"
@@ -153,6 +153,7 @@ def change_status(conn: sqlite3.Connection, work_item_id: str, to_status_id: str
          f"({escalation}); stopped={stopped or '-'} paused={paused or '-'} "
          f"resumed={resumed or '-'}"))
 
+    touch(conn, work_item_id, at)
     return {"work_item_id": work_item_id, "board_status_id": to_status_id,
             "state": state, "escalation_status": escalation,
             "stopped": stopped, "paused": paused, "resumed": resumed,
@@ -266,3 +267,127 @@ def close_loop(conn: sqlite3.Connection, work_item_id: str, to_status_id: str, *
                            actor=actor or sent_by)
     return {"loop_reply_id": loop_reply_id, "effort_minutes": effort_minutes,
             "band_hours": band_hours, "status": result}
+
+
+# The catch-all a ticket's company falls to when intake cannot tell who it is
+# for — ConnectWise's email connector does the same with a "catch-all" company.
+# It is a seeded entity that is flagged, never a guess that it is PMC.
+UNKNOWN_ENTITY = "UNCLASSIFIED"
+
+
+def default_status(conn: sqlite3.Connection, board_id: str,
+                   escalation: str | None = None) -> str | None:
+    """The status a ticket lands in on this board.
+
+    With `escalation`, the first active status that declares the same SLA
+    milestone — so a ticket moved between boards keeps its place in the
+    lifecycle rather than falling back to New.
+    """
+    if escalation:
+        row = conn.execute(
+            "SELECT board_status_id FROM board_status WHERE board_id = ?"
+            " AND escalation_status = ? AND is_closed = 0 AND inactive = 0"
+            " ORDER BY is_default DESC, sort_order LIMIT 1",
+            (board_id, escalation)).fetchone()
+        if row:
+            return row["board_status_id"]
+    row = conn.execute(
+        "SELECT board_status_id FROM board_status WHERE board_id = ?"
+        " AND is_default = 1 AND inactive = 0 LIMIT 1", (board_id,)).fetchone()
+    return row["board_status_id"] if row else None
+
+
+def touch(conn: sqlite3.Connection, work_item_id: str, at: datetime) -> None:
+    conn.execute("UPDATE ticket SET updated_at = ? WHERE work_item_id = ?",
+                 (at.isoformat(sep=" ", timespec="minutes"), work_item_id))
+
+
+def admit(conn: sqlite3.Connection, work_item_id: str, *, at: datetime) -> dict:
+    """Everything a new ticket needs the moment it exists, in one place.
+
+    Every way in — the portal, email, the machine API, a fulfiller's New Ticket
+    — calls this, so a ticket is never on a board without a status, a company
+    or its clocks. That was the gap: the engine could run clocks, but nothing
+    that opened a ticket ever started one.
+
+    - the board's default status, if the ticket has none;
+    - a company: the catch-all if intake could not tell;
+    - the SLA clocks the board's targets call for, on the board's calendar,
+      started at the moment the ticket was opened. A board that is not set up
+      starts none, and the board view says so.
+    """
+    ticket = conn.execute(
+        "SELECT t.board_id, t.board_status_id, t.opened_at, b.calendar_id"
+        "  FROM ticket t JOIN board b ON b.board_id = t.board_id"
+        " WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
+    if ticket is None:
+        raise LookupError(f"no ticket {work_item_id!r}")
+
+    landed = ticket["board_status_id"]
+    if landed is None:
+        landed = default_status(conn, ticket["board_id"])
+        if landed:
+            conn.execute("UPDATE ticket SET board_status_id = ? WHERE work_item_id = ?",
+                         (landed, work_item_id))
+
+    conn.execute("UPDATE work_item SET entity_id = ? WHERE work_item_id = ?"
+                 " AND entity_id IS NULL", (UNKNOWN_ENTITY, work_item_id))
+
+    started: list[int] = []
+    if ticket["calendar_id"]:
+        opened = clocks.parse_instant(ticket["opened_at"])
+        started = open_clocks(conn, work_item_id, at=opened,
+                              calendar_id=ticket["calendar_id"])
+    touch(conn, work_item_id, at)
+    return {"work_item_id": work_item_id, "board_status_id": landed,
+            "clocks_started": len(started)}
+
+
+def move(conn: sqlite3.Connection, work_item_id: str, to_board_id: str, *,
+         at: datetime, actor: str, owner: str | None = None,
+         reason: str = "moved") -> dict:
+    """Move a ticket to another board. One ticket, one id, its clocks intact.
+
+    ConnectWise documents that Auto Assign does not follow a ticket moved from
+    another board (§5.2 of the build scope); cross-board handover on one id is
+    the thing this desk must do better, so the move keeps the ticket's clocks
+    running and lands it on the new board's status for the same SLA milestone.
+    """
+    ticket = conn.execute(
+        "SELECT t.board_id, t.owner, s.escalation_status FROM ticket t"
+        "  LEFT JOIN board_status s ON s.board_status_id = t.board_status_id"
+        " WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
+    if ticket is None:
+        raise LookupError(f"no ticket {work_item_id!r}")
+    if ticket["board_id"] == to_board_id:
+        raise NotOnThisBoard(f"{work_item_id} is already on {to_board_id}")
+    if conn.execute("SELECT 1 FROM board WHERE board_id = ?",
+                    (to_board_id,)).fetchone() is None:
+        raise LookupError(f"no board {to_board_id!r}")
+
+    stamp = at.isoformat(sep=" ", timespec="minutes")
+    landed = default_status(conn, to_board_id, ticket["escalation_status"])
+    conn.execute(
+        "INSERT INTO ticket_handover (work_item_id, from_board_id, to_board_id,"
+        " handover_at, from_owner, to_owner, reason) VALUES (?,?,?,?,?,?,?)",
+        (work_item_id, ticket["board_id"], to_board_id, stamp, ticket["owner"],
+         owner or ticket["owner"], reason))
+    conn.execute(
+        "UPDATE ticket SET board_id = ?, board_status_id = ?,"
+        " owner = COALESCE(?, owner) WHERE work_item_id = ?",
+        (to_board_id, landed, owner, work_item_id))
+    conn.execute(
+        "INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail)"
+        " VALUES (?,?,'ROUTED',?,?)",
+        (work_item_id, stamp, actor,
+         f"moved {ticket['board_id']} -> {to_board_id}"
+         + (f", owner {owner}" if owner else "") + f" ({reason})"))
+    # A board that had no calendar may have started no clocks; start them now.
+    cal = conn.execute("SELECT calendar_id FROM board WHERE board_id = ?",
+                       (to_board_id,)).fetchone()["calendar_id"]
+    if cal and not conn.execute("SELECT 1 FROM ticket_clock WHERE work_item_id = ?",
+                                (work_item_id,)).fetchone():
+        open_clocks(conn, work_item_id, at=at, calendar_id=cal)
+    touch(conn, work_item_id, at)
+    return {"work_item_id": work_item_id, "board_id": to_board_id,
+            "board_status_id": landed}

@@ -202,8 +202,7 @@ def create(ctx):
                       "a patient is waiting."),
             user=ctx.user))
     # Computed, never chosen: the requester answered two questions and the
-    # matrix decides. There is no priority field for them to set.
-    priority, priority_source = tickets.compute_priority(impact, urgency)
+    # matrix decides (inside tickets.open_ticket). There is no priority field.
 
     board = ctx.conn.execute(
         "SELECT board_id FROM board WHERE is_unrouted = 1").fetchone()
@@ -216,22 +215,10 @@ def create(ctx):
             user=ctx.user))
 
     requester = (ctx.user.email or ctx.user.id or "").lower()
-    stamp = ctx.now.isoformat(sep=" ", timespec="minutes")
-    ticket_id = numbering.issue(ctx.conn, at=ctx.now)
-    ctx.conn.execute(
-        "INSERT INTO work_item (work_item_id, source, name, contract_basis)"
-        " VALUES (?,'desk',?,'UNKNOWN')", (ticket_id, summary))
-    ctx.conn.execute(
-        "INSERT INTO ticket (work_item_id, board_id, path, impact, urgency,"
-        " priority, priority_source, requested_by, requested_at, opened_at, state)"
-        " VALUES (?,?,'INCIDENT',?,?,?,?,?,?,?,'NEW')",
-        (ticket_id, board["board_id"], impact, urgency, priority, priority_source,
-         requester, stamp, stamp))
-    numbering.bind(ctx.conn, ticket_id)
-    if description:
-        ctx.conn.execute(
-            "INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail)"
-            " VALUES (?,?,'INTAKE',?,?)", (ticket_id, stamp, requester, description))
+    ticket_id = tickets.open_ticket(
+        ctx.conn, board_id=board["board_id"], summary=summary, impact=impact,
+        urgency=urgency, requested_by=requester, description=description or None,
+        at=ctx.now)
 
     # §6.1: flagged, counted, and the requester is told -- not refused. Refusing
     # sends the same identifier to the telephone, where nothing records it.
@@ -267,8 +254,11 @@ def reply(ctx, work_item_id):
         stamp = ctx.now.isoformat(sep=" ", timespec="minutes")
         requester = (ctx.user.email or ctx.user.id or "").lower()
         ctx.conn.execute(
-            "INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail)"
-            " VALUES (?,?,'PORTAL_REPLY',?,?)", (work_item_id, stamp, requester, body))
+            "INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail,"
+            " note_flag) VALUES (?,?,'PORTAL_REPLY',?,?,'DISCUSSION')",
+            (work_item_id, stamp, requester, body))
+        ctx.conn.execute("UPDATE ticket SET updated_at = ? WHERE work_item_id = ?",
+                         (stamp, work_item_id))
         for code, severity, detail in phi.scan_fields({"reply": body}):
             ctx.conn.execute(
                 "INSERT INTO data_quality (run_id, subject_kind, subject_id, code,"
