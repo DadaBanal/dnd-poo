@@ -4109,6 +4109,97 @@ class BoardKindAndTypeTest(unittest.TestCase):
         self.assertEqual(self._row(wid)["record_type"], "SERVICE_REQUEST")
 
 
+class MailPolicyTest(unittest.TestCase):
+    """023 and intake: loop guards, a ticket number in the subject, and each
+    board's answer to a reply on a closed ticket (ConnectWise's email connector)."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.at = datetime(2026, 9, 23, 9, 0)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        self.drop = Path(self.tmp.name) / "drop"
+        self.drop.mkdir()
+        self.n = 0
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _mail(self, subject, sender="ward3@pmcne.ph", headers="", body="Hello"):
+        self.n += 1
+        raw = (f"From: {sender}\r\nTo: helpdesk@pmcne.ph\r\nSubject: {subject}\r\n"
+               f"Message-ID: <m{self.n}@pmcne.ph>\r\nDate: Wed, 23 Sep 2026 09:0{self.n % 10}:00 +0800\r\n"
+               f"{headers}\r\n{body}\r\n")
+        (self.drop / f"{self.n:03d}.eml").write_bytes(raw.encode())
+
+    def _run(self, **kw):
+        c = intake.import_drop(self.conn, self.drop, run_id=f"r{self.n}", board_id="IT_HELP",
+                               at=self.at, **kw)
+        for f in self.drop.iterdir():
+            f.unlink()
+        return c
+
+    def _open(self, summary="Printer down", days_ago=0):
+        return tickets.open_ticket(self.conn, board_id="IT_HELP", summary=summary, impact="I3",
+                                   urgency="U3", requested_by="ward3@pmcne.ph",
+                                   at=self.at - timedelta(days=days_ago))
+
+    def _close(self, wid, days_ago=0):
+        board.change_status(self.conn, wid, setup.status_id("IT_HELP", ">Closed"),
+                            at=self.at - timedelta(days=days_ago), actor="t")
+
+    def test_bounces_out_of_office_and_our_own_mail_open_nothing_but_are_counted(self):
+        self._mail("Undeliverable: Printer", sender="MAILER-DAEMON@pmcne.ph")
+        self._mail("Out of office", headers="Auto-Submitted: auto-replied\r\n")
+        self._mail("Re: your ticket", sender="helpdesk@pmcne.ph")
+        self._mail("Backup job failed", sender="veeam@pmcne.ph",
+                   headers="Auto-Submitted: auto-generated\r\n")   # an alert is work
+        c = self._run(own_addresses=["helpdesk@pmcne.ph"])
+        self.assertEqual((c["loop_guarded"], c["new"]), (3, 1))
+        self.assertEqual(c["new"] + c["unclassified"], c["files"])       # nothing lost
+
+    def test_a_ticket_number_in_the_subject_finds_the_ticket(self):
+        wid = self._open()
+        self._mail(f"Still broken {intake.subject_token(wid)}")
+        c = self._run()
+        self.assertEqual(c["appended"], 1)
+        self.assertEqual(self.conn.execute("SELECT customer_updated FROM ticket WHERE"
+                                           " work_item_id = ?", (wid,)).fetchone()[0], 1)
+
+    def test_a_reply_to_a_closed_ticket_reopens_it_by_default(self):
+        wid = self._open()
+        self._close(wid)
+        self._mail(f"Re: [{wid}] printer")
+        c = self._run()
+        self.assertEqual(c["reopened"], 1)
+        row = self.conn.execute("SELECT closed_at, board_status_id FROM ticket WHERE"
+                                " work_item_id = ?", (wid,)).fetchone()
+        self.assertIsNone(row["closed_at"])
+        self.assertEqual(row["board_status_id"], setup.status_id("IT_HELP", "New"))
+
+    def test_a_late_reply_opens_a_new_ticket_linked_to_the_old(self):
+        from psaspine import itil
+        self.conn.execute("UPDATE board SET reopen_within_days = 7 WHERE board_id = 'IT_HELP'")
+        wid = self._open(days_ago=40)
+        self._close(wid, days_ago=30)
+        self._mail(f"Re: [{wid}] printer")
+        c = self._run()
+        self.assertEqual((c["reply_to_closed"], c["reopened"]), (1, 0))
+        links = itil.links_of(self.conn, wid)
+        self.assertEqual(len(links), 1)
+        self.assertNotEqual(links[0]["other"], wid)
+
+    def test_a_fulfillers_note_clears_customer_updated(self):
+        wid = self._open()
+        self._mail(f"More detail [{wid}]")
+        self._run()
+        board.add_note(self.conn, wid, body="On my way", actor="t", at=self.at,
+                       flag="DISCUSSION")
+        self.assertEqual(self.conn.execute("SELECT customer_updated FROM ticket WHERE"
+                                           " work_item_id = ?", (wid,)).fetchone()[0], 0)
+
+
 class ContactsTest(unittest.TestCase):
     """020 and psaspine.contacts: the people who ask, from what AD already holds."""
 
@@ -4222,7 +4313,21 @@ class ContactsTest(unittest.TestCase):
             "SELECT t.contact_id, w.entity_id FROM ticket t JOIN work_item w"
             " ON w.work_item_id = t.work_item_id WHERE t.work_item_id = ?", (wid,)).fetchone()
         self.assertIsNone(row["contact_id"])
-        self.assertEqual(row["entity_id"], "UNCLASSIFIED")
+        # No one person, but the domain belongs to one company: filed under it.
+        self.assertEqual(row["entity_id"], "PMC")
+
+    def test_a_domain_names_a_company_only_when_it_is_one_companys(self):
+        """ConnectWise's third match: exact address, unique name, then a domain
+        owned by exactly one company. Public mail domains never match."""
+        self.contacts.import_csv(self.conn, self._export(self._row(self.G1)),
+                                 entity_id="PMC", at=self.at)
+        self.assertEqual(self.contacts.company_for_domain(self.conn, "new.nurse@pmcne.ph"), "PMC")
+        self.assertIsNone(self.contacts.company_for_domain(self.conn, "someone@gmail.com"))
+        self.assertIsNone(self.contacts.company_for_domain(self.conn, "x@example.org"))
+        self.conn.execute(
+            "INSERT INTO contact (contact_id, entity_id, display_name, email, source, inactive,"
+            " created_at) VALUES ('CT-J', 'JRBY-CI', 'Other', 'o@pmcne.ph', 'MANUAL', 0, '2026')")
+        self.assertIsNone(self.contacts.company_for_domain(self.conn, "new.nurse@pmcne.ph"))
 
     def test_an_inactive_contact_is_never_resolved(self):
         self.contacts.import_csv(self.conn, self._export(self._row(self.G1, enabled="False")),

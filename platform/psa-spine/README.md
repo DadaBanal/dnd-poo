@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 366 tests
+python3 tests/test_spine.py          # 372 tests
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -222,6 +222,22 @@ folder and runs `import-mail`. It signs in with a certificate in the Windows
 store, never a secret, and is scoped by Exchange RBAC for Applications to that
 one mailbox. It polls rather than listens, so no inbound port is opened.
 Preview unless `-Apply`. Setup: `docs/handoffs/HANDOFF-cloud-sql01-WS36-20260923-mail.md`.
+Mail follows ConnectWise's email connector rules (VERIFIED from its archived
+setup page):
+- **Finding the ticket:** a reply finds its ticket by its thread headers first,
+  then by a ticket number anywhere in the subject (`[PMC-000123]`).
+- **Replies to closed tickets:** each board decides, on its Setup › Board tab.
+  It either reopens the ticket to a chosen status, or opens a new ticket linked
+  to the old one once the reply is later than N days after closing.
+- **Placing the sender:** exact email, then UPN. Failing those, an email domain
+  that belongs to exactly one company, never a public mail domain. After that,
+  the catch-all company.
+- **Mail that never opens a ticket:** bounces, out-of-office replies and the
+  desk's own address (`--own-address`) are recorded, counted and ignored.
+  Monitoring and backup alerts still open tickets.
+- **Customer updated:** every requester reply sets the flag, a fulfiller's note
+  clears it, and the Service Board shows it.
+
 Every ticket records where it came from (`ticket.intake_source`: EMAIL, PHONE,
 WALK_UP, PORTAL, API, DESK, IMPORT).
 

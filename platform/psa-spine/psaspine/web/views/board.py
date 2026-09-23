@@ -49,7 +49,7 @@ def _load(ctx, boards):
         "                  WHERE ct.contact_id = t.contact_id), t.requested_by) AS requested_by,"
         "       t.source_ref, t.intake_source, w.name AS summary, e.name AS entity,"
         "       e.entity_id, s.name AS status_name,"
-        "       t.record_type,"
+        "       t.record_type, t.customer_updated,"
         "       (SELECT c.display_name || ' › ' || a.display_name FROM catalogue_item i"
         "          JOIN service_component c ON c.component_id = i.component_id"
         "          JOIN service_action a ON a.action_id = i.action_id"
@@ -240,6 +240,8 @@ def _table(ctx, boards, shown, f) -> str:
             f"<td><input type=checkbox name=ids value='{t.esc(wid)}' form=bulk style='width:auto'></td>"
             f"<td><a href='/ticket/{t.esc(wid)}'>{t.esc(wid)}</a></td>"
             f"<td class=sum><a href='/ticket/{t.esc(wid)}' style='color:inherit'><b>{t.esc(r['summary'])}</b></a>"
+            + (" <span class='chip sla-warn' title='The requester has written since the desk last did'>"
+               "customer updated</span>" if r["customer_updated"] else "")
             + "<div class=last><span class=pill>" + t.esc(" › ".join(
                 [itil.LABEL.get(r["record_type"], "Type not set")] + ([r["klass"]] if r["klass"] else [])))
             + "</span></div>"

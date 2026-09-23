@@ -276,8 +276,8 @@ def reply(ctx, work_item_id):
             "INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail,"
             " note_flag) VALUES (?,?,'PORTAL_REPLY',?,?,'DISCUSSION')",
             (work_item_id, stamp, requester, body))
-        ctx.conn.execute("UPDATE ticket SET updated_at = ? WHERE work_item_id = ?",
-                         (stamp, work_item_id))
+        ctx.conn.execute("UPDATE ticket SET updated_at = ?, customer_updated = 1"
+                         " WHERE work_item_id = ?", (stamp, work_item_id))
         for code, severity, detail in phi.scan_fields({"reply": body}):
             ctx.conn.execute(
                 "INSERT INTO data_quality (run_id, subject_kind, subject_id, code,"

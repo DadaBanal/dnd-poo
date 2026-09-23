@@ -348,6 +348,12 @@ def admit(conn: sqlite3.Connection, work_item_id: str, *, at: datetime) -> dict:
                          (contact_id, work_item_id))
             conn.execute("UPDATE work_item SET entity_id = ? WHERE work_item_id = ?"
                          " AND entity_id IS NULL", (person["entity_id"], work_item_id))
+        else:
+            # No one person: the sender's domain may still name one company.
+            company = contacts.company_for_domain(conn, ticket["requested_by"])
+            if company:
+                conn.execute("UPDATE work_item SET entity_id = ? WHERE work_item_id = ?"
+                             " AND entity_id IS NULL", (company, work_item_id))
 
     conn.execute("UPDATE work_item SET entity_id = ? WHERE work_item_id = ?"
                  " AND entity_id IS NULL", (UNKNOWN_ENTITY, work_item_id))
@@ -479,6 +485,9 @@ def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: st
 
     stamp = at.isoformat(sep=" ", timespec="minutes")
     _event(conn, work_item_id, stamp, "NOTE", actor, body, flag)
+    # A fulfiller has written: the requester's reply has been seen.
+    conn.execute("UPDATE ticket SET customer_updated = 0 WHERE work_item_id = ?",
+                 (work_item_id,))
     if band_hours is not None:
         conn.execute(
             "INSERT INTO time_entry (work_item_id, entity_id, worked_on, band_hours,"

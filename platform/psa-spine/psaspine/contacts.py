@@ -178,6 +178,36 @@ def resolve(conn: sqlite3.Connection, requested_by: str | None) -> sqlite3.Row |
     return None
 
 
+# Mail providers anyone can sign up to: a domain here says nothing about which
+# company a sender belongs to.
+PUBLIC_DOMAINS = frozenset({
+    "gmail.com", "googlemail.com", "yahoo.com", "ymail.com", "outlook.com",
+    "hotmail.com", "live.com", "msn.com", "icloud.com", "me.com", "aol.com",
+    "proton.me", "protonmail.com", "gmx.com", "zoho.com", "mail.com"})
+
+
+def company_for_domain(conn: sqlite3.Connection, requested_by: str | None) -> str | None:
+    """The one company whose active contacts use this address's domain, or None.
+
+    ConnectWise's third match, after exact address and unique name: an email
+    domain that belongs to exactly one company (VERIFIED, docs.connectwise.com/
+    ConnectWise_Documentation/090/020/170/040, archived 2024-07-15). A name is
+    never matched here (see resolve). Public mail domains never match, and a
+    domain seen at two companies matches neither.
+    """
+    address = email_of(requested_by)
+    if address is None:
+        return None
+    domain = address.rsplit("@", 1)[1]
+    if domain in PUBLIC_DOMAINS:
+        return None
+    rows = conn.execute(
+        "SELECT DISTINCT entity_id FROM contact WHERE inactive = 0 AND ("
+        " lower(email) LIKE ? OR lower(upn) LIKE ?)",
+        (f"%@{domain}", f"%@{domain}")).fetchall()
+    return rows[0]["entity_id"] if len(rows) == 1 else None
+
+
 def search(conn: sqlite3.Connection, q: str = "", *, entity_id: str | None = None,
            include_inactive: bool = False, limit: int = 200) -> list[sqlite3.Row]:
     sql = ["SELECT c.*, e.name AS entity_name,"

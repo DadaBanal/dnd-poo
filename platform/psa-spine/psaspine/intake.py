@@ -36,6 +36,7 @@ import email
 import email.policy
 import email.utils
 import hashlib
+import re
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -143,6 +144,71 @@ def body_of(message) -> str:
     return ""
 
 
+# ---------------------------------------------------------- loop guards
+#
+# ConnectWise ignores mail from mailer-daemon, postmaster and MicrosoftExchange
+# (VERIFIED, docs.connectwise.com/ConnectWise_Documentation/090/020/170/040,
+# archived 2024-07-15). Here also RFC 3834 auto-replies (out-of-office), and the
+# desk's own addresses. An auto-GENERATED message (a backup or monitoring alert)
+# is not dropped: ConnectWise ships parsing presets for exactly those.
+LOOP_SENDERS = ("mailer-daemon", "postmaster", "microsoftexchange")
+
+
+def loop_guard(message, sender: str, own_addresses=()) -> str | None:
+    """Why this message must not open or touch a ticket, or None."""
+    local = (sender or "").split("@")[0]
+    if any(local.startswith(x) for x in LOOP_SENDERS):
+        return f"a delivery-system sender ({local})"
+    if sender and sender in {a.lower() for a in own_addresses}:
+        return "sent by the desk itself"
+    auto = str(message.get("Auto-Submitted", "")).strip().lower()
+    if auto.startswith("auto-replied"):
+        return "an automatic reply (Auto-Submitted: auto-replied)"
+    if str(message.get("X-Autoreply", "")).strip().lower() in ("yes", "true") or \
+            str(message.get("Precedence", "")).strip().lower() == "auto_reply":
+        return "an automatic reply"
+    return None
+
+
+# A ticket number anywhere in the subject: the second way a reply finds its
+# ticket, for a client that dropped the thread headers. ConnectWise needs the
+# token in one exact shape; any position works here.
+_TOKEN = re.compile(r"\b([A-Z]{2,10}-\d{4,})\b")
+
+
+def subject_token(work_item_id: str) -> str:
+    """What outbound mail puts in its subject so a reply can find its ticket."""
+    return f"[{work_item_id}]"
+
+
+def ticket_from_subject(conn: sqlite3.Connection, raw_subject) -> str | None:
+    for token in _TOKEN.findall(_decode(raw_subject).upper()):
+        if conn.execute("SELECT 1 FROM ticket WHERE work_item_id = ?", (token,)).fetchone():
+            return token
+    return None
+
+
+def _closed_policy(conn: sqlite3.Connection, work_item_id: str, at: datetime):
+    """For a reply to this ticket: ('OPEN', None) if it is open, ('REOPEN',
+    status) or ('NEW_TICKET', None) per its board's policy if it is closed."""
+    t = conn.execute(
+        "SELECT t.closed_at, t.board_id, s.is_closed, b.closed_reply_policy,"
+        "       b.reopen_within_days, b.reopen_status_id FROM ticket t"
+        "  JOIN board b ON b.board_id = t.board_id"
+        "  LEFT JOIN board_status s ON s.board_status_id = t.board_status_id"
+        " WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
+    if not (t["closed_at"] or t["is_closed"]):
+        return "OPEN", None
+    if t["closed_reply_policy"] == "NEW_TICKET":
+        return "NEW_TICKET", None
+    if t["reopen_within_days"] and t["closed_at"]:
+        closed = datetime.fromisoformat(t["closed_at"])
+        if at - closed > timedelta(days=t["reopen_within_days"]):
+            return "NEW_TICKET", None
+    from .board import default_status
+    return "REOPEN", t["reopen_status_id"] or default_status(conn, t["board_id"])
+
+
 def _seen(conn: sqlite3.Connection, message_id: str):
     return conn.execute("SELECT * FROM intake_message WHERE message_id = ?",
                         (message_id,)).fetchone()
@@ -172,7 +238,7 @@ def _recent_same_subject(conn: sqlite3.Connection, sender: str, subject: str,
 
 def import_drop(conn: sqlite3.Connection, drop_dir, *, run_id: str,
                 board_id: str | None = None, channel: str = "helpdesk",
-                at: datetime | None = None) -> dict:
+                at: datetime | None = None, own_addresses=()) -> dict:
     """Import every message in a directory. Returns counts; raises on nothing.
 
     Losslessness is the invariant, as it is for the register and the desk
@@ -189,7 +255,8 @@ def import_drop(conn: sqlite3.Connection, drop_dir, *, run_id: str,
         board_id = row["board_id"] if row else None
 
     counts = {"files": len(files), "new": 0, "appended": 0, "duplicate": 0,
-              "unclassified": 0, "already_seen": 0, "phi_flagged": 0}
+              "unclassified": 0, "already_seen": 0, "phi_flagged": 0,
+              "loop_guarded": 0, "reopened": 0, "reply_to_closed": 0}
 
     for path in files:
         raw = path.read_bytes()
@@ -216,11 +283,47 @@ def import_drop(conn: sqlite3.Connection, drop_dir, *, run_id: str,
                 (run_id, "intake_message", mid, code, detail, severity))
             counts["phi_flagged"] += 1
 
+        guarded = loop_guard(message, sender, own_addresses)
+        if guarded:
+            # Recorded and counted like everything else; it just opens nothing.
+            _record(conn, mid, stamp, sender, subject, channel, "UNCLASSIFIED",
+                    None, None, run_id)
+            conn.execute(
+                "INSERT INTO data_quality (run_id, subject_kind, subject_id, code,"
+                " detail, severity) VALUES (?,?,?,?,?,?)",
+                (run_id, "intake_message", mid, "MAIL_LOOP_GUARD",
+                 f"not turned into a ticket: {guarded}", "INFO"))
+            counts["unclassified"] += 1
+            counts["loop_guarded"] += 1
+            continue
+
         parents = thread_parents(message)
         parent_id, parent_ticket = _ticket_for_parent(conn, parents)
+        if not parent_ticket:
+            parent_ticket = ticket_from_subject(conn, message.get("Subject"))
 
         if parent_ticket:
+            action, reopen_to = _closed_policy(conn, parent_ticket, when)
+            if action == "NEW_TICKET":
+                # The board says a reply this late is new work. Open it, and
+                # point back at the ticket it answered.
+                ticket_id = _open_ticket(conn, board_id=board_id or _board_of(conn, parent_ticket),
+                                         summary=subject or f"Reply to {parent_ticket}",
+                                         requester=sender, body=body, at=when)
+                from . import itil
+                itil.link(conn, ticket_id, parent_ticket, "RELATED", actor="intake", at=when)
+                _record(conn, mid, stamp, sender, subject, channel, "NEW_TICKET",
+                        ticket_id, parent_id, run_id)
+                counts["new"] += 1
+                counts["reply_to_closed"] += 1
+                continue
             _append_note(conn, parent_ticket, body or subject, sender, stamp)
+            if action == "REOPEN" and reopen_to:
+                from .board import change_status
+                change_status(conn, parent_ticket, reopen_to, at=when, actor="intake")
+                conn.execute("UPDATE ticket SET closed_at = NULL WHERE work_item_id = ?",
+                             (parent_ticket,))
+                counts["reopened"] += 1
             _record(conn, mid, stamp, sender, subject, channel, "APPENDED",
                     parent_ticket, parent_id, run_id)
             counts["appended"] += 1
@@ -273,14 +376,19 @@ def _open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
                                description=body or None, at=at, source="EMAIL")
 
 
+def _board_of(conn: sqlite3.Connection, work_item_id: str) -> str:
+    return conn.execute("SELECT board_id FROM ticket WHERE work_item_id = ?",
+                        (work_item_id,)).fetchone()[0]
+
+
 def _append_note(conn: sqlite3.Connection, work_item_id: str, body: str,
                  actor: str, stamp: str) -> None:
     conn.execute(
         "INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail,"
         " note_flag) VALUES (?,?,'INTAKE_REPLY',?,?,'DISCUSSION')",
         (work_item_id, stamp, actor, body))
-    conn.execute("UPDATE ticket SET updated_at = ? WHERE work_item_id = ?",
-                 (stamp, work_item_id))
+    conn.execute("UPDATE ticket SET updated_at = ?, customer_updated = 1"
+                 " WHERE work_item_id = ?", (stamp, work_item_id))
 
 
 def _record(conn: sqlite3.Connection, message_id: str, stamp: str, sender: str,

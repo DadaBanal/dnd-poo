@@ -160,6 +160,7 @@ def board_setup(ctx, board_id):
             + "</div><div>" + chk("is_live", b["is_live"], "Live (needs an owner and a deputy)")
             + chk("inactive", b["inactive"], "Retired — no new tickets; history kept") + "</div>"
             "</div><div style='margin-top:12px'><button type=submit>Save board</button></div></form>"
+            + _reply_policy_form(ctx, b) +
             f"<form method=post action='/admin/board/{bid}/calendar' class=row style='margin-top:14px'>"
             f"<div><label>Calendar the SLA clocks run on</label><select name=calendar_id>{cal_opts}</select></div>"
             "<div style='flex:0 0 auto'><button type=submit>Save</button></div></form>"
@@ -319,6 +320,49 @@ def apply_starter(ctx, board_id):
     ctx.conn.commit()
     return _done(board_id, "statuses", f"Starter applied: {r['statuses']} statuses, "
                                        f"{r['targets']} SLA targets added")
+
+
+def _reply_policy_form(ctx, b) -> str:
+    """ConnectWise's per-board answer to a reply on a closed ticket."""
+    bid = t.esc(b["board_id"])
+    statuses = ctx.conn.execute(
+        "SELECT board_status_id, name FROM board_status WHERE board_id = ? AND is_closed = 0"
+        " AND inactive = 0 ORDER BY sort_order", (b["board_id"],)).fetchall()
+    pol = b["closed_reply_policy"] or "REOPEN"
+    opts = "".join(f"<option value={k}{' selected' if pol == k else ''}>{v}</option>" for k, v in (
+        ("REOPEN", "Reopen the ticket"), ("NEW_TICKET", "Open a new ticket, linked to the old one")))
+    st = "<option value=''>(the board's default status)</option>" + "".join(
+        f"<option value='{t.esc(x['board_status_id'])}'"
+        f"{' selected' if x['board_status_id'] == b['reopen_status_id'] else ''}>{t.esc(x['name'])}</option>"
+        for x in statuses)
+    return (
+        f"<form method=post action='/admin/board/{bid}/reply-policy' class=row style='margin-top:14px'>"
+        f"<div><label>When someone replies to a closed ticket</label><select name=policy>{opts}</select></div>"
+        f"<div><label>Reopen to</label><select name=reopen_status_id>{st}</select></div>"
+        f"<div><label>…only within days (blank: always)</label><input name=days type=number min=1 "
+        f"value='{t.esc(b['reopen_within_days'] or '')}'></div>"
+        "<div style='flex:0 0 auto'><button type=submit>Save</button></div></form>")
+
+
+def save_reply_policy(ctx, board_id):
+    common.require_board(ctx, board_id, need="ADMIN")
+    f = ctx.request.form()
+    policy = f.get("policy") if f.get("policy") in ("REOPEN", "NEW_TICKET") else None
+    status = f.get("reopen_status_id") or None
+    if status and ctx.conn.execute(
+            "SELECT 1 FROM board_status WHERE board_status_id = ? AND board_id = ?"
+            " AND is_closed = 0", (status, board_id)).fetchone() is None:
+        return _done(board_id, "board", "Not saved: that status is not an open status on this board")
+    days = f.get("days", "").strip()
+    days = int(days) if days.isdigit() and int(days) > 0 else None
+    ctx.conn.execute("UPDATE board SET closed_reply_policy = ?, reopen_status_id = ?,"
+                     " reopen_within_days = ? WHERE board_id = ?", (policy, status, days, board_id))
+    db.audit(ctx.conn, at=ctx.now.isoformat(sep=" ", timespec="minutes"), actor=ctx.user.id,
+             action="BOARD_REPLY_POLICY", subject_kind="board", subject_id=board_id,
+             detail=f"{policy or 'REOPEN'} to {status or 'default'}"
+                    + (f" within {days} days" if days else ""))
+    ctx.conn.commit()
+    return _done(board_id, "board", "Reply policy saved")
 
 
 def save_types(ctx, board_id):

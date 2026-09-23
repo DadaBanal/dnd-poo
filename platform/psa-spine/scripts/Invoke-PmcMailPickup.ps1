@@ -216,7 +216,7 @@ function Invoke-Pass {
         $runId = 'mail-' + (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss')
         Push-Location $SpineDir
         try {
-            $out = & $PythonExe -m psaspine import-mail $Database $DropDir --run-id $runId --channel $Channel 2>&1
+            $out = & $PythonExe -m psaspine import-mail $Database $DropDir --run-id $runId --channel $Channel --own-address $Mailbox 2>&1
             $code = $LASTEXITCODE
         } finally { Pop-Location }
         # import-mail prints counts only ("n files: x new, y appended ...").

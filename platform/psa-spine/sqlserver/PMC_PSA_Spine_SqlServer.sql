@@ -1881,6 +1881,22 @@ ALTER TABLE psa.[ticket] ADD [backout_plan] NVARCHAR(MAX) NULL;
 IF COL_LENGTH(N'psa.[board_status]', N'requires_approval') IS NULL
 ALTER TABLE psa.[board_status] ADD [requires_approval] INT NULL CONSTRAINT [CK_board_status_requires_approval_01] CHECK (requires_approval IN (0, 1));
 
+IF COL_LENGTH(N'psa.[board]', N'closed_reply_policy') IS NULL
+ALTER TABLE psa.[board] ADD [closed_reply_policy] NVARCHAR(32) NULL CONSTRAINT [CK_board_closed_reply_policy_01] CHECK (closed_reply_policy IN ('REOPEN', 'NEW_TICKET'));
+
+-- REOPEN only within this many days of closing; older replies open a new ticket.
+IF COL_LENGTH(N'psa.[board]', N'reopen_within_days') IS NULL
+ALTER TABLE psa.[board] ADD [reopen_within_days] INT NULL CONSTRAINT [CK_board_reopen_within_days_01] CHECK (reopen_within_days > 0);
+
+IF COL_LENGTH(N'psa.[board]', N'reopen_status_id') IS NULL
+ALTER TABLE psa.[board] ADD [reopen_status_id] NVARCHAR(64) NULL CONSTRAINT [FK_board_reopen_status_id] REFERENCES psa.[board_status]([board_status_id]);
+
+-- ConnectWise's "customer updated": the requester has written since a fulfiller
+-- last did. Set by every inbound reply (mail or portal), cleared by a fulfiller's
+-- note, shown on the board so a reply is never missed. NULL reads as 0.
+IF COL_LENGTH(N'psa.[ticket]', N'customer_updated') IS NULL
+ALTER TABLE psa.[ticket] ADD [customer_updated] INT NULL CONSTRAINT [CK_ticket_customer_updated_01] CHECK (customer_updated IN (0, 1));
+
 -- --------------------------------------------------------------------------
 -- indexes
 
@@ -2085,6 +2101,7 @@ PRINT N'target is enforced until somebody with the authority says so.';
     DROP TRIGGER IF EXISTS psa.[ticket_close_requires_a_variation];
     DROP TRIGGER IF EXISTS psa.[patient_reference_needs_a_restricted_board];
     DROP TRIGGER IF EXISTS psa.[patient_reference_stays_on_a_restricted_board];
+    ALTER TABLE psa.[board] DROP CONSTRAINT IF EXISTS [FK_board_reopen_status_id];
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_contact_id];
     ALTER TABLE psa.[board] DROP CONSTRAINT IF EXISTS [FK_board_calendar_id];
     ALTER TABLE psa.[time_entry] DROP CONSTRAINT IF EXISTS [FK_time_entry_loop_reply_id];

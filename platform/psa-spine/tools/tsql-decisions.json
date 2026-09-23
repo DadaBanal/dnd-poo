@@ -515,6 +515,8 @@
     "ticket_link.relation": "CODE",
     "ticket_link.linked_at": "TIMESTAMP_TEXT",
     "ticket_link.linked_by": "PERSON",
-    "board.kind": "CODE"
+    "board.kind": "CODE",
+    "board.closed_reply_policy": "CODE",
+    "board.reopen_status_id": "ID"
   }
 }

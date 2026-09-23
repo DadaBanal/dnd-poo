@@ -65,6 +65,7 @@ ROUTES = [
     ("POST", "/admin/board/<board_id>/team", admin.add_team),
     ("POST", "/admin/board/<board_id>/starter", admin.apply_starter),
     ("POST", "/admin/board/<board_id>/types", admin.save_types),
+    ("POST", "/admin/board/<board_id>/reply-policy", admin.save_reply_policy),
     ("POST", "/admin/board/<board_id>/calendar", admin.save_calendar),
     ("POST", "/admin/board/<board_id>/status/save", admin.save_status),
     ("POST", "/admin/board/<board_id>/status/add", admin.add_board_status),
