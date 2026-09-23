@@ -224,6 +224,7 @@ def emit_table(table: Table, dec: Decisions, tables: set[str]) -> str:
     entries: list[tuple[list[str], str]] = []      # (comment lines, definition)
     parsed: list[tuple[list[str], str]] = []
     n_check = 0
+    n_unique = 0
 
     for col in table.columns:
         sql_type, cls = column_type(table, col, dec)
@@ -267,9 +268,14 @@ def emit_table(table: Table, dec: Decisions, tables: set[str]) -> str:
         body, _ = _balanced(constraint, constraint.index("("))
         if head_word in ("PRIMARY", "UNIQUE"):
             cols = ", ".join(f"[{c.strip()}]" for c in body.split(","))
-            prefix = "PK" if head_word == "PRIMARY" else "UQ"
             keyword = "PRIMARY KEY" if head_word == "PRIMARY" else "UNIQUE"
-            entries.append(([], f"    CONSTRAINT [{prefix}_{table.name}] {keyword} ({cols})"))
+            if head_word == "PRIMARY":
+                name = f"PK_{table.name}"
+            else:
+                # A second UNIQUE on one table must not reuse the first's name.
+                n_unique += 1
+                name = f"UQ_{table.name}" + (f"_{n_unique:02d}" if n_unique > 1 else "")
+            entries.append(([], f"    CONSTRAINT [{name}] {keyword} ({cols})"))
         elif head_word == "CHECK":
             n_check += 1
             entries.append(([], f"    CONSTRAINT [CK_{table.name}_{n_check:02d}] "
@@ -335,6 +341,10 @@ def emit_trigger(trigger: Trigger, number: int, tables: set[str]) -> str:
         raise Unsupported(f"{trigger.name}: a trigger with no WHEN would fire on every row")
 
     when = expression(trigger.when, tables)
+    if re.search(r"\bOLD\.", when, re.I):
+        # SQL Server's OLD is the deleted table, which needs a join on the key
+        # that nothing here decides. Refused rather than emitted unbound.
+        raise Unsupported(f"{trigger.name}: OLD. in a trigger condition has no port decided")
     when = re.sub(r"\bNEW\.", f"{TRIGGER_ALIAS}.", when)
 
     guard = f"EXISTS (SELECT 1 FROM inserted AS {TRIGGER_ALIAS} WHERE {when})"
@@ -623,7 +633,7 @@ SELECT @Triggers = COUNT(*) FROM sys.triggers tr
 SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.tables t ON t.object_id = i.object_id
   JOIN sys.schemas s ON s.schema_id = t.schema_id
- WHERE s.name = @Schema AND i.type = 2 AND i.is_unique = 0 AND i.is_primary_key = 0;
+ WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
 IF @Tables <> {len(tables)} OR @Triggers <> {len(triggers)} OR @Indexes < {len(indexes)}
 BEGIN

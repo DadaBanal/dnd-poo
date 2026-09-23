@@ -1771,6 +1771,39 @@ class PortTest(unittest.TestCase):
         self.assertLess(rollback.index("DROP CONSTRAINT IF EXISTS [FK_p_q_id]"),
                         rollback.index("DROP TABLE IF EXISTS psa.[q]"))
 
+    def test_a_one_line_table_keeps_every_column(self):
+        """zip() over two splits once dropped every column after the first."""
+        tsql = self._translate(
+            "CREATE TABLE t (id TEXT PRIMARY KEY, k TEXT NOT NULL CHECK (k IN ('A','B')), n INTEGER);",
+            {"t.id": "ID", "t.k": "CODE"})
+        self.assertIn("[k] NVARCHAR(32) NOT NULL CONSTRAINT [CK_t_01] CHECK (k IN ('A','B'))", tsql)
+        self.assertIn("[n] INT NULL", tsql)
+
+    def test_old_in_a_trigger_condition_stops_the_build(self):
+        with self.assertRaises(Unsupported) as caught:
+            self._translate(
+                "CREATE TABLE t (a TEXT);\n"
+                "CREATE TRIGGER g BEFORE UPDATE ON t FOR EACH ROW WHEN OLD.a <> NEW.a"
+                " BEGIN SELECT RAISE(ABORT, 'no'); END;", {"t.a": "NAME"})
+        self.assertIn("OLD.", str(caught.exception))
+
+    def test_two_unique_constraints_get_two_names(self):
+        tsql = self._translate("CREATE TABLE t (a TEXT NOT NULL, b TEXT NOT NULL,\n"
+                               "  UNIQUE (a),\n  UNIQUE (b));", {"t.a": "ID", "t.b": "ID"})
+        self.assertIn("CONSTRAINT [UQ_t] UNIQUE ([a])", tsql)
+        self.assertIn("CONSTRAINT [UQ_t_02] UNIQUE ([b])", tsql)
+
+    def test_the_verify_gate_counts_unique_indexes_it_expects(self):
+        """A filtered unique index is declared, so the gate must count it, or a
+        correct install on SQL Server rolls itself back."""
+        tsql = self._translate(
+            "CREATE TABLE t (a TEXT);\nCREATE INDEX i ON t (a);\n"
+            "CREATE UNIQUE INDEX u ON t (a) WHERE a IS NOT NULL;", {"t.a": "ID"})
+        self.assertIn("@Indexes < 2", tsql)
+        gate = tsql[tsql.index("SELECT @Indexes"):tsql.index("@Indexes < 2")]
+        self.assertNotIn("is_unique = 0", gate)
+        self.assertIn("is_unique_constraint = 0", gate)
+
     def test_a_trigger_body_that_is_not_a_raise_stops_the_build(self):
         with self.assertRaises(Unsupported) as caught:
             self._translate(

@@ -1900,7 +1900,7 @@ SELECT @Triggers = COUNT(*) FROM sys.triggers tr
 SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.tables t ON t.object_id = i.object_id
   JOIN sys.schemas s ON s.schema_id = t.schema_id
- WHERE s.name = @Schema AND i.type = 2 AND i.is_unique = 0 AND i.is_primary_key = 0;
+ WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
 IF @Tables <> 58 OR @Triggers <> 4 OR @Indexes < 10
 BEGIN

@@ -322,7 +322,12 @@ def parse_table(raw: str, code: str, source_file: str) -> Table:
     body_raw = raw[open_paren + 1:close]
 
     columns, constraints = [], []
-    for part_code, part_raw in zip(split_top_level(body_code), split_top_level_raw(body_code, body_raw)):
+    code_parts = split_top_level(body_code)
+    raw_parts = split_top_level_raw(body_code, body_raw)
+    if len(code_parts) != len(raw_parts):
+        # zip() would silently drop columns. Refuse instead.
+        raise Unsupported(f"{m.group(1)}: column list could not be split consistently")
+    for part_code, part_raw in zip(code_parts, raw_parts):
         head = part_code.strip().split(" ", 1)[0].upper()
         if head in TABLE_CONSTRAINT_HEADS:
             constraints.append(" ".join(part_code.split()))
@@ -353,8 +358,12 @@ def split_top_level_raw(body_code: str, body_raw: str) -> list[str]:
         elif ch == ")":
             depth -= 1
         elif ch == "," and depth == 0:
+            # Run on to the end of the line only when nothing but a note follows
+            # the comma there; a second column on the same line starts here.
             end_of_line = body_code.find("\n", i)
-            cuts.append((i, len(body_code) if end_of_line < 0 else end_of_line))
+            end_of_line = len(body_code) if end_of_line < 0 else end_of_line
+            rest = body_code[i + 1:end_of_line]
+            cuts.append((i, end_of_line if not rest.strip() else i + 1))
     parts, start = [], 0
     for cut, resume in cuts + [(len(body_code), len(body_code))]:
         if body_code[start:cut].strip():
