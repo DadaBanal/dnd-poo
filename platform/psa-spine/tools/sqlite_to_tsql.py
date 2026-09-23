@@ -288,9 +288,42 @@ def emit_table(table: Table, dec: Decisions, tables: set[str]) -> str:
     return "\n".join(lines)
 
 
-def emit_index(index: Index) -> str:
-    cols = ", ".join(f"[{c.strip()}]" for c in index.columns.split(","))
-    return f"CREATE INDEX [{index.name}] ON {SCHEMA}.[{index.table}] ({cols});"
+_NOT_NULL_TERM = re.compile(r"^(\w+)\s+IS\s+NOT\s+NULL$", re.I)
+
+
+def emit_index(index: Index, nullable: set[str] | None = None) -> str:
+    """A plain index, or a UNIQUE one with a WHERE that keeps NULLs out of it.
+
+    The two engines disagree about NULL in a unique index: SQLite lets any number
+    of rows hold NULL, SQL Server lets exactly one. Ported as written, the second
+    contact with no AD GUID would be refused on the live server and nowhere else.
+    So a UNIQUE index over a nullable column must say `WHERE col IS NOT NULL`,
+    which is a no-op in SQLite and a filtered index in SQL Server; one that does
+    not say it stops the build rather than changing meaning on the port.
+    """
+    cols = [c.strip() for c in index.columns.split(",")]
+    guarded: list[str] = []
+    if index.where is not None:
+        for term in re.split(r"\s+AND\s+", index.where, flags=re.I):
+            m = _NOT_NULL_TERM.match(term.strip())
+            if not m or m.group(1) not in cols:
+                raise Unsupported(
+                    f"{index.name}: partial index condition {index.where!r} has no "
+                    "port decided; only '<indexed column> IS NOT NULL' terms are recognised")
+            guarded.append(m.group(1))
+    if index.unique:
+        if nullable is None:
+            raise Unsupported(f"{index.name}: UNIQUE index on unknown table {index.table!r}")
+        open_nulls = [c for c in cols if c in nullable and c not in guarded]
+        if open_nulls:
+            raise Unsupported(
+                f"{index.name}: UNIQUE over nullable {', '.join(open_nulls)} means many "
+                "NULLs in SQLite and one in SQL Server; add WHERE "
+                + " AND ".join(f"{c} IS NOT NULL" for c in open_nulls))
+    kind = "UNIQUE INDEX" if index.unique else "INDEX"
+    where = (" WHERE " + " AND ".join(f"[{c}] IS NOT NULL" for c in guarded)) if guarded else ""
+    col_sql = ", ".join(f"[{c}]" for c in cols)
+    return f"CREATE {kind} [{index.name}] ON {SCHEMA}.[{index.table}] ({col_sql}){where};"
 
 
 def emit_trigger(trigger: Trigger, number: int, tables: set[str]) -> str:
@@ -348,6 +381,11 @@ def generate(schema_dir: Path = SCHEMA_DIR, decisions: Path = DECISIONS) -> str:
             "drift away from the schema either.")
 
     by_name = {t.name: t for t in tables}
+    nullable = {t.name: {c.name for c in t.columns if not (c.not_null or c.primary_key)}
+                for t in tables}
+    for a in alters:
+        if not a.column.not_null:
+            nullable.setdefault(a.table, set()).add(a.column.name)
     objects = ([f"{SCHEMA}.{t.name}" for t in tables]
                + [f"{SCHEMA}.{i.name}" for i in indexes]
                + [f"{SCHEMA}.{t.name}" for t in triggers])
@@ -533,7 +571,7 @@ IF SCHEMA_ID(@Schema) IS NULL
             out.extend(_comment_block(index.comment))
         w(f"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'{index.name}'"
           f" AND object_id = OBJECT_ID(N'{SCHEMA}.[{index.table}]'))")
-        w(emit_index(index))
+        w(emit_index(index, nullable.get(index.table)))
 
     w("")
     w(f"-- {'=' * 74}")
@@ -617,6 +655,12 @@ PRINT N'target is enforced until somebody with the authority says so.';
     w("")
     for trigger in triggers:
         w(f"    DROP TRIGGER IF EXISTS {SCHEMA}.[{trigger.name}];")
+    # A column added later can point at a table created after its own, so table
+    # order alone is not dependency order: those keys go first.
+    for alter in reversed(alters):
+        if alter.column.references:
+            w(f"    ALTER TABLE {SCHEMA}.[{alter.table}] DROP CONSTRAINT IF EXISTS "
+              f"[FK_{alter.table}_{alter.column.name}];")
     for table in reversed(tables):
         w(f"    DROP TABLE IF EXISTS {SCHEMA}.[{table.name}];")
     w(f"    DROP SCHEMA IF EXISTS {SCHEMA};")

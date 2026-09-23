@@ -439,6 +439,21 @@
     "ticket_event.note_flag": "CODE",
     "ticket.updated_at": "TIMESTAMP_TEXT",
     "ticket.intake_source": "CODE",
-    "board.description": "FREE"
+    "board.description": "FREE",
+    "contact.contact_id": "ID",
+    "contact.entity_id": "ID",
+    "contact.display_name": "NAME",
+    "contact.email": "NAME",
+    "contact.phone": "CODE",
+    "contact.department": "NAME",
+    "contact.title": "NAME",
+    "contact.office": "NAME",
+    "contact.upn": "NAME",
+    "contact.sam_account": "CODE",
+    "contact.ad_object_guid": "ID",
+    "contact.source": "CODE",
+    "contact.created_at": "TIMESTAMP_TEXT",
+    "contact.last_synced_at": "TIMESTAMP_TEXT",
+    "ticket.contact_id": "ID"
   }
 }

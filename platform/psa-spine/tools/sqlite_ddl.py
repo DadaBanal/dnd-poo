@@ -195,6 +195,8 @@ class Index:
     table: str
     columns: str
     comment: str
+    unique: bool = False
+    where: str | None = None        # a partial index's condition, verbatim
 
 
 @dataclass
@@ -217,7 +219,9 @@ TYPES = {"TEXT", "INTEGER", "REAL"}
 TABLE_CONSTRAINT_HEADS = {"PRIMARY", "UNIQUE", "CHECK", "FOREIGN", "CONSTRAINT"}
 
 _CREATE_TABLE = re.compile(r"^\s*CREATE\s+TABLE\s+(\w+)\s*\(", re.I)
-_CREATE_INDEX = re.compile(r"^\s*CREATE\s+INDEX\s+(\w+)\s+ON\s+(\w+)\s*\((.*)\)\s*;?\s*$", re.I | re.S)
+_CREATE_INDEX = re.compile(
+    r"^\s*CREATE\s+(UNIQUE\s+)?INDEX\s+(\w+)\s+ON\s+(\w+)\s*\(([^()]*)\)"
+    r"\s*(?:WHERE\s+(.*?))?\s*;?\s*$", re.I | re.S)
 _PRAGMA = re.compile(r"^\s*PRAGMA\s+\w+\s*=\s*\w+\s*;?\s*$", re.I)
 _ALTER = re.compile(r"^\s*ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(.*?);?\s*$", re.I | re.S)
 _TRIGGER_HEAD = re.compile(
@@ -363,8 +367,10 @@ def parse_index(raw: str, code: str) -> Index:
     m = _CREATE_INDEX.match(strip_comments(code).strip())
     if not m:
         raise Unsupported("CREATE INDEX form not recognised")
-    return Index(name=m.group(1), table=m.group(2),
-                 columns=" ".join(m.group(3).split()), comment=leading_comment(raw))
+    where = " ".join(m.group(5).split()) if m.group(5) else None
+    return Index(name=m.group(2), table=m.group(3),
+                 columns=" ".join(m.group(4).split()), comment=leading_comment(raw),
+                 unique=bool(m.group(1)), where=where)
 
 
 def parse_trigger(raw: str, code: str, source_file: str) -> Trigger:
@@ -445,7 +451,7 @@ def parse_schema(files: list[tuple[str, str]]) -> tuple[list[Table], list[Index]
             elif re.match(r"\s*CREATE\s+TABLE\b", clean, re.I):
                 # FOR EACH ROW never appears in a table; guard the order below.
                 tables.append(parse_table(raw, code, filename))
-            elif re.match(r"\s*CREATE\s+INDEX\b", clean, re.I):
+            elif re.match(r"\s*CREATE\s+(UNIQUE\s+)?INDEX\b", clean, re.I):
                 indexes.append(parse_index(raw, code))
             elif re.match(r"\s*CREATE\s+TRIGGER\b", clean, re.I):
                 triggers.append(parse_trigger(raw, _consume_for_each_row(code), filename))

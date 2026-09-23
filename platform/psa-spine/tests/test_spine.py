@@ -1736,6 +1736,41 @@ class PortTest(unittest.TestCase):
             self._translate("CREATE TABLE t (a TEXT);", {"t.a": "NAME", "t.gone": "NAME"})
         self.assertIn("t.gone", str(caught.exception))
 
+    def test_a_unique_index_over_a_nullable_column_must_keep_nulls_out(self):
+        """SQLite lets many rows be NULL under UNIQUE; SQL Server lets one."""
+        with self.assertRaises(Unsupported) as caught:
+            self._translate("CREATE TABLE t (a TEXT);\nCREATE UNIQUE INDEX u ON t (a);",
+                            {"t.a": "ID"})
+        self.assertIn("WHERE a IS NOT NULL", str(caught.exception))
+
+    def test_a_filtered_unique_index_ports_as_one(self):
+        tsql = self._translate(
+            "CREATE TABLE t (a TEXT);\n"
+            "CREATE UNIQUE INDEX u ON t (a) WHERE a IS NOT NULL;", {"t.a": "ID"})
+        self.assertIn("CREATE UNIQUE INDEX [u] ON psa.[t] ([a]) WHERE [a] IS NOT NULL;", tsql)
+
+    def test_a_unique_index_over_not_null_columns_needs_no_filter(self):
+        tsql = self._translate("CREATE TABLE t (a TEXT NOT NULL);\n"
+                               "CREATE UNIQUE INDEX u ON t (a);", {"t.a": "ID"})
+        self.assertIn("CREATE UNIQUE INDEX [u] ON psa.[t] ([a]);", tsql)
+
+    def test_any_other_partial_index_condition_stops_the_build(self):
+        with self.assertRaises(Unsupported) as caught:
+            self._translate("CREATE TABLE t (a TEXT);\n"
+                            "CREATE INDEX i ON t (a) WHERE a = 'x';", {"t.a": "ID"})
+        self.assertIn("no port decided", str(caught.exception))
+
+    def test_rollback_drops_an_added_foreign_key_before_its_target(self):
+        """A column added later may point at a table created after its own."""
+        tsql = self._translate(
+            "CREATE TABLE p (id TEXT PRIMARY KEY);\n"
+            "CREATE TABLE q (id TEXT PRIMARY KEY);\n"
+            "ALTER TABLE p ADD COLUMN q_id TEXT REFERENCES q(id);",
+            {"p.id": "ID", "q.id": "ID", "p.q_id": "ID"})
+        rollback = tsql[tsql.index("  ROLLBACK"):]
+        self.assertLess(rollback.index("DROP CONSTRAINT IF EXISTS [FK_p_q_id]"),
+                        rollback.index("DROP TABLE IF EXISTS psa.[q]"))
+
     def test_a_trigger_body_that_is_not_a_raise_stops_the_build(self):
         with self.assertRaises(Unsupported) as caught:
             self._translate(

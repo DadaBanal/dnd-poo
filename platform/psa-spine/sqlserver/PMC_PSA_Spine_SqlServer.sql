@@ -143,18 +143,21 @@ BEGIN
     PRINT N'    psa.ticket_number';
     PRINT N'    psa.intake_message';
     PRINT N'    psa.api_alert';
+    PRINT N'    psa.contact';
     PRINT N'    psa.ix_fee_line_effective';
     PRINT N'    psa.ix_time_entry_period';
     PRINT N'    psa.ix_workflow_run_event';
     PRINT N'    psa.ix_oncall_active';
     PRINT N'    psa.ix_intake_thread';
     PRINT N'    psa.ix_intake_ticket';
+    PRINT N'    psa.ix_contact_email';
+    PRINT N'    psa.ux_contact_ad_guid';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  54 tables, 6 indexes, 4 triggers.';
+    PRINT N'  55 tables, 8 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -1555,6 +1558,36 @@ CREATE TABLE psa.[api_alert] (
 );
 END;
 
+-- --------------------------------------------------------------------------
+-- contact   (from schema/020_contacts.sql)
+IF OBJECT_ID(N'psa.[contact]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[contact] (
+    [contact_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_contact] PRIMARY KEY,
+    [entity_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_contact_entity_id] REFERENCES psa.[entity]([entity_id]),
+    [display_name] NVARCHAR(400) NOT NULL,
+    [email] NVARCHAR(400) NULL,
+    [phone] NVARCHAR(32) NULL,
+
+    -- ward or department, as AD holds it
+    [department] NVARCHAR(400) NULL,
+    [title] NVARCHAR(400) NULL,
+    [office] NVARCHAR(400) NULL,
+    [upn] NVARCHAR(400) NULL,
+    [sam_account] NVARCHAR(32) NULL,
+    [ad_object_guid] NVARCHAR(64) NULL,
+    [source] NVARCHAR(32) NOT NULL CONSTRAINT [CK_contact_01] CHECK (source IN ('AD', 'ENTRA', 'MANUAL', 'INTAKE')),
+    [inactive] INT NOT NULL CONSTRAINT [DF_contact_inactive] DEFAULT (0) CONSTRAINT [CK_contact_02] CHECK (inactive IN (0, 1)),
+    [created_at] NVARCHAR(64) NOT NULL,
+    [last_synced_at] NVARCHAR(64) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END)),
+    [last_synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [last_synced_at], 126), CASE WHEN [last_synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [last_synced_at], 112) END))
+);
+END;
+
 -- ==========================================================================
 -- COLUMNS ADDED TO TABLES THAT ALREADY EXIST
 --
@@ -1605,6 +1638,11 @@ ALTER TABLE psa.[board] ADD [inactive] INT NULL CONSTRAINT [CK_board_inactive_01
 IF COL_LENGTH(N'psa.[board]', N'description') IS NULL
 ALTER TABLE psa.[board] ADD [description] NVARCHAR(MAX) NULL;
 
+-- Which contact a ticket is for. requested_by keeps what intake was told,
+-- verbatim; contact_id is the resolved person, when there is one.
+IF COL_LENGTH(N'psa.[ticket]', N'contact_id') IS NULL
+ALTER TABLE psa.[ticket] ADD [contact_id] NVARCHAR(64) NULL CONSTRAINT [FK_ticket_contact_id] REFERENCES psa.[contact]([contact_id]);
+
 -- --------------------------------------------------------------------------
 -- indexes
 
@@ -1629,6 +1667,14 @@ CREATE INDEX [ix_intake_thread] ON psa.[intake_message] ([from_address], [subjec
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_intake_ticket' AND object_id = OBJECT_ID(N'psa.[intake_message]'))
 CREATE INDEX [ix_intake_ticket] ON psa.[intake_message] ([work_item_id]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_contact_email' AND object_id = OBJECT_ID(N'psa.[contact]'))
+CREATE INDEX [ix_contact_email] ON psa.[contact] ([email]);
+
+-- One contact per AD object. Manual contacts have no GUID, and there may be many
+-- of them, so NULL is kept out of the index (see the translator's emit_index).
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_contact_ad_guid' AND object_id = OBJECT_ID(N'psa.[contact]'))
+CREATE UNIQUE INDEX [ux_contact_ad_guid] ON psa.[contact] ([ad_object_guid]) WHERE [ad_object_guid] IS NOT NULL;
 
 -- ==========================================================================
 -- THE GATE
@@ -1760,10 +1806,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_unique = 0 AND i.is_primary_key = 0;
 
-IF @Tables <> 54 OR @Triggers <> 4 OR @Indexes < 6
+IF @Tables <> 55 OR @Triggers <> 4 OR @Indexes < 8
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 54), %d triggers (expected 4), %d indexes (expected at least 6). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 55), %d triggers (expected 4), %d indexes (expected at least 8). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -1791,6 +1837,11 @@ PRINT N'target is enforced until somebody with the authority says so.';
     DROP TRIGGER IF EXISTS psa.[ticket_close_requires_a_variation];
     DROP TRIGGER IF EXISTS psa.[patient_reference_needs_a_restricted_board];
     DROP TRIGGER IF EXISTS psa.[patient_reference_stays_on_a_restricted_board];
+    ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_contact_id];
+    ALTER TABLE psa.[board] DROP CONSTRAINT IF EXISTS [FK_board_calendar_id];
+    ALTER TABLE psa.[time_entry] DROP CONSTRAINT IF EXISTS [FK_time_entry_loop_reply_id];
+    ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
+    DROP TABLE IF EXISTS psa.[contact];
     DROP TABLE IF EXISTS psa.[api_alert];
     DROP TABLE IF EXISTS psa.[intake_message];
     DROP TABLE IF EXISTS psa.[ticket_number];
