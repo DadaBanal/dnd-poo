@@ -3,9 +3,16 @@
 # is git-ignored). ci/run.sh points PMC_SECRETS at a throwaway folder of its
 # own, so a test run never touches a site's real secrets.
 #
-# Idempotent: an existing secret is never overwritten, because the index was
-# initialised with it. Prints no secret. Rotating one is a deliberate act:
-# change it in PostgreSQL first, then replace the file.
+#   tools/make-secrets.sh          the platform's own secrets
+#   tools/make-secrets.sh --test   also the stand-in Entra ID's (tests only)
+#
+# Idempotent: an existing secret is never overwritten, because databases and
+# Keycloak were initialised with it. Prints no secret. Rotating one is a
+# deliberate act: change it where it is used first, then replace the file.
+#
+# One secret is NOT generated: entra-client-secret. Entra ID issues it for
+# PMC's app registration and ICT places it here; Keycloak will not start
+# without it.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -13,35 +20,45 @@ dir="${PMC_SECRETS:-$here/secrets}"
 mkdir -p "$dir"
 chmod 700 "$dir"
 
-rand() { LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 40 || true; }
+rand() { LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c "${1:-40}" || true; }
 
 # The files are bind-mounted into containers that run as other users
 # (postgres runs as uid 999), so they must be world-readable. The 0700
 # directory is what keeps other host users out.
 write() {
-  local path="$1" content="$2"
+  local path="$dir/$1" content="$2"
   if [[ -e "$path" ]]; then
-    echo "kept      $(basename "$path")"
+    echo "kept      $1"
     return
   fi
   umask 022
   printf '%s' "$content" >"$path"
   chmod 644 "$path"
-  echo "generated $(basename "$path")"
+  echo "generated $1"
 }
 
-write "$dir/pg-index-password" "$(rand)"
+# Databases.
+write pg-index-password "$(rand)"
+write pg-platform-password "$(rand)"
+write keycloak-db-password "$(rand)"
 
-# The one HTTP user until sign-in arrives (M2.2).
-users="$dir/orthanc-users.json"
-if [[ -e "$users" ]]; then
-  ops="$(sed -n 's/.*"pmc-ops": *"\([A-Za-z0-9]*\)".*/\1/p' "$users")"
-else
-  ops="$(rand)"
+# Sign-in. oauth2-proxy wants a cookie secret of exactly 32 bytes.
+write front-door-client-secret "$(rand)"
+write front-door-cookie-secret "$(rand 32)"
+write admin-cli-client-secret "$(rand)"
+
+# Between the engine and orthanc-auth-service, and the auth service's own key
+# for share links.
+write auth-service-password "$(rand)"
+write auth-service-secret-key "$(rand 64)"
+
+# The platform's own services (connector, monitoring, tests) call the engine
+# with this API key, as the Keycloak user svc-platform.
+write svc-platform-api-key "$(rand 48)"
+
+if [[ "${1:-}" == "--test" ]]; then
+  # The stand-in Entra ID in tests: its client secret, and the one password
+  # its invented users share.
+  write entra-client-secret "$(rand)"
+  write test-user-password "$(rand 24)"
 fi
-write "$users" "{\"RegisteredUsers\": {\"pmc-ops\": \"$ops\"}}"
-
-# M2.1 only: the front door presents that user to the engine. Removed when
-# sign-in lands; never deployed.
-write "$dir/front-engine-auth.conf" \
-  "proxy_set_header Authorization \"Basic $(printf 'pmc-ops:%s' "$ops" | base64 -w0)\";"

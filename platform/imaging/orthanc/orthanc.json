@@ -3,7 +3,9 @@
   //
   // Nothing site-specific and no secret lives in this file:
   //   - the AE title comes from compose (PMC_DICOM_AET);
-  //   - passwords and HTTP users come from Docker secrets (tools/make-secrets.sh);
+  //   - passwords come from Docker secrets (tools/make-secrets.sh);
+  //   - who may do what is the Authorization block below, per role in
+  //     identity/auth-service/permissions.json. There are no HTTP users;
   //   - modality addresses live in the engine's own database, registered at
   //     runtime from a private inventory. They never enter git.
   //
@@ -83,16 +85,74 @@
   "SaveJobs": true,
 
   // ---- Operations ----
+  // Idle HTTP connections stay open 10 s (Orthanc's default is 1 s). A client
+  // that reuses a connection just as the engine closes it gets a dropped
+  // request (MEASURED in the tests, 23 Sep); the front door closes its own idle
+  // connections to the engine sooner, at 5 s, so it never races.
+  "KeepAlive": true,
+  "KeepAliveTimeout": 10,
   "DeidentifyLogs": true,
   "WebDavEnabled": false,
   "MetricsEnabled": true,
 
-  // ---- HTTP ----
+  // ---- HTTP: who may do what ----
   // Reachable only on the engine network. People arrive through the front
-  // door (M2), which adds single sign-on. The one HTTP user until then is
-  // generated into a Docker secret; RegisteredUsers is never written here.
+  // door, signed in with Entra ID; the platform's own services present an API
+  // key. Orthanc's own user list is off: every request is decided by the
+  // authorization plugin below, which asks orthanc-auth-service who the
+  // caller is and checks the permission this table requires. A route the
+  // table does not name is refused. DICOM from the modalities does not pass
+  // through here, so ingest keeps working even while sign-in is down.
   "RemoteAccessAllowed": true,
-  "AuthenticationEnabled": true,
+  "AuthenticationEnabled": false,
+
+  "Authorization": {
+    "WebServiceRootUrl": "http://auth-service:8000/",
+    "WebServiceUsername": "orthanc-engine",
+    // WebServicePassword: the secret ORTHANC__AUTHORIZATION__WEB_SERVICE_PASSWORD
+    "TokenHttpHeaders": ["Authorization", "api-key"],
+    "CheckedLevel": "studies",
+    // Downloads, uploads, modifications and deletions are written to the
+    // engine's audit log. Who opened which study is in the front door's log.
+    "EnableAuditLogs": true,
+    "Permissions": [
+      // The permission names are orthanc-auth-service's own (a fixed list,
+      // MEASURED in 26.8.1): "api-view" is used here for searching, "view"
+      // for reading one study. What a search returns is also cut to the
+      // labels a role may see: the plugin rewrites DICOMweb and /tools/find
+      // searches itself (MEASURED in its 0.12.0 source), so a referrer's
+      // search finds only the studies shared with referrers.
+      //
+      // DICOMweb, as the viewer uses it.
+      ["get", "^/dicom-web/(studies|series|instances)$", "api-view"],
+      ["get", "^/dicom-web/studies/[^/]+/(series|instances)$", "api-view"],
+      ["get", "^/dicom-web/studies/[^/]+/series/[^/]+/instances$", "api-view"],
+      ["get", "^/dicom-web/studies/[^/]+(/series/[^/]+(/instances/[^/]+)?)?(/(metadata|rendered|thumbnail|frames/[0-9,]+(/(rendered|thumbnail))?|bulk/.+))?$", "view"],
+      ["get", "^/wado$", "view"],
+
+      // The REST API, as the front door's backend and the platform's tools read it.
+      ["post", "^/tools/(find|lookup)$", "api-view"],
+      ["get", "^/changes$", "api-view"],
+      ["get", "^/system$", "view"],
+      ["get", "^/(patients|studies|series|instances)/[a-f0-9-]+(/(patient|study|series|instances|shared-tags|tags|simplified-tags|header|statistics|metadata(/[^/]+)?|labels(/[^/]+)?|preview|rendered|numpy|content(/.*)?|frames(/[0-9]+(/(preview|rendered|numpy|raw|image-uint8|image-uint16|image-int16))?)?))?$", "view"],
+      ["get", "^/(patients|studies|series|instances)/[a-f0-9-]+/(archive|media|file)$", "download"],
+
+      // Modality worklists, as the BizBox connector keeps them (M3).
+      ["get", "^/worklists(/[^/]+)?$", "worklists"],
+      ["post", "^/worklists/create$", "worklists"],
+      ["delete", "^/worklists/[^/]+$", "worklists"],
+
+      // Administration: ICT and the platform's own tools.
+      ["get", "^/(modalities|plugins|statistics|jobs)(/.*)?$", "admin-permissions"],
+      ["put", "^/modalities/[^/]+$", "admin-permissions"],
+      ["delete", "^/modalities/[^/]+$", "admin-permissions"],
+      ["get", "^/(patients|studies|series|instances)/[a-f0-9-]+/attachments(/.*)?$", "admin-permissions"],
+      ["put", "^/(patients|studies|series|instances)/[a-f0-9-]+/labels/[^/]+$", "edit-labels"],
+      ["delete", "^/(patients|studies|series|instances)/[a-f0-9-]+/labels/[^/]+$", "edit-labels"],
+      ["post", "^/instances$", "upload"],
+      ["delete", "^/(patients|studies|series|instances)/[a-f0-9-]+$", "delete"]
+    ]
+  },
 
   // ---- Index: PostgreSQL (ADR-001) ----
   // The password arrives as the secret ORTHANC__POSTGRESQL__PASSWORD.

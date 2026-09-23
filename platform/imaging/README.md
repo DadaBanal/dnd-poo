@@ -1,7 +1,7 @@
 # platform/imaging — the Path A platform
 
-**Status, 23 Sep 2026: M1 (the engine) and M2.1 (the front door and the
-viewer) are built and proven off-prem. Nothing is deployed.** Dada's rule
+**Status, 23 Sep 2026: M1 (the engine), M2.1 (the front door and the viewer)
+and M2.2 (sign-in) are built and proven off-prem. Nothing is deployed.** Dada's rule
 (23 Sep): nothing goes on-prem until the whole platform is built, and the
 on-prem go is his. Deployment also stays gated on ADR-001 (still *Proposed*)
 and on the safety work in [`../README.md`](../README.md), "What it is gated
@@ -12,11 +12,15 @@ This replaces the 6 Sep skeleton in `platform/`, which was never run.
 ## What is built
 
 ```
-                          edge network              engine network (no route out)
-person ── HTTPS 443 ──▶  front (nginx) ──┬──▶ viewer (OHIF, static files)
-                                         └──▶ orthanc ──▶ pg-index      the index
-modality ── DICOM 4242 ────────────────────▶    │
-                                                └──▶ orthanc-storage   the images
+            edge                         engine network (no route out)
+person ─ HTTPS 443 ─▶ front (nginx) ─┬─▶ oauth2-proxy ─▶ sessions (Valkey)
+                                     │        │
+                                     ├─▶ keycloak ─▶ pg-platform ─ egress ─▶ Entra ID
+                                     ├─▶ viewer (OHIF, static files)
+                                     └─▶ orthanc ─▶ auth-service ─▶ keycloak
+modality ─ DICOM 4242 ─────────────────▶   │
+                                           ├─▶ pg-index         the index
+                                           └─▶ orthanc-storage  the images
 ```
 
 - **M1, the engine:** Orthanc and its PostgreSQL index, on a network with no
@@ -25,16 +29,152 @@ modality ── DICOM 4242 ─────────────────�
   `/viewer?StudyInstanceUIDs=…` is OHIF; `/dicom-web/` is the engine's DICOMweb,
   read-only and never cached. Nothing else of the engine is routed. OHIF's own
   study list stands in as the worklist until the PMC front door app (M2.3).
-
-**Not built yet: sign-in (M2.2).** Until then the front door presents the one
-engine account (`pmc-ops`) to the engine for every visitor. Anyone who reaches
-port 443 can read images. That is fine for the off-prem build and must never be
-deployed. M2.2 replaces it with Entra ID sign-in and per-role permissions.
+- **M2.2, sign-in:** see [Sign-in](#sign-in) below. Every page and every
+  image request needs a session, and the engine decides, per role, what each
+  person may see.
 
 No port is published to the host in the build. The tests run in containers:
 one on the engine network plays the modalities, and one on the edge network is
 a person at a PC, with Chromium, who can reach the front door and nothing else.
-Nothing is mocked.
+Nothing is mocked, except Entra ID itself: the tests sign in against a stand-in
+(a second Keycloak realm, `identity/test/realm-entra-sim.json`, with invented
+people), which is never deployed.
+
+## Sign-in
+
+People sign in with their Microsoft 365 account. Nobody has a PMC imaging
+password, and there is no PMC login form.
+
+How a sign-in goes. Each step is MEASURED by the browser tests, against the
+stand-in Entra ID, unless marked:
+
+1. A person opens a link, say a study in the viewer. The front door asks
+   oauth2-proxy whether the request carries a session. It does not, so the
+   person is sent to sign in. A request a page makes in the background (a
+   script, an image) gets a plain 401 instead and can never start a sign-in.
+2. oauth2-proxy sends them to Keycloak, which sends them straight on to
+   Entra ID.
+3. Entra ID signs them in and returns them to Keycloak with an ID token that
+   lists their groups. Whatever MFA and Conditional Access PMC's tenant
+   applies, it applies here too (INFERRED; the tests use the stand-in).
+4. Keycloak turns five Entra groups into five PMC roles (below) and issues its
+   own tokens. Someone in none of the groups gets no role, and oauth2-proxy
+   refuses them a session.
+5. oauth2-proxy keeps the session in Valkey and gives the browser one cookie,
+   `__Host-pmc-session`: HttpOnly, Secure, SameSite=Lax. It holds a ticket,
+   not a token, and the page's scripts cannot read it. The person lands on the
+   page they asked for.
+6. On every request the front door hands the engine the person's own access
+   token. It lasts 5 minutes, and oauth2-proxy renews it once it is 4 minutes
+   old (configured; the renewal is not yet measured). The engine's
+   authorization plugin asks orthanc-auth-service what the person's role may
+   do, and matches the route against the engine's permission table
+   (`orthanc/orthanc.json`). A route the table does not name is refused,
+   whoever asks.
+
+Signing out (`/oauth2/sign_out`) ends the session, and the viewer's own
+requests cannot revive it.
+
+### Roles
+
+| Role | Entra group | May | Sees |
+|---|---|---|---|
+| `pmc-radiologist` | radiologists | search, view, download | every study |
+| `pmc-cardiologist` | cardiologists | search, view, download | every study |
+| `pmc-technologist` | technologists | search, view | every study |
+| `pmc-referrer` | referring doctors | search, view | only studies shared with referrers |
+| `pmc-ict-admin` | ICT administrators | as a radiologist, plus worklists, modalities, upload, labels, delete | every study |
+| `pmc-service` | none: the platform's own services, by API key | as ICT, except delete | every study |
+
+The roles are in `identity/realm-pmc.json`, and what each may do is in
+`identity/auth-service/permissions.json`. Two things the table does not say:
+
+- **Viewing is copying.** A viewer works by fetching a study's DICOM through
+  DICOMweb, so anyone who may view a study can, with some effort, save it
+  (INFERRED from the permission table, which allows exactly that). The
+  download right (a whole study as a zip) is not routed from the front door
+  yet.
+- **ICT's extra rights are not reachable yet.** The front door routes only
+  DICOMweb reads. The admin rights take effect when an admin screen arrives
+  (M2.3).
+
+Sharing with a referrer is a label on the study, `referrer-shared`. Only the
+ICT and service roles may set it, and a share does not expire.
+
+### Decisions for Dada
+
+The design works either way on each of these; the build has a placeholder.
+
+- **Who is in each group**, and whether these five roles are the right ones.
+- **How long a session lasts.** Now: signed out after 1 hour idle, and after
+  12 hours at most (a shift). Set in `identity/realm-pmc.json`.
+- **Who may share a study with referrers, and for how long.** The front door
+  app (M2.3) carries the answer.
+- **OHIF's investigational-use notice** (see Choices).
+
+### What ICT provides at go-live
+
+None of it goes in git.
+
+1. **An Entra app registration** for PMC Imaging, with:
+   - the redirect URI
+     `https://imaging.pmcne.ph/auth/realms/pmc/broker/entra/endpoint`;
+   - a client secret, placed in `secrets/entra-client-secret`;
+   - a groups claim in the ID token, as group IDs (Token configuration, Add
+     groups claim).
+2. **Five security groups**, one per role, and their object IDs.
+3. **The site's values**, in the site's env file: `PMC_ENTRA_CLIENT_ID`; the
+   tenant's `PMC_ENTRA_AUTHORIZATION_URL`, `_TOKEN_URL`, `_JWKS_URL`,
+   `_USERINFO_URL` and `_ISSUER`; and `PMC_ENTRA_GROUP_RADIOLOGISTS`,
+   `_CARDIOLOGISTS`, `_TECHNOLOGISTS`, `_REFERRERS` and `_ICT_ADMINS`.
+   Keycloak refuses to start if any is missing.
+
+What Entra does with groups (VERIFIED, 23 Sep 2026, Microsoft Learn):
+
+- A token carries at most 200 groups. For someone in more, Entra leaves the
+  groups out altogether
+  ([limits](https://learn.microsoft.com/entra/identity/users/directory-service-limits-restrictions)).
+  Here that fails closed: no groups means no role and no session (INFERRED
+  from the no-group test, which is MEASURED).
+- The fix is to emit only the groups assigned to the app. That counts direct
+  members only, and needs Entra ID P1 or P2
+  ([group claims](https://learn.microsoft.com/security/zero-trust/develop/configure-tokens-group-claims-app-roles#group-overages),
+  [assignment](https://learn.microsoft.com/entra/identity/enterprise-apps/assign-user-or-group-access-portal)).
+  Whether PMC's tenant has P1 is NOT VERIFIED.
+- For a new application Microsoft recommends app roles over groups
+  ([caveats](https://learn.microsoft.com/entra/identity/hybrid/connect/how-to-connect-fed-group-claims#important-caveats-for-this-functionality)).
+  Switching means changing the five mappers in `identity/realm-pmc.json` to
+  read the `roles` claim (INFERRED). See Open.
+
+### Found while building it
+
+MEASURED, 23 Sep 2026, unless marked.
+
+- **orthanc-auth-service 26.8.1 writes the tokens it checks to its log** at
+  INFO level. Here it runs at WARNING (`identity/auth-service/pmc_quiet.py`),
+  so no token reaches a log.
+- **Its permission names are a fixed list.** The engine's table uses
+  `api-view` for search, `view` to read a study and `admin-permissions` for
+  administration.
+- **Keycloak reports itself ready before it has imported the realms.** Its
+  health check therefore waits for the `pmc` realm itself, and the auth
+  service waits for Keycloak.
+- **A new share takes about a minute to reach a referrer**, because the
+  engine's authorization plugin caches what it knows about a study. See
+  Measured.
+- **Sign-out used to undo itself.** The viewer's requests still in flight
+  followed the sign-in redirect straight back in. Now only a page load can
+  start a sign-in.
+- **The engine dropped idle connections after 1 s** (its default), racing
+  clients that reused them. Its `KeepAliveTimeout` is now 10 s, and the front
+  door lets go after 5 s.
+- **The realms are imported only at Keycloak's first start.** A later change
+  to `identity/realm-pmc.json` does not reach a running platform. See Open.
+- **There is no Keycloak administrator.** When ICT needs one, `kc.sh
+  bootstrap-admin` creates a temporary one (NOT VERIFIED here).
+- **Removing someone from a group takes effect at their next sign-in**: at
+  most 12 hours later, or 1 hour after they stop using it (INFERRED: roles are
+  copied from Entra when a person signs in). See Open.
 
 ## Pinned
 
@@ -44,6 +184,9 @@ Nothing is mocked.
 | Index: `postgres:18.6-trixie` | 18.6. Data checksums on; built-in `C.UTF-8` collation, which no glibc update can reorder | image digest | MEASURED by `ci/run.sh` on every run |
 | Viewer: `ohif/app:v3.13.10` | OHIF 3.13.10, served only through the front door | image digest | MEASURED: the option names in `viewer/app-config.js` were read from this image's bundle |
 | Front door: `nginx:1.30.5` (trixie) | nginx 1.30.5, TLS 1.3, HTTP/2 | image digest | MEASURED by the browser tests |
+| Sign-in broker: `quay.io/keycloak/keycloak:26.7.4` | Keycloak 26.7.4, on its own PostgreSQL 18.6 cluster (`pg-platform`) | image digest | MEASURED: it starts, imports both realms and brokers the test sign-ins |
+| Session: `quay.io/oauth2-proxy/oauth2-proxy:v7.15.4` | oauth2-proxy 7.15.4, sessions in `valkey/valkey:9.2-trixie` (Valkey 9.2.0) | image digests | MEASURED by the browser tests |
+| Permissions: `orthancteam/orthanc-auth-service:26.8.1` | orthanc-auth-service 26.8.1, with the engine's authorization plugin 0.12.0 | image digest | MEASURED: `/plugins`, and the access tests |
 | Test runner: `python:3.14-slim-trixie` | Python 3.14.7, pydicom 3.0.2, pynetdicom 3.0.4, pylibjpeg-libjpeg 2.4.0, pytest 9.1.1 | image digest, and a hash for every package | MEASURED |
 | Browser runner: `mcr.microsoft.com/playwright:v1.63.0-noble` | Playwright 1.63.0, Chromium | image digest, and an integrity hash for every package | MEASURED |
 
@@ -54,16 +197,18 @@ Each was pulled on 23 Sep 2026 (MEASURED). The official images (`postgres`,
 
 ## What the tests prove
 
-`ci/run.sh` runs 39 tests. All passed on 23 Sep 2026 (MEASURED, cloud build,
-3 min 25 s). It starts from empty volumes and runs 26 engine tests and 7 browser
-tests. It then removes the containers, starts new ones from the same volumes,
-and runs 5 engine tests and 1 browser test again.
+`ci/run.sh` runs 50 tests. All passed on 23 Sep 2026 (MEASURED, cloud build,
+about 7½ minutes). It starts from empty volumes and runs 28 engine tests and
+15 browser tests. It then removes the containers, starts new ones from the
+same volumes, and runs 5 engine tests and 2 browser tests again: the
+radiologist signs in afresh, and a cathlab run still opens playing.
 
 | Property | Test |
 |---|---|
 | The engine is the configured one: versions, PostgreSQL index, no SQLite index file, exact plugin set, JPEG-LS ingest, never overwrite, never recycle | `test_engine.py`, `ci/run.sh` |
 | Nothing on the engine network can reach the internet | `ci/run.sh` |
-| A modality is admitted only if its AE title is registered, it calls this engine's AE title, and it connects from its registered address. A store-only modality cannot search. REST refuses a caller without credentials | `test_engine.py` |
+| A modality is admitted only if its AE title is registered, it calls this engine's AE title, and it connects from its registered address. A store-only modality cannot search | `test_engine.py` |
+| The engine's REST API refuses a caller with no credentials or a wrong API key. A route the permission table does not name is refused even to the platform's own service account | `test_engine.py` |
 | Every uncompressed arrival (XA cine, signed 16-bit CT, MR, CR, DR, RGB ultrasound) is stored as JPEG-LS and decodes identical to what was sent, every pixel of every frame | `test_ingest.py` |
 | An arrival that is already lossy (JPEG ultrasound) is kept byte for byte, not re-encoded | `test_ingest.py` |
 | A resend is accepted and leaves one copy. Six modalities sending at once all succeed | `test_ingest.py` |
@@ -75,39 +220,53 @@ and runs 5 engine tests and 1 browser test again.
 | A cathlab run opens already playing. A CT series opens and every slice arrives. An ultrasound run that arrived as JPEG plays as sent. No console errors | `browser/tests/viewer.spec.js` |
 | Every request the viewer makes goes to the front door and nowhere else, and every DICOMweb answer says `no-store` | `browser/tests/viewer.spec.js` |
 | From where people sit, the engine cannot be reached by name. Its REST API is not routed. DICOMweb refuses writes | `browser/tests/viewer.spec.js` |
+| A link opened without a session goes straight to Entra ID (the stand-in), with no image request first, and comes back to the same page. The session cookie is HttpOnly, Secure and SameSite=Lax | `browser/tests/access.spec.js` |
+| Someone signed in to Entra ID but in no PMC group gets no session and no images | `browser/tests/access.spec.js` |
+| A referrer opens a study shared with referrers. A search finds only shared studies, and an unshared study is refused even by its UID | `browser/tests/access.spec.js` |
+| A cardiologist opens a cathlab run and it plays | `browser/tests/access.spec.js` |
+| Without a session, DICOMweb answers 401: never data, never a sign-in page. Keycloak's admin console and master realm are not reachable. Signing out ends the session | `browser/tests/access.spec.js` |
 
 All test data is synthetic (`tests/synth.py`). Pixels are drawn from formulas,
 patients are invented, and each file carries `PatientIdentityRemoved=YES`.
 The AE titles the tests play are PMC's own, as MEASURED in the record.
 
-## Measured on synthetic data (one run, cloud build host, 4 CPU)
+## Measured on synthetic data (cloud build host, 4 CPU)
 
 - **JPEG-LS saving:** synthetic images were stored at 38–61% of their raw pixel
   size. That figure says nothing about PMC's images. The record MEASURED 30–37%
   smaller on PMC's own files.
-- **A 59-frame cathlab run (512×512):**
-  - whole instance, one request: 52 ms;
-  - all frames, one request: 42 ms;
-  - frame by frame, 59 requests: 1,030 ms in total.
+- **A 59-frame cathlab run (512×512)**, straight from the engine, in two runs:
+  - whole instance, one request: 52–54 ms;
+  - all frames, one request: 42–47 ms;
+  - frame by frame, 59 requests: 881–1,030 ms in total.
 
   INFERRED: a viewer should fetch a cine run in one request, or in a few large
   batches, and never frame by frame. The fix for the live portal's cine
   complaint starts from this.
 - **Through the browser** (headless Chromium, software rendering, same host):
-  - the 59-frame run showed its first image about 6–9 s after the link opened,
-    then played;
-  - the 40-slice CT showed its first slice in about 4.5–7.5 s, with every slice
-    loaded by then.
+  - before sign-in (M2.1), the 59-frame run showed its first image about
+    6–9 s after the link opened, then played; the 40-slice CT showed its first
+    slice in about 4.5–7.5 s, with every slice loaded by then;
+  - with sign-in (M2.2), the run showed its first image after 9.7–11.0 s, and
+    the CT after 7.3 s, all slices by 7.7 s;
+  - OHIF fetched the cathlab run frame by frame: 59 requests, the slowest
+    pattern above. With sign-in, each of them also passes the session check
+    and the engine's permission check.
 
-  These include OHIF's own start-up and a CPU-rendered canvas, so a ward PC
-  with a GPU should do better. That is NOT VERIFIED: it is measured on PMC
-  hardware in M4.
+  How much of the slower start is sign-in and how much is this shared host is
+  NOT VERIFIED; it is measured next (see Open). All of these include OHIF's own
+  start-up and a CPU-rendered canvas, so a ward PC with a GPU should do better.
+  That too is NOT VERIFIED: it is measured on PMC hardware in M4.
+- **A new share reached a referrer after 60–64 s**, in two runs: the engine's
+  authorization plugin caches what it knows about a study.
 
 ## Run it
 
 ```sh
-tools/make-secrets.sh        # once: generates secrets/ (git-ignored); never overwrites
-                             # and put the site's certificate in secrets/tls/
+tools/make-secrets.sh        # once: generates secrets/ (git-ignored); never overwrites.
+                             # ICT adds secrets/entra-client-secret, the site's
+                             # certificate in secrets/tls/, and the PMC_ENTRA_*
+                             # values in .env beside compose.yaml (git-ignored)
 docker compose up -d --wait  # the platform, as project pmc-imaging
 ci/run.sh                    # the tests, as project pmc-imaging-test, then removes it
 KEEP=1 ci/run.sh             # the same, but leaves the test stack running
@@ -131,12 +290,22 @@ anonymous pulls, run it with `PMC_LIBRARY=public.ecr.aws/docker/library`.
   `templates/front.conf.template` holds the routes, TLS and security headers.
 - `viewer/`: OHIF's configuration (`app-config.js`) and the server block that
   serves its files inside its own container.
-- `browser/`: the browser tests (Playwright).
-- `secrets/`: generated by `tools/make-secrets.sh`, git-ignored. It holds the
-  index password, the one HTTP user (`pmc-ops`) until sign-in arrives in M2.2,
-  the front door's copy of that user's credential (removed in M2.2) and the TLS
-  certificate. The containers read them as Docker secrets; none is in any file
-  in git.
+- `identity/`: sign-in. `realm-pmc.json` is the Keycloak realm: the roles,
+  the two clients, the Entra ID broker and the group-to-role mappers, with
+  every site value and secret as a placeholder Keycloak fills in at import.
+  `keycloak-start.sh` refuses to start without them. `pg-platform-init.sh`
+  makes Keycloak's database. `auth-service/` holds what each role may do
+  (`permissions.json`) and how the auth service starts. `test/` is the
+  stand-in Entra ID, for tests only.
+- `browser/`: the browser tests (Playwright). `tests/people.js` is who signs
+  in, `tests/access.spec.js` what each person may see.
+- `secrets/`: generated by `tools/make-secrets.sh`, git-ignored, never
+  overwritten. It holds the passwords of both PostgreSQL clusters and of
+  Keycloak's database, the front door's client and cookie secrets, the auth
+  service's password and signing key, admin-cli's secret, the platform's API
+  key, and the TLS certificate. `entra-client-secret` comes from Entra ID, and
+  ICT places it. The containers read them all as Docker secrets; none is in
+  any file in git.
 - **Modality addresses** live in the engine's database, registered at runtime
   (`PUT /modalities/{name}`), never in git (CLAUDE.md). The tests register
   their own container's address. A registration tool that reads the private
@@ -146,7 +315,9 @@ anonymous pulls, run it with `PMC_LIBRARY=public.ecr.aws/docker/library`.
   - `PMC_HOSTNAME`: the front door's name (default `imaging.pmcne.ph`);
   - `PMC_DICOM_AET`: the engine's AE title (default `PMC-IMAGING`);
   - `PMC_SECRETS`: where the secrets are (default `./secrets`);
-  - `PMC_LIBRARY`: where the official images come from (default Docker Hub).
+  - `PMC_LIBRARY`: where the official images come from (default Docker Hub);
+  - `PMC_ENTRA_*`: PMC's Entra ID tenant and the group behind each role. These
+    have no default (see [Sign-in](#sign-in)); they go in the site's env file.
 - **The TLS certificate** is the site's own; for PMC, the existing `*.pmcne.ph`
   wildcard. It goes in `secrets/tls/` as `tls.crt` and `tls.key`.
   `tools/make-test-tls.sh` makes a throwaway one for tests and never replaces
@@ -168,7 +339,22 @@ These are INFERRED, not decided by anyone but this build. Argue with them.
   later makes the Housekeeper re-read every file: 6.3 TB after the migration.
 - **PostgreSQL `Lock` is off.** A lock held by a killed container's dead session
   can block the very restart that would recover it. Compose runs one engine.
-- **Explorer 2 is off** until M2.2 decides ICT's admin surface.
+- **Explorer 2 is off.** ICT's admin screens come with the front door app
+  (M2.3). Nothing of the engine's REST API is routed from the front door.
+- **No local accounts.** Everyone signs in through Entra ID. The `pmc` realm
+  holds no people, only the platform's two service accounts, so a leaver is
+  handled where ICT already handles leavers.
+- **The engine decides, not the front door.** The front door checks only that
+  a session exists. What a person may see is decided by the engine on every
+  request, so any later client (the front door app, a report tool) gets the
+  same rules.
+- **Default deny.** The engine's permission table lists every route anyone may
+  use, and refuses the rest (MEASURED: its script endpoint is refused even to
+  the platform's own service account).
+- **Only Keycloak can reach the internet**, and only to talk to Entra ID. Its
+  admin console and the master realm are never routed.
+- **Sessions are kept in memory only.** A restart of the session store signs
+  everyone out, and Entra ID signs them straight back in (INFERRED).
 - **A worklist entry nobody performs is removed after 72 h.** A performed one
   goes as soon as its study is stable.
 - **The Housekeeper runs on weekday nights and weekends**, Manila time.
@@ -204,6 +390,22 @@ These are INFERRED, not decided by anyone but this build. Argue with them.
 - **DICOM from the modalities on-prem:** the engine sits on a network with no
   route out, which also means port 4242 cannot be published from it. M4 gives
   the engine a second, DICOM-only network for the modalities.
+- **Token renewal and expiry are configured, not measured.** Two things to
+  prove next: that the engine refuses an expired token, and that a session
+  outlives its first 5-minute token.
+- **What sign-in costs each image request**, and whether the viewer can fetch
+  a cathlab run in fewer requests (see Measured). OHIF's frame-by-frame
+  fetching is the pattern the engine measures as slowest.
+- **Groups or app roles** (see [Sign-in](#sign-in)). ICT confirms whether
+  PMC's tenant has Entra ID P1. With it, the groups claim can be limited to the
+  five groups; without it, a person in more than 200 groups cannot sign in.
+  App roles avoid the limit and are Microsoft's recommendation for a new
+  application.
+- **A realm change after the first start does not reach a running platform.**
+  M4 adds a tool that applies `identity/realm-pmc.json` to a running Keycloak.
+- **Cutting someone off at once.** Removing a person from a group waits for
+  their next sign-in. The runbook (M4) gets a step that ends a person's
+  sessions straight away.
 
 ## Regenerating `tests/requirements.txt`
 
@@ -219,15 +421,13 @@ uv pip compile --generate-hashes --python-version 3.14 \
 
 ## Next
 
-- **M2.2:** sign-in through Entra ID with roles from Microsoft 365 groups.
-  Keycloak brokers to Entra, oauth2-proxy keeps the session, and
-  orthanc-auth-service checks every call. A stand-in Entra runs in the tests.
-  This removes the engine account from the front door.
-- **M2.3:** the PMC front door app at `/pmc/`: the worklist, which opens the
-  viewer.
-- **M2.4:** the cine fix for the live WS23 portal, prepared and tested here. It
-  is deployed only on Dada's go.
+- **M2.2, the rest:** measure token renewal and expiry (see Open).
+- **M2.3:** the PMC front door app at `/pmc/`: the worklist and study search,
+  sharing with referrers, and ICT's admin screens. It opens the viewer, and
+  OHIF's own study list goes off.
+- **M2.4:** the cine fix for the live WS23 portal, prepared and tested in
+  `apps/imaging-portal`. It is deployed only on Dada's go.
 - **M3:** the BizBox-to-worklist connector (against a mock BizBox), feed watch
-  and alerts, backups (pgBackRest and restic) with a timed restore drill.
+  and alerts, and backups with a timed restore drill.
 - **M4:** migration tooling, the runbook, and the on-prem package for the
   R740xd.

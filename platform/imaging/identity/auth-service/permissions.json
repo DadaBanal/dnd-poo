@@ -1,0 +1,74 @@
+{
+  "roles": {
+    "pmc-radiologist": {
+      "authorized-labels": [
+        "*"
+      ],
+      "permissions": [
+        "api-view",
+        "view",
+        "download"
+      ]
+    },
+    "pmc-cardiologist": {
+      "authorized-labels": [
+        "*"
+      ],
+      "permissions": [
+        "api-view",
+        "view",
+        "download"
+      ]
+    },
+    "pmc-technologist": {
+      "authorized-labels": [
+        "*"
+      ],
+      "permissions": [
+        "api-view",
+        "view"
+      ]
+    },
+    "pmc-referrer": {
+      "authorized-labels": [
+        "referrer-shared"
+      ],
+      "permissions": [
+        "api-view",
+        "view"
+      ]
+    },
+    "pmc-ict-admin": {
+      "authorized-labels": [
+        "*"
+      ],
+      "permissions": [
+        "api-view",
+        "view",
+        "download",
+        "worklists",
+        "admin-permissions",
+        "upload",
+        "delete",
+        "edit-labels"
+      ]
+    },
+    "pmc-service": {
+      "authorized-labels": [
+        "*"
+      ],
+      "permissions": [
+        "api-view",
+        "view",
+        "download",
+        "worklists",
+        "admin-permissions",
+        "upload",
+        "edit-labels"
+      ]
+    }
+  },
+  "available-labels": [
+    "referrer-shared"
+  ]
+}

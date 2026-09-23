@@ -1,12 +1,11 @@
-// The platform as a person at a ward PC sees it: Chromium on the edge network,
-// which can reach the front door and nothing else. The studies are the
-// synthetic ones tests/seed.py stored (their UIDs are in /results/seed.json).
+// The platform as a radiologist at a ward PC sees it, signed in (see
+// signin.setup.js): Chromium on the edge network, which can reach the front
+// door and nothing else. The studies are the synthetic ones tests/seed.py
+// stored (their UIDs are in /results/seed.json).
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
+import { RESULTS, HOST, seed } from './people.js';
 
-const RESULTS = process.env.RESULTS_DIR || '/results';
-const HOST = process.env.PMC_HOSTNAME;
-const seed = JSON.parse(fs.readFileSync(`${RESULTS}/seed.json`, 'utf8'));
 const measured = {};
 
 test.describe.configure({ mode: 'serial' });
@@ -124,7 +123,7 @@ test('the engine is reachable only through the front door, and only to read', as
   // ...and the front door routes none of its REST API: this is the viewer's page, not the engine.
   const system = await request.get(`https://${HOST}/system`);
   expect(system.headers()['content-type']).toContain('text/html');
-  // DICOMweb is read-only until sign-in decides who may write.
+  // DICOMweb is read-only, whoever is signed in, until writing is designed.
   const stow = await request.post(`https://${HOST}/dicom-web/studies`, { data: 'x' });
   expect(stow.status()).toBe(403);
 });

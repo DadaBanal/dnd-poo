@@ -1,0 +1,151 @@
+{
+  "realm": "entra-sim",
+  "displayName": "Stand-in for Microsoft Entra ID (tests only; never deployed)",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "accessTokenLifespan": 300,
+  "groups": [
+    {
+      "name": "${PMC_ENTRA_GROUP_RADIOLOGISTS}"
+    },
+    {
+      "name": "${PMC_ENTRA_GROUP_CARDIOLOGISTS}"
+    },
+    {
+      "name": "${PMC_ENTRA_GROUP_TECHNOLOGISTS}"
+    },
+    {
+      "name": "${PMC_ENTRA_GROUP_REFERRERS}"
+    },
+    {
+      "name": "${PMC_ENTRA_GROUP_ICT_ADMINS}"
+    }
+  ],
+  "users": [
+    {
+      "username": "rad.test@pmc.test",
+      "email": "rad.test@pmc.test",
+      "emailVerified": true,
+      "firstName": "Test",
+      "lastName": "Radiologist",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${PMC_TEST_USER_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/${PMC_ENTRA_GROUP_RADIOLOGISTS}"
+      ]
+    },
+    {
+      "username": "card.test@pmc.test",
+      "email": "card.test@pmc.test",
+      "emailVerified": true,
+      "firstName": "Test",
+      "lastName": "Cardiologist",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${PMC_TEST_USER_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/${PMC_ENTRA_GROUP_CARDIOLOGISTS}"
+      ]
+    },
+    {
+      "username": "ref.test@pmc.test",
+      "email": "ref.test@pmc.test",
+      "emailVerified": true,
+      "firstName": "Test",
+      "lastName": "Referrer",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${PMC_TEST_USER_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/${PMC_ENTRA_GROUP_REFERRERS}"
+      ]
+    },
+    {
+      "username": "ict.test@pmc.test",
+      "email": "ict.test@pmc.test",
+      "emailVerified": true,
+      "firstName": "Test",
+      "lastName": "ICT",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${PMC_TEST_USER_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/${PMC_ENTRA_GROUP_ICT_ADMINS}"
+      ]
+    },
+    {
+      "username": "none.test@pmc.test",
+      "email": "none.test@pmc.test",
+      "emailVerified": true,
+      "firstName": "Test",
+      "lastName": "Nogroup",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${PMC_TEST_USER_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "groups": []
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "${PMC_ENTRA_CLIENT_ID}",
+      "name": "The PMC imaging platform's Keycloak, as an Entra app registration would see it",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${PMC_ENTRA_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "redirectUris": [
+        "https://${PMC_HOSTNAME}/auth/realms/pmc/broker/entra/endpoint"
+      ],
+      "webOrigins": [],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups as object IDs, like Entra",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "claim.name": "groups"
+          }
+        }
+      ]
+    }
+  ]
+}

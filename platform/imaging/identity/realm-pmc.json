@@ -1,0 +1,209 @@
+{
+  "realm": "pmc",
+  "enabled": true,
+  "displayName": "PMC Imaging",
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "rememberMe": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 3600,
+  "ssoSessionMaxLifespan": 43200,
+  "roles": {
+    "realm": [
+      {
+        "name": "pmc-radiologist",
+        "description": "Reads imaging: searches, views and downloads studies."
+      },
+      {
+        "name": "pmc-cardiologist",
+        "description": "Reads cathlab and echo: searches, views and downloads studies."
+      },
+      {
+        "name": "pmc-technologist",
+        "description": "Checks their own images: searches and views studies."
+      },
+      {
+        "name": "pmc-referrer",
+        "description": "Referring doctor: views only the studies shared with referrers (label referrer-shared)."
+      },
+      {
+        "name": "pmc-ict-admin",
+        "description": "ICT: everything, including modalities, worklists, uploads and deletion."
+      },
+      {
+        "name": "pmc-service",
+        "description": "The platform's own services (connector, monitoring, tests). Never given to a person."
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "pmc-front-door",
+      "name": "PMC front door",
+      "description": "oauth2-proxy at the front door holds the session for every person; nothing else signs in.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${PMC_FRONT_DOOR_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": false,
+      "redirectUris": [
+        "https://${PMC_HOSTNAME}/oauth2/callback"
+      ],
+      "webOrigins": [],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://${PMC_HOSTNAME}/*"
+      }
+    },
+    {
+      "clientId": "admin-cli",
+      "name": "orthanc-auth-service",
+      "description": "Used only by orthanc-auth-service to look up service accounts by API key. Read-only on users and the realm.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${PMC_ADMIN_CLI_CLIENT_SECRET}",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "redirectUris": [],
+      "webOrigins": []
+    }
+  ],
+  "users": [
+    {
+      "username": "service-account-admin-cli",
+      "enabled": true,
+      "serviceAccountClientId": "admin-cli",
+      "clientRoles": {
+        "realm-management": [
+          "view-users",
+          "query-users",
+          "view-realm"
+        ]
+      }
+    },
+    {
+      "username": "svc-platform",
+      "enabled": true,
+      "attributes": {
+        "api-key": [
+          "${PMC_SVC_PLATFORM_API_KEY}"
+        ]
+      },
+      "realmRoles": [
+        "pmc-service"
+      ]
+    }
+  ],
+  "identityProviders": [
+    {
+      "alias": "entra",
+      "displayName": "Microsoft Entra ID",
+      "providerId": "oidc",
+      "enabled": true,
+      "trustEmail": true,
+      "storeToken": false,
+      "addReadTokenRoleOnCreate": false,
+      "linkOnly": false,
+      "config": {
+        "clientId": "${PMC_ENTRA_CLIENT_ID}",
+        "clientSecret": "${PMC_ENTRA_CLIENT_SECRET}",
+        "clientAuthMethod": "client_secret_post",
+        "authorizationUrl": "${PMC_ENTRA_AUTHORIZATION_URL}",
+        "tokenUrl": "${PMC_ENTRA_TOKEN_URL}",
+        "jwksUrl": "${PMC_ENTRA_JWKS_URL}",
+        "userInfoUrl": "${PMC_ENTRA_USERINFO_URL}",
+        "issuer": "${PMC_ENTRA_ISSUER}",
+        "useJwksUrl": "true",
+        "validateSignature": "true",
+        "pkceEnabled": "true",
+        "pkceMethod": "S256",
+        "defaultScope": "openid profile email",
+        "syncMode": "FORCE"
+      }
+    }
+  ],
+  "identityProviderMappers": [
+    {
+      "name": "radiologists -> pmc-radiologist",
+      "identityProviderAlias": "entra",
+      "identityProviderMapper": "oidc-role-idp-mapper",
+      "config": {
+        "syncMode": "FORCE",
+        "claim": "groups",
+        "claim.value": "${PMC_ENTRA_GROUP_RADIOLOGISTS}",
+        "role": "pmc-radiologist"
+      }
+    },
+    {
+      "name": "cardiologists -> pmc-cardiologist",
+      "identityProviderAlias": "entra",
+      "identityProviderMapper": "oidc-role-idp-mapper",
+      "config": {
+        "syncMode": "FORCE",
+        "claim": "groups",
+        "claim.value": "${PMC_ENTRA_GROUP_CARDIOLOGISTS}",
+        "role": "pmc-cardiologist"
+      }
+    },
+    {
+      "name": "technologists -> pmc-technologist",
+      "identityProviderAlias": "entra",
+      "identityProviderMapper": "oidc-role-idp-mapper",
+      "config": {
+        "syncMode": "FORCE",
+        "claim": "groups",
+        "claim.value": "${PMC_ENTRA_GROUP_TECHNOLOGISTS}",
+        "role": "pmc-technologist"
+      }
+    },
+    {
+      "name": "referrers -> pmc-referrer",
+      "identityProviderAlias": "entra",
+      "identityProviderMapper": "oidc-role-idp-mapper",
+      "config": {
+        "syncMode": "FORCE",
+        "claim": "groups",
+        "claim.value": "${PMC_ENTRA_GROUP_REFERRERS}",
+        "role": "pmc-referrer"
+      }
+    },
+    {
+      "name": "ict-admins -> pmc-ict-admin",
+      "identityProviderAlias": "entra",
+      "identityProviderMapper": "oidc-role-idp-mapper",
+      "config": {
+        "syncMode": "FORCE",
+        "claim": "groups",
+        "claim.value": "${PMC_ENTRA_GROUP_ICT_ADMINS}",
+        "role": "pmc-ict-admin"
+      }
+    }
+  ],
+  "components": {
+    "org.keycloak.userprofile.UserProfileProvider": [
+      {
+        "providerId": "declarative-user-profile",
+        "subComponents": {},
+        "config": {
+          "kc.user.profile.config": [
+            "{\"attributes\":[{\"name\":\"username\",\"displayName\":\"${username}\",\"validations\":{\"length\":{\"min\":3,\"max\":255},\"username-prohibited-characters\":{},\"up-username-not-idn-homograph\":{}},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"multivalued\":false},{\"name\":\"email\",\"displayName\":\"${email}\",\"validations\":{\"email\":{},\"length\":{\"max\":255}},\"required\":{\"roles\":[\"user\"]},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"multivalued\":false},{\"name\":\"firstName\",\"displayName\":\"${firstName}\",\"validations\":{\"length\":{\"max\":255},\"person-name-prohibited-characters\":{}},\"required\":{\"roles\":[\"user\"]},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"multivalued\":false},{\"name\":\"lastName\",\"displayName\":\"${lastName}\",\"validations\":{\"length\":{\"max\":255},\"person-name-prohibited-characters\":{}},\"required\":{\"roles\":[\"user\"]},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"multivalued\":false},{\"name\":\"api-key\",\"displayName\":\"API key (service accounts only)\",\"validations\":{},\"permissions\":{\"view\":[\"admin\"],\"edit\":[\"admin\"]},\"multivalued\":false}],\"groups\":[{\"name\":\"user-metadata\",\"displayHeader\":\"User metadata\",\"displayDescription\":\"Attributes, which refer to user metadata\"}]}"
+          ]
+        }
+      }
+    ]
+  }
+}

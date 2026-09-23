@@ -11,6 +11,7 @@ from engine import REJECTED
 # explorer.js is not a plugin: /plugins lists it as the scripts plugins add to
 # the built-in explorer.
 EXPECTED_PLUGINS = {
+    "authorization": "0.12.0",
     "dicom-web": "1.24",
     "gdcm": "1.8",
     "housekeeper": "1.13.0",
@@ -40,7 +41,6 @@ def test_configuration_is_the_committed_one(engine):
     assert system["MaximumPatientCount"] == 0
     assert system["StorageCompression"] is False
     assert system["StoreMD5ForAttachments"] is True
-    assert system["IsHttpServerSecure"] is True
     instance_tags = system["MainDicomTags"]["Instance"].split(";")
     # Rows, Columns, SOPClassUID, PixelSpacing, BitsAllocated: the extra
     # main tags that must be in place before the first study arrives.
@@ -56,7 +56,25 @@ def test_exactly_the_plugins_the_configuration_names(engine):
 
 
 def test_rest_refuses_a_caller_without_credentials(engine):
-    assert requests.get(engine.url + "/system", timeout=30).status_code == 401
+    # Orthanc's own password list is off; the authorization plugin decides,
+    # and an anonymous caller may do nothing at all.
+    assert requests.get(engine.url + "/system", timeout=30).status_code == 403
+    assert requests.post(engine.url + "/tools/find", json={"Level": "Study", "Query": {}},
+                         timeout=30).status_code == 403
+
+
+def test_rest_refuses_a_wrong_api_key(engine):
+    wrong = {"api-key": "not-" + engine.api_key}
+    assert requests.get(engine.url + "/system", headers=wrong, timeout=30).status_code == 403
+    assert requests.get(engine.url + "/system", headers={"api-key": engine.api_key},
+                        timeout=30).status_code == 200
+
+
+def test_a_route_the_permission_table_does_not_name_is_refused(engine):
+    # Even the platform's own service account cannot reach what the table
+    # leaves out, such as the engine's Lua endpoint.
+    r = engine.request("POST", "/tools/execute-script", data="print(1)")
+    assert r.status_code == 403
 
 
 # ---- the DICOM network -------------------------------------------------------

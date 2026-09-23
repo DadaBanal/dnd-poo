@@ -1,24 +1,47 @@
 # The front door: the only way in (Path A, M2). One origin, ${PMC_HOSTNAME},
 # over TLS and HTTP/2:
 #
-#   /dicom-web/, /wado   the engine's DICOMweb, read-only, never cached
-#   everything else      the viewer (OHIF 3.13), static files
+#   /oauth2/              the session (oauth2-proxy)
+#   /auth/realms/pmc/…    sign-in pages (Keycloak, which sends people on to
+#                         Entra ID). Keycloak's admin console is not routed.
+#   /dicom-web/, /wado    the engine's DICOMweb, read-only, never cached
+#   everything else       the viewer (OHIF 3.13), static files
 #
-# The engine's own REST API, its explorer and the index are not routed at all.
-#
-# M2.1: sign-in is not built yet. Until M2.2 the front door presents the one
-# engine account to the engine itself (secrets/front-engine-auth.conf). That
-# means anyone who reaches this port can read images. It is fit for the
-# off-prem build only and must never be deployed.
+# Every request except sign-in itself is checked with oauth2-proxy first
+# (auth_request). A person without a session is sent to sign in. The engine
+# receives the person's own access token and decides, per role, what they
+# may do. The engine's own REST API, its explorer and the index are not routed.
 
 upstream engine {
   server orthanc:8042;
   keepalive 32;
+  # Shorter than the engine's own 10 s, so the front door never reuses a
+  # connection the engine is closing.
+  keepalive_timeout 5s;
 }
 
 upstream viewer {
   server viewer:80;
   keepalive 8;
+}
+
+upstream session {
+  server oauth2-proxy:4180;
+  keepalive 8;
+}
+
+upstream signin {
+  server keycloak:8080;
+  keepalive 8;
+}
+
+# Where oauth2-proxy sends a person afterwards: back to the page they asked
+# for, except that its own URLs never point back at themselves (sign-out would
+# loop), and sign-out ends on a page that needs no session.
+map $request_uri $pmc_return_to {
+  ~^/oauth2/sign_out  /signed-out;
+  ~^/oauth2/          /;
+  default             $request_uri;
 }
 
 server {
@@ -40,6 +63,12 @@ server {
   ssl_session_timeout  1d;
   ssl_session_tickets  off;
 
+  # The session cookie and the token the session hands over are bigger than
+  # nginx's default buffers.
+  proxy_buffer_size 32k;
+  proxy_buffers 8 32k;
+  large_client_header_buffers 4 32k;
+
   # Same-origin everything. connect-src 'self' means the viewer can talk to
   # nothing but this front door: that is the control that keeps images from
   # leaving. 'unsafe-eval' is there because the viewer's image decoders need
@@ -59,8 +88,79 @@ server {
   gzip_min_length 1024;
   gzip_types application/dicom+json application/json;
 
-  # ---- the engine: DICOMweb, read-only until sign-in decides who may write --
+  # ---- the session -------------------------------------------------------------
+  # Asked about every request below. Answers 202 with the person's identity and
+  # access token, or 401.
+  location = /oauth2/auth {
+    internal;
+    proxy_pass http://session;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Uri $request_uri;
+  }
+
+  # Sign-in, the return from Entra ID, and sign-out. A page asked for without
+  # a session lands here too (error_page 401 below), and $request_uri is still
+  # that page, so the person comes back to it after signing in.
+  location /oauth2/ {
+    proxy_pass http://session;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-Host $host;
+    # Where to go afterwards (see the map above).
+    proxy_set_header X-Auth-Request-Redirect $pmc_return_to;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "no-referrer" always;
+  }
+
+  # Where sign-out ends. Needs no session, says what happened, offers the way back.
+  location = /signed-out {
+    default_type text/html;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Cache-Control "no-store" always;
+    add_header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'" always;
+    return 200 '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Signed out - PMC Imaging</title><body style="font:16px system-ui,sans-serif;margin:3rem;max-width:32rem"><h1 style="font-size:1.4rem">You have signed out of PMC Imaging.</h1><p>Close this window on a shared PC.</p><p><a href="/">Sign in again</a></p></body></html>';
+  }
+
+  # ---- sign-in pages (Keycloak) ------------------------------------------------
+  # The login and protocol endpoints of the named realms (${PMC_PUBLIC_REALMS})
+  # and their page resources only; never the master realm, never the admin
+  # console. Keycloak's own security headers apply to its pages.
+  location ~ ^/auth/(realms/(${PMC_PUBLIC_REALMS})|resources)/ {
+    proxy_pass http://signin;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Port 443;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+  }
+
+  # Keycloak's admin console and anything else under /auth/: not from here.
+  location /auth/ {
+    return 404;
+  }
+
+  # ---- the engine: DICOMweb, read-only until writing is designed ---------------
   location ~ ^/(dicom-web/|wado$) {
+    auth_request /oauth2/auth;
+    # A viewer's background request gets a plain 401, not a sign-in page.
+    auth_request_set $pmc_user $upstream_http_x_auth_request_email;
+    auth_request_set $pmc_token $upstream_http_x_auth_request_access_token;
+    auth_request_set $pmc_cookie $upstream_http_set_cookie;
+    add_header Set-Cookie $pmc_cookie;
+
     limit_except GET { deny all; }
     proxy_pass http://engine;
     proxy_http_version 1.1;
@@ -68,7 +168,8 @@ server {
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto https;
     proxy_set_header X-Forwarded-Host $host;
-    include /run/secrets/front-engine-auth.conf;
+    proxy_set_header Cookie "";
+    proxy_set_header Authorization "Bearer $pmc_token";
     proxy_read_timeout 300s;
     # Images never touch a disk on the way through: no temp files here, and
     # no-store tells shared ward PCs not to keep them either.
@@ -80,12 +181,39 @@ server {
     add_header Cross-Origin-Resource-Policy "same-origin" always;
   }
 
-  # ---- the viewer ------------------------------------------------------------
+  # Without a session, only a page load starts sign-in. Anything a page asks
+  # for in the background (a script, a worker, an image) gets a plain 401, so
+  # a background request can never start, or silently restart, a session:
+  # after signing out, the viewer's in-flight requests would otherwise follow
+  # sign-in straight back in (MEASURED, 23 Sep, before this rule). A browser
+  # that does not say what a request is for is treated as a page load.
+  location @unauthorized {
+    if ($http_sec_fetch_mode ~ ^(cors|no-cors|same-origin|websocket)$) {
+      return 401;
+    }
+    rewrite ^ /oauth2/sign_in last;
+  }
+
+  # ---- the viewer --------------------------------------------------------------
   location / {
+    auth_request /oauth2/auth;
+    error_page 401 = @unauthorized;
+    auth_request_set $pmc_user $upstream_http_x_auth_request_email;
+    auth_request_set $pmc_cookie $upstream_http_set_cookie;
+    add_header Set-Cookie $pmc_cookie;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header Cross-Origin-Opener-Policy "same-origin" always;
+    add_header Cross-Origin-Embedder-Policy "require-corp" always;
+    add_header Cross-Origin-Resource-Policy "same-origin" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'" always;
+
     limit_except GET { deny all; }
     proxy_pass http://viewer;
     proxy_http_version 1.1;
     proxy_set_header Connection "";
     proxy_set_header Host $host;
+    proxy_set_header Cookie "";
   }
 }

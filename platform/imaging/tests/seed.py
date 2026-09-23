@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import uuid
 from pathlib import Path
 
@@ -15,7 +16,8 @@ from conftest import MODALITIES, SENDER
 from engine import REJECTED, Engine
 
 # What the browser tests open: a cathlab run (cine), a CT series (a stack),
-# a chest plate, and an ultrasound run that arrived already JPEG-compressed.
+# a chest plate (shared with referrers), and an ultrasound run that arrived
+# already JPEG-compressed.
 KINDS = ["xa", "ct", "cr", "us-jpeg"]
 
 
@@ -39,6 +41,13 @@ def main() -> None:
             "frames": int(getattr(first, "NumberOfFrames", 1)),
             "patient_id": study.patient_id,
         }
+    # Share the chest plate with referrers (a label), so the browser tests can
+    # show a referrer opening it and not the others.
+    shared = engine.study_id(seeded["cr"]["study"])
+    r = engine.request("PUT", f"/studies/{shared}/labels/referrer-shared")
+    r.raise_for_status()
+    seeded["cr"]["labels"] = ["referrer-shared"]
+    seeded["cr"]["labelled_at_ms"] = int(time.time() * 1000)
     out = Path(os.environ.get("RESULTS_DIR", "/results")) / "seed.json"
     out.write_text(json.dumps(seeded, indent=2))
     print(f"seeded {', '.join(KINDS)} -> {out}")

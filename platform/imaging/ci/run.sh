@@ -26,7 +26,7 @@ finish() {
   local status=$?
   if [[ $status -ne 0 ]]; then
     step "logs (last 150 lines each)"
-    "${compose[@]}" logs --no-color --tail 150 orthanc pg-index viewer front || true
+    "${compose[@]}" logs --no-color --tail 150 || true
   fi
   if [[ "${KEEP:-0}" != 1 ]]; then
     "${compose[@]}" --profile test down -v --remove-orphans >/dev/null 2>&1 || true
@@ -35,9 +35,9 @@ finish() {
 }
 trap finish EXIT
 
-step "throwaway secrets and a test certificate for $PMC_HOSTNAME"
+step "throwaway secrets, a stand-in Entra ID and a test certificate for $PMC_HOSTNAME"
 rm -rf "$PMC_SECRETS"
-tools/make-secrets.sh
+tools/make-secrets.sh --test
 tools/make-test-tls.sh
 
 step "test runner images"
@@ -80,7 +80,7 @@ echo "ok: no SQLite index, no route out"
 step "engine tests (DICOM, REST, DICOMweb) against a fresh engine"
 "${compose[@]}" --profile test run --rm "${as_me[@]}" tests -m "not after_restart"
 
-step "browser tests: the front door and the viewer"
+step "browser tests: sign-in, the front door and the viewer"
 "${compose[@]}" --profile test run --rm "${as_me[@]}" --entrypoint python tests seed.py
 "${compose[@]}" --profile test run --rm "${as_me[@]}" browser
 

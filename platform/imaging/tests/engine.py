@@ -6,7 +6,6 @@ container on the engine network. Nothing is mocked.
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import socket
@@ -17,6 +16,8 @@ from typing import Callable, Iterable
 
 import pydicom
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from pydicom.dataset import Dataset
 from pydicom.uid import ExplicitVRLittleEndian, ImplicitVRLittleEndian
 from pynetdicom import AE
@@ -35,10 +36,17 @@ class Engine:
         self.aet = os.environ.get("ENGINE_AET", "PMC-IMAGING")
         self.dicom_port = int(os.environ.get("DICOM_PORT", "4242"))
         self.url = f"http://{self.host}:{os.environ.get('HTTP_PORT', '8042')}"
-        secret = Path(os.environ.get("USERS_SECRET", "/run/secrets/orthanc-users.json"))
-        users = json.loads(secret.read_text())["RegisteredUsers"]
+        # The platform's own services call the engine with an API key, as the
+        # Keycloak user svc-platform; the engine asks orthanc-auth-service
+        # what that user may do.
+        self.api_key = Path(os.environ.get("API_KEY_SECRET", "/run/secrets/svc-platform-api-key")).read_text().strip()
         self.http = requests.Session()
-        self.http.auth = next(iter(users.items()))
+        self.http.headers["api-key"] = self.api_key
+        # A request sent on a kept-alive connection just as the engine closes
+        # it is dropped; repeating it is safe for the idempotent methods.
+        retry = Retry(total=3, connect=3, read=2, status=0, other=0, backoff_factor=0.2,
+                      allowed_methods=frozenset({"GET", "HEAD", "PUT", "DELETE"}))
+        self.http.mount("http://", HTTPAdapter(max_retries=retry))
 
     # ---- REST ---------------------------------------------------------------
     def request(self, method: str, path: str, **kw) -> requests.Response:
