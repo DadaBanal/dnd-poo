@@ -4,8 +4,8 @@
 |---|---|
 | **To** | SQL01 — a Claude Code session running **on** `DND-SQL01`, not a cloud session viewed from it. |
 | **From** | Cloud Build. MEASURED 23 Sep 2026: this session executes on a cloud VM (hostname `vm`, Ubuntu 24.04); the Claude app on `DND-SQL01` only displays it. No route to `PMC_SS` or `PMC-ORTHANC01`. |
-| **Workstream** | WS36 (PSA ticketing), plus the waiting WS23 handoff |
-| **Bucket** | Stand up the SQL01 row as a real local session, prove its route, and pick up the handoff already queued for it. One sitting. |
+| **Workstream** | WS36 (PSA ticketing) and WS23 (imaging portal), plus the waiting WS23 backup handoff |
+| **Bucket** | Stand up the SQL01 row as one real local session that serves **both** builds, prove its routes, and pick up the handoff already queued for it. One sitting. |
 | **Read first** | 1. `CLAUDE.md` 2. `ENVIRONMENT.md` 3. this file 4. `docs/handoffs/HANDOFF-cloud-sql01-WS23-20260922.md` |
 
 ## Step 0 — for the person at the keyboard (not for Claude)
@@ -17,15 +17,19 @@
    ```
    git clone https://github.com/dadabanal/dnd-poo.git
    cd dnd-poo
-   git fetch origin claude/psa-ticketing-build
+   git fetch origin claude/psa-ticketing-build claude/imaging-app-build-nqhh6f
+   git worktree add ..\dnd-poo-imaging claude/imaging-app-build-nqhh6f
    ```
+   One clone, two folders: `dnd-poo` holds the ticketing branch and `dnd-poo-imaging`
+   the imaging branch, so neither build switches branches under the other.
    Clone onto a volume that is **not** the SQL Server data volume.
 3. Open that folder as the session's working directory and paste the message below.
 
 ## The opening message to paste
 
 > You are the SQL01 row. Read CLAUDE.md, then ENVIRONMENT.md, then
-> docs/handoffs/HANDOFF-cloud-sql01-WS36-20260923.md, and do its "Do" section.
+> docs/handoffs/HANDOFF-cloud-sql01-WS36-20260923.md, and do its "Do" section
+> for both builds (ticketing in this folder, imaging in ..\dnd-poo-imaging).
 > Preview everything first; change nothing without my go-ahead.
 
 ## Do
@@ -48,10 +52,28 @@ All read-only unless stated. Report each result with its evidence label.
    ```
    If Python 3.11+ is not installed, report BLOCKED on that; **do not install anything**
    without the operator's say-so.
-4. **Pick up the queued WS23 handoff** — `HANDOFF-cloud-sql01-WS23-20260922.md`, step 1
+4. **Prove the imaging build runs here (no install without say-so).**
+   ```
+   cd ..\..\dnd-poo-imaging\apps\imaging-portal
+   node --version        # needs >= 22 (package.json engines)
+   npm ci
+   npm test              # builds, then checks; the build refuses a hash off build/manifest.json
+   ```
+   If Node 22+ is absent, report BLOCKED; do not install it without the operator's say-so.
+   `npm ci` fetches packages from the npm registry — ask before running it if the server
+   has no approved internet egress. Never hand-edit `dist/`.
+5. **Prove the Orthanc route, read-only.** From this host:
+   ```
+   .\scripts\Test-PmcPortalReadiness.ps1
+   ```
+   run in its preview form only, and record whether `PMC-ORTHANC01` answers (MEASURED) or
+   not. Whether SQL01 has that route is NOT VERIFIED today; if it has none, report it and
+   stop the imaging side there. **Do not run `Install-PmcImagingPortal.ps1`** — putting a
+   build onto the live archive is the operator's decision, not this handoff's.
+6. **Pick up the queued WS23 handoff** — `HANDOFF-cloud-sql01-WS23-20260922.md`, step 1
    only (the index backup). Preview run first (no `-Apply`), show the operator the plan,
    and apply only on their explicit go-ahead.
-5. **Not in this sitting:** `sqlserver/PMC_PSA_Spine_SqlServer.sql` stays unrun until D7
+7. **Not in this sitting:** `sqlserver/PMC_PSA_Spine_SqlServer.sql` stays unrun until D7
    (where the spine lives) is decided. A `@Apply = 0` preview is allowed if the operator
    asks; `@Apply = 1` is not.
 
@@ -60,6 +82,7 @@ All read-only unless stated. Report each result with its evidence label.
 - D7 — SQLite, SQL Server Express, or an existing instance for the PSA spine.
 - Whether the imaging index backup target volume is acceptable long-term.
 - Anything touching the live HIS databases on the same instance.
+- Deploying the imaging portal onto `PMC-ORTHANC01`.
 
 ## Fence
 
@@ -70,8 +93,10 @@ address in any file, commit or reply. Label MEASURED / VERIFIED / INFERRED / NOT
 
 - The master `ENVIRONMENT.md` (OneDrive `Documents/Claude`) SQL01 row carries a cell dated
   the day of the run: hostname, route to `PMC_SS` MEASURED, Python version MEASURED.
-- A Reply appended below: DONE or BLOCKED, with the test count and the index-backup
-  manifest sha256 if step 4 applied.
+- The same row records the route to `PMC-ORTHANC01` (MEASURED yes / no) and the Node version.
+- A Reply appended below: DONE or BLOCKED per step, with the psa-spine test count, the
+  imaging `npm test` result and built `dist` sha256, and the index-backup manifest sha256
+  if step 6 applied.
 
 | Written | 2026-09-23, UTC |
 |---|---|

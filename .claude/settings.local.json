@@ -16,7 +16,9 @@
       "Read(//tmp/**)",
       "Bash(python3 -c \"import json,sys;d=json.load\\(sys.stdin\\);print\\(d if isinstance\\(d,dict\\) else [\\(c['commit']['committer']['date'],c['commit']['message'][:60]\\) for c in d]\\)\")",
       "Bash(python3 -c \"import json,sys;d=json.load\\(sys.stdin\\);print\\([t['name'] for t in d['results'] if t['name'].endswith\\('alpine'\\)][:5]\\)\")",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "Bash(grep -nE '\\\\b[0-9]{1,3}\\\\.[0-9]{1,3}\\\\.[0-9]{1,3}\\\\.[0-9]{1,3}\\\\b' docs/handoffs/HANDOFF-cloud-sql01-WS36-20260923.md)",
+      "Bash(python3 -)"
     ]
   }
 }
