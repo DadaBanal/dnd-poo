@@ -130,7 +130,7 @@ def body_of(message) -> str:
     there is one and an empty string otherwise; the raw HTML is not ticket text."""
     if message.is_multipart():
         for part in message.walk():
-            if part.get_content_type() == "text/plain":
+            if part.get_content_type() == "text/plain" and not _is_file(part):
                 try:
                     return part.get_content().strip()
                 except Exception:                          # noqa: BLE001
@@ -142,6 +142,75 @@ def body_of(message) -> str:
         except Exception:                                  # noqa: BLE001
             return ""
     return ""
+
+
+# ---------------------------------------------------------- attachments
+#
+# A file on a message goes onto the ticket the message became, through the
+# same door as a file uploaded at the desk: sniffed, compressed, and PENDING
+# review for patient information. A file the desk will not keep is recorded
+# on the ticket and in data_quality, never silently dropped. The one thing
+# not kept is a small inline image named by Content-ID -- a signature logo --
+# and those are counted.
+
+INLINE_LOGO_BYTES = 20 * 1024
+
+
+def _is_file(part) -> bool:
+    return part.get_content_disposition() == "attachment" or bool(part.get_filename())
+
+
+def files_of(message):
+    """(filename, bytes, is_inline_logo) for every file a message carries."""
+    import mimetypes
+    for part in message.walk():
+        if part.is_multipart():
+            continue
+        kind = part.get_content_type()
+        if kind == "message/rfc822":
+            inner = part.get_payload()
+            inner = inner[0] if isinstance(inner, list) else inner
+            data = inner.as_bytes() if hasattr(inner, "as_bytes") else b""
+            yield (part.get_filename() or "forwarded.eml"), data, False
+            continue
+        if kind in ("text/plain", "text/html") and not _is_file(part):
+            continue                                   # the body, not a file
+        data = part.get_payload(decode=True) or b""
+        logo = (part.get_content_disposition() != "attachment" and bool(part.get("Content-ID"))
+                and part.get_content_maintype() == "image" and len(data) < INLINE_LOGO_BYTES)
+        name = part.get_filename() or ("attachment" + (mimetypes.guess_extension(kind) or ""))
+        yield name, data, logo
+
+
+def _keep_files(conn: sqlite3.Connection, message, work_item_id: str, *, sender: str,
+                at: datetime, run_id: str, counts: dict) -> None:
+    from . import attachments
+    from .board import _event
+    logos = 0
+    for name, data, logo in files_of(message):
+        if logo:
+            logos += 1
+            continue
+        try:
+            attachments.add(conn, work_item_id, data, name, actor=sender or "intake", at=at,
+                            source="EMAIL")
+            counts["files_kept"] += 1
+        except attachments.Refused as exc:
+            counts["files_refused"] += 1
+            safe = attachments.safe_name(name)
+            conn.execute(
+                "INSERT INTO data_quality (run_id, subject_kind, subject_id, code,"
+                " detail, severity) VALUES (?,?,?,?,?,?)",
+                (run_id, "ticket", work_item_id, "ATTACHMENT_REFUSED", f"{safe}: {exc}", "WARN"))
+            _event(conn, work_item_id, at.isoformat(sep=" ", timespec="minutes"), "ATTACHMENT",
+                   "intake", f"file {safe} from email not kept: {exc}")
+    if logos:
+        counts["inline_skipped"] += logos
+        conn.execute(
+            "INSERT INTO data_quality (run_id, subject_kind, subject_id, code,"
+            " detail, severity) VALUES (?,?,?,?,?,?)",
+            (run_id, "ticket", work_item_id, "INLINE_IMAGE_SKIPPED",
+             f"{logos} small inline image(s), signature logos, not kept", "INFO"))
 
 
 # ---------------------------------------------------------- loop guards
@@ -256,7 +325,8 @@ def import_drop(conn: sqlite3.Connection, drop_dir, *, run_id: str,
 
     counts = {"files": len(files), "new": 0, "appended": 0, "duplicate": 0,
               "unclassified": 0, "already_seen": 0, "phi_flagged": 0,
-              "loop_guarded": 0, "reopened": 0, "reply_to_closed": 0}
+              "loop_guarded": 0, "reopened": 0, "reply_to_closed": 0,
+              "files_kept": 0, "files_refused": 0, "inline_skipped": 0}
 
     for path in files:
         raw = path.read_bytes()
@@ -312,12 +382,16 @@ def import_drop(conn: sqlite3.Connection, drop_dir, *, run_id: str,
                                          requester=sender, body=body, at=when)
                 from . import itil
                 itil.link(conn, ticket_id, parent_ticket, "RELATED", actor="intake", at=when)
+                _keep_files(conn, message, ticket_id, sender=sender, at=when, run_id=run_id,
+                            counts=counts)
                 _record(conn, mid, stamp, sender, subject, channel, "NEW_TICKET",
                         ticket_id, parent_id, run_id)
                 counts["new"] += 1
                 counts["reply_to_closed"] += 1
                 continue
             _append_note(conn, parent_ticket, body or subject, sender, stamp)
+            _keep_files(conn, message, parent_ticket, sender=sender, at=when, run_id=run_id,
+                        counts=counts)
             if action == "REOPEN" and reopen_to:
                 from .board import change_status
                 change_status(conn, parent_ticket, reopen_to, at=when, actor="intake")
@@ -334,6 +408,8 @@ def import_drop(conn: sqlite3.Connection, drop_dir, *, run_id: str,
             if recent:
                 _append_note(conn, recent["work_item_id"], body or subject,
                              sender, stamp)
+                _keep_files(conn, message, recent["work_item_id"], sender=sender, at=when,
+                            run_id=run_id, counts=counts)
                 _record(conn, mid, stamp, sender, subject, channel, "DUPLICATE",
                         None, recent["message_id"], run_id)
                 counts["duplicate"] += 1
@@ -354,6 +430,8 @@ def import_drop(conn: sqlite3.Connection, drop_dir, *, run_id: str,
 
         ticket_id = _open_ticket(conn, board_id=board_id, summary=subject,
                                  requester=sender, body=body, at=when)
+        _keep_files(conn, message, ticket_id, sender=sender, at=when, run_id=run_id,
+                    counts=counts)
         _record(conn, mid, stamp, sender, subject, channel, "NEW_TICKET",
                 ticket_id, None, run_id)
         counts["new"] += 1

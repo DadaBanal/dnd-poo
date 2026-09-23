@@ -185,7 +185,9 @@ def main(argv: list[str] | None = None) -> int:
               f"{c['duplicate']} duplicate, {c['unclassified']} unclassified, "
               f"{c['already_seen']} already seen ({c['phi_flagged']} PHI findings; "
               f"{c['loop_guarded']} auto-replies or bounces ignored; {c['reopened']} "
-              f"closed tickets reopened; {c['reply_to_closed']} late replies as new tickets)")
+              f"closed tickets reopened; {c['reply_to_closed']} late replies as new tickets; "
+              f"{c['files_kept']} files kept, {c['files_refused']} refused, "
+              f"{c['inline_skipped']} signature images skipped)")
         # Losslessness, stated the same way the other importers state it: every
         # file is accounted for by exactly one outcome.
         placed = (c["new"] + c["appended"] + c["duplicate"] + c["unclassified"]

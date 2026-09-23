@@ -8,7 +8,7 @@ context, and return a Response.
 """
 from __future__ import annotations
 
-from .views import (admin, board, companies, configurations, dispatch, loop, oncall,
+from .views import (admin, board, companies, configurations, dispatch, files, loop, oncall,
                     portal, rules, ticket, uplift)
 
 # (method, pattern, handler). The first pattern that matches the path wins,
@@ -30,6 +30,9 @@ ROUTES = [
     ("POST", "/ticket/<work_item_id>/template", ticket.template_apply),
     ("POST", "/ticket/<work_item_id>/link", ticket.link),
     ("POST", "/ticket/<work_item_id>/unlink", ticket.unlink),
+    ("POST", "/ticket/<work_item_id>/attach", files.upload),
+    ("GET", "/ticket/<work_item_id>/file/<attachment_id>", files.download),
+    ("POST", "/ticket/<work_item_id>/file/<attachment_id>/review", files.review),
     ("POST", "/ticket/<work_item_id>/config/add", configurations.attach),
     ("POST", "/ticket/<work_item_id>/config/remove", configurations.detach),
     ("GET", "/ticket/<work_item_id>/loop", loop.form),
@@ -50,6 +53,7 @@ ROUTES = [
     ("POST", "/my/new", portal.create),
     ("GET", "/my/<work_item_id>", portal.detail),
     ("POST", "/my/<work_item_id>/reply", portal.reply),
+    ("GET", "/my/<work_item_id>/file/<attachment_id>", portal.file_download),
     ("GET", "/uplift", uplift.index),
     ("GET", "/admin", admin.index),
     ("POST", "/admin/status/add", admin.add_status),

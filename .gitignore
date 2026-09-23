@@ -4,3 +4,7 @@ platform/.env
 __pycache__/
 *.pyc
 *.db
+# Ticket attachments live beside the database and may show patient data (§6.1).
+*.db.attachments/
+*.db-wal
+*.db-shm

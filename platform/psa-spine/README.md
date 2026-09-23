@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 389 tests
+python3 tests/test_spine.py          # 404 tests
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -184,6 +184,36 @@ workbook column A. (Sources are in `schema/022_record_type.sql`.)
   template*), apply one to an open ticket, or have a workflow rule apply one
   (*Apply a ticket template*). Applying the same template twice adds nothing
   twice.
+
+### Files on a ticket (027)
+
+- **Where:** outside the database, in `<database>.attachments/` (or
+  `PSA_ATTACHMENT_DIR`), named by the file's sha256. The same file sent twice
+  is kept once, and a file that no longer matches its hash is not served.
+  The folder is git-ignored: it may hold screenshots of patient screens.
+- **What:** decided by the file's first bytes, never its name: images, PDF,
+  text and logs, CSV, email, and Office documents (docx/xlsx/pptx).
+  Programs, scripts, web pages, zip archives and anything unidentifiable are
+  refused and the person is told why. 10 MB a file; a larger request is
+  refused before it is read.
+- **Compression, lossless by kind:** PNG image data is re-deflated at
+  level 9 with its text and time chunks dropped, and the pixels are compared
+  before it is kept; JPEG loses its EXIF, XMP, IPTC and comment segments
+  (GPS, device serials) with the scan untouched; text, logs, CSV, email and
+  BMP are gzipped when that saves a tenth; PDF, GIF, WebP and Office files
+  are already compressed and are stored as sent.
+- **Patient information (§6.1):** every file starts *Awaiting review*.
+  Anyone who works the board clears it or withholds it; a withheld file is
+  flagged `PHI_IN_ATTACHMENT` and served only to the board's
+  administrators. A download on a restricted board is audited with the
+  file it was. Downloads are always attachments, with `nosniff` and a
+  sandbox policy.
+- **The requester** attaches files when raising or replying on the portal,
+  and sees cleared files and their own, never a withheld one.
+- **Email:** files on a message go onto the ticket it became, source
+  `EMAIL`. A refused file is written on the ticket and in data quality
+  (`ATTACHMENT_REFUSED`); small inline signature images are counted
+  (`INLINE_IMAGE_SKIPPED`), not kept.
 
 ### Workflow rules (Setup › Workflow rules)
 

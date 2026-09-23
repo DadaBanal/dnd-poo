@@ -30,6 +30,10 @@ from .. import db
 from . import auth, router
 
 SESSION_COOKIE = "psa_session"
+# The largest request body read at all: one attachment at its limit plus the
+# multipart framing and the form's other fields. Anything bigger is refused
+# before a byte of it is read, so a large upload cannot fill memory.
+MAX_BODY = 10 * 1024 * 1024 + 256 * 1024
 
 
 class HttpError(Exception):
@@ -76,6 +80,9 @@ class Request:
             length = int(environ.get("CONTENT_LENGTH") or 0)
         except ValueError:
             length = 0
+        if length > MAX_BODY:
+            raise HttpError("413 Content Too Large",
+                            "That is too large to send. Files over 10 MB are not kept.")
         body = environ["wsgi.input"].read(length) if length > 0 else b""
         headers = {k[5:].replace("_", "-").lower(): v
                    for k, v in environ.items() if k.startswith("HTTP_")}
@@ -90,8 +97,48 @@ class Request:
             query=dict(urllib.parse.parse_qsl(environ.get("QUERY_STRING", ""))),
             headers=headers, cookies=cookies, body=body)
 
+    def _multipart(self):
+        """(fields, files) of a multipart/form-data body, parsed with the
+        standard library's email package (the cgi module is gone in 3.13).
+        files is a list of (field name, filename, bytes); a file input left
+        empty is not a file."""
+        cached = getattr(self, "_parsed", None)
+        if cached is not None:
+            return cached
+        import email.parser
+        import email.policy
+        fields: dict[str, str] = {}
+        files: list[tuple[str, str, bytes]] = []
+        head = ("Content-Type: " + self.headers.get("content-type", "") + "\r\n\r\n").encode("latin-1")
+        message = email.parser.BytesParser(policy=email.policy.HTTP).parsebytes(head + self.body)
+        if message.is_multipart():
+            for part in message.iter_parts():
+                name = part.get_param("name", header="content-disposition")
+                if not name:
+                    continue
+                payload = part.get_payload(decode=True) or b""
+                filename = part.get_filename()
+                if filename is not None:
+                    if payload:
+                        files.append((name, filename, payload))
+                else:
+                    fields[name] = payload.decode(part.get_content_charset() or "utf-8", "replace")
+        self._parsed = (fields, files)
+        return self._parsed
+
+    def is_multipart(self) -> bool:
+        return self.headers.get("content-type", "").lower().startswith("multipart/form-data")
+
     def form(self) -> dict[str, str]:
+        if self.is_multipart():
+            return dict(self._multipart()[0])
         return dict(urllib.parse.parse_qsl(self.body.decode("utf-8", "replace")))
+
+    def files(self, name: str = "file") -> list[tuple[str, bytes]]:
+        """The (filename, bytes) of every file posted under `name`."""
+        if not self.is_multipart():
+            return []
+        return [(fn, data) for field_name, fn, data in self._multipart()[1] if field_name == name]
 
     def form_list(self, name: str) -> list[str]:
         """Every value of a repeated field — the ticked rows of a bulk action."""
@@ -106,12 +153,12 @@ class Request:
 @dataclass
 class Response:
     status: str = "200 OK"
-    body: str = ""
+    body: str | bytes = ""
     content_type: str = "text/html; charset=utf-8"
     headers: list[tuple[str, str]] = field(default_factory=list)
 
     def emit(self, start_response):
-        raw = self.body.encode("utf-8")
+        raw = self.body if isinstance(self.body, bytes) else self.body.encode("utf-8")
         headers = [("Content-Type", self.content_type),
                    ("Content-Length", str(len(raw))),
                    # The portal speaks to nothing external; say so to the browser.

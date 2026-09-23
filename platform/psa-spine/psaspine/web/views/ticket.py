@@ -364,8 +364,9 @@ def detail(ctx, work_item_id):
 
     from . import configurations as cmdb_views
     configs = cmdb_views.ticket_card(ctx, tk, can_work=can_work)
+    from . import files as file_views
     configs = (_change_card(ctx, tk, can_work=can_work) + _tasks_card(ctx, tk, can_work=can_work)
-               + _links_card(ctx, tk, can_work=can_work) + configs)
+               + file_views.ticket_card(ctx, tk, can_work=can_work) + _links_card(ctx, tk, can_work=can_work) + configs)
     body = header + strip + (f"<div class=rail>{left}<div>{fields}{configs}{time_card}"
                              f"{commercial}{details}</div></div>")
     return Response(body=t.page(work_item_id, body, user=ctx.user, active="board"))

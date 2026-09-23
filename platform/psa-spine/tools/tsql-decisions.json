@@ -546,6 +546,18 @@
     "ticket_task.created_by": "PERSON",
     "ticket_task.done_at": "TIMESTAMP_TEXT",
     "ticket_task.done_by": "PERSON",
-    "workflow_action.target_template_id": "ID"
+    "workflow_action.target_template_id": "ID",
+    "attachment.work_item_id": "ID",
+    "attachment.filename": "NAME",
+    "attachment.media_type": "NAME",
+    "attachment.sha256": "HASH",
+    "attachment.encoding": "CODE",
+    "attachment.treatment": "NAME",
+    "attachment.source": "CODE",
+    "attachment.uploaded_by": "PERSON",
+    "attachment.uploaded_at": "TIMESTAMP_TEXT",
+    "attachment.review_status": "CODE",
+    "attachment.reviewed_by": "PERSON",
+    "attachment.reviewed_at": "TIMESTAMP_TEXT"
   }
 }

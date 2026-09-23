@@ -121,7 +121,8 @@ def _raise_form(error: str = "", notice: str = "") -> str:
     note = f"<div class='banner ok'>{t.esc(notice)}</div>" if notice else ""
     return (err + note +
             "<div class='card'><h3>Raise a request</h3>"
-            "<form class='stack' method='post' action='/my/new' style='max-width:none'>"
+            "<form class='stack' method='post' action='/my/new' style='max-width:none'"
+            " enctype='multipart/form-data'>"
             "<label>What do you need? "
             "<input name='summary' required maxlength='200' "
             "placeholder='Printer in ward 3 is offline'></label>"
@@ -132,8 +133,52 @@ def _raise_form(error: str = "", notice: str = "") -> str:
             "<label>Anything that would help us"
             "<textarea name='description' placeholder='Please do not include "
             "patient names or case numbers -- give us the record number if we "
-            "need one.'></textarea></label>"
+            "need one.'></textarea></label>" + _FILE_FIELD +
             "<div><button type='submit'>Send it</button></div></form></div>")
+
+
+_FILE_FIELD = ("<label>A screenshot or file, if it helps "
+               "<input type='file' name='file' multiple></label>"
+               "<p class='why' style='margin:0'>Up to 10 MB each. Please do not send "
+               "screenshots that show a patient's details.</p>")
+
+
+def _attach(ctx, work_item_id: str, requester: str) -> list[str]:
+    """Keep what the requester sent. Returns a sentence per file not kept."""
+    from ... import attachments
+    refused = []
+    for filename, data in ctx.request.files("file"):
+        try:
+            attachments.add(ctx.conn, work_item_id, data, filename, actor=requester,
+                            at=ctx.now, source="PORTAL")
+        except attachments.Refused as exc:
+            refused.append(f"{attachments.safe_name(filename)} was not kept: {exc}.")
+    return refused
+
+
+def _visible_files(ctx, work_item_id: str):
+    """Cleared files, and the requester's own; never a withheld one."""
+    ids = _identities(ctx)
+    return ctx.conn.execute(
+        "SELECT * FROM attachment WHERE work_item_id = ? AND review_status <> 'WITHHELD'"
+        " AND (review_status = 'CLEARED' OR LOWER(uploaded_by) IN (%s))"
+        " ORDER BY attachment_id" % ",".join("?" * len(ids) or ["NULL"]),
+        [work_item_id] + ids).fetchall()
+
+
+def file_download(ctx, work_item_id, attachment_id):
+    from .. import HttpError
+    from . import files
+    clause, params = _mine_clause(ctx)
+    row = ctx.conn.execute("SELECT t.board_id FROM ticket t" + clause + " AND t.work_item_id = ?",
+                           params + [work_item_id]).fetchone()
+    if row is None:
+        raise HttpError("404 Not Found", "No such request.")
+    match = [f for f in _visible_files(ctx, work_item_id)
+             if str(f["attachment_id"]) == attachment_id]
+    if not match:
+        raise HttpError("404 Not Found", "No such file.")
+    return files.serve(ctx, match[0], board_id=row["board_id"])
 
 
 # The requester never sees ITIL's words; the desk files the answer as the Type.
@@ -183,18 +228,24 @@ def detail(ctx, work_item_id):
         f"<li><div style='white-space:pre-wrap'>{t.esc(e['detail'])}</div>"
         f"<div class='meta'>{who(e)} &middot; {t.esc(e['occurred_at'])}</div></li>"
         for e in events) or "<li class='muted'>Nothing yet.</li>"
+    shared = _visible_files(ctx, work_item_id)
+    files_card = ""
+    if shared:
+        files_card = ("<div class='card'><h3>Files</h3><ul class='plain'>" + "".join(
+            f"<li><a href='/my/{t.esc(work_item_id)}/file/{f['attachment_id']}'>"
+            f"{t.esc(f['filename'])}</a></li>" for f in shared) + "</ul></div>")
 
     body = (
         f"<h1>{t.esc(row['summary'])}</h1>"
         f"<p class='sub'>{t.esc(work_item_id)} &middot; "
         f"{t.chip(_status_words(row))} &middot; raised {t.esc(row['opened_at'])}</p>"
         f"<div class='card'><h3>What has happened</h3>"
-        f"<ul class='stream'>{stream}</ul></div>"
+        f"<ul class='stream'>{stream}</ul></div>" + files_card +
         "<div class='card'><h3>Add something</h3>"
         f"<form class='stack' method='post' action='/my/{t.esc(work_item_id)}/reply' "
-        "style='max-width:none'>"
-        "<textarea name='body' required placeholder='No patient names or case "
-        "numbers, please.'></textarea>"
+        "style='max-width:none' enctype='multipart/form-data'>"
+        "<textarea name='body' placeholder='No patient names or case "
+        "numbers, please.'></textarea>" + _FILE_FIELD +
         "<div><button type='submit'>Send</button></div></form></div>"
         "<p><a href='/my'>All your requests</a></p>")
     return Response(body=t.page(work_item_id, body, user=ctx.user))
@@ -248,15 +299,20 @@ def create(ctx):
             "INSERT INTO data_quality (run_id, subject_kind, subject_id, code,"
             " detail, severity) VALUES (?,?,?,?,?,?)",
             ("portal", "ticket", ticket_id, code, detail, severity))
+    refused = _attach(ctx, ticket_id, requester)
     ctx.conn.commit()
 
-    if findings:
+    if findings or refused:
+        notice = f"Raised as {ticket_id}."
+        if findings:
+            notice += (" It looks like your message may contain "
+                       "patient details. We have flagged it so it can be removed -- next "
+                       "time, please give us the record number instead of the patient's "
+                       "details.")
+        if refused:
+            notice += " " + " ".join(refused)
         return Response(body=t.page("Your requests", (
-            "<h1>Your requests</h1>" + _raise_form(notice=(
-                f"Raised as {ticket_id}. It looks like your message may contain "
-                "patient details. We have flagged it so it can be removed -- next "
-                "time, please give us the record number instead of the patient's "
-                "details.")) ), user=ctx.user))
+            "<h1>Your requests</h1>" + _raise_form(notice=notice)), user=ctx.user))
     return redirect(f"/my/{ticket_id}")
 
 
@@ -270,9 +326,15 @@ def reply(ctx, work_item_id):
         raise HttpError("404 Not Found", "No such request.")
 
     body = ctx.request.form().get("body", "").strip()
+    requester = (ctx.user.email or ctx.user.id or "").lower()
+    stamp = ctx.now.isoformat(sep=" ", timespec="minutes")
+    refused = []
+    if ctx.request.files("file"):
+        refused = _attach(ctx, work_item_id, requester)
+        ctx.conn.execute("UPDATE ticket SET customer_updated = 1 WHERE work_item_id = ?",
+                         (work_item_id,))
+        ctx.conn.commit()
     if body:
-        stamp = ctx.now.isoformat(sep=" ", timespec="minutes")
-        requester = (ctx.user.email or ctx.user.id or "").lower()
         ctx.conn.execute(
             "INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail,"
             " note_flag) VALUES (?,?,'PORTAL_REPLY',?,?,'DISCUSSION')",
@@ -285,4 +347,12 @@ def reply(ctx, work_item_id):
                 " detail, severity) VALUES (?,?,?,?,?,?)",
                 ("portal", "ticket", work_item_id, code, detail, severity))
         ctx.conn.commit()
+    if refused:
+        # The words were kept; say which file was not, rather than drop it quietly.
+        from .. import Response
+        return Response("400 Bad Request", t.page(work_item_id, (
+            "<h1>Not everything was kept</h1><div class='banner err'>"
+            + t.esc(" ".join(refused)) + "</div>"
+            f"<p><a href='/my/{t.esc(work_item_id)}'>Back to your request</a></p>"),
+            user=ctx.user))
     return redirect(f"/my/{work_item_id}")

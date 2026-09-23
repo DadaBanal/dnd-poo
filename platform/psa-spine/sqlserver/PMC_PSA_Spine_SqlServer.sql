@@ -155,6 +155,7 @@ BEGIN
     PRINT N'    psa.ticket_template';
     PRINT N'    psa.ticket_template_task';
     PRINT N'    psa.ticket_task';
+    PRINT N'    psa.attachment';
     PRINT N'    psa.ix_fee_line_effective';
     PRINT N'    psa.ix_time_entry_period';
     PRINT N'    psa.ix_workflow_run_event';
@@ -168,12 +169,13 @@ BEGIN
     PRINT N'    psa.ix_change_approval_ticket';
     PRINT N'    psa.ix_notification_status';
     PRINT N'    psa.ix_ticket_task_ticket';
+    PRINT N'    psa.ix_attachment_ticket';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  66 tables, 13 indexes, 4 triggers.';
+    PRINT N'  67 tables, 14 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -1874,6 +1876,43 @@ CREATE TABLE psa.[ticket_task] (
 );
 END;
 
+-- --------------------------------------------------------------------------
+-- attachment   (from schema/027_attachments.sql)
+IF OBJECT_ID(N'psa.[attachment]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[attachment] (
+    [attachment_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_attachment] PRIMARY KEY,
+    [work_item_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_attachment_work_item_id] REFERENCES psa.[ticket]([work_item_id]),
+
+    -- cleaned; never used as a path
+    [filename] NVARCHAR(400) NOT NULL,
+
+    -- from the file's own bytes
+    [media_type] NVARCHAR(400) NOT NULL,
+    [size_received] INT NOT NULL CONSTRAINT [CK_attachment_01] CHECK (size_received > 0),
+    [size_stored] INT NOT NULL CONSTRAINT [CK_attachment_02] CHECK (size_stored > 0),
+
+    -- of the file as served; also its name on disk
+    [sha256] NVARCHAR(64) NOT NULL,
+    [encoding] NVARCHAR(32) NOT NULL CONSTRAINT [CK_attachment_03] CHECK (encoding IN ('IDENTITY', 'GZIP')),
+
+    -- what compression did, in words
+    [treatment] NVARCHAR(400) NOT NULL,
+    [source] NVARCHAR(32) NOT NULL CONSTRAINT [CK_attachment_04] CHECK (source IN ('DESK', 'PORTAL', 'EMAIL')),
+    [uploaded_by] NVARCHAR(200) NOT NULL,
+    [uploaded_at] NVARCHAR(64) NOT NULL,
+    [review_status] NVARCHAR(32) NOT NULL CONSTRAINT [CK_attachment_05] CHECK (review_status IN ('PENDING', 'CLEARED', 'WITHHELD')),
+    [reviewed_by] NVARCHAR(200) NULL,
+    [reviewed_at] NVARCHAR(64) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [uploaded_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [uploaded_at], 126), CASE WHEN [uploaded_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [uploaded_at], 112) END)),
+    [reviewed_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [reviewed_at], 126), CASE WHEN [reviewed_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [reviewed_at], 112) END)),
+    CONSTRAINT [CK_attachment_06] CHECK ((review_status = 'PENDING') = (reviewed_by IS NULL))
+);
+END;
+
 -- ==========================================================================
 -- COLUMNS ADDED TO TABLES THAT ALREADY EXIST
 --
@@ -2007,6 +2046,13 @@ ALTER TABLE psa.[ticket_event] ADD [is_resolution] INT NULL CONSTRAINT [CK_ticke
 IF COL_LENGTH(N'psa.[workflow_action]', N'target_template_id') IS NULL
 ALTER TABLE psa.[workflow_action] ADD [target_template_id] NVARCHAR(64) NULL CONSTRAINT [FK_workflow_action_target_template_id] REFERENCES psa.[ticket_template]([template_id]);
 
+-- Emailing the requester: ConnectWise mails the contact on a new ticket and on a
+-- Discussion note, per board. Here the mail says only that the ticket moved and
+-- links to the portal; the note's words never leave the desk (§6.1). NULL reads
+-- as on.
+IF COL_LENGTH(N'psa.[board]', N'notify_requester') IS NULL
+ALTER TABLE psa.[board] ADD [notify_requester] INT NULL CONSTRAINT [CK_board_notify_requester_01] CHECK (notify_requester IN (0, 1));
+
 -- --------------------------------------------------------------------------
 -- indexes
 
@@ -2055,6 +2101,9 @@ CREATE INDEX [ix_notification_status] ON psa.[notification] ([status]);
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ticket_task_ticket' AND object_id = OBJECT_ID(N'psa.[ticket_task]'))
 CREATE INDEX [ix_ticket_task_ticket] ON psa.[ticket_task] ([work_item_id]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_attachment_ticket' AND object_id = OBJECT_ID(N'psa.[attachment]'))
+CREATE INDEX [ix_attachment_ticket] ON psa.[attachment] ([work_item_id]);
 
 -- ==========================================================================
 -- THE GATE
@@ -2186,10 +2235,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 66 OR @Triggers <> 4 OR @Indexes < 13
+IF @Tables <> 67 OR @Triggers <> 4 OR @Indexes < 14
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 66), %d triggers (expected 4), %d indexes (expected at least 13). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 67), %d triggers (expected 4), %d indexes (expected at least 14). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -2223,6 +2272,7 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[board] DROP CONSTRAINT IF EXISTS [FK_board_calendar_id];
     ALTER TABLE psa.[time_entry] DROP CONSTRAINT IF EXISTS [FK_time_entry_loop_reply_id];
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
+    DROP TABLE IF EXISTS psa.[attachment];
     DROP TABLE IF EXISTS psa.[ticket_task];
     DROP TABLE IF EXISTS psa.[ticket_template_task];
     DROP TABLE IF EXISTS psa.[ticket_template];

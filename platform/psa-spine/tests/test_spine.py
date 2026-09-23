@@ -4518,6 +4518,321 @@ class TasksTemplatesTest(unittest.TestCase):
         self.assertEqual(self.tasks.progress(self.conn, wid), (0, 3))
 
 
+def _png(width=64, height=64, *, text=b"Author\x00C:\\Users\\alice"):
+    """A real PNG, deliberately badly packed (deflate level 0) and carrying a
+    tEXt chunk, which is what an unoptimised screenshot tool writes."""
+    import struct as _struct
+    import zlib as _zlib
+    raw = b"".join(b"\x00" + bytes((x * 4) % 256 for x in range(width)) * 3
+                   for _ in range(height))
+
+    def chunk(kind, body):
+        return (_struct.pack(">I", len(body)) + kind + body
+                + _struct.pack(">I", _zlib.crc32(kind + body)))
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", _struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"tEXt", text)
+            + chunk(b"IDAT", _zlib.compress(raw, 0)) + chunk(b"IEND", b""))
+
+
+def _jpeg():
+    """The marker structure of a phone photo: JFIF, then EXIF with a GPS block,
+    a comment, a quantisation table and the scan."""
+    import struct as _struct
+
+    def seg(marker, body):
+        return b"\xff" + bytes([marker]) + _struct.pack(">H", len(body) + 2) + body
+    return (b"\xff\xd8" + seg(0xE0, b"JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00")
+            + seg(0xE1, b"Exif\x00\x00GPS 14.5995N 120.9842E serial X123")
+            + seg(0xFE, b"taken by alice") + seg(0xDB, b"\x00" + bytes(range(64)))
+            + seg(0xDA, b"\x01\x01\x00\x00\x3f\x00") + b"\x12\x34\x56\xff\x00\x78"
+            + b"\xff\xd9")
+
+
+class AttachmentsTest(unittest.TestCase):
+    """027 and psaspine.attachments: kept outside the database, compressed by
+    kind and losslessly, and every file waits for a patient-information review."""
+
+    def setUp(self) -> None:
+        from psaspine import attachments
+        self.att = attachments
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tmp.name) / "spine.db"
+        self.conn = db.init(self.db_path)
+        self.at = datetime(2026, 9, 23, 9, 0)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        self.wid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="Printer",
+                                       impact="I3", urgency="U3", requested_by=None, at=self.at)
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def test_a_png_is_repacked_losslessly_and_loses_its_text_chunks(self):
+        import zlib as _zlib
+        original = _png()
+        slim = self.att.optimise_png(original)
+        self.assertLess(len(slim), len(original) // 4)
+        self.assertNotIn(b"tEXt", slim)
+        self.assertNotIn(b"alice", slim)
+
+        def pixels(data):
+            return _zlib.decompress(b"".join(b for k, b in self.att._png_chunks(data) if k == b"IDAT"))
+        self.assertEqual(pixels(slim), pixels(original))
+        self.assertEqual(self.att.sniff(slim), "image/png")
+
+    def test_an_animated_or_damaged_png_is_kept_as_sent(self):
+        import struct as _struct
+        import zlib as _zlib
+        png = _png()
+        actl = b"acTL" + b"\x00" * 8
+        animated = png[:33] + _struct.pack(">I", 8) + actl + _struct.pack(">I", _zlib.crc32(actl)) + png[33:]
+        self.assertEqual(self.att.optimise_png(animated), animated)
+        self.assertEqual(self.att.optimise_png(png[:60]), png[:60])
+
+    def test_a_jpeg_loses_exif_and_comments_and_keeps_its_scan_bit_for_bit(self):
+        photo = _jpeg()
+        slim = self.att.strip_jpeg(photo)
+        self.assertNotIn(b"GPS", slim)
+        self.assertNotIn(b"alice", slim)
+        self.assertIn(b"JFIF", slim)
+        scan = photo[photo.index(b"\xff\xda"):]
+        self.assertTrue(slim.endswith(scan))
+
+    def test_text_is_gzipped_and_served_back_identical(self):
+        log = ("2026-09-23 09:00 spooler restarted on PRN-WARD3\n" * 400).encode()
+        info = self.att.add(self.conn, self.wid, log, "spooler.log", actor="alice", at=self.at)
+        self.assertEqual(info["media_type"], "text/plain")
+        self.assertLess(info["size_stored"], len(log) // 10)
+        row, data = self.att.read(self.conn, info["attachment_id"])
+        self.assertEqual(data, log)
+        self.assertEqual((row["encoding"], row["review_status"]), ("GZIP", "PENDING"))
+
+    def test_what_the_desk_will_not_keep_is_refused_by_content_not_name(self):
+        for data, name in ((b"MZ\x90\x00" + b"\x00" * 60, "invoice.pdf"),
+                           (b"PK\x03\x04" + b"\x00" * 60, "logs.zip"),
+                           (b"<html><script>x()</script></html>", "note.txt"),
+                           (b"#!/bin/sh\nrm -rf /\n", "readme.txt"),
+                           (b"Write-Host hi", "fix.ps1"),
+                           (bytes(range(256)) * 4, "blob.dat"),
+                           (b"\x00\x01" * 50, "utf16-without-bom.txt"),
+                           (b"", "empty.txt")):
+            with self.subTest(name=name), self.assertRaises(self.att.Refused):
+                self.att.add(self.conn, self.wid, data, name, actor="a", at=self.at)
+        with self.assertRaises(self.att.Refused):
+            self.att.add(self.conn, self.wid, b"a" * (self.att.MAX_BYTES + 1), "big.txt",
+                         actor="a", at=self.at)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM attachment").fetchone()[0], 0)
+
+    def test_the_same_file_twice_is_stored_once_and_tampering_is_caught(self):
+        a = self.att.add(self.conn, self.wid, _png(), "shot.png", actor="a", at=self.at)
+        b = self.att.add(self.conn, self.wid, _png(), "shot again.png", actor="b", at=self.at)
+        self.assertEqual(a["sha256"], b["sha256"])
+        stored = [p for p in Path(str(self.db_path) + ".attachments").rglob("*") if p.is_file()]
+        self.assertEqual(len(stored), 1)
+        stored[0].write_bytes(b"not the file")
+        with self.assertRaises(IOError):
+            self.att.read(self.conn, a["attachment_id"])
+
+    def test_withholding_a_file_flags_the_ticket_for_patient_information(self):
+        info = self.att.add(self.conn, self.wid, _png(), "his-screen.png", actor="a", at=self.at)
+        self.att.review(self.conn, info["attachment_id"], "WITHHELD", actor="lead", at=self.at)
+        dq = self.conn.execute("SELECT code, subject_id FROM data_quality"
+                               " WHERE code = 'PHI_IN_ATTACHMENT'").fetchone()
+        self.assertEqual(tuple(dq), ("PHI_IN_ATTACHMENT", self.wid))
+        self.assertTrue(self.conn.execute("SELECT 1 FROM audit_event WHERE action ="
+                                          " 'ATTACHMENT_WITHHELD'").fetchone())
+        with self.assertRaises(ValueError):
+            self.att.review(self.conn, info["attachment_id"], "MAYBE", actor="lead", at=self.at)
+
+    def test_email_attachments_land_on_the_ticket_and_refusals_are_recorded(self):
+        from email.message import EmailMessage
+        drop = Path(self.tmp.name) / "drop"
+        drop.mkdir()
+        m = EmailMessage()
+        m["From"] = "nurse@pmcne.ph"
+        m["Subject"] = "Scanner error"
+        m["Message-ID"] = "<att1@pmcne.ph>"
+        m["Date"] = "Wed, 23 Sep 2026 08:00:00 +0800"
+        m.set_content("See the screenshot.")
+        m.add_attachment(_png(), maintype="image", subtype="png", filename="error.png")
+        m.add_attachment(b"MZ" + b"\x00" * 100, maintype="application", subtype="octet-stream",
+                         filename="fix.exe")
+        m.add_attachment(("x" * 3000).encode(), maintype="text", subtype="plain",
+                         filename="trace.txt")
+        (drop / "001.eml").write_bytes(bytes(m))
+        c = intake.import_drop(self.conn, drop, run_id="m1", board_id="IT_HELP", at=self.at)
+        self.assertEqual((c["new"], c["files_kept"], c["files_refused"]), (1, 2, 1))
+        wid = self.conn.execute("SELECT work_item_id FROM intake_message").fetchone()[0]
+        rows = self.conn.execute("SELECT filename, source FROM attachment WHERE work_item_id = ?"
+                                 " ORDER BY attachment_id", (wid,)).fetchall()
+        self.assertEqual([tuple(r) for r in rows], [("error.png", "EMAIL"), ("trace.txt", "EMAIL")])
+        self.assertTrue(self.conn.execute("SELECT 1 FROM data_quality WHERE code ="
+                                          " 'ATTACHMENT_REFUSED' AND detail LIKE 'fix.exe%'").fetchone())
+        # The text/plain attachment is a file, not the ticket's description.
+        texts = [r[0] or "" for r in self.conn.execute(
+            "SELECT detail FROM ticket_event WHERE work_item_id = ?", (wid,))]
+        self.assertIn("See the screenshot.", texts)
+        self.assertFalse(any("xxxx" in x for x in texts))
+
+
+class AttachmentsWebTest(unittest.TestCase):
+    """The desk and the portal: upload, download, review, and who may see what."""
+
+    setUp = WebWSGITest.setUp
+    tearDown = WebWSGITest.tearDown
+    _cookie_for = WebWSGITest._cookie_for
+
+    def _send(self, method, path, *, cookie, fields=None, files=()):
+        import io as _io_
+        import wsgiref.validate as _v
+        body, ctype = b"", None
+        if fields is not None or files:
+            boundary = "----psa-test-boundary"
+            parts = []
+            for k, v in (fields or {}).items():
+                parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"'
+                             f"\r\n\r\n{v}\r\n".encode())
+            for fname, data in files:
+                parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="file";'
+                             f' filename="{fname}"\r\nContent-Type: application/octet-stream'
+                             "\r\n\r\n".encode() + data + b"\r\n")
+            body = b"".join(parts) + f"--{boundary}--\r\n".encode()
+            ctype = f"multipart/form-data; boundary={boundary}"
+        env = {"REQUEST_METHOD": method, "PATH_INFO": path, "SCRIPT_NAME": "",
+               "QUERY_STRING": "", "SERVER_NAME": "t", "SERVER_PORT": "80",
+               "SERVER_PROTOCOL": "HTTP/1.1", "wsgi.version": (1, 0),
+               "wsgi.url_scheme": "http", "wsgi.input": _io_.BytesIO(body),
+               "wsgi.errors": _io_.StringIO(), "wsgi.multithread": False,
+               "wsgi.multiprocess": False, "wsgi.run_once": False, "HTTP_COOKIE": cookie}
+        if body:
+            env["CONTENT_LENGTH"] = str(len(body))
+            env["CONTENT_TYPE"] = ctype
+        captured = {}
+
+        def start_response(status, headers, exc_info=None):
+            captured.update(status=status, headers=dict(headers))
+        it = _v.validator(self.raw)(env, start_response)
+        try:
+            payload = b"".join(it)
+        finally:
+            it.close()
+        return captured["status"], captured["headers"], payload
+
+    def _conn(self):
+        return db.connect(self.db_path)
+
+    def test_a_file_uploaded_at_the_desk_downloads_as_an_attachment(self):
+        cookie = self._cookie_for("alice")
+        status, headers, _ = self._send("POST", "/ticket/ITO-1/attach", cookie=cookie,
+                                        files=[("error screen.png", _png())])
+        self.assertTrue(status.startswith("303"), status)
+        self.assertIn("Attached", headers["Location"])
+        conn = self._conn()
+        aid, stored = conn.execute("SELECT attachment_id, size_stored FROM attachment").fetchone()
+        conn.close()
+        self.assertLess(stored, len(_png()))
+        status, headers, data = self._send("GET", f"/ticket/ITO-1/file/{aid}", cookie=cookie)
+        self.assertTrue(status.startswith("200"))
+        self.assertTrue(headers["Content-Disposition"].startswith("attachment;"))
+        self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(headers["Content-Security-Policy"], "sandbox")
+        self.assertTrue(data.startswith(b"\x89PNG"))
+        _, _, page = self._send("GET", "/ticket/ITO-1", cookie=cookie)
+        self.assertIn(b"Awaiting review", page)
+
+    def test_a_refused_upload_says_why_and_keeps_nothing(self):
+        status, headers, _ = self._send("POST", "/ticket/ITO-1/attach",
+                                        cookie=self._cookie_for("alice"),
+                                        files=[("tool.exe", b"MZ" + b"\x00" * 64)])
+        self.assertIn("err=", headers["Location"])
+        conn = self._conn()
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM attachment").fetchone()[0], 0)
+        conn.close()
+
+    def test_a_reader_cannot_upload_or_review(self):
+        status, _, _ = self._send("POST", "/ticket/ITO-1/attach", cookie=self._cookie_for("carol"),
+                                  files=[("a.txt", b"hello there")])
+        self.assertFalse(status.startswith("303"))
+
+    def test_a_withheld_file_is_served_only_to_the_board_admin(self):
+        from psaspine import attachments
+        conn = self._conn()
+        aid = attachments.add(conn, "ITO-1", _png(), "his.png", actor="alice",
+                              at=datetime(2026, 9, 17, 9))["attachment_id"]
+        conn.commit()
+        conn.close()
+        status, headers, _ = self._send("POST", f"/ticket/ITO-1/file/{aid}/review",
+                                        cookie=self._cookie_for("alice"),
+                                        fields={"decision": "WITHHELD"})
+        self.assertIn("withheld", headers["Location"])
+        status, _, _ = self._send("GET", f"/ticket/ITO-1/file/{aid}", cookie=self._cookie_for("carol"))
+        self.assertTrue(status.startswith("404"))
+        status, _, _ = self._send("GET", f"/ticket/ITO-1/file/{aid}", cookie=self._cookie_for("alice"))
+        self.assertTrue(status.startswith("200"))
+
+    def test_a_download_on_a_restricted_board_is_audited_with_the_file(self):
+        from psaspine import attachments
+        conn = self._conn()
+        aid = attachments.add(conn, "ITO-9", b"trace line\n" * 50, "trace.txt", actor="alice",
+                              at=datetime(2026, 9, 17, 9))["attachment_id"]
+        conn.commit()
+        conn.close()
+        status, _, data = self._send("GET", f"/ticket/ITO-9/file/{aid}", cookie=self._cookie_for("alice"))
+        self.assertEqual(data, b"trace line\n" * 50)
+        conn = self._conn()
+        details = [r[0] for r in conn.execute("SELECT detail FROM audit_event WHERE action ="
+                                              " 'RESTRICTED_READ' AND subject_id = 'ITO-9'")]
+        conn.close()
+        self.assertTrue(any(f"attachment {aid}" in d for d in details), details)
+
+    def test_the_requester_sees_cleared_files_and_their_own_never_withheld(self):
+        from psaspine import attachments
+        conn = self._conn()
+        conn.execute("UPDATE ticket SET requested_by = 'bob@pmcne.ph' WHERE work_item_id = 'ITO-1'")
+        at = datetime(2026, 9, 17, 9)
+        pending = attachments.add(conn, "ITO-1", b"desk note\n" * 20, "desk.txt", actor="alice",
+                                  at=at)["attachment_id"]
+        cleared = attachments.add(conn, "ITO-1", b"how to fix\n" * 20, "howto.txt", actor="alice",
+                                  at=at)["attachment_id"]
+        attachments.review(conn, cleared, "CLEARED", actor="alice", at=at)
+        conn.commit()
+        conn.close()
+        bob = self._cookie_for("bob", email="bob@pmcne.ph")
+        status, headers, _ = self._send("POST", "/my/ITO-1/reply", cookie=bob,
+                                        fields={"body": ""}, files=[("mine.png", _png())])
+        self.assertTrue(status.startswith("303"), status)
+        _, _, page = self._send("GET", "/my/ITO-1", cookie=bob)
+        self.assertIn(b"howto.txt", page)
+        self.assertIn(b"mine.png", page)
+        self.assertNotIn(b"desk.txt", page)
+        status, _, _ = self._send("GET", f"/my/ITO-1/file/{pending}", cookie=bob)
+        self.assertTrue(status.startswith("404"))
+        status, _, data = self._send("GET", f"/my/ITO-1/file/{cleared}", cookie=bob)
+        self.assertEqual(data, b"how to fix\n" * 20)
+        conn = self._conn()
+        self.assertEqual(conn.execute("SELECT customer_updated FROM ticket WHERE work_item_id"
+                                      " = 'ITO-1'").fetchone()[0], 1)
+        conn.close()
+
+    def test_a_body_over_the_limit_is_refused_unread(self):
+        import io as _io_
+        from psaspine.web import MAX_BODY
+
+        class Exploding(_io_.BytesIO):
+            def read(self, *a):
+                raise AssertionError("the body was read")
+        env = {"REQUEST_METHOD": "POST", "PATH_INFO": "/ticket/ITO-1/attach", "SCRIPT_NAME": "",
+               "QUERY_STRING": "", "SERVER_NAME": "t", "SERVER_PORT": "80",
+               "SERVER_PROTOCOL": "HTTP/1.1", "wsgi.version": (1, 0), "wsgi.url_scheme": "http",
+               "wsgi.input": Exploding(), "wsgi.errors": _io_.StringIO(),
+               "wsgi.multithread": False, "wsgi.multiprocess": False, "wsgi.run_once": False,
+               "CONTENT_LENGTH": str(MAX_BODY + 1), "HTTP_COOKIE": self._cookie_for("alice")}
+        captured = {}
+        b"".join(self.raw(env, lambda s, h, e=None: captured.update(status=s)))
+        self.assertTrue(captured["status"].startswith("413"))
+
+
 class ContactsTest(unittest.TestCase):
     """020 and psaspine.contacts: the people who ask, from what AD already holds."""
 
