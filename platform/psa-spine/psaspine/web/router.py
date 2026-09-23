@@ -10,10 +10,17 @@ from __future__ import annotations
 
 from .views import admin, board, dispatch, loop, oncall, portal, ticket, uplift
 
-# (method, pattern, handler). Order does not matter; patterns do not overlap.
+# (method, pattern, handler). The first pattern that matches the path wins,
+# so a literal segment must be listed before a <capture> in the same place.
 ROUTES = [
     ("GET", "/", board.index),
+    ("POST", "/bulk", board.bulk),
+    # /ticket/new first: the first matching pattern wins, and <work_item_id>
+    # would otherwise capture the word "new".
+    ("GET", "/ticket/new", ticket.new_form),
+    ("POST", "/ticket/new", ticket.new_create),
     ("GET", "/ticket/<work_item_id>", ticket.detail),
+    ("POST", "/ticket/<work_item_id>/update", ticket.update),
     ("POST", "/ticket/<work_item_id>/status", ticket.change_status),
     ("POST", "/ticket/<work_item_id>/note", ticket.add_note),
     ("GET", "/ticket/<work_item_id>/loop", loop.form),
@@ -32,6 +39,13 @@ ROUTES = [
     ("POST", "/admin/status/add", admin.add_status),
     ("POST", "/admin/member/add", admin.add_member),
     ("POST", "/admin/local/disable", admin.disable_local),
+    ("GET", "/admin/board/<board_id>", admin.board_setup),
+    ("POST", "/admin/board/<board_id>/starter", admin.apply_starter),
+    ("POST", "/admin/board/<board_id>/calendar", admin.save_calendar),
+    ("POST", "/admin/board/<board_id>/status/save", admin.save_status),
+    ("POST", "/admin/board/<board_id>/status/add", admin.add_board_status),
+    ("POST", "/admin/board/<board_id>/sla", admin.save_sla),
+    ("POST", "/admin/board/<board_id>/roles", admin.save_roles),
 ]
 
 

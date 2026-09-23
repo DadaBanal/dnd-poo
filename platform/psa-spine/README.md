@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 284 tests
+python3 tests/test_spine.py          # 298 tests
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -88,6 +88,35 @@ commercial spine on `DND-SQL01`.
 cross-board configuration, never a restricted board's contents. This is §11 test
 5, the acceptance test the record wrote and never ran: a non-member is *provably*
 excluded, and a test asserts a non-member gets a 404, not a leak.
+
+## The desk, laid out like ConnectWise
+
+What a technician uses every day, built to ConnectWise PSA's shape and
+checked against Zammad and HaloPSA:
+
+- **Service Board** (`/`): five counters that also filter (open, SLA breached,
+  due within the hour, unassigned, mine), then board, status, owner, priority,
+  source and search filters. Every column sorts. Each row shows the last note
+  under its summary and one chip per SLA clock: **R**espond, resolution
+  **P**lan, re**S**olve. Tick rows to change status, assign or move board in
+  bulk. Bulk changes go through the same engine seams as a single ticket.
+- **Ticket** (`/ticket/<id>`): the priority and why (computed, never typed).
+  One box per SLA clock. Notes flagged **Discussion / Internal / Resolution**,
+  as ConnectWise flags them. The requester's portal shows Discussion and
+  Resolution only. A note can carry banded time, with a charge method the
+  technician must choose, and can move the status in the same save. The
+  right-hand panel edits board, status, owner, company, contact and the two
+  questions.
+- **New ticket** (`/ticket/new`): for phone calls and walk-ups. It records its
+  source.
+- **Setup** (`/admin/board/<id>`): Board, Statuses, SLA, and Members & roles
+  tabs, as ConnectWise's Service Board setup table. The starter setup
+  (`psaspine setup-board`) adds what is missing and never overwrites. Every
+  change is audited.
+
+Waiting statuses pause the **resolve** clock, never the respond clock. A board
+move keeps the ticket id and its clocks. A POST from another site is refused,
+on top of the `SameSite=Lax` session cookie.
 
 ## Requester intake (Phase C)
 

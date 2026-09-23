@@ -47,11 +47,11 @@ def index(ctx):
     if unrouted_rows:
         lines = []
         for r in sorted(unrouted_rows, key=lambda x: (x["priority"] or "P9", x["opened_at"] or "")):
-            state, label = common.ticket_sla(ctx, r["work_item_id"], now=ctx.now)
+            states = common.clock_states(ctx.conn, r["work_item_id"], now=ctx.now)
             assign = ""
             if target_opts:
                 assign = (
-                    f"<form method='post' action='/dispatch/assign' "
+                    f"<form method='post' action='/dispatch/assign' class='dispatch-route' "
                     "style='display:flex;gap:6px'>"
                     f"<input type='hidden' name='work_item_id' value='{t.esc(r['work_item_id'])}'>"
                     f"<select name='to_board'>{target_opts}</select>"
@@ -60,9 +60,9 @@ def index(ctx):
             lines.append(
                 "<tr>"
                 f"<td><a href='/ticket/{t.esc(r['work_item_id'])}'>{t.esc(r['work_item_id'])}</a></td>"
-                f"<td class='pri pri-{t.esc(r['priority'])}'>{t.esc(r['priority'])}</td>"
+                f"<td>{t.badge(r['priority'])}</td>"
                 f"<td>{t.esc(common.human_age(r['opened_at'], now=ctx.now))}</td>"
-                f"<td>{t.chip(label if state!='NONE' else 'no clock', t.sla_class(state))}</td>"
+                f"<td>{t.sla_chips(states) or '<span class=pill>no clock</span>'}</td>"
                 f"<td>{t.esc(r['summary'])}</td>"
                 f"<td class='muted'>{t.esc(r['entity'] or '—')}</td>"
                 f"<td>{assign}</td></tr>")

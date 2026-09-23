@@ -158,12 +158,22 @@ def detail(ctx, work_item_id):
         raise HttpError("404 Not Found", "No such request.")
 
     events = ctx.conn.execute(
-        "SELECT occurred_at, kind, detail FROM ticket_event"
-        "  WHERE work_item_id = ? AND kind IN ('INTAKE','INTAKE_REPLY','PORTAL_REPLY')"
+        "SELECT occurred_at, kind, detail, note_flag FROM ticket_event"
+        "  WHERE work_item_id = ?"
+        # What the requester may read: their own words, and the desk's notes
+        # flagged Discussion or Resolution. Never an Internal note, never a
+        # system event (those name owners and internal statuses).
+        "    AND (kind IN ('INTAKE','INTAKE_REPLY','PORTAL_REPLY')"
+        "         OR note_flag IN ('DISCUSSION','RESOLUTION'))"
+        "    AND (note_flag IS NULL OR note_flag <> 'INTERNAL')"
         "  ORDER BY ticket_event_id", (work_item_id,)).fetchall()
+    def who(e):
+        if e["kind"] in ("INTAKE", "INTAKE_REPLY", "PORTAL_REPLY"):
+            return "You"
+        return "IT — resolution" if e["note_flag"] == "RESOLUTION" else "IT"
     stream = "".join(
-        f"<li><div>{t.esc(e['detail'])}</div>"
-        f"<div class='meta'>{t.esc(e['occurred_at'])}</div></li>"
+        f"<li><div style='white-space:pre-wrap'>{t.esc(e['detail'])}</div>"
+        f"<div class='meta'>{who(e)} &middot; {t.esc(e['occurred_at'])}</div></li>"
         for e in events) or "<li class='muted'>Nothing yet.</li>"
 
     body = (

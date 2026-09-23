@@ -85,34 +85,94 @@ def require_sysadmin(ctx):
                         "This is a cross-board setting; a system administrator changes it.")
 
 
-def ticket_sla(ctx, work_item_id: str, *, now: datetime) -> tuple[str, str]:
-    """Worst open-clock state for a ticket: ('OK'|'WARN'|'BAD'|'NONE', label).
+CLOCK_ORDER = {"RESPOND": 0, "ACKNOWLEDGE": 1, "RESOLUTION_PLAN": 2, "RESOLVE": 3,
+               "DECISION": 4}
+CLOCK_NAME = {"RESPOND": "Respond", "RESOLUTION_PLAN": "Resolution plan",
+              "RESOLVE": "Resolve", "ACKNOWLEDGE": "Acknowledge", "DECISION": "Decision"}
 
-    Derived every time from the clocks, never read from a column — the same rule
-    clocks.py holds to. A breached clock makes the ticket red; a clock past the
-    warn fraction but not breached makes it amber; nothing open is neutral.
+
+def fmt_minutes(m: int) -> str:
+    m = abs(int(m))
+    if m < 60:
+        return f"{m}m"
+    if m < 60 * 48:
+        h, r = divmod(m, 60)
+        return f"{h}h" + (f" {r:02d}m" if r and h < 10 else "")
+    return f"{m // 1440}d"
+
+
+def clock_states(conn, work_item_id: str, *, now: datetime) -> list[dict]:
+    """Every clock on a ticket, each with its own state, computed now.
+
+    MET / MISSED for a stopped clock (inside or outside target), OK / WARN / BAD
+    for a running one, PAUSED while a waiting status holds it. Never read from a
+    stored flag: a flag goes stale the moment a target or a calendar is fixed.
     """
-    worst = "NONE"
-    label = "—"
-    order = {"NONE": 0, "OK": 1, "WARN": 2, "BAD": 3}
-    for row in ctx.conn.execute(
-            "SELECT clock_id, clock FROM ticket_clock"
-            " WHERE work_item_id = ? AND stopped_at IS NULL", (work_item_id,)):
-        st = clocks.state_of(ctx.conn, row["clock_id"], as_of=now)
+    out = []
+    rows = conn.execute("SELECT clock_id, clock FROM ticket_clock WHERE work_item_id = ?",
+                        (work_item_id,)).fetchall()
+    for row in sorted(rows, key=lambda r: CLOCK_ORDER.get(r["clock"], 9)):
+        st = clocks.state_of(conn, row["clock_id"], as_of=now)
         target = st["target_minutes"] or 1
         used = st["elapsed_minutes"]
-        if st["breached"]:
-            state = "BAD"
-        elif used >= WARN_FRACTION * target:
-            state = "WARN"
+        left = st["remaining_minutes"]
+        if st["stopped_at"]:
+            state = "MISSED" if st["breached"] else "MET"
+            short = fmt_minutes(used)
+            text = (f"Missed by {fmt_minutes(-left)}" if st["breached"]
+                    else f"Met in {fmt_minutes(used)}")
+        elif st["paused"]:
+            state, short, text = "PAUSED", "paused", f"Paused at {fmt_minutes(left)} left"
+            if st["breached"]:
+                state, text = "BAD", f"Breached by {fmt_minutes(-left)} (paused)"
+        elif st["breached"]:
+            state, short = "BAD", "-" + fmt_minutes(-left)
+            text = f"Breached by {fmt_minutes(-left)}"
         else:
-            state = "OK"
-        if order[state] > order[worst]:
-            worst = state
-            remaining = st["remaining_minutes"]
-            label = (f"{row['clock']} over by {-remaining}m" if remaining < 0
-                     else f"{row['clock']} {remaining}m left")
-    return worst, label
+            state = "WARN" if used >= WARN_FRACTION * target else "OK"
+            short, text = fmt_minutes(left), f"{fmt_minutes(left)} left"
+        name = CLOCK_NAME.get(row["clock"], row["clock"])
+        out.append({"clock": row["clock"], "name": name, "state": state, "short": short,
+                    "text": text, "target": st["target_minutes"], "used": used,
+                    "fraction": min(1.0, used / target),
+                    "title": f"{name}: {text} (target {fmt_minutes(st['target_minutes'])})"})
+    return out
+
+
+WORST = {"MET": 0, "PAUSED": 1, "OK": 2, "WARN": 3, "MISSED": 4, "BAD": 5}
+
+
+def worst_state(states: list[dict]) -> str:
+    """The row colour: the worst of the clocks. A missed clock stays red once
+    stopped, because a breach that happened is not undone by closing it."""
+    if not states:
+        return "NONE"
+    w = max(states, key=lambda s: WORST[s["state"]])["state"]
+    return {"MET": "OK", "PAUSED": "OK", "OK": "OK", "WARN": "WARN",
+            "MISSED": "BAD", "BAD": "BAD"}[w]
+
+
+def ticket_sla(ctx, work_item_id: str, *, now: datetime) -> tuple[str, str]:
+    """Worst open-clock state for a ticket: ('OK'|'WARN'|'BAD'|'NONE', label).
+    Kept for the dispatch view and older callers."""
+    states = [s for s in clock_states(ctx.conn, work_item_id, now=now)
+              if s["state"] not in ("MET", "MISSED")]
+    if not states:
+        return "NONE", "—"
+    worst = max(states, key=lambda s: WORST[s["state"]])
+    label = f"{worst['clock']} {worst['text'].lower()}"
+    return worst_state(states), label
+
+
+def no_clock_reason(conn, board_id: str, source_ref) -> str:
+    """Why a ticket has no clock, in words, instead of a bare 'no clock'."""
+    if source_ref:
+        return "imported"
+    row = conn.execute("SELECT calendar_id FROM board WHERE board_id = ?",
+                       (board_id,)).fetchone()
+    if row is None or row["calendar_id"] is None:
+        return "board not set up"
+    return "no target"
 
 
 def human_age(opened_at: str, *, now: datetime) -> str:

@@ -93,6 +93,11 @@ class Request:
     def form(self) -> dict[str, str]:
         return dict(urllib.parse.parse_qsl(self.body.decode("utf-8", "replace")))
 
+    def form_list(self, name: str) -> list[str]:
+        """Every value of a repeated field — the ticked rows of a bulk action."""
+        return [v for k, v in urllib.parse.parse_qsl(self.body.decode("utf-8", "replace"))
+                if k == name]
+
     def bearer(self) -> str | None:
         value = self.headers.get("authorization", "")
         return value[7:] if value.lower().startswith("bearer ") else None
@@ -201,6 +206,17 @@ def _route(conn, request: Request, config: Config, now: datetime) -> Response:
     if request.path.startswith("/api/"):
         from . import api
         return api.handle(conn, request, now=now)
+
+    # A form posted from another site. The session cookie is SameSite=Lax, which
+    # already keeps it off a cross-site POST; this refuses the request outright
+    # as well, so the defence does not rest on one browser setting.
+    if request.method == "POST":
+        origin = request.headers.get("origin", "")
+        host = request.headers.get("host", "")
+        if origin and origin != "null" and host and \
+                urllib.parse.urlsplit(origin).netloc.lower() != host.lower():
+            return Response("403 Forbidden", "<h1>403 Forbidden</h1>"
+                            "<p>This form was posted from another site.</p>")
 
     # The two doors that do not require an established identity.
     from . import templates

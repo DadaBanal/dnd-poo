@@ -70,7 +70,7 @@ def annex_b(conn: sqlite3.Connection, *, as_of: date) -> str:
     for r in rows:
         days = days_outstanding(r["last_activity"], as_of)
         out.append(
-            f"| {r['work_item_id']} | {r['name']} | {r['entity_id']} | {r['status']} | "
+            f"| {r['work_item_id']} | {r['name']} | {r['entity_id'] or '—'} | {r['status']} | "
             f"{r['risk'] or '—'} | {days if days is not None else '—'} | {r['contract_basis_raw']} |"
         )
 
@@ -319,7 +319,7 @@ def variation_paper(conn: sqlite3.Connection, *, as_of: date,
         "|---|---|---|---|",
     ]
     for v in variations:
-        out.append(f"| {v['work_item_id']} | {v['name']} | {v['entity_id']} | {v['status']} |")
+        out.append(f"| {v['work_item_id']} | {v['name']} | {v['entity_id'] or '—'} | {v['status']} |")
 
     out += [
         "",
@@ -650,7 +650,7 @@ def uplift_evidence(conn: sqlite3.Connection, *, as_of: date,
         ]
         for t in unknown:
             out.append(
-                f"| {t['work_item_id']} | {t['external_ref'] or '—'} | {t['entity_id']} | "
+                f"| {t['work_item_id']} | {t['external_ref'] or '—'} | {t['entity_id'] or '—'} | "
                 f"{t['board_id']} | {t['priority']} | {t['state']} | {t['name']} |")
         out += ["", "**Who owes it:** whether PACS, imaging and medical gas sit inside any "
                 "baseline heading is a ruling for the parties to the agreement, not for "
@@ -671,7 +671,7 @@ def uplift_evidence(conn: sqlite3.Connection, *, as_of: date,
             "|---|---|---|---|---|---|",
         ]
         for t in closed:
-            out.append(f"| {t['work_item_id']} | {t['external_ref'] or '—'} | {t['entity_id']} | "
+            out.append(f"| {t['work_item_id']} | {t['external_ref'] or '—'} | {t['entity_id'] or '—'} | "
                        f"{t['board_id']} | {t['state']} | {t['name']} |")
     else:
         out.append("None.")
@@ -689,7 +689,7 @@ def uplift_evidence(conn: sqlite3.Connection, *, as_of: date,
             "|---|---|---|---|---|---|",
         ]
         for t in open_:
-            out.append(f"| {t['work_item_id']} | {t['external_ref'] or '—'} | {t['entity_id']} | "
+            out.append(f"| {t['work_item_id']} | {t['external_ref'] or '—'} | {t['entity_id'] or '—'} | "
                        f"{t['board_id']} | {t['state']} | {t['name']} |")
     else:
         out.append("None.")

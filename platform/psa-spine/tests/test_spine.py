@@ -2106,7 +2106,7 @@ class WebWSGITest(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def _environ(self, method, path, *, cookie=None, body=b"", query=""):
+    def _environ(self, method, path, *, cookie=None, body=b"", query="", headers=None):
         env = {
             "REQUEST_METHOD": method, "PATH_INFO": path, "SCRIPT_NAME": "",
             "QUERY_STRING": query, "SERVER_NAME": "t", "SERVER_PORT": "80",
@@ -2119,9 +2119,12 @@ class WebWSGITest(unittest.TestCase):
             env["CONTENT_TYPE"] = "application/x-www-form-urlencoded"
         if cookie:
             env["HTTP_COOKIE"] = cookie
+        for k, v in (headers or {}).items():
+            env["HTTP_" + k.upper().replace("-", "_")] = v
         return env
 
-    def _call(self, method, path, *, cookie=None, form=None, query="", validate=True):
+    def _call(self, method, path, *, cookie=None, form=None, query="", validate=True,
+              headers=None):
         body = _urlparse.urlencode(form).encode() if form else b""
         app = _validator(self.raw) if validate else self.raw
         captured = {}
@@ -2129,8 +2132,8 @@ class WebWSGITest(unittest.TestCase):
         def start_response(status, headers, exc_info=None):
             captured["status"] = status
             captured["headers"] = headers
-        it = app(self._environ(method, path, cookie=cookie, body=body, query=query),
-                 start_response)
+        it = app(self._environ(method, path, cookie=cookie, body=body, query=query,
+                               headers=headers), start_response)
         try:
             payload = b"".join(it).decode()
         finally:
@@ -2168,10 +2171,173 @@ class WebWSGITest(unittest.TestCase):
         cookie = self._cookie_for("alice")
         for path, needle in (("/", "ITO-1"), ("/ticket/ITO-1", "Printer down"),
                              ("/dispatch", "Dispatch"), ("/oncall", "On-call"),
-                             ("/uplift", "Uplift"), ("/admin", "Admin")):
+                             ("/uplift", "Uplift"), ("/admin", "Setup"),
+                             ("/ticket/new", "New ticket"),
+                             ("/admin/board/IT_HELP", "Statuses")):
             status, _, body = self._call("GET", path, cookie=cookie)
             self.assertTrue(status.startswith("200"), f"{path} -> {status}")
             self.assertIn(needle, body)
+
+    # ------------------------------------------------ the ConnectWise-style desk
+
+    def _db(self):
+        return db.connect(self.db_path)
+
+    def test_a_note_is_flagged_and_can_carry_banded_time(self):
+        cookie = self._cookie_for("alice")
+        status, headers, _ = self._call("POST", "/ticket/ITO-1/note", cookie=cookie, form={
+            "body": "Checked the switch.", "flag": "INTERNAL", "hours": "2",
+            "charge": "INCLUDED_IN_MONTHLY_FEE"})
+        self.assertTrue(status.startswith("303"))
+        conn = self._db()
+        self.assertEqual(conn.execute(
+            "SELECT note_flag FROM ticket_event WHERE detail = 'Checked the switch.'"
+        ).fetchone()[0], "INTERNAL")
+        self.assertEqual(conn.execute(
+            "SELECT band_hours, charge_method FROM time_entry WHERE work_item_id='ITO-1'"
+        ).fetchone()[:], (2.0, "INCLUDED_IN_MONTHLY_FEE"))
+        conn.close()
+
+    def test_time_with_no_charge_method_is_refused_and_nothing_is_written(self):
+        """The charge method is never assumed (the numerator of an uplift claim)."""
+        status, headers, _ = self._call("POST", "/ticket/ITO-1/note",
+                                        cookie=self._cookie_for("alice"),
+                                        form={"body": "x", "flag": "DISCUSSION", "hours": "2"})
+        self.assertIn("err=", dict(headers)["Location"])
+        conn = self._db()
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM time_entry").fetchone()[0], 0)
+        self.assertIsNone(conn.execute(
+            "SELECT 1 FROM ticket_event WHERE detail = 'x'").fetchone())
+        conn.close()
+
+    def test_a_read_only_member_cannot_add_a_note(self):
+        status, _, _ = self._call("POST", "/ticket/ITO-1/note", cookie=self._cookie_for("carol"),
+                                  form={"body": "nope", "flag": "DISCUSSION"})
+        self.assertTrue(status.startswith("404"))
+
+    def test_the_requester_sees_discussion_and_resolution_never_internal(self):
+        conn = self._db()
+        conn.execute("UPDATE ticket SET requested_by = 'nurse@pmcne.ph' WHERE work_item_id='ITO-1'")
+        board.add_note(conn, "ITO-1", body="We are on it.", flag="DISCUSSION",
+                       actor="alice", at=datetime(2026, 9, 17, 9, 0))
+        board.add_note(conn, "ITO-1", body="Vendor contract lapsed, do not say.",
+                       flag="INTERNAL", actor="alice", at=datetime(2026, 9, 17, 9, 5))
+        board.add_note(conn, "ITO-1", body="Replaced the cable.", flag="RESOLUTION",
+                       actor="alice", at=datetime(2026, 9, 17, 9, 10))
+        conn.commit()
+        conn.close()
+        status, _, body = self._call("GET", "/my/ITO-1", cookie=self._cookie_for(
+            "nurse", email="nurse@pmcne.ph"))
+        self.assertTrue(status.startswith("200"), status)
+        self.assertIn("We are on it.", body)
+        self.assertIn("Replaced the cable.", body)
+        self.assertNotIn("Vendor contract lapsed", body)
+
+    def test_changing_the_two_answers_recomputes_priority_never_typed(self):
+        status, _, _ = self._call("POST", "/ticket/ITO-1/update", cookie=self._cookie_for("alice"),
+                                  form={"board_id": "IT_HELP", "impact": "I3", "urgency": "U3",
+                                        "owner": "bob", "to_status": "IT_HELP.NEW",
+                                        "entity_id": "PMC", "requested_by": ""})
+        self.assertTrue(status.startswith("303"))
+        conn = self._db()
+        row = conn.execute("SELECT priority, priority_source, owner FROM ticket"
+                           " WHERE work_item_id='ITO-1'").fetchone()
+        self.assertEqual(tuple(row), ("P4", "MATRIX", "bob"))
+        self.assertIsNotNone(conn.execute(
+            "SELECT 1 FROM ticket_event WHERE work_item_id='ITO-1' AND kind='UPDATED'").fetchone())
+        conn.close()
+
+    def test_new_ticket_from_the_desk_records_its_source_and_priority(self):
+        status, headers, _ = self._call("POST", "/ticket/new", cookie=self._cookie_for("alice"),
+                                        form={"board_id": "IT_HELP", "source": "PHONE",
+                                              "entity_id": "PMC", "summary": "Ward 5 phone dead",
+                                              "impact": "I2", "urgency": "U2"})
+        self.assertTrue(status.startswith("303"), status)
+        wid = dict(headers)["Location"].split("/ticket/")[1].split("?")[0]
+        conn = self._db()
+        row = conn.execute("SELECT intake_source, priority, board_status_id FROM ticket"
+                           " WHERE work_item_id = ?", (wid,)).fetchone()
+        self.assertEqual(tuple(row), ("PHONE", "P3", "IT_HELP.NEW"))
+        conn.close()
+
+    def test_new_ticket_refuses_a_board_the_user_cannot_work(self):
+        status, _, body = self._call("POST", "/ticket/new", cookie=self._cookie_for("carol"),
+                                     form={"board_id": "IT_HELP", "summary": "x",
+                                           "impact": "I3", "urgency": "U3"})
+        self.assertIn("not a working", body)
+
+    def test_bulk_assign_goes_through_the_engine_and_respects_access(self):
+        status, headers, _ = self._call("POST", "/bulk", cookie=self._cookie_for("alice"),
+                                        form=[("ids", "ITO-1"), ("ids", "ITO-9"),
+                                              ("owner", "bob"), ("back", "/")])
+        self.assertIn("Updated+2", dict(headers)["Location"])
+        status, headers, _ = self._call("POST", "/bulk", cookie=self._cookie_for("carol"),
+                                        form=[("ids", "ITO-1"), ("owner", "mallory")])
+        self.assertIn("1+could+not", dict(headers)["Location"])
+        conn = self._db()
+        self.assertEqual(conn.execute("SELECT owner FROM ticket WHERE work_item_id='ITO-1'"
+                                      ).fetchone()[0], "bob")
+        conn.close()
+
+    def test_board_setup_takes_board_admin(self):
+        status, _, _ = self._call("GET", "/admin/board/IT_HELP", cookie=self._cookie_for("carol"))
+        self.assertTrue(status.startswith("404"))
+        status, _, _ = self._call("POST", "/admin/board/IT_HELP/starter",
+                                  cookie=self._cookie_for("carol"))
+        self.assertTrue(status.startswith("404"))
+
+    def test_setup_applies_the_starter_and_edits_targets_with_an_audit(self):
+        cookie = self._cookie_for("alice")
+        self._call("POST", "/admin/board/IT_HELP/starter", cookie=cookie)
+        self._call("POST", "/admin/board/IT_HELP/sla", cookie=cookie,
+                   form={"t_P1_RESPOND": "7", "t_P1_RESOLUTION_PLAN": "60",
+                         "t_P1_RESOLVE": ""})
+        conn = self._db()
+        targets = {r[0]: r[1] for r in conn.execute(
+            "SELECT clock, target_minutes FROM sla_target WHERE board_id='IT_HELP' AND priority='P1'")}
+        self.assertEqual(targets, {"RESPOND": 7, "RESOLUTION_PLAN": 60})
+        self.assertEqual(conn.execute("SELECT calendar_id FROM board WHERE board_id='IT_HELP'"
+                                      ).fetchone()[0], "ALL_HOURS")
+        self.assertGreaterEqual(conn.execute(
+            "SELECT COUNT(*) FROM audit_event WHERE action IN ('BOARD_SETUP','BOARD_CONFIG')"
+        ).fetchone()[0], 2)
+        conn.close()
+
+    def test_a_status_edit_keeps_exactly_one_default(self):
+        cookie = self._cookie_for("alice")
+        self._call("POST", "/admin/board/IT_HELP/starter", cookie=cookie)
+        self._call("POST", "/admin/board/IT_HELP/status/save", cookie=cookie,
+                   form={"board_status_id": "IT_HELP.ASSIGNED", "name": "Assigned",
+                         "escalation_status": "NOT_RESPONDED", "is_default": "1",
+                         "time_entry_allowed": "1", "display_on_board": "1", "sort_order": "20"})
+        conn = self._db()
+        defaults = [r[0] for r in conn.execute(
+            "SELECT board_status_id FROM board_status WHERE board_id='IT_HELP' AND is_default=1")]
+        self.assertEqual(defaults, ["IT_HELP.ASSIGNED"])
+        conn.close()
+
+    def test_a_form_posted_from_another_site_is_refused(self):
+        status, _, _ = self._call("POST", "/ticket/ITO-1/note", cookie=self._cookie_for("alice"),
+                                  form={"body": "csrf", "flag": "DISCUSSION"},
+                                  headers={"Origin": "http://evil.example", "Host": "t"})
+        self.assertTrue(status.startswith("403"))
+        status, _, _ = self._call("POST", "/ticket/ITO-1/note", cookie=self._cookie_for("alice"),
+                                  form={"body": "same site", "flag": "DISCUSSION"},
+                                  headers={"Origin": "http://t", "Host": "t"})
+        self.assertTrue(status.startswith("303"))
+
+    def test_the_board_tiles_filter_and_every_column_sorts(self):
+        cookie = self._cookie_for("alice")
+        _, _, body = self._call("GET", "/", cookie=cookie, query="tile=unassigned")
+        self.assertIn("ITO-1", body)
+        for key in ("id", "summary", "company", "contact", "board", "status", "pri",
+                    "owner", "age", "updated", "sla"):
+            status, _, _ = self._call("GET", "/", cookie=cookie, query=f"sort={key}&dir=asc")
+            self.assertTrue(status.startswith("200"), key)
+
+    def test_the_board_says_why_a_ticket_has_no_clock(self):
+        _, _, body = self._call("GET", "/", cookie=self._cookie_for("alice"))
+        self.assertIn("board not set up", body)
 
     def test_the_board_shows_only_the_members_boards(self):
         status, _, body = self._call("GET", "/", cookie=self._cookie_for("carol"))
