@@ -3,7 +3,7 @@
 `wsgiref.simple_server` is the pilot server and does not pretend to be more. It
 is here because the whole web tier is zero-dependency by choice (D2), and the
 value of a WSGI callable is that this launcher is the only thing that changes in
-Phase C: the same `application` drops behind gunicorn or IIS with no edit to a
+Phase C: the same `application` drops behind a production WSGI server with no edit to a
 view. The stdlib's own warning that this server is not for production is left to
 print — it is true, and hiding it would be the wrong kind of tidy.
 

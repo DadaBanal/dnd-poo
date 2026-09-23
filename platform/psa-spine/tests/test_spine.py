@@ -3099,6 +3099,62 @@ class MachineApiTest(unittest.TestCase):
             self.assertNotIn("345678901", r["detail"])
 
 
+class DatabaseSettingsTest(unittest.TestCase):
+    """How the store behaves with more than one person on the desk."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / "spine.db"
+        db.init(self.path).close()
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_the_database_runs_in_wal_mode(self):
+        """Readers carry on while one writer commits."""
+        conn = db.connect(self.path)
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        conn.close()
+        self.assertEqual(mode.lower(), "wal")
+
+    def test_every_connection_enforces_foreign_keys(self):
+        conn = db.connect(self.path)
+        self.assertEqual(conn.execute("PRAGMA foreign_keys").fetchone()[0], 1)
+        conn.close()
+
+    def test_a_reader_is_not_blocked_by_an_open_write(self):
+        writer = db.connect(self.path)
+        writer.execute("BEGIN IMMEDIATE")
+        writer.execute("INSERT INTO entity (entity_id, name) VALUES ('X-WAL','x')")
+        reader = db.connect(self.path)
+        # Under the old rollback journal this read would wait or fail; under
+        # WAL it sees the last committed state at once.
+        n = reader.execute("SELECT COUNT(*) FROM entity WHERE entity_id='X-WAL'").fetchone()[0]
+        self.assertEqual(n, 0)
+        writer.commit()
+        writer.close()
+        reader.close()
+
+    def test_synchronous_is_left_at_full(self):
+        """NORMAL can lose the last commit on a power cut; not a quiet change."""
+        conn = db.connect(self.path)
+        self.assertEqual(conn.execute("PRAGMA synchronous").fetchone()[0], 2)  # FULL
+        conn.close()
+
+    def test_the_backup_api_captures_a_commit_still_in_the_wal(self):
+        """Why escrow must use Connection.backup and not a copy of the .db file."""
+        conn = db.connect(self.path)
+        conn.execute("INSERT INTO entity (entity_id, name) VALUES ('X-ESCROW','x')")
+        conn.commit()
+        target = sqlite3.connect(str(Path(self.tmp.name) / "escrow.db"))
+        conn.backup(target)
+        got = target.execute(
+            "SELECT COUNT(*) FROM entity WHERE entity_id='X-ESCROW'").fetchone()[0]
+        target.close()
+        db.close(conn)
+        self.assertEqual(got, 1)
+
+
 class MarkdownRenderTest(unittest.TestCase):
     """The uplift screen renders the report's own markdown; the renderer must
     handle exactly the shapes the reports emit, and escape everything else."""

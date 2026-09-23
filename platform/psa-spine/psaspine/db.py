@@ -1,7 +1,9 @@
 """Open, create and seed the spine database.
 
 SQLite by design for Phase 1: no server, no provisioning, no procurement, and
-one file that can be escrowed to the client's own storage nightly. The Azure SQL
+one database that can be escrowed to the client's own storage nightly -- through
+SQLite's backup API, not a file copy, because the database runs in WAL mode (see
+create()). The Azure SQL
 lift is a later gate; the schema is kept to constructs SQL Server also accepts
 but that path is NOT VERIFIED.
 """
@@ -16,15 +18,50 @@ SCHEMA_DIR = ROOT / "schema"
 SEED_DIR = ROOT / "seed"
 
 
+# How long a writer waits for another writer before giving up, in seconds. The
+# default is to fail at once with "database is locked", which on a desk with
+# more than one person working is an error nobody caused and everybody sees.
+BUSY_TIMEOUT_SECONDS = 5.0
+
+
 def connect(path: str | Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(path))
+    """One connection. Foreign keys are off by default in SQLite and the setting
+    is per connection, so it is set on every one; so is the busy timeout.
+
+    `synchronous` is deliberately left at SQLite's default (FULL). NORMAL is
+    faster and can lose the last committed transaction on a power cut -- a
+    trade to make only once the host is known to be on a UPS, and not one to
+    make quietly on a clinical desk. (sqlite.org/pragma.html#pragma_synchronous)
+    """
+    conn = sqlite3.connect(str(path), timeout=BUSY_TIMEOUT_SECONDS)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
+def close(conn: sqlite3.Connection) -> None:
+    """Close, letting SQLite refresh its query-planner statistics first.
+
+    sqlite.org recommends `PRAGMA optimize` when a short-lived connection
+    closes, which is exactly how the web tier uses them (one per request). It
+    is cheap when there is nothing to do.
+    """
+    try:
+        conn.execute("PRAGMA optimize")
+    except sqlite3.Error:
+        pass
+    conn.close()
+
+
 def create(conn: sqlite3.Connection) -> None:
-    """Apply every migration in name order.
+    """Apply every migration in name order, in write-ahead-log mode.
+
+    WAL lets readers carry on while one writer commits, which is what a desk
+    with several people on it needs. It persists in the file, so it is set once,
+    here. It has one consequence worth stating: recent commits can live in the
+    `-wal` file beside the database until a checkpoint, so **the nightly escrow
+    must use SQLite's backup API (`Connection.backup`) or checkpoint first -- a
+    plain copy of the .db file alone can drop the latest commits.**
 
     schema/*.sql is the one schema, and the SQL Server port is generated from it.
     schema/local/ is applied here too but is NOT part of that port: it holds the
@@ -32,6 +69,7 @@ def create(conn: sqlite3.Connection) -> None:
     nowhere near the commercial spine on DND-SQL01. The glob is non-recursive on
     purpose so the translator and this loader see the same files.
     """
+    conn.execute("PRAGMA journal_mode = WAL")
     for sql_file in sorted(SCHEMA_DIR.glob("*.sql")):
         conn.executescript(sql_file.read_text(encoding="utf-8"))
     for sql_file in sorted((SCHEMA_DIR / "local").glob("*.sql")):

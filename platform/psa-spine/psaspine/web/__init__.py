@@ -187,7 +187,7 @@ def make_app(db_path: str, *, config: Config | None = None, clock=datetime.now):
         except HttpError as exc:
             response = Response(exc.status, f"<h1>{exc.status}</h1><p>{exc.message}</p>")
         finally:
-            conn.close()
+            db.close(conn)
         return response.emit(start_response)
 
     return application
