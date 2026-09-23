@@ -1,3 +1,7 @@
+# SUPERSEDED 23 Sep 2026 by platform/imaging/compose.yaml, which is built,
+# pinned and tested. Kept because dated handoffs cite the risks recorded in the
+# comments below. Do not run or extend this file.
+#
 # Path A, "engine as code" -- roadmap weeks 2-5.
 #
 # STATUS: SKELETON. Never run, never deployed, no image digest pinned.

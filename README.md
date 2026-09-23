@@ -8,7 +8,8 @@ Two things live here:
 | Path | What it is | Status |
 |---|---|---|
 | [`apps/imaging-portal/`](apps/imaging-portal/) | **PMC Imaging** — the worklist and DICOM viewer Orthanc serves at `https://imaging.pmcne.ph/pmc/index.html`. One self-contained HTML file, built from source, 45 browser checks. | Installed 9 Sep 2026 (WS23). The address is the file, not the folder. |
-| [`platform/`](platform/) | Path A "engine as code": Orthanc + PostgreSQL index + OHIF + Keycloak as versioned config. | **Skeleton. Never run.** Gated on ADR-001 and a Linux host. |
+| [`platform/imaging/`](platform/imaging/) | Path A, the modern build: the imaging engine (Orthanc 1.13.0 on a PostgreSQL 18.6 index) as versioned config, pinned by digest, with synthetic DICOM and a test runner that acts as the modalities and the viewer. | **M1 built and proven off-prem** (31 tests, 23 Sep 2026). Not deployed: nothing goes on-prem until the whole platform is built, and deployment stays gated on ADR-001. M2–M4 to come. |
+| [`platform/`](platform/) | The 6 Sep skeleton of the same, superseded by `platform/imaging/`. Its README keeps the deployment gates. | Superseded. Never run. |
 | [`platform/psa-spine/`](platform/psa-spine/) | The commercial half of a PSA — agreements, the nine scope items, the Annex B variation register, notices, client dependencies. Produces the variation register, the dependency notices and the instrument exception report. | Built and tested (158 tests, 10 Sep 2026). Since then: the service catalogue, the ticket, the board engine, the desk import, the generated SQL Server port and the uplift report. Measured against the real register: 35 rows in, 35 out. |
 
 ## Why this repo exists
@@ -32,6 +33,8 @@ cd apps/imaging-portal
 npm run build          # assemble the single-file artifact into dist/
 npm test               # build, then drive it in Chromium against a stand-in Orthanc
 npm run payload        # emit the installer payload + sha256
+
+platform/imaging/ci/run.sh   # the engine: start, test, restart, test again (Docker)
 ```
 
 ## Ground rules

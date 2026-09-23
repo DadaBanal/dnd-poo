@@ -1,6 +1,15 @@
 # platform — Path A, engine as code
 
-**Status: SKELETON. Never run, never deployed, nothing here is validated.**
+> **Superseded, 23 Sep 2026, by [`imaging/`](imaging/)**. There, milestone M1
+> (the engine and its PostgreSQL index) is built, pinned by digest and proven
+> off-prem by 31 tests. It is still not deployed.
+>
+> What stays true below is **"What it is gated on"**: those gates still apply
+> to deployment. `compose.yaml` and `orthanc/orthanc.json` in this folder are
+> the 6 Sep skeleton. They stay because dated handoffs cite what their comments
+> record. Do not run them or build on them.
+
+**Status (6 Sep): SKELETON. Never run, never deployed, nothing here is validated.**
 
 Dada chose Path A on 6 Sep 2026 — *"Path A now; Path B evaluation in parallel;
 decision point at week 12."* Path A is: OHIF v3 as the only viewer, sign-in via
@@ -46,7 +55,8 @@ argued with, not run.
 ## Files
 
 ```
-compose.yaml        Orthanc + PostgreSQL index + OHIF + Keycloak
-orthanc/orthanc.json  config as code; site values come from the environment
-.env.example        copy to .env (git-ignored); no real value is committed
+imaging/            the build: engine + index, pinned, tested (start here)
+compose.yaml        6 Sep skeleton, superseded; kept for the dated handoffs
+orthanc/orthanc.json  6 Sep skeleton, superseded
+.env.example        6 Sep skeleton, superseded; imaging/ needs no .env
 ```

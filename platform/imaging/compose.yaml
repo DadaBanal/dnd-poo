@@ -1,0 +1,95 @@
+# PMC imaging engine: Path A, milestone M1 (WS23).
+#
+# The engine (Orthanc) and its index (PostgreSQL), pinned by digest, on a
+# network with no route out and no port published. Built and proven
+# off-prem first; nothing here goes on-prem until the whole platform is
+# built and Dada says so. Read README.md before changing anything.
+#
+#   tools/make-secrets.sh            generate the secrets (once, never committed)
+#   docker compose up -d --wait      start the engine
+#   ci/run.sh                        start it, test it, restart it, test again
+#
+# Site values are compose variables with safe defaults. None is a secret.
+#   PMC_DICOM_AET   the engine's AE title (default PMC-IMAGING)
+
+name: pmc-imaging
+
+x-logging: &logging
+  # The local driver rotates and compresses by default; json-file would
+  # grow until the disk fills.
+  driver: local
+
+services:
+  pg-index:
+    image: postgres:18.6-trixie@sha256:86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae
+    environment:
+      POSTGRES_DB: orthanc
+      POSTGRES_USER: orthanc
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg-index-password
+      # Built-in C.UTF-8 collation: sort order that no glibc update can
+      # change under an existing index. PostgreSQL 18 turns data checksums
+      # on by default; ci/run.sh checks both.
+      POSTGRES_INITDB_ARGS: --locale-provider=builtin --builtin-locale=C.UTF-8
+      TZ: Asia/Manila
+    secrets: [pg-index-password]
+    volumes:
+      # PostgreSQL 18 images keep PGDATA under /var/lib/postgresql/18/docker;
+      # the volume is mounted one level up, as the image documents.
+      - pg-index-data:/var/lib/postgresql
+    shm_size: 256mb
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U orthanc -d orthanc]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+    stop_grace_period: 60s
+    restart: unless-stopped
+    logging: *logging
+    networks: [engine]
+
+  orthanc:
+    image: orthancteam/orthanc:26.9.1@sha256:d2705f2c56547e55ce9bc2250fd22d05d326493b3f3d9fa191ecb7db8ca6b5a2
+    depends_on:
+      pg-index: { condition: service_healthy }
+    environment:
+      TZ: Asia/Manila
+      ORTHANC__DICOM_AET: ${PMC_DICOM_AET:-PMC-IMAGING}
+      # Explorer 2 is on by default in this image. The user-facing surface
+      # is decided in M2; until then it stays off.
+      ORTHANC_EXPLORER_2_ENABLED: "false"
+    secrets:
+      - source: pg-index-password
+        target: ORTHANC__POSTGRESQL__PASSWORD
+      - source: orthanc-users
+        target: orthanc-users.json
+    volumes:
+      - ./orthanc/orthanc.json:/etc/orthanc/orthanc.json:ro
+      - orthanc-storage:/var/lib/orthanc/db
+    healthcheck:
+      # Ships with the image: calls /changes with the configured user.
+      test: [CMD, /probes/test-aliveness.py]
+      interval: 10s
+      timeout: 10s
+      start_period: 30s
+      retries: 12
+    stop_grace_period: 60s
+    restart: unless-stopped
+    logging: *logging
+    networks: [engine]
+
+networks:
+  engine:
+    # No route out. Nothing on it can call the internet, and nothing is
+    # published to the host. The front door (M2) joins it and is the only
+    # way in.
+    internal: true
+
+volumes:
+  pg-index-data: {}
+  orthanc-storage: {}
+
+secrets:
+  pg-index-password:
+    file: ./secrets/pg-index-password
+  orthanc-users:
+    file: ./secrets/orthanc-users.json

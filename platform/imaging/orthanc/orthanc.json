@@ -1,0 +1,155 @@
+{
+  // PMC imaging engine: configuration as versioned code (Path A, WS23).
+  //
+  // Nothing site-specific and no secret lives in this file:
+  //   - the AE title comes from compose (PMC_DICOM_AET);
+  //   - passwords and HTTP users come from Docker secrets (tools/make-secrets.sh);
+  //   - modality addresses live in the engine's own database, registered at
+  //     runtime from a private inventory. They never enter git.
+  //
+  // The orthancteam image merges this file with /run/secrets/*.json and the
+  // ORTHANC__* environment. Plugins are enabled by the presence of their
+  // section below; anything without a section stays off (the tests check the
+  // exact set).
+
+  "Name": "PMC-IMAGING",
+  "DicomPort": 4242,
+  "HttpPort": 8042,
+
+  // Orthanc derives its default identifier from the MAC addresses, and Docker
+  // gives the container new ones at every start. Pinned so the index and the
+  // Housekeeper's progress survive a restart.
+  "DatabaseServerIdentifier": "pmc-imaging-engine",
+
+  // ---- DICOM network: only known modalities, each from its own address ----
+  // A modality must call this engine's AE title, be registered under its own
+  // AE title, and connect from the address it was registered with. C-ECHO
+  // stays open so a technologist can test a link without ICT.
+  "DicomCheckCalledAet": true,
+  "DicomCheckModalityHost": true,
+  "DicomAlwaysAllowEcho": true,
+  "DicomAlwaysAllowStore": false,
+  "DicomAlwaysAllowFind": false,
+  "DicomAlwaysAllowFindWorklist": false,
+  "DicomAlwaysAllowGet": false,
+  "DicomAlwaysAllowMove": false,
+  "DicomModalitiesInDatabase": true,
+  "DicomModalities": {},
+  "OrthancPeersInDatabase": true,
+  "OrthancPeers": {},
+
+  // ---- Storage ----
+  "StorageDirectory": "/var/lib/orthanc/db",
+  // An archive never recycles. Zero means no limit, so nothing is ever
+  // deleted to make room. Stated here so a later edit has to be deliberate.
+  "MaximumStorageSize": 0,
+  "MaximumPatientCount": 0,
+  "StorageCompression": false,
+  "StoreMD5ForAttachments": true,
+
+  // JPEG-LS lossless on arrival. The record MEASURED it 30-37% smaller on
+  // PMC's own files; tests/test_ingest.py proves it bit-exact. Anything that
+  // arrives already compressed (lossy ultrasound, for one) is kept exactly as
+  // sent: re-encoding lossy pixels would lose more.
+  "IngestTranscoding": "1.2.840.10008.1.2.4.80",
+  "IngestTranscodingOfUncompressed": true,
+  "IngestTranscodingOfCompressed": false,
+
+  // Tags the index answers without opening files: the set Orthanc 1.13.0
+  // recommends for DICOMweb (MEASURED from its default configuration). They
+  // must be right before the first study arrives. Changing them later makes
+  // the Housekeeper re-read every file, which after the migration is 6.3 TB.
+  "ExtraMainDicomTags": {
+    "Instance": [
+      "Rows",
+      "Columns",
+      "ImageType",
+      "SOPClassUID",
+      "ContentDate",
+      "ContentTime",
+      "FrameOfReferenceUID",
+      "PixelSpacing",
+      "SpecificCharacterSet",
+      "BitsAllocated"
+    ],
+    "Series": [],
+    "Study": [],
+    "Patient": []
+  },
+
+  // A study is "stable" 60 s after its last image. Stability triggers the
+  // DICOMweb metadata cache and the removal of a performed worklist entry.
+  "StableAge": 60,
+  "SaveJobs": true,
+
+  // ---- Operations ----
+  "DeidentifyLogs": true,
+  "WebDavEnabled": false,
+  "MetricsEnabled": true,
+
+  // ---- HTTP ----
+  // Reachable only on the engine network. People arrive through the front
+  // door (M2), which adds single sign-on. The one HTTP user until then is
+  // generated into a Docker secret; RegisteredUsers is never written here.
+  "RemoteAccessAllowed": true,
+  "AuthenticationEnabled": true,
+
+  // ---- Index: PostgreSQL (ADR-001) ----
+  // The password arrives as the secret ORTHANC__POSTGRESQL__PASSWORD.
+  // Lock stays off: a lock held by a killed container's dead session can
+  // block the restart that would recover it. Compose runs one engine.
+  "PostgreSQL": {
+    "EnableIndex": true,
+    "EnableStorage": false,
+    "Host": "pg-index",
+    "Port": 5432,
+    "Database": "orthanc",
+    "Username": "orthanc",
+    "EnableSsl": false,
+    "Lock": false,
+    "ApplicationName": "pmc-imaging-engine"
+  },
+
+  // ---- DICOMweb: the only way viewers reach images ----
+  "DicomWeb": {
+    "Enable": true,
+    "Root": "/dicom-web/",
+    "EnableWado": true,
+    "WadoRoot": "/wado",
+    "StudiesMetadata": "Full",
+    "SeriesMetadata": "Full",
+    "EnableMetadataCache": true
+  },
+
+  // ---- Modality worklists, kept in the index ----
+  // Orders arrive through the REST API (the BizBox connector, M3). A modality
+  // sees only the entries scheduled for its own AE title. An entry goes when
+  // its study has arrived and is stable, or after 72 h if it never happens.
+  "Worklists": {
+    "Enable": true,
+    "SaveInOrthancDatabase": true,
+    "FilterIssuerAet": true,
+    "SetStudyInstanceUidIfMissing": true,
+    "DeleteWorklistsOnStableStudy": true,
+    "HousekeepingInterval": 60,
+    "DeleteWorklistsDelay": 72
+  },
+
+  // ---- Housekeeper: clean-up after configuration changes ----
+  // Off-hours only, in PMC's local time (the container runs in Asia/Manila):
+  // weekday nights and all weekend.
+  "Housekeeper": {
+    "Enable": true,
+    "GlobalPropertyId": 1025,
+    "ThrottleDelay": 5,
+    "Schedule": {
+      "Monday": ["0-6", "20-24"],
+      "Tuesday": ["0-6", "20-24"],
+      "Wednesday": ["0-6", "20-24"],
+      "Thursday": ["0-6", "20-24"],
+      "Friday": ["0-6", "20-24"],
+      "Saturday": ["0-24"],
+      "Sunday": ["0-24"]
+    }
+  }
+}

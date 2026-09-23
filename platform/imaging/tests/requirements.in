@@ -1,0 +1,10 @@
+# The test runner's direct dependencies. requirements.txt is generated from
+# this file with hashes (see README.md) and is what the image installs.
+pydicom==3.0.2
+pynetdicom==3.0.4
+numpy==2.5.3
+pylibjpeg==2.1.0
+pylibjpeg-libjpeg==2.4.0
+pillow==12.3.0
+requests==2.34.2
+pytest==9.1.1

@@ -1,4 +1,5 @@
 {
+  "//superseded": "SUPERSEDED 23 Sep 2026 by platform/imaging/orthanc/orthanc.json, which is built and tested. Kept for the dated handoffs; do not deploy or extend.",
   "//": "Config as versioned code (Path A, roadmap wk 2-5). NOT DEPLOYED. Values that differ per site come from the environment; nothing site-specific and no secret belongs in this file.",
 
   "Name": "PMC-ORTHANC",

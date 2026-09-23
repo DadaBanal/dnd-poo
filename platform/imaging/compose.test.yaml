@@ -1,0 +1,31 @@
+# Test overlay for ci/run.sh. Never used on-prem.
+#
+# Shortens the two timers the tests wait on, and adds the test runner: a
+# container on the engine network that plays the modalities and the viewer.
+# The runner image is built by ci/run.sh (it may need a build proxy that
+# compose cannot pass conditionally).
+
+services:
+  orthanc:
+    environment:
+      ORTHANC__STABLE_AGE: "5"
+      ORTHANC__WORKLISTS__HOUSEKEEPING_INTERVAL: "5"
+
+  tests:
+    image: pmc-imaging/tests:local
+    pull_policy: never
+    profiles: [test]
+    depends_on:
+      orthanc: { condition: service_healthy }
+    environment:
+      ENGINE_HOST: orthanc
+      ENGINE_AET: ${PMC_DICOM_AET:-PMC-IMAGING}
+      RESULTS_DIR: /results
+      USERS_SECRET: /run/secrets/orthanc-users.json
+      RUN_PHASE: ${RUN_PHASE:-first}
+    secrets:
+      - source: orthanc-users
+        target: orthanc-users.json
+    volumes:
+      - ./.results:/results
+    networks: [engine]
