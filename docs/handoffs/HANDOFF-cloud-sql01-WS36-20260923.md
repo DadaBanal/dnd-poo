@@ -158,3 +158,36 @@ at `bbb89ac` (a fast-forward from `ed2b7d4`) and ran
 `platform/psa-spine` on `DND-SQL01`. Result: **Ran 269 tests in 30.9 s, OK**, exit 0, with 0
 FAIL or ERROR lines (MEASURED). The nine `EmailIntakeTest` failures recorded above are fixed
 by `bbb89ac`.
+
+### Addendum 1: 2026-09-23, 02:00 UTC
+
+The operator's go-ahead, verbatim: *"yes to all as long as it doesnt affect current
+operations"*. This supersedes the 01:02 table where the two differ. Step 3 is covered by the
+01:43 follow-up above: `bbb89ac` writes each `.eml` as bytes and marks `*.eml` as `-text`
+(MEASURED, `git show bbb89ac`).
+
+| Step | State | Evidence |
+|---|---|---|
+| 2 Route to `PMC_SS` | **DONE** | Read-only SELECTs through `System.Data.SqlClient` from PowerShell; the repo's `sqlcmd` deny rule was left in place. `@@SERVERNAME` = `DND-SQL01\PMC_SS`; SQL Server 2022 Standard, 16.0.1190.2 RTM-GDR (KB5102334), no CU (MEASURED) |
+| 6 Index backup (WS23 step 1) | **DONE** | Preview, then `-Apply`, of `Backup-PmcImagingIndex.ps1` at `fe4de35`. Database `Orthanc`: 384.0 MB allocated (256 MB data, 128 MB log), files on C:, as is every SQL file on this instance (MEASURED). Target `D:\PMC\backup\orthanc-index\`: a new folder on the other volume. `D:\Backups` was not used, because the payroll watchdog and the nightly offsite copy read it and a fresh `.bak` there could mask a stale-backup alert (INFERRED). No backup or restore was running at the start (MEASURED). Manifest: `Orthanc-20260923-092127.bak`, 15,851,520 bytes, sha256 `8C89D66F38398DABE03EDEEB9954C1DFF54AAFBDAC2AB2D6C2154BA0F0452334`, "RESTORE VERIFYONLY WITH CHECKSUM passed" (MEASURED). `msdb` on this instance held 0 backup rows for `Orthanc` before and 1 after, `is_copy_only` = 1, against a control of 3,458 rows for `LiveDB_PMC` (MEASURED). So this is the first backup `msdb` records for it. That it is the first ever is INFERRED, since `msdb` history can be purged and a backup taken elsewhere would not show. The log chain is untouched: `last_log_backup_lsn` NULL before and after, log reuse wait NOTHING (MEASURED). That matches Coeo's demonstration that a `COPY_ONLY` full backup does not initialise the log chain (VERIFIED, https://blog.coeo.com/understanding-copy_only-backups) and Microsoft's statement that copy-only backups are independent of the conventional sequence (VERIFIED, https://learn.microsoft.com/sql/relational-databases/backup-restore/copy-only-backups-sql-server). Still owed, and still the operator's: schedule, retention and an offsite copy. Database and backup sit on the same host |
+| 5 Orthanc route | **ROUTE DONE; probe with the operator** | `https://imaging.pmcne.ph/system` from this host: HTTP 401 with `WWW-Authenticate: Basic realm="Orthanc Secure Area"` in 0.05 s. Control `zz-no-such-host.pmcne.ph` fails DNS. From this host `imaging.pmcne.ph` and `PMC-ORTHANC01` resolve to the same address (compared only; no address recorded) (all MEASURED). So SQL01 reaches `PMC-ORTHANC01`, and Orthanc itself answers (INFERRED). The readiness probe needs the Orthanc sign-in, so the operator runs it (command below) |
+| 4 Imaging build | **BUILD DONE; browser checks NOT RUN** | System git has `core.autocrlf=true` and the imaging branch has no `.gitattributes`. So the 46 text files among the 47 tracked portal files are CRLF in this working tree (the 47th, `favicon.png`, is binary), **including `dist/PMC_Imaging_Portal.html`**. On disk here that file is 206,877 bytes, sha256 `750339c8…`, and matches neither its `.sha256` nor `build/manifest.json`. The committed blob does (`035cbfa3…`, 203,442 bytes) (MEASURED). **Never copy `dist/` from a Windows checkout to the archive.** `build/build.mjs:41` looks for `'/*@STYLES@*/\n'`, so the build refused and wrote nothing, and the tree stayed clean (MEASURED). An LF export of `fe4de35` (`git -c core.autocrlf=false archive`) into the session scratchpad builds under Node 22.23.2 to 203,442 bytes, sha256 `035cbfa33ca9c41fd378b9c008743dc302555586274c663110b29beeb75edb9e`, equal to `build/manifest.json`, self-contained check passed (MEASURED). Playwright 1.63.0 was installed into that scratch copy only: 2 packages, 19 MB (MEASURED). Its Chromium download failed in two attempts, roughly 01:25 and 01:54 UTC: Playwright's downloader timed out against `cdn.playwright.dev` on every try (MEASURED). In between, a verifier fetched 1 MiB of the same zip in 1 to 2.6 s by following the CDN's 307 to `storage.googleapis.com`, with about 3 of 14 connections timing out (MEASURED). At 01:57 UTC neither curl nor Node could connect to `cdn.playwright.dev` at all, over IPv4 or IPv6 (MEASURED). So the path from this host to that CDN is intermittent to down (INFERRED); the cause is NOT VERIFIED. Retries stopped; nothing was worked around. By default Playwright 1.63 fetches Chrome builds only from that CDN. The override `PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST` / `PLAYWRIGHT_DOWNLOAD_HOST` replaces it and was not used (MEASURED in its bundle). `test/checks.mjs` has not run on this host. CI runs it on `ubuntu-latest` (MEASURED, `.github/workflows/imaging-portal.yml`). The near-empty browser folder each failed install left in `C:\PMC\_tools` was removed |
+
+**Proposed, not applied**
+
+- A `.gitattributes` pinning LF for `apps/imaging-portal`, so that a Windows checkout builds and
+  its `dist/` matches the manifest (INFERRED; not tried in the checkout). This is the imaging
+  counterpart of what `bbb89ac` did for the mail fixtures.
+
+**Readiness probe, for the operator** (read-only; it asks for the Orthanc sign-in):
+
+```
+cd D:\dnd-poo-imaging\apps\imaging-portal\scripts
+.\Test-PmcPortalReadiness.ps1
+```
+
+**Also noted:** as of 02:00 UTC, nine allow entries have accumulated in
+`.claude/settings.local.json` in `D:\dnd-poo` during this sitting: `git commit *`,
+`git ls-remote *`, `git diff *`, four `echo` lines, one `grep` and one `node -e` probe. They
+match commands this session ran, so the app most likely saved them when the operator approved
+those prompts (INFERRED). The file is tracked; it was left uncommitted.
