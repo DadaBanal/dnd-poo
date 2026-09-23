@@ -3764,8 +3764,9 @@ class BoardSetupTest(unittest.TestCase):
 
 class ManyBoardsTest(unittest.TestCase):
     """019 and setup.create_board / apply_cw_template — many boards, the way an
-    MSP runs ConnectWise: a Help board and a Request board to start, then one per
-    group that runs its own queue, each with its own statuses, SLA and people."""
+    MSP runs ConnectWise: a service board, a change board and a project board to
+    start, then one per group that runs its own queue, each with its own
+    statuses, SLA and people."""
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -3805,11 +3806,25 @@ class ManyBoardsTest(unittest.TestCase):
             setup.create_board(self.conn, display_name="IT Help", fulfiller_group="x",
                                creator="dada", at=self.at, board_id="IT_HELP")
 
-    def test_the_connectwise_template_makes_help_and_request_boards_and_the_catalogue(self):
+    def test_the_connectwise_template_is_itil_shaped_not_help_and_request(self):
+        """23 Sep direction: no Help/Request split. One service board takes the
+        four ITIL service-desk types; changes and projects get their own boards."""
+        from psaspine import itil
         r = setup.apply_cw_template(self.conn, actor="dada", at=self.at)
-        self.assertEqual(r["created"], ["IT_REQUEST"])
-        self.assertEqual(r["items"], 31)                 # 15 Help + 16 Request
+        self.assertEqual(r["created"], ["IT_CHANGE", "IT_PROJECTS"])
+        self.assertEqual(r["items"], 31)                 # all of Dada's items, on IT Help
         self.assertIn("BIOMEDICAL", r["waiting"])        # waits for its board
+        self.assertIsNone(self.conn.execute(
+            "SELECT 1 FROM board WHERE board_id = 'IT_REQUEST'").fetchone())
+        self.assertEqual(itil.profile_of(self.conn, "IT_HELP"), "SERVICE")
+        self.assertEqual(itil.profile_of(self.conn, "IT_CHANGE"), "CHANGE")
+        self.assertEqual(itil.profile_of(self.conn, "IT_PROJECTS"), "PROJECT")
+        # projects run no SLA clocks; the request board's numbers survive as typed targets
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM sla_target WHERE board_id"
+                                           " IN ('IT_CHANGE','IT_PROJECTS')").fetchone()[0], 0)
+        self.assertEqual(self.conn.execute(
+            "SELECT target_minutes FROM sla_target_type WHERE board_id='IT_HELP' AND"
+            " record_type='SERVICE_REQUEST' AND priority='P4' AND clock='RESPOND'").fetchone()[0], 960)
         again = setup.apply_cw_template(self.conn, actor="dada", at=self.at)
         self.assertEqual((again["created"], again["items"]), ([], 0))
         setup.create_board(self.conn, display_name="Biomedical", board_id="BIOMEDICAL",
@@ -3874,6 +3889,158 @@ class MailPickupScriptTest(unittest.TestCase):
         failed = self.text.index("if ($code -ne 0) {")
         saved = self.text.index("Set-Content -Path $DeltaFile")
         self.assertLess(failed, saved)
+
+
+class ItilRecordTypeTest(unittest.TestCase):
+    """022 and psaspine.itil: record types per ticket, the types a board takes,
+    change enablement, and incident -> problem -> change links."""
+
+    def setUp(self) -> None:
+        from psaspine import itil
+        self.itil = itil
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.at = datetime(2026, 9, 23, 9, 0)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        setup.create_board(self.conn, display_name="IT Change", board_id="IT_CHANGE",
+                           fulfiller_group="Dada", creator="lead", at=self.at, profile="CHANGE")
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _open(self, board="IT_HELP", **kw):
+        return tickets.open_ticket(self.conn, board_id=board, summary="x", impact="I3",
+                                   urgency="U3", requested_by=None, at=self.at, **kw)
+
+    def _row(self, wid):
+        return self.conn.execute("SELECT * FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()
+
+    def _status(self, board, name):
+        return setup.status_id(board, name)
+
+    def test_a_service_board_takes_the_four_service_desk_types(self):
+        self.assertEqual(self._row(self._open())["record_type"], "INCIDENT")   # board default
+        self.assertEqual(self._row(self._open(record_type="SERVICE_REQUEST"))["record_type"],
+                         "SERVICE_REQUEST")
+        with self.assertRaises(self.itil.NotAccepted):
+            self._open(record_type="CHANGE")          # changes run on the change board
+        wid = self._open(board="IT_CHANGE")
+        self.assertEqual((self._row(wid)["record_type"], self._row(wid)["change_type"]),
+                         ("CHANGE", "NORMAL"))          # the safe default needs approval
+
+    def test_either_of_dadas_phrasings_is_configuration(self):
+        self.itil.set_board_types(self.conn, "IT_HELP", list(self.itil.PROFILES["SERVICE"])
+                                  + ["CHANGE"])
+        self.assertEqual(self._row(self._open(record_type="CHANGE"))["record_type"], "CHANGE")
+
+    def test_the_path_is_derived_so_a_variation_item_cannot_slip_the_gate(self):
+        """The bypass: open_ticket wrote INCIDENT for a VARIATION item, and effort
+        was booked against it unrefused."""
+        db.seed_sample(self.conn)
+        var = self.conn.execute("SELECT catalogue_item_id, default_board_id FROM catalogue_item"
+                                " WHERE default_contract_basis = 'VARIATION' LIMIT 1").fetchone()
+        wid = tickets.open_ticket(self.conn, board_id=var["default_board_id"], summary="x",
+                                  impact="I3", urgency="U3", requested_by=None, at=self.at,
+                                  catalogue_item_id=var["catalogue_item_id"])
+        self.assertEqual(self._row(wid)["path"], "VARIATION")
+        ok, _ = board.may_book_effort(self.conn, wid)
+        self.assertFalse(ok)
+        self.assertEqual(tickets_path := self._row(self._open(record_type="SERVICE_REQUEST"))["path"],
+                         "SERVICE_REQUEST")
+        self.assertEqual(self._row(self._open())["path"], "INCIDENT")
+
+    def test_a_move_to_a_board_that_does_not_take_the_type_is_refused(self):
+        wid = self._open()
+        with self.assertRaises(board.NotOnThisBoard):
+            board.move(self.conn, wid, "IT_CHANGE", at=self.at, actor="t")
+
+    def test_a_normal_change_is_built_only_once_approved(self):
+        wid = self._open(board="IT_CHANGE", owner="alice")
+        approved = self._status("IT_CHANGE", "Approved")
+        with self.assertRaises(self.itil.ChangeNotAuthorised):
+            board.change_status(self.conn, wid, approved, at=self.at, actor="alice")
+        with self.assertRaises(PermissionError):         # the owner never authorises it
+            self.itil.decide(self.conn, wid, decision="APPROVED", authority="CAB",
+                             actor="alice", at=self.at)
+        with self.assertRaises(PermissionError):         # nor does anyone without authority
+            self.itil.decide(self.conn, wid, decision="APPROVED", authority="CAB",
+                             actor="bob", at=self.at)
+        self.itil.decide(self.conn, wid, decision="DECLINED", authority="CAB", actor="lead",
+                         at=self.at, comment="no backout plan")
+        with self.assertRaises(self.itil.ChangeNotAuthorised):
+            board.change_status(self.conn, wid, approved, at=self.at, actor="alice")
+        self.itil.decide(self.conn, wid, decision="APPROVED", authority="CAB", actor="lead",
+                         at=self.at)
+        board.change_status(self.conn, wid, approved, at=self.at, actor="alice")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM change_approval").fetchone()[0], 2)
+
+    def test_a_standard_change_needs_no_approval(self):
+        wid = self._open(board="IT_CHANGE", change_type="STANDARD")
+        board.change_status(self.conn, wid, self._status("IT_CHANGE", "Implementing"),
+                            at=self.at, actor="t")
+
+    def test_an_emergency_change_goes_ahead_but_closes_only_once_authorised(self):
+        wid = self._open(board="IT_CHANGE", change_type="EMERGENCY")
+        board.change_status(self.conn, wid, self._status("IT_CHANGE", "Implementing"),
+                            at=self.at, actor="t")
+        with self.assertRaises(self.itil.ChangeNotAuthorised):
+            board.change_status(self.conn, wid, self._status("IT_CHANGE", ">Closed"),
+                                at=self.at, actor="t")
+        self.itil.decide(self.conn, wid, decision="APPROVED", authority="ECAB", actor="lead",
+                         at=self.at)
+        board.change_status(self.conn, wid, self._status("IT_CHANGE", ">Closed"),
+                            at=self.at, actor="t")
+
+    def test_change_fields_are_validated_and_belong_to_changes(self):
+        wid = self._open(board="IT_CHANGE")
+        board.update_fields(self.conn, wid, at=self.at, actor="t", change_risk="HIGH",
+                            planned_start="2026-09-26 22:00", planned_end="2026-09-26 23:30",
+                            backout_plan="restore the VM snapshot")
+        self.assertEqual(self._row(wid)["change_risk"], "HIGH")
+        with self.assertRaises(ValueError):
+            board.update_fields(self.conn, wid, at=self.at, actor="t",
+                                planned_end="2026-09-26 21:00")
+        with self.assertRaises(ValueError):
+            board.update_fields(self.conn, self._open(), at=self.at, actor="t", change_risk="LOW")
+
+    def test_incidents_link_to_a_problem_and_a_problem_to_its_fix(self):
+        inc1, inc2 = self._open(), self._open()
+        prob = self._open(record_type="PROBLEM")
+        fix = self._open(board="IT_CHANGE")
+        self.itil.link(self.conn, inc1, prob, "CAUSED_BY", actor="t", at=self.at)
+        self.itil.link(self.conn, inc2, prob, "CAUSED_BY", actor="t", at=self.at)
+        self.itil.link(self.conn, prob, fix, "FIXED_BY", actor="t", at=self.at)
+        with self.assertRaises(ValueError):              # an incident is not a problem
+            self.itil.link(self.conn, inc1, inc2, "CAUSED_BY", actor="t", at=self.at)
+        reads = sorted(x["reads"] for x in self.itil.links_of(self.conn, prob))
+        self.assertEqual(reads, ["causes", "causes", "fixed by change"])
+        # a link changes neither ticket's status or clocks
+        self.assertIsNone(self._row(inc1)["closed_at"])
+
+    def test_a_request_runs_on_its_own_targets_where_they_exist(self):
+        self.conn.execute("INSERT INTO sla_target_type (board_id, record_type, priority, clock,"
+                          " target_minutes, calendar) VALUES ('IT_HELP','SERVICE_REQUEST','P4',"
+                          "'RESPOND',960,'MANILA_BUSINESS')")
+        req = self._open(record_type="SERVICE_REQUEST")
+        inc = self._open()
+        clocks_of = lambda w: {r["clock"]: r["target_minutes"] for r in self.conn.execute(  # noqa: E731
+            "SELECT clock, target_minutes FROM ticket_clock WHERE work_item_id = ?", (w,))}
+        self.assertEqual(clocks_of(req), {"RESPOND": 960})
+        self.assertEqual(clocks_of(inc)["RESPOND"], setup.STARTER_TARGETS["P4"][0])
+        board.update_fields(self.conn, inc, at=self.at, actor="t", record_type="SERVICE_REQUEST")
+        self.assertEqual(clocks_of(inc)["RESPOND"], 960)     # the running clock retargets
+
+    def test_the_item_sets_the_type_unless_the_same_save_says_otherwise(self):
+        db.seed_sample(self.conn)
+        req_item = self.conn.execute(
+            "SELECT i.catalogue_item_id FROM catalogue_item i JOIN service_action a"
+            " ON a.action_id = i.action_id WHERE a.kind = 'REQUEST' AND i.default_board_id ="
+            " 'IT_HELP' AND i.default_contract_basis = 'BASELINE' LIMIT 1").fetchone()[0]
+        wid = self._open()
+        board.update_fields(self.conn, wid, at=self.at, actor="t", catalogue_item_id=req_item,
+                            record_type="INCIDENT")
+        self.assertEqual(self._row(wid)["record_type"], "SERVICE_REQUEST")
 
 
 class ContactsTest(unittest.TestCase):

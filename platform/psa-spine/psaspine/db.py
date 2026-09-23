@@ -285,6 +285,16 @@ def seed_sample(conn: sqlite3.Connection) -> None:
              row["calendar"], float(row["attainment_percent"]) if row["attainment_percent"] else None,
              int(row["enforced"]), blank(row["note"])),
         )
+    for row in _sample_rows("sla_targets_by_type.csv"):
+        conn.execute(
+            "INSERT OR REPLACE INTO sla_target_type (board_id, record_type, priority, clock,"
+            " target_minutes, calendar, attainment_percent, enforced, note)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
+            (row["board_id"], row["record_type"], row["priority"], row["clock"],
+             int(row["target_minutes"]), row["calendar"],
+             float(row["attainment_percent"]) if row["attainment_percent"] else None,
+             int(row["enforced"]), blank(row["note"])),
+        )
 
 
 def init(path: str | Path) -> sqlite3.Connection:

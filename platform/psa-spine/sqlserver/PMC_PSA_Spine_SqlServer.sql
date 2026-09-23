@@ -147,6 +147,10 @@ BEGIN
     PRINT N'    psa.configuration';
     PRINT N'    psa.ticket_configuration';
     PRINT N'    psa.integration_link';
+    PRINT N'    psa.board_record_type';
+    PRINT N'    psa.sla_target_type';
+    PRINT N'    psa.change_approval';
+    PRINT N'    psa.ticket_link';
     PRINT N'    psa.ix_fee_line_effective';
     PRINT N'    psa.ix_time_entry_period';
     PRINT N'    psa.ix_workflow_run_event';
@@ -157,12 +161,13 @@ BEGIN
     PRINT N'    psa.ux_contact_ad_guid';
     PRINT N'    psa.ix_configuration_entity';
     PRINT N'    psa.ux_configuration_ad_guid';
+    PRINT N'    psa.ix_change_approval_ticket';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  58 tables, 10 indexes, 4 triggers.';
+    PRINT N'  62 tables, 11 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -1677,6 +1682,98 @@ CREATE TABLE psa.[integration_link] (
 );
 END;
 
+-- --------------------------------------------------------------------------
+-- board_record_type   (from schema/022_record_type.sql)
+-- Which record types a board takes. A board with no rows takes every type, so a
+-- board set up before this migration behaves as it did.
+IF OBJECT_ID(N'psa.[board_record_type]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[board_record_type] (
+    [board_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_board_record_type_board_id] REFERENCES psa.[board]([board_id]),
+    [record_type] NVARCHAR(32) NOT NULL CONSTRAINT [CK_board_record_type_01] CHECK (record_type IN ('INCIDENT', 'SERVICE_REQUEST', 'PROBLEM', 'EVENT', 'CHANGE', 'PROJECT')),
+    [is_default] INT NOT NULL CONSTRAINT [DF_board_record_type_is_default] DEFAULT (0) CONSTRAINT [CK_board_record_type_02] CHECK (is_default IN (0, 1)),
+    CONSTRAINT [PK_board_record_type] PRIMARY KEY ([board_id], [record_type])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- sla_target_type   (from schema/022_record_type.sql)
+-- SLA targets for one record type on a board. ITIL measures a service request
+-- by its fulfilment time, not an incident's restore time, and Dada's workbook
+-- had separate numbers for the two ("respond within 2 h" for Help, "within 1
+-- day" for Request). Merging the boards must not merge those numbers, so a
+-- ticket takes its record type's targets where they exist and the board's
+-- general ones (sla_target) where they do not.
+IF OBJECT_ID(N'psa.[sla_target_type]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[sla_target_type] (
+    [board_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_sla_target_type_board_id] REFERENCES psa.[board]([board_id]),
+    [record_type] NVARCHAR(32) NOT NULL CONSTRAINT [CK_sla_target_type_01] CHECK (record_type IN ('INCIDENT', 'SERVICE_REQUEST', 'PROBLEM', 'EVENT', 'CHANGE', 'PROJECT')),
+    [priority] NVARCHAR(32) NOT NULL CONSTRAINT [CK_sla_target_type_02] CHECK (priority IN ('P1', 'P2', 'P3', 'P4')),
+    [clock] NVARCHAR(32) NOT NULL CONSTRAINT [CK_sla_target_type_03] CHECK (clock IN ('RESPOND', 'RESOLUTION_PLAN', 'RESOLVE', 'ACKNOWLEDGE', 'DECISION')),
+    [target_minutes] INT NOT NULL CONSTRAINT [CK_sla_target_type_04] CHECK (target_minutes > 0),
+    [calendar] NVARCHAR(32) NOT NULL CONSTRAINT [CK_sla_target_type_05] CHECK (calendar IN ('CLINICAL_24x7', 'MANILA_BUSINESS')),
+    [attainment_percent] DECIMAL(5,2) NULL,
+    [enforced] INT NOT NULL CONSTRAINT [DF_sla_target_type_enforced] DEFAULT (0) CONSTRAINT [CK_sla_target_type_06] CHECK (enforced IN (0, 1)),
+    [note] NVARCHAR(MAX) NULL,
+    CONSTRAINT [PK_sla_target_type] PRIMARY KEY ([board_id], [record_type], [priority], [clock])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- change_approval   (from schema/022_record_type.sql)
+-- The authorisation record. Append-only: a decision is evidence, and a later
+-- decision is a new row, never an edit. The person who owns the change cannot
+-- authorise it (separation of duties; enforced in board.decide_change).
+IF OBJECT_ID(N'psa.[change_approval]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[change_approval] (
+    [approval_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_change_approval] PRIMARY KEY,
+    [work_item_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_change_approval_work_item_id] REFERENCES psa.[ticket]([work_item_id]),
+    [decided_by] NVARCHAR(200) NOT NULL,
+    [authority] NVARCHAR(32) NOT NULL CONSTRAINT [CK_change_approval_01] CHECK (authority IN ('CHANGE_AUTHORITY', 'CAB', 'ECAB', 'CLIENT')),
+    [decision] NVARCHAR(32) NOT NULL CONSTRAINT [CK_change_approval_02] CHECK (decision IN ('APPROVED', 'DECLINED')),
+    [decided_at] NVARCHAR(64) NOT NULL,
+    [comment] NVARCHAR(MAX) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [decided_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [decided_at], 126), CASE WHEN [decided_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [decided_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ticket_link   (from schema/022_record_type.sql)
+-- ------------------------------------------------ incident -> problem -> change
+--
+-- ITIL's chain: incidents are linked to the problem that causes them, and a
+-- problem (or anything else) to the change that fixes it. ConnectWise does this
+-- by bundling child tickets under a parent, which stops workflow and billing on
+-- the children and is a known cause of SLA reports running for years on open
+-- children (VERIFIED, visionary360.com/the-hidden-sla-killer-in-connectwise-psa-
+-- child-merged-tickets/). A link here changes neither ticket: each keeps its
+-- own clocks, status and time.
+--
+-- This is not handover. One fault worked by two teams is still ONE ticket that
+-- moves (005, board.move): two tickets each waiting on the other is what produced
+-- the twenty-five day MRI-to-PACS outage. A link joins two different pieces of
+-- work, such as twelve incidents and the one problem behind them.
+IF OBJECT_ID(N'psa.[ticket_link]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ticket_link] (
+    [work_item_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ticket_link_work_item_id] REFERENCES psa.[ticket]([work_item_id]),
+    [linked_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ticket_link_linked_id] REFERENCES psa.[ticket]([work_item_id]),
+    [relation] NVARCHAR(32) NOT NULL CONSTRAINT [CK_ticket_link_01] CHECK (relation IN ('CAUSED_BY', 'FIXED_BY', 'RELATED')),
+    [linked_at] NVARCHAR(64) NOT NULL,
+    [linked_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [linked_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [linked_at], 126), CASE WHEN [linked_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [linked_at], 112) END)),
+    CONSTRAINT [PK_ticket_link] PRIMARY KEY ([work_item_id], [linked_id])
+);
+END;
+
 -- ==========================================================================
 -- COLUMNS ADDED TO TABLES THAT ALREADY EXIST
 --
@@ -1732,6 +1829,46 @@ ALTER TABLE psa.[board] ADD [description] NVARCHAR(MAX) NULL;
 IF COL_LENGTH(N'psa.[ticket]', N'contact_id') IS NULL
 ALTER TABLE psa.[ticket] ADD [contact_id] NVARCHAR(64) NULL CONSTRAINT [FK_ticket_contact_id] REFERENCES psa.[contact]([contact_id]);
 
+IF COL_LENGTH(N'psa.[ticket]', N'record_type') IS NULL
+ALTER TABLE psa.[ticket] ADD [record_type] NVARCHAR(32) NULL CONSTRAINT [CK_ticket_record_type_01] CHECK (record_type IN ('INCIDENT', 'SERVICE_REQUEST', 'PROBLEM', 'EVENT', 'CHANGE', 'PROJECT'));
+
+-- A catalogue item can say what it is; blank means "from the action's kind"
+-- (FAULT -> INCIDENT, REQUEST -> SERVICE_REQUEST).
+IF COL_LENGTH(N'psa.[catalogue_item]', N'record_type') IS NULL
+ALTER TABLE psa.[catalogue_item] ADD [record_type] NVARCHAR(32) NULL CONSTRAINT [CK_catalogue_item_record_type_01] CHECK (record_type IN ('INCIDENT', 'SERVICE_REQUEST', 'PROBLEM', 'EVENT', 'CHANGE', 'PROJECT'));
+
+-- ------------------------------------------------------------ change enablement
+--
+-- ITIL 4 names three types of change, and ConnectWise's Service Transition page
+-- uses the same three (VERIFIED, docs.connectwise.com/ConnectWise_Business_
+-- Knowledge/110/030): STANDARD is pre-authorised and needs no approval; NORMAL
+-- is authorised by a change authority before it is built; EMERGENCY goes ahead
+-- at once and is authorised as soon as it can be, afterwards. ConnectWise's
+-- ticket has no change fields (only Ticket.approved), so these are the spine's
+-- own, named as such.
+IF COL_LENGTH(N'psa.[ticket]', N'change_type') IS NULL
+ALTER TABLE psa.[ticket] ADD [change_type] NVARCHAR(32) NULL CONSTRAINT [CK_ticket_change_type_01] CHECK (change_type IN ('STANDARD', 'NORMAL', 'EMERGENCY'));
+
+IF COL_LENGTH(N'psa.[ticket]', N'change_risk') IS NULL
+ALTER TABLE psa.[ticket] ADD [change_risk] NVARCHAR(32) NULL CONSTRAINT [CK_ticket_change_risk_01] CHECK (change_risk IN ('LOW', 'MEDIUM', 'HIGH'));
+
+IF COL_LENGTH(N'psa.[ticket]', N'planned_start') IS NULL
+ALTER TABLE psa.[ticket] ADD [planned_start] NVARCHAR(64) NULL;
+
+-- the implementation window
+IF COL_LENGTH(N'psa.[ticket]', N'planned_end') IS NULL
+ALTER TABLE psa.[ticket] ADD [planned_end] NVARCHAR(64) NULL;
+
+IF COL_LENGTH(N'psa.[ticket]', N'backout_plan') IS NULL
+ALTER TABLE psa.[ticket] ADD [backout_plan] NVARCHAR(MAX) NULL;
+
+-- how it is undone if it fails
+
+-- A status a change may enter only once it is authorised (Approved, Scheduled,
+-- Implementing). NULL or 0: no gate. The engine enforces it; see board.change_status.
+IF COL_LENGTH(N'psa.[board_status]', N'requires_approval') IS NULL
+ALTER TABLE psa.[board_status] ADD [requires_approval] INT NULL CONSTRAINT [CK_board_status_requires_approval_01] CHECK (requires_approval IN (0, 1));
+
 -- --------------------------------------------------------------------------
 -- indexes
 
@@ -1771,6 +1908,9 @@ CREATE INDEX [ix_configuration_entity] ON psa.[configuration] ([entity_id]);
 -- One configuration per AD object; manual ones have no GUID (see 020).
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_configuration_ad_guid' AND object_id = OBJECT_ID(N'psa.[configuration]'))
 CREATE UNIQUE INDEX [ux_configuration_ad_guid] ON psa.[configuration] ([ad_object_guid]) WHERE [ad_object_guid] IS NOT NULL;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_change_approval_ticket' AND object_id = OBJECT_ID(N'psa.[change_approval]'))
+CREATE INDEX [ix_change_approval_ticket] ON psa.[change_approval] ([work_item_id]);
 
 -- ==========================================================================
 -- THE GATE
@@ -1902,10 +2042,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 58 OR @Triggers <> 4 OR @Indexes < 10
+IF @Tables <> 62 OR @Triggers <> 4 OR @Indexes < 11
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 58), %d triggers (expected 4), %d indexes (expected at least 10). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 62), %d triggers (expected 4), %d indexes (expected at least 11). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -1937,6 +2077,10 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[board] DROP CONSTRAINT IF EXISTS [FK_board_calendar_id];
     ALTER TABLE psa.[time_entry] DROP CONSTRAINT IF EXISTS [FK_time_entry_loop_reply_id];
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
+    DROP TABLE IF EXISTS psa.[ticket_link];
+    DROP TABLE IF EXISTS psa.[change_approval];
+    DROP TABLE IF EXISTS psa.[sla_target_type];
+    DROP TABLE IF EXISTS psa.[board_record_type];
     DROP TABLE IF EXISTS psa.[integration_link];
     DROP TABLE IF EXISTS psa.[ticket_configuration];
     DROP TABLE IF EXISTS psa.[configuration];

@@ -1,6 +1,5 @@
 board_id,display_name,phase,fulfiller_group,owner,deputy,is_live,restricted,is_unrouted,note
 IT_HELP,IT Help,2,Dada IT + on-site Windows team,Dada Banal,Cadano,1,0,0,Incident path. Restore service. Owner and deputy are defaults; correct the row.
-IT_REQUEST,IT Service Request,2,Dada IT + on-site Windows team,Dada Banal,Gabelo,1,0,0,In-baseline fulfilment. No fee. Still scope-mapped. Owner and deputy are defaults; correct the row.
 AGREEMENT,Agreement & Variation,2,Dada IT / PMO,Dada Banal,Dela Cruz,1,1,0,Rescued from the workbook's Administration > Agreement. No resolve clock. Owner and deputy are defaults; correct the row.
 SECURITY,Security & Privacy,2,Dada IT + DPO,Dada Banal,Dela Cruz,1,1,0,Replaces the workbook's SECURITY??? family. First backlog is the 173 open findings. Substitute the DPO as deputy when one is named.
 UNROUTED,Unrouted,2,PMO coordinator,Dela Cruz,Dada Banal,1,0,1,Default queue with an ageing rule that pages IT. Dela Cruz is the triage path today [MEASURED].

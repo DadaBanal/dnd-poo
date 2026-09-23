@@ -42,7 +42,7 @@ import re
 import sqlite3
 from pathlib import Path
 
-from . import db, phi
+from . import db, itil, phi
 from .register import ENTITY_MAP
 
 # ---------------------------------------------------------------- the export
@@ -379,14 +379,12 @@ def import_tickets(conn: sqlite3.Connection, export_path: str | Path, *,
                  f"from impact {impact} and urgency {urgency} ({priority_source}). "
                  f"The computed value is used; the desk's is evidence, not input", "INFO")
 
-        if catalogue is None:
-            path_kind = "INCIDENT"
-        elif basis == "VARIATION":
-            path_kind = "VARIATION"
-        else:
-            kind = conn.execute("SELECT kind FROM service_action WHERE action_id = ?",
-                                (catalogue["action_id"],)).fetchone()
-            path_kind = "INCIDENT" if kind and kind["kind"] == "FAULT" else "SERVICE_REQUEST"
+        # The ITIL class from the item (the desk export has no column for it);
+        # the commercial path from that and the basis, as open_ticket does.
+        record_type = itil.of_item(conn, catalogue)
+        if catalogue is not None and record_type is None:
+            record_type = "SERVICE_REQUEST"          # an action of no known kind
+        path_kind = itil.derive_path(record_type, basis if catalogue is not None else None)
 
         # --------------------------------------------------------- the state
         status_raw = cell(row, "status")
@@ -438,12 +436,13 @@ def import_tickets(conn: sqlite3.Connection, export_path: str | Path, *,
             "INSERT OR REPLACE INTO ticket (work_item_id, external_ref, board_id,"
             " catalogue_item_id, path, impact, urgency, priority, priority_source,"
             " requested_by, requested_at, owner, opened_at, closed_at, state, source_ref,"
-            " intake_source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'IMPORT')",
+            " intake_source, record_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'IMPORT',?)",
             (wid, external or None, board_id,
              catalogue["catalogue_item_id"] if catalogue else None,
              path_kind, impact, urgency, priority, priority_source,
              cell(row, "requested_by") or None, opened_at,
-             cell(row, "owner") or None, opened_at, closed_at, state, source_ref),
+             cell(row, "owner") or None, opened_at, closed_at, state, source_ref,
+             record_type),
         )
 
         if scope_item_id:
@@ -498,7 +497,8 @@ def open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
                 impact: str, urgency: str, requested_by: str | None, at,
                 actor: str | None = None, description: str | None = None,
                 entity_id: str | None = None, owner: str | None = None,
-                path: str = "INCIDENT", event_kind: str = "INTAKE",
+                record_type: str | None = None, change_type: str | None = None,
+                event_kind: str = "INTAKE",
                 min_priority: str | None = None, source: str = "DESK",
                 catalogue_item_id: str | None = None) -> str:
     """Open one ticket, the same way whichever door it came in by.
@@ -510,10 +510,16 @@ def open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
     default status, a company and its SLA clocks. Four copies of this were how
     tickets came to exist with no clock at all.
 
+    The ITIL record type is the one said, else the catalogue item's, else the
+    board's default (itil.resolve), and a board that does not take it refuses.
+    The commercial path is derived from it and the basis, never passed in: a
+    caller-supplied path is how a variation item came to be opened as an
+    INCIDENT and have effort booked against it unrefused.
+
     Does not commit: the caller owns the transaction, so a PHI flag or a dedup
     row written alongside lands or rolls back with the ticket.
     """
-    from . import board, numbering
+    from . import board, itil, numbering
 
     item = None
     if catalogue_item_id:
@@ -528,6 +534,14 @@ def open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
         min_priority=min_priority or (item["min_priority"] if item else None),
         clinical_impact=item["clinical_impact"] if item else 0)
     basis = item["default_contract_basis"] if item else "UNKNOWN"
+    record_type = itil.resolve(conn, board_id, explicit=record_type, item=item)
+    path = itil.derive_path(record_type, basis)
+    if record_type == "CHANGE":
+        if change_type is not None and change_type not in itil.CHANGE_TYPES:
+            raise ValueError(f"unknown change type {change_type!r}")
+        change_type = change_type or "NORMAL"      # the safe default: it needs approval
+    else:
+        change_type = None
     ticket_id = numbering.issue(conn, at=at)
     stamp = at.isoformat(sep=" ", timespec="minutes")
     conn.execute(
@@ -543,9 +557,10 @@ def open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
     conn.execute(
         "INSERT INTO ticket (work_item_id, board_id, catalogue_item_id, path, impact, urgency,"
         " priority, priority_source, requested_by, requested_at, owner, opened_at, state,"
-        " intake_source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'NEW',?)",
+        " intake_source, record_type, change_type)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'NEW',?,?,?)",
         (ticket_id, board_id, catalogue_item_id, path, impact, urgency, priority,
-         priority_source, requested_by, stamp, owner, stamp, source))
+         priority_source, requested_by, stamp, owner, stamp, source, record_type, change_type))
     numbering.bind(conn, ticket_id)
     if description:
         conn.execute(

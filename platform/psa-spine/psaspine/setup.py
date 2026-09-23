@@ -53,6 +53,36 @@ STARTER_STATUSES = (
     (">Closed", "RESOLVED", 0, 1, 0, 0, "Closed"),
 )
 
+# A change board's lifecycle (ITIL 4 change enablement; ConnectWise's Change
+# Approvals module uses the same shape: pending approval, approved, scheduled,
+# completed, rejected). The last column is requires_approval: a NORMAL change
+# enters those statuses only once approved (itil.check_status_move).
+CHANGE_STATUSES = (
+    ("New", "NOT_RESPONDED", 1, 0, 1, 1, "Received - being assessed", 0),
+    ("Assessing", "RESPONDED", 0, 0, 1, 1, "Being assessed for risk and impact", 0),
+    ("Awaiting Approval", "NO_ESCALATION", 0, 0, 1, 1, "Waiting for approval", 0),
+    ("Approved", "RESOLUTION_PLAN", 0, 0, 1, 1, "Approved - being scheduled", 1),
+    ("Scheduled", "RESOLUTION_PLAN", 0, 0, 1, 1, "Scheduled - we will tell you the date", 1),
+    ("Implementing", "RESOLUTION_PLAN", 0, 0, 1, 1, "Being carried out", 1),
+    ("Implemented", "RESOLVED", 0, 0, 1, 1, "Done - reply if anything is wrong", 1),
+    ("Backed Out", "RESOLVED", 0, 0, 1, 1, "Undone - it did not work as planned", 0),
+    ("Declined", "RESOLVED", 0, 0, 0, 1, "Not approved", 0),
+    (">Closed", "RESOLVED", 0, 1, 0, 0, "Closed", 0),
+)
+# A project board. ConnectWise: "SLA timers do not run on project tickets"
+# (VERIFIED 23 Sep 2026, docs.connectwise.com/ConnectWise_Documentation/090/020/
+# 140/010/020), so neither profile below gets SLA targets.
+PROJECT_STATUSES = (
+    ("New", "NOT_RESPONDED", 1, 0, 1, 1, "Received", 0),
+    ("Planning", "RESPONDED", 0, 0, 1, 1, "Being planned", 0),
+    ("In Progress", "RESOLUTION_PLAN", 0, 0, 1, 1, "Under way", 0),
+    ("On Hold", "NO_ESCALATION", 0, 0, 1, 1, "On hold", 0),
+    ("Completed", "RESOLVED", 0, 0, 1, 1, "Completed", 0),
+    (">Closed", "RESOLVED", 0, 1, 0, 0, "Closed", 0),
+)
+PROFILE_STATUSES = {"SERVICE": tuple(s + (0,) for s in STARTER_STATUSES),
+                    "CHANGE": CHANGE_STATUSES, "PROJECT": PROJECT_STATUSES}
+
 # priority -> (respond, resolution plan, resolve), in minutes. Placeholders.
 STARTER_TARGETS = {
     "P1": (15, 60, 240),
@@ -78,33 +108,47 @@ def ensure_calendars(conn: sqlite3.Connection) -> None:
 
 
 def apply_starter(conn: sqlite3.Connection, board_id: str, *, actor: str,
-                  at: datetime) -> dict:
+                  at: datetime, profile: str | None = None) -> dict:
     """Give a board the statuses, calendar and SLA targets it needs to run.
+
+    `profile` is SERVICE (the default), CHANGE or PROJECT (itil.PROFILES): which
+    record types the board takes and which starter statuses it gets. Only a
+    service board gets SLA targets. Record types are written only if the board
+    has none yet.
 
     Adds only what is missing. A status an administrator renamed, a target they
     changed, a calendar they chose: all left exactly as they are.
     """
+    from . import itil
     if conn.execute("SELECT 1 FROM board WHERE board_id = ?", (board_id,)).fetchone() is None:
         raise LookupError(f"no board {board_id!r}")
+    profile = profile or itil.profile_of(conn, board_id) or "SERVICE"
+    if profile not in itil.PROFILES:
+        raise ValueError(f"unknown board profile {profile!r}")
     ensure_calendars(conn)
+    types_set = False
+    if not itil.boards_types(conn, board_id):
+        itil.set_board_types(conn, board_id, itil.PROFILES[profile])
+        types_set = True
 
     has_default = conn.execute(
         "SELECT 1 FROM board_status WHERE board_id = ? AND is_default = 1 AND inactive = 0",
         (board_id,)).fetchone() is not None
     added_statuses = 0
-    for order, (name, esc, default, closed, effort, shown, portal) in enumerate(
-            STARTER_STATUSES, start=1):
+    for order, (name, esc, default, closed, effort, shown, portal, approval) in enumerate(
+            PROFILE_STATUSES[profile], start=1):
         cur = conn.execute(
             "INSERT OR IGNORE INTO board_status (board_status_id, board_id, name,"
             " customer_description, escalation_status, is_default, is_closed,"
-            " time_entry_allowed, display_on_board, sort_order)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            " time_entry_allowed, display_on_board, sort_order, requires_approval)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (status_id(board_id, name), board_id, name, portal, esc,
-             0 if has_default else default, closed, effort, shown, order * 10))
+             0 if has_default else default, closed, effort, shown, order * 10,
+             approval or None))
         added_statuses += cur.rowcount
 
     added_targets = 0
-    for priority, minutes in STARTER_TARGETS.items():
+    for priority, minutes in (STARTER_TARGETS.items() if profile == "SERVICE" else ()):
         for clock, target in zip(CLOCKS, minutes):
             cur = conn.execute(
                 "INSERT OR IGNORE INTO sla_target (board_id, priority, clock,"
@@ -119,9 +163,10 @@ def apply_starter(conn: sqlite3.Connection, board_id: str, *, actor: str,
 
     db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor,
              action="BOARD_SETUP", subject_kind="board", subject_id=board_id,
-             detail=f"starter applied: {added_statuses} statuses, {added_targets} "
-                    f"SLA targets{', calendar ALL_HOURS' if calendar_set else ''}")
-    return {"board_id": board_id, "statuses": added_statuses,
+             detail=f"{profile.lower()} starter applied: {added_statuses} statuses, "
+                    f"{added_targets} SLA targets{', calendar ALL_HOURS' if calendar_set else ''}"
+                    f"{', record types ' + '/'.join(itil.PROFILES[profile]) if types_set else ''}")
+    return {"board_id": board_id, "statuses": added_statuses, "profile": profile,
             "targets": added_targets, "calendar_set": calendar_set}
 
 
@@ -152,7 +197,8 @@ def board_id_for(name: str) -> str:
 def create_board(conn: sqlite3.Connection, *, display_name: str, fulfiller_group: str,
                  creator: str, at: datetime, board_id: str | None = None,
                  restricted: bool = False, closed_loop_required: bool = False,
-                 description: str | None = None, copy_from: str | None = "starter") -> str:
+                 description: str | None = None, copy_from: str | None = "starter",
+                 profile: str = "SERVICE") -> str:
     """A new board, the way ConnectWise adds one to the Service Board setup table.
 
     `copy_from` is "starter" (the starter statuses, calendar and targets), the id
@@ -176,7 +222,7 @@ def create_board(conn: sqlite3.Connection, *, display_name: str, fulfiller_group
     conn.execute("INSERT INTO board_member (board_id, member, access) VALUES (?,?,'ADMIN')",
                  (bid, creator))
     if copy_from == "starter":
-        apply_starter(conn, bid, actor=creator, at=at)
+        apply_starter(conn, bid, actor=creator, at=at, profile=profile)
     elif copy_from:
         copy_setup(conn, copy_from, bid)
     db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=creator,
@@ -193,11 +239,20 @@ def copy_setup(conn: sqlite3.Connection, from_board: str, to_board: str) -> None
         conn.execute(
             "INSERT OR IGNORE INTO board_status (board_status_id, board_id, name,"
             " customer_description, escalation_status, is_default, is_closed,"
-            " time_entry_allowed, display_on_board, sort_order, inactive)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            " time_entry_allowed, display_on_board, sort_order, inactive, requires_approval)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (status_id(to_board, s["name"]), to_board, s["name"], s["customer_description"],
              s["escalation_status"], s["is_default"], s["is_closed"], s["time_entry_allowed"],
-             s["display_on_board"], s["sort_order"], s["inactive"]))
+             s["display_on_board"], s["sort_order"], s["inactive"], s["requires_approval"]))
+    conn.execute("INSERT OR IGNORE INTO board_record_type (board_id, record_type, is_default)"
+                 " SELECT ?, record_type, is_default FROM board_record_type WHERE board_id = ?",
+                 (to_board, from_board))
+    conn.execute(
+        "INSERT OR IGNORE INTO sla_target_type (board_id, record_type, priority, clock,"
+        " target_minutes, calendar, attainment_percent, enforced, note)"
+        " SELECT ?, record_type, priority, clock, target_minutes, calendar, attainment_percent,"
+        " 0, 'copied from ' || board_id FROM sla_target_type WHERE board_id = ?",
+        (to_board, from_board))
     conn.execute(
         "INSERT OR IGNORE INTO sla_target (board_id, priority, clock, target_minutes, calendar,"
         " attainment_percent, enforced, note) SELECT ?, priority, clock, target_minutes, calendar,"
@@ -216,34 +271,43 @@ def _sample(name: str) -> list[dict]:
 
 
 def apply_cw_template(conn: sqlite3.Connection, *, actor: str, at: datetime) -> dict:
-    """Dada's ConnectWise design: a Help board and a Request board, and the
-    Type / Subtype / Item catalogue from his workbook (seed/sample/, derived
-    from "CW service types and items", Sep 2025).
+    """Dada's ConnectWise design, on the ITIL model (direction of 23 Sep 2026):
 
-    - Help ("it is broken, please fix it") is IT_HELP, which already exists.
-    - Request ("a change to the agreement or the fee") is created as IT_REQUEST
-      if it is missing, with the starter statuses.
+    - **IT Help (IT_HELP) is the service board** and takes incidents, service
+      requests, problems and events: ITIL's service desk is the one front door
+      for incidents and requests, and ConnectWise's own ITIL example puts those
+      four as Types on one board (schema/022). No Help/Request split.
+    - **IT Change (IT_CHANGE)**, created if missing: changes, with the change
+      lifecycle and approval gate (setup.CHANGE_STATUSES, itil.check_status_move).
+    - **IT Projects (IT_PROJECTS)**, created if missing: projects, no SLA clocks.
     - Types, subtypes and item verbs are loaded whole. A catalogue item is loaded
       only when its default board exists; the rest are counted and wait for the
       board (Biomedical, Facilities, ...) to be created, then load on a re-run.
-      That keeps the 9 Sep direction: boards are made when someone runs them.
-    - SLA targets from the sample are added where a board has none for that
-      priority and clock. Every one is enforced = 0.
+    - SLA targets from the sample replace starter placeholders. The old Request
+      board's numbers become service-request targets on IT Help
+      (sla_targets_by_type.csv), so merging the boards did not merge the SLAs.
+      Every one is enforced = 0.
 
+    Which record types each board takes is editable afterwards on its Setup
+    page, so Dada's other phrasing (changes on every service board) is a tick.
     Re-running adds only what is missing and never overwrites.
     """
     created = []
-    if conn.execute("SELECT 1 FROM board WHERE board_id = 'IT_REQUEST'").fetchone() is None:
-        create_board(conn, board_id="IT_REQUEST", display_name="IT Service Request",
-                     fulfiller_group="Dada IT + on-site Windows team", creator=actor, at=at,
-                     description="Requests and changes: a new service, an adjustment, access, "
-                                 "a decommission. The Request board of Dada's ConnectWise design.",
-                     copy_from="starter")
-        created.append("IT_REQUEST")
+    for bid, name, profile, desc in (
+            ("IT_CHANGE", "IT Change", "CHANGE",
+             "Changes to PMC's systems: assessed, approved by a change authority, "
+             "scheduled, implemented or backed out."),
+            ("IT_PROJECTS", "IT Projects", "PROJECT",
+             "Projects: planned work with a start and an end. No SLA clocks.")):
+        if conn.execute("SELECT 1 FROM board WHERE board_id = ?", (bid,)).fetchone() is None:
+            create_board(conn, board_id=bid, display_name=name, profile=profile,
+                         fulfiller_group="Dada IT + on-site Windows team", creator=actor,
+                         at=at, description=desc, copy_from="starter")
+            created.append(bid)
     for bid in ("IT_HELP",):
         if conn.execute("SELECT 1 FROM board WHERE board_id = ?", (bid,)).fetchone() and \
                 not conn.execute("SELECT 1 FROM board_status WHERE board_id = ?", (bid,)).fetchone():
-            apply_starter(conn, bid, actor=actor, at=at)
+            apply_starter(conn, bid, actor=actor, at=at, profile="SERVICE")
 
     def blank(v):
         return v if (v or "").strip() else None
@@ -288,6 +352,18 @@ def apply_cw_template(conn: sqlite3.Connection, *, actor: str, at: datetime) -> 
             "INSERT OR IGNORE INTO sla_target (board_id, priority, clock, target_minutes, calendar,"
             " attainment_percent, enforced, note) VALUES (?,?,?,?,?,?,0,?)",
             (r["board_id"], r["priority"], r["clock"], int(r["target_minutes"]), r["calendar"],
+             float(r["attainment_percent"]) if r["attainment_percent"] else None,
+             blank(r["note"]) or "from Dada's ConnectWise workbook"))
+        targets += cur.rowcount
+    for r in _sample("sla_targets_by_type.csv"):
+        if r["board_id"] not in boards:
+            continue
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO sla_target_type (board_id, record_type, priority, clock,"
+            " target_minutes, calendar, attainment_percent, enforced, note)"
+            " VALUES (?,?,?,?,?,?,?,0,?)",
+            (r["board_id"], r["record_type"], r["priority"], r["clock"],
+             int(r["target_minutes"]), r["calendar"],
              float(r["attainment_percent"]) if r["attainment_percent"] else None,
              blank(r["note"]) or "from Dada's ConnectWise workbook"))
         targets += cur.rowcount

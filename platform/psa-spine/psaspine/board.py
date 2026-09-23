@@ -19,7 +19,7 @@ import sqlite3
 import uuid
 from datetime import datetime
 
-from . import clocks, contacts
+from . import clocks, contacts, itil
 
 # The universal lifecycle a board status maps onto. `state` is what the variation
 # gate in 005 tests, so it cannot depend on a vocabulary each board edits.
@@ -58,15 +58,14 @@ def open_clocks(conn: sqlite3.Connection, work_item_id: str, *, at: datetime,
     Targets come from `sla_target`, which still ships `enforced = 0` on every
     row. Starting a clock measures; it does not promise.
     """
-    ticket = conn.execute("SELECT board_id, priority FROM ticket WHERE work_item_id = ?",
-                          (work_item_id,)).fetchone()
+    ticket = conn.execute("SELECT board_id, priority, record_type FROM ticket"
+                          " WHERE work_item_id = ?", (work_item_id,)).fetchone()
     if ticket is None:
         raise LookupError(f"no ticket {work_item_id!r}")
 
     started: list[int] = []
-    for target in conn.execute(
-            "SELECT clock, target_minutes FROM sla_target"
-            " WHERE board_id = ? AND priority = ?", (ticket["board_id"], ticket["priority"])):
+    for target in itil.targets(conn, ticket["board_id"], ticket["record_type"],
+                               ticket["priority"]):
         cur = conn.execute(
             "INSERT OR IGNORE INTO ticket_clock (work_item_id, clock, calendar_id,"
             " target_minutes, started_at) VALUES (?,?,?,?,?)",
@@ -105,6 +104,7 @@ def change_status(conn: sqlite3.Connection, work_item_id: str, to_status_id: str
         raise NotOnThisBoard(
             f"status {to_status_id!r} is retired. Retired statuses stay for the "
             f"tickets that sat in them; nothing new enters one.")
+    itil.check_status_move(conn, ticket, new)      # a change goes only where it is authorised
 
     stamp = at.isoformat(sep=" ", timespec="minutes")
     escalation = new["escalation_status"]
@@ -373,7 +373,7 @@ def move(conn: sqlite3.Connection, work_item_id: str, to_board_id: str, *,
     running and lands it on the new board's status for the same SLA milestone.
     """
     ticket = conn.execute(
-        "SELECT t.board_id, t.owner, s.escalation_status FROM ticket t"
+        "SELECT t.board_id, t.owner, t.record_type, s.escalation_status FROM ticket t"
         "  LEFT JOIN board_status s ON s.board_status_id = t.board_status_id"
         " WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
     if ticket is None:
@@ -383,6 +383,10 @@ def move(conn: sqlite3.Connection, work_item_id: str, to_board_id: str, *,
     if conn.execute("SELECT 1 FROM board WHERE board_id = ?",
                     (to_board_id,)).fetchone() is None:
         raise LookupError(f"no board {to_board_id!r}")
+    if not itil.accepts(conn, to_board_id, ticket["record_type"]):
+        raise NotOnThisBoard(
+            f"{to_board_id} does not take a {itil.LABEL[ticket['record_type']].lower()}. "
+            "Change the ticket's record type first, or move it to a board that takes it.")
 
     stamp = at.isoformat(sep=" ", timespec="minutes")
     landed = default_status(conn, to_board_id, ticket["escalation_status"])
@@ -478,8 +482,18 @@ def update_fields(conn: sqlite3.Connection, work_item_id: str, *, at: datetime,
                   actor: str, owner: str | None = None, entity_id: str | None = None,
                   requested_by: str | None = None, impact: str | None = None,
                   urgency: str | None = None,
-                  catalogue_item_id: str | None = None) -> list[str]:
+                  catalogue_item_id: str | None = None,
+                  record_type: str | None = None, change_type: str | None = None,
+                  change_risk: str | None = None, planned_start: str | None = None,
+                  planned_end: str | None = None,
+                  backout_plan: str | None = None) -> list[str]:
     """Change the ticket's editable fields and write down every change.
+
+    The record type is checked against the board. If the item changes and the
+    same save does not change the record type, the type follows the new item.
+    The commercial path is re-derived from the type and the basis. A new item
+    can raise the basis to VARIATION, never lower it: taking a ticket off the
+    variation path is a commercial decision, not a field edit.
 
     Priority is never set here. Changing impact or urgency re-runs the matrix,
     as ConnectWise's SLA matrix does, and the running clocks take the new
@@ -490,8 +504,9 @@ def update_fields(conn: sqlite3.Connection, work_item_id: str, *, at: datetime,
     from .tickets import compute_priority
 
     row = conn.execute(
-        "SELECT t.*, w.entity_id FROM ticket t JOIN work_item w USING (work_item_id)"
-        " WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
+        "SELECT t.*, w.entity_id, w.contract_basis FROM ticket t"
+        " JOIN work_item w USING (work_item_id) WHERE t.work_item_id = ?",
+        (work_item_id,)).fetchone()
     if row is None:
         raise LookupError(f"no ticket {work_item_id!r}")
     stamp = at.isoformat(sep=" ", timespec="minutes")
@@ -537,6 +552,78 @@ def update_fields(conn: sqlite3.Connection, work_item_id: str, *, at: datetime,
                        f"{catalogue_item_id or '-'}")
         item_changed = True
 
+    # ------------------------------------------ record type and the path
+    new_rt = row["record_type"]
+    asked_rt = (record_type or None) if record_type is not None else row["record_type"]
+    if asked_rt != row["record_type"]:
+        new_rt = asked_rt
+    elif item_changed and catalogue_item_id:
+        from_item = itil.of_item(conn, conn.execute(
+            "SELECT * FROM catalogue_item WHERE catalogue_item_id = ?",
+            (catalogue_item_id,)).fetchone())
+        if from_item and itil.accepts(conn, row["board_id"], from_item):
+            new_rt = from_item
+    rt_changed = new_rt != row["record_type"]
+    if rt_changed:
+        if new_rt is not None and new_rt not in itil.RECORD_TYPES:
+            raise itil.NotAccepted(f"unknown record type {new_rt!r}")
+        if not itil.accepts(conn, row["board_id"], new_rt):
+            raise itil.NotAccepted(f"this board does not take a "
+                                   f"{itil.LABEL[new_rt].lower()}")
+        conn.execute("UPDATE ticket SET record_type = ? WHERE work_item_id = ?",
+                     (new_rt, work_item_id))
+        changed.append(f"record type {itil.LABEL.get(row['record_type'], '-')} -> "
+                       f"{itil.LABEL.get(new_rt, '-')}")
+
+    basis = row["contract_basis"]
+    if item_changed and catalogue_item_id:
+        item_basis = conn.execute("SELECT default_contract_basis FROM catalogue_item"
+                                  " WHERE catalogue_item_id = ?",
+                                  (catalogue_item_id,)).fetchone()[0]
+        if basis != "VARIATION" and item_basis != basis and (
+                item_basis == "VARIATION" or basis == "UNKNOWN"):
+            conn.execute("UPDATE work_item SET contract_basis = ?, contract_basis_raw = ?"
+                         " WHERE work_item_id = ?",
+                         (item_basis, f"from catalogue item {catalogue_item_id}", work_item_id))
+            changed.append(f"contract basis {basis} -> {item_basis}")
+            basis = item_basis
+    path = itil.derive_path(new_rt, basis)
+    if path != row["path"]:
+        conn.execute("UPDATE ticket SET path = ? WHERE work_item_id = ?", (path, work_item_id))
+        changed.append(f"commercial path {row['path']} -> {path}")
+
+    # ------------------------------------------------------ change fields
+    change = {"change_type": change_type, "change_risk": change_risk,
+              "planned_start": planned_start, "planned_end": planned_end,
+              "backout_plan": backout_plan}
+    given = {k: norm(v) for k, v in change.items() if v is not None}
+    if new_rt == "CHANGE":
+        if rt_changed and not row["change_type"] and not given.get("change_type"):
+            given["change_type"] = "NORMAL"          # the safe default: it needs approval
+        if given.get("change_type") and given["change_type"] not in itil.CHANGE_TYPES:
+            raise ValueError(f"unknown change type {given['change_type']!r}")
+        if given.get("change_risk") and given["change_risk"] not in itil.RISKS:
+            raise ValueError(f"unknown risk {given['change_risk']!r}")
+        window = {}
+        for k in ("planned_start", "planned_end"):
+            v = given.get(k, row[k]) if k in given else row[k]
+            if v:
+                try:
+                    window[k] = clocks.parse_instant(v)
+                except ValueError:
+                    raise ValueError(f"{k.replace('_', ' ')} is not a date and time: {v!r}")
+        if len(window) == 2 and window["planned_end"] < window["planned_start"]:
+            raise ValueError("the implementation window ends before it starts")
+        for k, v in given.items():
+            if v != row[k]:
+                conn.execute(f"UPDATE ticket SET {k} = ? WHERE work_item_id = ?",
+                             (v, work_item_id))
+                shown = "(set)" if k == "backout_plan" and v else (v or "-")
+                changed.append(f"{k.replace('_', ' ')} {'-' if k == 'backout_plan' else (row[k] or '-')}"
+                               f" -> {shown}")
+    elif any(given.values()):
+        raise ValueError("change fields belong to a change; set the record type to Change first")
+
     new_i = impact or row["impact"]
     new_u = urgency or row["urgency"]
     axes_changed = (new_i, new_u) != (row["impact"], row["urgency"])
@@ -556,13 +643,15 @@ def update_fields(conn: sqlite3.Connection, work_item_id: str, *, at: datetime,
             conn.execute("UPDATE ticket SET priority = ?, priority_source = ?"
                          " WHERE work_item_id = ?", (priority, source, work_item_id))
             changed.append(f"priority {row['priority']} -> {priority} ({source})")
-            for target in conn.execute(
-                    "SELECT clock, target_minutes FROM sla_target"
-                    " WHERE board_id = ? AND priority = ?", (row["board_id"], priority)):
-                conn.execute(
-                    "UPDATE ticket_clock SET target_minutes = ? WHERE work_item_id = ?"
-                    " AND clock = ? AND stopped_at IS NULL",
-                    (target["target_minutes"], work_item_id, target["clock"]))
+    now_priority = conn.execute("SELECT priority FROM ticket WHERE work_item_id = ?",
+                                (work_item_id,)).fetchone()["priority"]
+    if now_priority != row["priority"] or rt_changed:
+        # The running clocks take the targets for the ticket's priority and type now.
+        for target in itil.targets(conn, row["board_id"], new_rt, now_priority):
+            conn.execute(
+                "UPDATE ticket_clock SET target_minutes = ? WHERE work_item_id = ?"
+                " AND clock = ? AND stopped_at IS NULL",
+                (target["target_minutes"], work_item_id, target["clock"]))
 
     if changed:
         _event(conn, work_item_id, stamp, "UPDATED", actor, "; ".join(changed))

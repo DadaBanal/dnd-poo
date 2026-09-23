@@ -1,0 +1,6 @@
+board_id,record_type,priority,clock,target_minutes,calendar,attainment_percent,enforced,note
+IT_HELP,SERVICE_REQUEST,P2,RESPOND,240,MANILA_BUSINESS,90,0,Request board of Dada's ConnectWise workbook (respond within 1 day)
+IT_HELP,SERVICE_REQUEST,P3,RESPOND,480,MANILA_BUSINESS,90,0,Request board of Dada's ConnectWise workbook (respond within 1 day)
+IT_HELP,SERVICE_REQUEST,P3,RESOLVE,2880,MANILA_BUSINESS,80,0,Request board of Dada's ConnectWise workbook (respond within 1 day)
+IT_HELP,SERVICE_REQUEST,P4,RESPOND,960,MANILA_BUSINESS,90,0,Request board of Dada's ConnectWise workbook (respond within 1 day)
+IT_HELP,SERVICE_REQUEST,P4,RESOLVE,4800,MANILA_BUSINESS,80,0,Request board of Dada's ConnectWise workbook (respond within 1 day)
