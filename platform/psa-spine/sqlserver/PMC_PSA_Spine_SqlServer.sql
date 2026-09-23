@@ -1937,6 +1937,9 @@ ALTER TABLE psa.[workflow_event] ADD [tested_at] NVARCHAR(64) NULL;
 IF COL_LENGTH(N'psa.[workflow_event]', N'tested_matches') IS NULL
 ALTER TABLE psa.[workflow_event] ADD [tested_matches] INT NULL;
 
+IF COL_LENGTH(N'psa.[ticket_event]', N'is_resolution') IS NULL
+ALTER TABLE psa.[ticket_event] ADD [is_resolution] INT NULL CONSTRAINT [CK_ticket_event_is_resolution_01] CHECK (is_resolution IN (0, 1));
+
 -- --------------------------------------------------------------------------
 -- indexes
 

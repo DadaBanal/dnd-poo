@@ -2301,6 +2301,29 @@ class WebWSGITest(unittest.TestCase):
         self.assertIn("Replaced the cable.", body)
         self.assertNotIn("Vendor contract lapsed", body)
 
+    def test_a_note_can_also_be_the_resolution_and_internal_stays_internal(self):
+        """ConnectWise lets one note carry more than one flag (025)."""
+        conn = self._db()
+        conn.execute("UPDATE ticket SET requested_by = 'nurse@pmcne.ph' WHERE work_item_id='ITO-1'")
+        board.add_note(conn, "ITO-1", body="Swapped the toner; printing again.",
+                       flag="DISCUSSION", resolution=True, actor="alice",
+                       at=datetime(2026, 9, 17, 9, 0))
+        board.add_note(conn, "ITO-1", body="Root cause: counterfeit toner batch.",
+                       flag="INTERNAL", resolution=True, actor="alice",
+                       at=datetime(2026, 9, 17, 9, 5))
+        conn.commit()
+        conn.close()
+        _, _, mine = self._call("GET", "/my/ITO-1", cookie=self._cookie_for(
+            "nurse", email="nurse@pmcne.ph"))
+        self.assertIn("Swapped the toner", mine)
+        self.assertIn("IT — resolution", mine)
+        self.assertNotIn("counterfeit", mine)             # an internal resolution stays internal
+        _, _, desk = self._call("GET", "/ticket/ITO-1", cookie=self._cookie_for("alice"),
+                                query="tab=RESOLUTION")
+        self.assertIn("Swapped the toner", desk)
+        self.assertIn("counterfeit", desk)
+        self.assertIn("Resolution 2", desk)
+
     def test_changing_the_two_answers_recomputes_priority_never_typed(self):
         status, _, _ = self._call("POST", "/ticket/ITO-1/update", cookie=self._cookie_for("alice"),
                                   form={"board_id": "IT_HELP", "impact": "I3", "urgency": "U3",

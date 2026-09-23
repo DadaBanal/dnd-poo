@@ -221,14 +221,18 @@ def detail(ctx, work_item_id):
 
     # --------------------------------------------------------- the notes
     events = ctx.conn.execute(
-        "SELECT occurred_at, kind, actor, detail, note_flag FROM ticket_event"
+        "SELECT occurred_at, kind, actor, detail, note_flag, is_resolution FROM ticket_event"
         " WHERE work_item_id = ? ORDER BY ticket_event_id", (work_item_id,)).fetchall()
+
+    def is_res(e):
+        return e["note_flag"] == "RESOLUTION" or bool(e["is_resolution"])
     time_rows = ctx.conn.execute(
         "SELECT worked_on, band_hours, performed_by, charge_method, note FROM time_entry"
         " WHERE work_item_id = ? ORDER BY time_entry_id", (work_item_id,)).fetchall()
     counts = {"ALL": len(events), "SYSTEM": sum(1 for e in events if not e["note_flag"])}
-    for flag in FLAG_LABEL:
+    for flag in ("DISCUSSION", "INTERNAL"):
         counts[flag] = sum(1 for e in events if e["note_flag"] == flag)
+    counts["RESOLUTION"] = sum(1 for e in events if is_res(e))
     tabs = "".join(
         f"<a class='{'on' if tab == key else ''}' href='/ticket/{wid}?tab={key}'>"
         f"{label} {counts[key]}</a>"
@@ -237,12 +241,18 @@ def detail(ctx, work_item_id):
     items = []
     for e in events:
         flag = e["note_flag"]
-        if tab == "SYSTEM" and flag or tab in FLAG_LABEL and flag != tab:
+        if tab == "SYSTEM" and flag:
+            continue
+        if tab == "RESOLUTION" and not is_res(e):
+            continue
+        if tab in ("DISCUSSION", "INTERNAL") and flag != tab:
             continue
         if flag:
+            extra = ("<span class='flag RESOLUTION'>Resolution</span>"
+                     if e["is_resolution"] and flag != "RESOLUTION" else "")
             items.append(
                 f"<div class='note {flag}'><div class=h><span class=av>{t.esc(_initials(e['actor']))}</span>"
-                f"<b>{t.esc(e['actor'] or '—')}</b><span class='flag {flag}'>{FLAG_LABEL[flag]}</span>"
+                f"<b>{t.esc(e['actor'] or '—')}</b><span class='flag {flag}'>{FLAG_LABEL[flag]}</span>{extra}"
                 f"{t.esc(e['occurred_at'])} · {t.esc(e['kind'].replace('_', ' ').lower())}</div>"
                 f"<div style='white-space:pre-wrap'>{t.esc(e['detail'])}</div></div>")
         else:
@@ -275,13 +285,15 @@ def detail(ctx, work_item_id):
             "<div style='flex:0 0 auto'><label>Who can read it</label><div class=seg>"
             "<label><input type=radio name=flag value=DISCUSSION checked><span>Discussion</span></label>"
             "<label class=int><input type=radio name=flag value=INTERNAL><span>Internal</span></label>"
-            "<label class=res><input type=radio name=flag value=RESOLUTION><span>Resolution</span></label>"
-            "</div></div>" + time_block +
+            "</div><label style='display:block;margin-top:6px;color:var(--ink);font-weight:500'>"
+            "<input type=checkbox name=resolution value=1 style='width:auto'> Also the resolution"
+            "</label></div>" + time_block +
             "<div><label>And set status</label><select name=to_status>"
             + _options([("", "(no change)")] + status_pairs, "") +
             "</select></div><div style='flex:0 0 auto'><button type=submit>Save note</button></div>"
-            "</div><p class=why style='margin:8px 0 0'>Discussion and Resolution notes are shown "
-            "to the requester on their portal. Internal notes never leave the desk.</p></form></div>")
+            "</div><p class=why style='margin:8px 0 0'>Discussion notes, and the resolution when it "
+            "is a Discussion note, are shown to the requester on their portal. Internal notes never "
+            "leave the desk, even when they are the resolution.</p></form></div>")
 
     left = (f"<div><div class=card><div class=tabs>{tabs}</div>{stream}</div>{composer}</div>")
 
@@ -388,7 +400,8 @@ def add_note(ctx, work_item_id):
                         actor=ctx.user.id, at=ctx.now,
                         band_hours=float(hours) if hours else None,
                         charge_method=f.get("charge") or None,
-                        to_status_id=f.get("to_status") or None)
+                        to_status_id=f.get("to_status") or None,
+                        resolution=f.get("resolution") == "1")
         ctx.conn.commit()
     except (ValueError, LookupError, engine.EffortRefused, engine.NotOnThisBoard) as exc:
         ctx.conn.rollback()

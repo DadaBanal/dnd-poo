@@ -165,7 +165,7 @@ def detail(ctx, work_item_id):
         raise HttpError("404 Not Found", "No such request.")
 
     events = ctx.conn.execute(
-        "SELECT occurred_at, kind, detail, note_flag FROM ticket_event"
+        "SELECT occurred_at, kind, detail, note_flag, is_resolution FROM ticket_event"
         "  WHERE work_item_id = ?"
         # What the requester may read: their own words, and the desk's notes
         # flagged Discussion or Resolution. Never an Internal note, never a
@@ -177,7 +177,8 @@ def detail(ctx, work_item_id):
     def who(e):
         if e["kind"] in ("INTAKE", "INTAKE_REPLY", "PORTAL_REPLY"):
             return "You"
-        return "IT — resolution" if e["note_flag"] == "RESOLUTION" else "IT"
+        return ("IT — resolution" if e["note_flag"] == "RESOLUTION" or e["is_resolution"]
+                else "IT")
     stream = "".join(
         f"<li><div style='white-space:pre-wrap'>{t.esc(e['detail'])}</div>"
         f"<div class='meta'>{who(e)} &middot; {t.esc(e['occurred_at'])}</div></li>"

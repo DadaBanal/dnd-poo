@@ -457,7 +457,8 @@ def _event(conn, work_item_id, stamp, kind, actor, detail, flag=None):
 
 def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: str,
              actor: str, at: datetime, band_hours: float | None = None,
-             charge_method: str | None = None, to_status_id: str | None = None) -> dict:
+             charge_method: str | None = None, to_status_id: str | None = None,
+             resolution: bool = False) -> dict:
     """One note, the way ConnectWise takes one: flagged, optionally with time
     against it, optionally moving the status in the same action.
 
@@ -489,6 +490,11 @@ def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: st
 
     stamp = at.isoformat(sep=" ", timespec="minutes")
     _event(conn, work_item_id, stamp, "NOTE", actor, body, flag)
+    if resolution and flag != "RESOLUTION":
+        # ConnectWise's second flag on one note (025): who reads it is still
+        # the note's own flag; an Internal resolution stays internal.
+        conn.execute("UPDATE ticket_event SET is_resolution = 1 WHERE ticket_event_id ="
+                     " last_insert_rowid()")
     # A fulfiller has written: the requester's reply has been seen.
     conn.execute("UPDATE ticket SET customer_updated = 0 WHERE work_item_id = ?",
                  (work_item_id,))
