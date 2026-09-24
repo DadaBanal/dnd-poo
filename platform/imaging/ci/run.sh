@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Start the platform, test it, restart it from its volumes alone, test again.
-# The same script runs in the cloud build and in GitHub Actions.
+# Start the platform, test it, restart it from its volumes alone, test again;
+# back it up, lose the primary and the R740xd, rebuild from the off-site copy
+# alone, test again. The same script runs in the cloud build and in GitHub
+# Actions.
 #
 #   ci/run.sh          run everything, then remove the test stack and its volumes
 #   KEEP=1 ci/run.sh   leave the test stack running afterwards, to look around
@@ -16,7 +18,9 @@ cd "$here"
 export PMC_SECRETS="$here/.test-secrets"
 export PMC_HOSTNAME="imaging.pmcne.test"   # RFC 2606 .test: never a real site
 
-compose=(docker compose -p pmc-imaging-test -f compose.yaml -f compose.test.yaml)
+project=pmc-imaging-test
+compose=(docker compose -p "$project" -f compose.yaml -f compose.r740xd.yaml -f compose.test.yaml)
+export PMC_COMPOSE="${compose[*]}" PMC_PROJECT="$project"
 as_me=(--user "$(id -u):$(id -g)")
 
 step() { printf '\n== %s\n' "$*"; }
@@ -39,8 +43,10 @@ step "throwaway secrets, a stand-in Entra ID and a test certificate for $PMC_HOS
 rm -rf "$PMC_SECRETS"
 tools/make-secrets.sh --test
 tools/make-test-tls.sh
+PMC_KOPIA_SERVER_FINGERPRINT="$(cat "$PMC_SECRETS/tls/kopia-server.fp")"
+export PMC_KOPIA_SERVER_FINGERPRINT
 
-step "images: the front door app, and the two test runners"
+step "images: PostgreSQL with pgBackRest, the front door app, and the two test runners"
 build=(docker build)
 if [[ -n "${HTTPS_PROXY:-}" ]]; then
   # A build host behind a proxy (the cloud build): let the build reach it,
@@ -49,6 +55,7 @@ if [[ -n "${HTTPS_PROXY:-}" ]]; then
   ca="${PIP_CERT:-${SSL_CERT_FILE:-}}"
   if [[ -n "$ca" && -s "$ca" ]]; then build+=(--secret "id=build-ca,src=$ca"); fi
 fi
+"${build[@]}" --build-arg "PMC_LIBRARY=${PMC_LIBRARY:-docker.io/library}" -t pmc-imaging/postgres:local backup/postgres
 "${build[@]}" --build-arg "PMC_LIBRARY=${PMC_LIBRARY:-docker.io/library}" -t pmc-imaging/app:local app
 "${build[@]}" -t pmc-imaging/tests:local tests
 "${build[@]}" -t pmc-imaging/browser:local browser
@@ -102,7 +109,21 @@ step "after the restart"
 RUN_PHASE=after_restart "${compose[@]}" --profile test run --rm "${as_me[@]}" tests -m after_restart
 RUN_PHASE=after_restart "${compose[@]}" --profile test run --rm "${as_me[@]}" browser -g "cathlab run opens playing"
 
+step "the nightly backup: both databases, then the engine's files, to the R740xd and off-site"
+tools/backup.sh full --prove-append-only
+# ICT makes the off-site container once, with its immutability policy, before
+# the first copy; here the test makes it in the stand-in.
+"${compose[@]}" exec -T azurite node /pmc/azure-standin-container.mjs
+tools/offsite.sh
+
+step "disaster: the primary and the R740xd are lost; rebuild from the off-site copy alone"
+ci/restore-drill.sh
+
+step "after the disaster: everything is back"
+RUN_PHASE=after_disaster "${compose[@]}" --profile test run --rm "${as_me[@]}" tests -m after_restart
+RUN_PHASE=after_disaster "${compose[@]}" --profile test run --rm "${as_me[@]}" browser -g "cathlab run opens playing"
+
 step "measured on synthetic data, on this host"
-cat .results/measurements-first.json .results/measurements-browser-first.json .results/measurements-access.json
+cat .results/measurements-first.json .results/measurements-browser-first.json .results/measurements-access.json .results/measurements-drill.json
 echo
 step "PASS"

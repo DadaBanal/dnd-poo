@@ -36,8 +36,18 @@ x-logging: &logging
 
 services:
   pg-index:
-    image: ${PMC_LIBRARY:-docker.io/library}/postgres:18.6-trixie@sha256:86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae
+    # PostgreSQL 18.6 (the official image, by digest) with pgBackRest 2.59.1,
+    # built from backup/postgres. Every write-ahead log segment is archived
+    # to the pgbackrest-repo volume as it completes (backup/pg-start.sh).
+    image: pmc-imaging/postgres:local
+    pull_policy: never
+    build:
+      context: ./backup/postgres
+      args: { PMC_LIBRARY: "${PMC_LIBRARY:-docker.io/library}" }
+    entrypoint: [/pmc/backup/pg-start.sh]
+    command: [postgres, -c, wal_level=replica, -c, archive_mode=on, -c, "archive_command=pgbackrest --stanza=index archive-push %p", -c, archive_timeout=60]
     environment:
+      PMC_BACKUP_STANZA: index
       POSTGRES_DB: orthanc
       POSTGRES_USER: orthanc
       POSTGRES_PASSWORD_FILE: /run/secrets/pg-index-password
@@ -51,6 +61,9 @@ services:
       # PostgreSQL 18 images keep PGDATA under /var/lib/postgresql/18/docker;
       # the volume is mounted one level up, as the image documents.
       - pg-index-data:/var/lib/postgresql
+      - pgbackrest-repo:/var/lib/pgbackrest
+      - ./backup:/pmc/backup:ro
+      - ./backup/initdb-stanza.sh:/docker-entrypoint-initdb.d/90-backup-stanza.sh:ro
     shm_size: 256mb
     healthcheck:
       test: [CMD-SHELL, pg_isready -U orthanc -d orthanc]
@@ -218,13 +231,65 @@ services:
     logging: *logging
     networks: [engine, edge]
 
+  # ---- backups (M3) -------------------------------------------------------------
+  files-backup:
+    # The nightly snapshot to the R740xd's Kopia server (tools/backup.sh),
+    # after the databases' own backup: the engine's files and the pgBackRest
+    # repository, read-only. The server accepts new snapshots from this host
+    # and refuses to delete any.
+    image: kopia/kopia:0.23.1@sha256:89fd95ee2942880ca00eae964266958a394421ddbdf69bca62e38afc55f5900e
+    profiles: [backup]
+    entrypoint: [/bin/sh, /pmc/kopia/snapshot.sh]
+    environment:
+      # Site values: where the R740xd's Kopia server answers, and the SHA-256
+      # fingerprint of its certificate (M4 sets both at install).
+      PMC_KOPIA_SERVER_URL: ${PMC_KOPIA_SERVER_URL:-}
+      PMC_KOPIA_SERVER_FINGERPRINT: ${PMC_KOPIA_SERVER_FINGERPRINT:-}
+    secrets: [kopia-client-password]
+    volumes:
+      - orthanc-storage:/sources/engine-files:ro
+      - pgbackrest-repo:/sources/database-backups:ro
+      - ./backup/kopia:/pmc/kopia:ro
+    restart: "no"
+    logging: *logging
+    networks: [backup]
+
+  files-restore:
+    # Disaster recovery: the engine's files and the database backups from the
+    # off-site copy, read-only there, into empty volumes (see the README's
+    # Backups). Needs the escrowed repository password and storage key.
+    image: kopia/kopia:0.23.1@sha256:89fd95ee2942880ca00eae964266958a394421ddbdf69bca62e38afc55f5900e
+    profiles: [restore]
+    entrypoint: [/bin/sh, /pmc/kopia/restore.sh]
+    environment:
+      PMC_BACKUP_AZURE_ACCOUNT: ${PMC_BACKUP_AZURE_ACCOUNT:-}
+      PMC_BACKUP_AZURE_KOPIA_CONTAINER: ${PMC_BACKUP_AZURE_KOPIA_CONTAINER:-kopia}
+    secrets: [kopia-repo-password, backup-azure-key]
+    volumes:
+      - orthanc-storage:/restore/engine-files
+      - pgbackrest-repo:/restore/database-backups
+      - ./backup/kopia:/pmc/kopia:ro
+    restart: "no"
+    logging: *logging
+    networks: [backup]
+
   # ---- sign-in (M2.2) ---------------------------------------------------------
 
   pg-platform:
     # The platform's own database cluster, apart from the engine's index:
     # Keycloak's database, and PMC's platform database (db/migrations).
-    image: ${PMC_LIBRARY:-docker.io/library}/postgres:18.6-trixie@sha256:86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae
+    # PostgreSQL 18.6 (the official image, by digest) with pgBackRest 2.59.1,
+    # built from backup/postgres. Every write-ahead log segment is archived
+    # to the pgbackrest-repo volume as it completes (backup/pg-start.sh).
+    image: pmc-imaging/postgres:local
+    pull_policy: never
+    build:
+      context: ./backup/postgres
+      args: { PMC_LIBRARY: "${PMC_LIBRARY:-docker.io/library}" }
+    entrypoint: [/pmc/backup/pg-start.sh]
+    command: [postgres, -c, wal_level=replica, -c, archive_mode=on, -c, "archive_command=pgbackrest --stanza=platform archive-push %p", -c, archive_timeout=60]
     environment:
+      PMC_BACKUP_STANZA: platform
       POSTGRES_DB: pmc
       POSTGRES_USER: pmc
       POSTGRES_PASSWORD_FILE: /run/secrets/pg-platform-password
@@ -233,7 +298,10 @@ services:
     secrets: [pg-platform-password, keycloak-db-password, platform-owner-password, platform-app-password]
     volumes:
       - pg-platform-data:/var/lib/postgresql
+      - pgbackrest-repo:/var/lib/pgbackrest
+      - ./backup:/pmc/backup:ro
       - ./identity/pg-platform-init.sh:/docker-entrypoint-initdb.d/10-databases.sh:ro
+      - ./backup/initdb-stanza.sh:/docker-entrypoint-initdb.d/90-backup-stanza.sh:ro
     shm_size: 256mb
     healthcheck:
       test: [CMD-SHELL, pg_isready -U pmc -d pmc]
@@ -428,13 +496,30 @@ networks:
   sessions:
     # oauth2-proxy and its session store, and nothing else.
     internal: true
+  backup:
+    # From the primary's backup jobs to the R740xd, and from there to Azure.
+    # The databases and the engine are not on it.
+    {}
 
 volumes:
   pg-index-data: {}
   orthanc-storage: {}
   pg-platform-data: {}
+  # Both clusters' pgBackRest repository: backups and archived write-ahead
+  # log. Snapshotted nightly to the R740xd (files-backup).
+  pgbackrest-repo: {}
 
 secrets:
+  kopia-client-password:
+    file: ${PMC_SECRETS:-./secrets}/kopia-client-password
+  kopia-repo-password:
+    # Encrypts the Kopia repository. Escrowed off both hosts: without it no
+    # backup can be read.
+    file: ${PMC_SECRETS:-./secrets}/kopia-repo-password
+  backup-azure-key:
+    # The off-site storage account's key; empty until ICT places it (cloud
+    # copies wait on the DPO's answer).
+    file: ${PMC_SECRETS:-./secrets}/backup-azure-key
   platform-owner-password:
     file: ${PMC_SECRETS:-./secrets}/platform-owner-password
   platform-app-password:

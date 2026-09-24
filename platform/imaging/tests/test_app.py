@@ -169,7 +169,7 @@ def test_only_readers_claim_only_what_they_can_see_and_only_from_this_site(radio
     assert radiologist.post(claim_url("not-a-uid"), headers=ORIGIN, timeout=30).status_code == 400
 
 
-def test_ict_reads_who_opened_and_claimed_a_study(radiologist, sent):
+def test_ict_reads_who_opened_and_claimed_a_study(radiologist, sent, ledger):
     uid = sent["dx"].study_uid
     assert radiologist.post(f"{BASE}/pmc/api/studies/{uid}/opened", headers=ORIGIN, timeout=30).status_code == 204
     assert radiologist.post(claim_url(uid), headers=ORIGIN, timeout=30).status_code == 200
@@ -179,3 +179,5 @@ def test_ict_reads_who_opened_and_claimed_a_study(radiologist, sent):
     # Newest first.
     assert [(e["actor"], e["action"]) for e in trail] == [
         ("rad.test@pmc.test", "release"), ("rad.test@pmc.test", "claim"), ("rad.test@pmc.test", "open")]
+    # The restart and the disaster drill look for this same trail again.
+    ledger["audit"] = {"study": uid, "trail": [[e["actor"], e["action"]] for e in trail]}

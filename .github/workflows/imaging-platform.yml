@@ -2,8 +2,10 @@ name: imaging-platform
 
 # The Path A platform (platform/imaging), started from empty volumes, tested
 # as a modality, a viewer and a person with a browser would use it, restarted
-# from its volumes alone, and tested again. Synthetic DICOM only. Nothing here
-# reaches PMC.
+# from its volumes alone, and tested again. Then backed up (to a stand-in
+# R740xd, and from it to a stand-in Azure), deleted, rebuilt from the off-site
+# copy alone, and tested once more. Synthetic DICOM only. Nothing here reaches
+# PMC.
 #
 # Same trigger pattern as imaging-portal: push covers main, pull_request covers
 # everything else, so each commit is tested once.
@@ -26,5 +28,5 @@ jobs:
       - uses: actions/checkout@v7
 
       # Secrets are generated inside the run and destroyed with its volumes.
-      - name: Engine, front door and viewer, tested fresh and after a restart
+      - name: The platform, tested fresh, after a restart, and after a disaster
         run: platform/imaging/ci/run.sh

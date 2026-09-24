@@ -1,8 +1,8 @@
 # platform/imaging — the Path A platform
 
 **Status, 24 Sep 2026: M1 (the engine), M2.1 (the front door and the viewer),
-M2.2 (sign-in) and the first part of M2.3 (the worklist) are built and proven
-off-prem. Nothing is deployed.** Dada's rule
+M2.2 (sign-in), the first part of M2.3 (the worklist) and M3.1 (backups and a
+disaster drill) are built and proven off-prem. Nothing is deployed.** Dada's rule
 (23 Sep): nothing goes on-prem until the whole platform is built, and the
 on-prem go is his. Deployment also stays gated on ADR-001 (still *Proposed*)
 and on the safety work in [`../README.md`](../README.md), "What it is gated
@@ -36,6 +36,11 @@ modality ─ DICOM 4242 ─────────────────▶  
 - **M2.3, the front door app, first part:** see
   [The front door app](#the-front-door-app) below. The site's address opens
   the PMC worklist at `/pmc/`, which opens the viewer.
+- **M3.1, backups:** see [Backups](#backups) below. Every database change is
+  kept as it happens; every night the images and the database backups go to
+  the R740xd, which the primary can add to but never delete from, and from
+  there off-site. A disaster drill rebuilds the platform from the off-site
+  copy alone.
 
 No port is published to the host in the build. The tests run in containers:
 one on the engine network plays the modalities, and one on the edge network is
@@ -280,6 +285,107 @@ swappable.
   the schema those migrations produce; `ci/run.sh` dumps the live database
   on every run and fails if the two differ.
 
+## Backups
+
+M3.1, built and proven off-prem. Nothing runs on site yet.
+
+```
+primary (the platform)                         R740xd (second building)                off-site
+pg-index ────┐ every log segment,
+pg-platform ─┴─ as written ─▶ pgbackrest-repo ─┐
+orthanc-storage (the images) ──────────────────┴─ nightly, add-only ─▶ kopia-server ─ nightly, new blobs only ─▶ Azure
+```
+
+- **Every change to either database is kept as it happens.** Both PostgreSQL
+  clusters hand each finished write-ahead log segment to pgBackRest, and
+  close one at least once a minute (`archive_timeout`). So a database can be
+  put back to any moment since its oldest kept full backup, not only to last
+  night. The database containers stay on the engine network, with no route
+  out: their backups leave the host inside the nightly snapshot.
+- **Every night** (`tools/backup.sh`): pgBackRest backs up both clusters
+  (full on Sundays, differential on other days, two full backups kept) and
+  checks each. Then Kopia snapshots the engine's files and pgBackRest's
+  repository to the Kopia server on the R740xd.
+- **The primary can add to the R740xd's copy, never remove from it.** It
+  connects as its own Kopia user, allowed to add snapshots and nothing else.
+  Expiry and maintenance run on the R740xd, as the repository's owner. So
+  ransomware on the primary, or a mistake there, cannot delete what the
+  R740xd already holds. `tools/backup.sh full --prove-append-only` tries to
+  delete a snapshot and fails if it can; `ci/run.sh` runs it that way.
+- **Then off-site** (`tools/offsite.sh`, on the R740xd): `kopia repository
+  sync-to azure` copies new blobs to an Azure Blob Storage container and never
+  deletes one. Only the R740xd holds the storage key. Kopia encrypts every
+  blob before it leaves (AES256-GCM-HMAC-SHA256, MEASURED from the
+  repository's status), with a key made from the repository password.
+- **Off-site stays off until it is decided.** On site,
+  `tools/make-secrets.sh` leaves the storage key empty, and `tools/offsite.sh`
+  then does nothing. A cloud copy waits on the DPO's answers and on Dada
+  (the record's open decision). ICT placing the key switches it on.
+- **The disaster drill** (`ci/restore-drill.sh`, which refuses any compose
+  project but the test one): delete both hosts' volumes, meaning both
+  clusters, the engine's files, the database backups and the R740xd's copy.
+  Then rebuild from the off-site copy alone: verify every file of every
+  snapshot, restore the engine's files and pgBackRest's repository, restore
+  both clusters from it (replaying every archived segment), start the
+  platform, and check that archiving works again. The after-restart tests then
+  run once more.
+
+What that gives, INFERRED from the design:
+
+| | |
+|---|---|
+| 3 copies | the live data; the R740xd's copy; the off-site copy |
+| 2 kinds of storage | disks in two buildings; object storage in Azure |
+| 1 off site | Azure, once switched on |
+| 1 the primary cannot change | the R740xd's copy (add-only, MEASURED on every run). On Azure, immutability is ICT's to set; the stand-in does not enforce it, so NOT VERIFIED here |
+| 0 errors | every drill verifies every file it restores. pgBackRest checks every database page against its checksum as it backs up; a bad page is logged and noted in the backup, not fatal (MEASURED from its own help), so the alerts (M3) must watch for it |
+
+How much could be lost, INFERRED from the schedule:
+
+- **a database mistake, the primary intact:** up to about a minute (a
+  point-in-time restore from the primary's own repository);
+- **the primary lost, the R740xd intact:** up to one night;
+- **both buildings lost:** up to one night, from off-site.
+
+Studies sent since the last snapshot are likely still on the modalities that
+sent them and can be sent again (INFERRED; how long each modality keeps its
+studies is NOT VERIFIED). M4 can make the R740xd pgBackRest's repository host
+too, which brings the second case down to about a minute for the databases,
+though not for the images.
+
+### What ICT provides for backups
+
+- **The R740xd**, running `compose.r740xd.yaml` (M4 packages it), with disks
+  for the Kopia repository: at least the archive (6.3 TB after the
+  migration), its growth, and what the retention keeps. Sizing is NOT
+  VERIFIED.
+- **An Azure storage account and container** for the off-site copy, with
+  immutability set, once Dada and the DPO agree.
+- **Escrow, away from both hosts:** the Kopia repository password and the
+  storage key. Without the password nobody can read the copy, including PMC.
+- **The schedule:** `tools/backup.sh` nightly on the primary, then
+  `tools/offsite.sh` on the R740xd. M4 installs both as timers.
+
+### Found while building the backups
+
+- **Kopia never makes the Azure container.** `sync-to` into a missing one
+  fails with `ContainerNotFound` (MEASURED). That is kept: ICT makes the
+  container, with its immutability policy, and a missing one stops the copy
+  rather than sending it somewhere unprotected. The tests make it in the
+  stand-in (`ci/azure-standin-container.mjs`).
+- **Compose's `--wait` counts a container without a health check as ready as
+  soon as it runs.** The stand-in was running but not yet listening (MEASURED:
+  connection refused), so it has a health check now.
+- **A restore logs `unknown group 'root' in backup manifest`.** The official
+  image leaves the data directory's group as root; the restore gives it the
+  postgres group. Harmless (MEASURED: both clusters start, archive and pass
+  every check).
+- **The snapshot's order matters.** The database backups are snapshotted
+  before the engine's files, so a restored index never names a file the
+  snapshot missed. The first version got that order from the alphabet;
+  `backup/kopia/snapshot.sh` now names it.
+
+## Pinned
 
 | Component | Version | Pinned by | Evidence |
 |---|---|---|---|
@@ -292,22 +398,29 @@ swappable.
 | Permissions: `orthancteam/orthanc-auth-service:26.8.1` | orthanc-auth-service 26.8.1, with the engine's authorization plugin 0.12.0 | image digest | MEASURED: `/plugins`, and the access tests |
 | Front door app: `pmc-imaging/app`, built here from `app/` | Node 24.21.0 LTS (`node:24.21.0-trixie-slim`). The page: React 19.3.0, TanStack Router 1.170.39 and Query 5.103.2, React Aria Components 1.21.1, Tailwind CSS 4.3.3, lucide-react 1.47.0; built by Vite 8.3.0 and type-checked by TypeScript 7.0.2. The server: Hono 4.13.8 with @hono/node-server 2.1.1, and zod 4.6.5 on both sides | base image digest, and an integrity hash for every package | MEASURED: built and run by `ci/run.sh`. Versions VERIFIED on registry.npmjs.org, 23 Sep 2026. The base digest was read from the mirror (Docker Hub answered 429 that day) |
 | Schema migrations: `ghcr.io/amacneil/dbmate:2.36.0` | dbmate 2.36.0, with pg_dump 18.6 inside | image digest | MEASURED: the digest pulled matched the one the research recorded; `--version` and `pg_dump --version` read from the image |
+| Database backups: pgBackRest, in `pmc-imaging/postgres`, built here from `backup/postgres/` on `postgres:18.6-trixie` | pgBackRest 2.59.1 (`2.59.1-1.pgdg13+1`, from the PostgreSQL project's Debian repository) | base image digest, and the exact package version | MEASURED: `pgbackrest version` at build, and the backups and the drill on every run |
+| Nightly copy and off-site: `kopia/kopia:0.23.1` | Kopia 0.23.1. Repository format 3, AES256-GCM-HMAC-SHA256, BLAKE2B-256-128 | image digest | MEASURED: `kopia --version` and `kopia repository status`, 24 Sep 2026 |
+| Off-site stand-in, tests only: `mcr.microsoft.com/azure-storage/azurite:3.37.0` | Azurite 3.37.0, blob service only, over TLS | image digest | MEASURED: `azurite-blob --version`, 24 Sep 2026 |
 | Test runner: `python:3.14-slim-trixie` | Python 3.14.7, pydicom 3.0.2, pynetdicom 3.0.4, pylibjpeg-libjpeg 2.4.0, pytest 9.1.1 | image digest, and a hash for every package | MEASURED |
 | Browser runner: `mcr.microsoft.com/playwright:v1.63.0-noble` | Playwright 1.63.0, Chromium | image digest, and an integrity hash for every package | MEASURED |
 
-The digests are in `compose.yaml`, `tests/Dockerfile` and `browser/Dockerfile`.
-Each was pulled on 23 Sep 2026 (MEASURED). The official images (`postgres`,
+The digests are in `compose.yaml`, `compose.r740xd.yaml`, `compose.test.yaml`
+and the Dockerfiles (`app/`, `backup/postgres/`, `tests/`, `browser/`). Each
+was pulled on 23 or 24 Sep 2026 (MEASURED). The official images (`postgres`,
 `nginx`) gave the same digest from Docker Hub and from its public mirror, so
 `PMC_LIBRARY` can point at a mirror without changing what runs.
 
 ## What the tests prove
 
-`ci/run.sh` runs 71 tests. All passed on 24 Sep 2026 (MEASURED, cloud build,
-about 8½ minutes). It starts from empty volumes, checks the platform
+`ci/run.sh` runs 80 tests. All passed on 24 Sep 2026 (MEASURED, cloud build,
+about 10 minutes). It starts from empty volumes, checks the platform
 database's schema and grants, and runs 41 engine and API tests and 23
 browser tests. It then removes the containers, starts new ones
-from the same volumes, and runs 5 engine tests and 2 browser tests again: the
-radiologist signs in afresh, and a cathlab run still opens playing.
+from the same volumes, and runs 6 engine tests and 2 browser tests again: the
+radiologist signs in afresh, and a cathlab run still opens playing. Then it
+takes the nightly backup, proves the primary cannot delete from the R740xd's
+copy, copies that off-site, deletes every volume of both hosts, rebuilds the
+platform from the off-site copy alone, and runs the same 6 and 2 once more.
 
 The test overlay shortens three clocks so the tests can wait them out: a
 study is stable after 5 s (60 s on site), worklist housekeeping runs every
@@ -326,7 +439,9 @@ on site).
 | Server-side sorting (`OrderBy`) works, which the legacy ODBC index answers with HTTP 500 | `test_dicomweb.py` |
 | QIDO-RS finds by modality and patient. WADO-RS returns cine frames as stored (JPEG-LS) or uncompressed, both pixel-exact. Series metadata is cached once the series is stable | `test_dicomweb.py` |
 | An order reaches only its own modality's worklist and leaves it once the study has arrived and is stable. A cancelled order is withdrawn | `test_worklists.py` |
-| After the restart, every study, every file (MD5), every registered modality and a pending order are still there, and the engine still takes studies | `test_after_restart.py` |
+| After the restart, every study, every file (MD5), every registered modality, a pending order and the audit trail are still there, and the engine still takes studies | `test_after_restart.py` |
+| Both clusters archive every log segment as it is written. The nightly backup takes both clusters and checks them, then snapshots them and the engine's files to the R740xd's Kopia server, which copies its repository off-site. The primary cannot delete a snapshot, even its own | `ci/run.sh`, `tools/backup.sh`, `tools/offsite.sh` |
+| Disaster: with both hosts' volumes deleted, the platform is rebuilt from the off-site copy alone. Every file is verified, both clusters are restored and their logs replayed, and archiving works again. Then every study, every file (MD5), every modality, a pending order and the audit trail are back, the radiologist signs in, and a cathlab run opens playing | `ci/restore-drill.sh`, then `test_after_restart.py` and `browser/tests/viewer.spec.js` |
 | The front door answers only for the site name, over TLS 1.3 and HTTP/2, and sends plain HTTP to HTTPS | `browser/tests/viewer.spec.js` |
 | A cathlab run opens already playing. A CT series opens and every slice arrives. An ultrasound run that arrived as JPEG plays as sent. No console errors | `browser/tests/viewer.spec.js` |
 | Every request the viewer makes goes to the front door and nowhere else, and every DICOMweb answer says `no-store` | `browser/tests/viewer.spec.js` |
@@ -381,6 +496,17 @@ The AE titles the tests play are PMC's own, as MEASURED in the record.
   sending it, in two runs.
 - **The worklist page** is one 646 KB script and a 15 KB stylesheet (198 KB
   and 4 KB compressed); Vite 8.3 builds it in about 1.3 s.
+- **The nightly backup** of both clusters in full, then the snapshot to the
+  R740xd, took 9.3 s (one run). pgBackRest's zstd kept the index's 33.4 MB as
+  3.9 MB, and the platform database's 51.7 MB as 5.9 MB. These are small
+  synthetic databases; real ones will compress less. The images are not
+  compressed again: they are already JPEG-LS.
+- **The off-site copy** of the whole 60 MB repository took 1.4 s (one run, to
+  the stand-in on the same host).
+- **The disaster drill**, in two runs: verifying every file of the off-site
+  copy and restoring the engine's files and the database backups took
+  9.8–9.9 s; restoring both clusters from those backups, 3.8–3.9 s; starting
+  the platform on them, 49 s.
 
 ## Run it
 
@@ -390,6 +516,10 @@ tools/make-secrets.sh        # once: generates secrets/ (git-ignored); never ove
                              # certificate in secrets/tls/, and the PMC_ENTRA_*
                              # values in .env beside compose.yaml (git-ignored)
 docker compose up -d --wait  # the platform, as project pmc-imaging
+tools/backup.sh              # the nightly backup: both databases, then the
+                             # snapshot to the R740xd (M4 runs it on a timer)
+tools/offsite.sh             # on the R740xd: its copy, off-site; does nothing
+                             # until the storage key is placed
 ci/run.sh                    # the tests, as project pmc-imaging-test, then removes it
 KEEP=1 ci/run.sh             # the same, but leaves the test stack running
 ```
@@ -431,11 +561,26 @@ anonymous pulls, run it with `PMC_LIBRARY=public.ecr.aws/docker/library`.
 - `tests/frontdoor.py`: signing in at the front door from Python, as a
   person would, for the tests that look behind it (`test_session.py`,
   `test_app.py`).
+- `backup/`: backups. `postgres/Dockerfile` adds pgBackRest to the official
+  PostgreSQL image, which both clusters run; `pg-start.sh` writes its
+  configuration at each start, `initdb-stanza.sh` creates a new cluster's
+  stanza, and `pg-restore.sh` restores a cluster from its repository.
+  `kopia/` holds the Kopia server's start (`server.sh`: the repository, the
+  primary's add-only user, retention), the nightly snapshot
+  (`snapshot.sh`), the copy off-site (`sync-offsite.sh`) and the restore from
+  off-site (`restore.sh`).
+- `compose.r740xd.yaml`: the R740xd's part, the Kopia server. On site it runs
+  on the R740xd; in the tests, beside the primary.
+- `tools/backup.sh` and `tools/offsite.sh`: the nightly backup, and the copy
+  off-site. `ci/restore-drill.sh`: the disaster drill, for the test project
+  only.
 - `secrets/`: generated by `tools/make-secrets.sh`, git-ignored, never
   overwritten. It holds the passwords of both PostgreSQL clusters and of
   Keycloak's database, the front door's client and cookie secrets, the auth
   service's password and signing key, admin-cli's secret, the platform's API
-  key, and the TLS certificate. `entra-client-secret` comes from Entra ID, and
+  key, the Kopia repository's password and its three users' passwords, the
+  off-site storage key (empty on site until ICT places it), and the TLS
+  certificate. `entra-client-secret` comes from Entra ID, and
   ICT places it. The containers read them all as Docker secrets; none is in
   any file in git.
 - **Modality addresses** live in the engine's database, registered at runtime
@@ -449,7 +594,13 @@ anonymous pulls, run it with `PMC_LIBRARY=public.ecr.aws/docker/library`.
   - `PMC_SECRETS`: where the secrets are (default `./secrets`);
   - `PMC_LIBRARY`: where the official images come from (default Docker Hub);
   - `PMC_ENTRA_*`: PMC's Entra ID tenant and the group behind each role. These
-    have no default (see [Sign-in](#sign-in)); they go in the site's env file.
+    have no default (see [Sign-in](#sign-in)); they go in the site's env file;
+  - `PMC_KOPIA_SERVER_URL` and `PMC_KOPIA_SERVER_FINGERPRINT`: the R740xd's
+    Kopia server, by name, and the SHA-256 fingerprint of its certificate,
+    which the primary pins. The nightly snapshot refuses to run without them;
+  - `PMC_BACKUP_AZURE_ACCOUNT` and `PMC_BACKUP_AZURE_KOPIA_CONTAINER`: the
+    off-site storage account and container, set on the R740xd once the cloud
+    copy is decided.
 - **The TLS certificate** is the site's own; for PMC, the existing `*.pmcne.ph`
   wildcard. It goes in `secrets/tls/` as `tls.crt` and `tls.key`.
   `tools/make-test-tls.sh` makes a throwaway one for tests and never replaces
@@ -523,6 +674,17 @@ These are INFERRED, not decided by anyone but this build. Argue with them.
   cookie, another site's page cannot act in a signed-in person's name.
 - **OHIF's "investigational use" notice** is left at OHIF's default: once per
   browser session. Whether PMC keeps it is a governance decision for Dada.
+- **A database is backed up by pgBackRest, never by copying its files.** A
+  copy of a running cluster's files is not a database. pgBackRest takes a
+  consistent backup and every log segment needed to replay it, and keeps
+  archiving between backups, so a restore can stop at any moment.
+- **Kopia takes the copy off the host**, for three things it does that a plain
+  copy does not: a server whose users can be allowed to add snapshots but not
+  delete them; encryption before anything leaves; and `sync-to`, which copies
+  the whole repository to Azure without the primary ever holding the key.
+- **The drill restores from off-site only.** The R740xd's copy would be
+  quicker, but the case worth proving is the one where both buildings are
+  gone.
 
 ## Open
 
@@ -567,6 +729,29 @@ These are INFERRED, not decided by anyone but this build. Argue with them.
 - **The worklist has no totals yet** ("41 studies"): counting what a person may
   see has to respect the same labels as the search, and the engine's count
   endpoint is not in the permission table.
+- **The engine logs in to its index as that cluster's superuser**
+  (MEASURED: `orthanc` has `rolsuper`; Keycloak's role and the app's do not).
+  The official image makes `POSTGRES_USER` a superuser, and M1 let the engine
+  use it. A superuser can run programs inside the database's container, where
+  the index's own backups also live; the R740xd's copy is out of its reach.
+  Next: an owner role for the engine that is not a superuser, with the
+  superuser kept for backups and administration.
+- **`secrets/` after a disaster.** The drill keeps the test secrets, so it
+  proves the data comes back, not the credentials. On site, losing the
+  primary loses `secrets/` too. Either ICT escrows the whole directory with
+  the two backup keys, or the nightly snapshot takes it too (encrypted like
+  everything else), leaving only the two keys to escrow. M4 decides, with the
+  host layout.
+- **After a disaster, the R740xd's own copy** is gone as well. The runbook
+  (M4) re-seeds it from Azure before the next night's backup.
+- **Azure immutability with Kopia's `sync-to`** is NOT VERIFIED: the stand-in
+  does not enforce immutability. It is tested against a real container, with
+  ICT, before the copy counts as the one the primary cannot change.
+- **Putting back one study**, not the whole site, needs the engine's index to
+  find its files. The runbook (M4) restores a copy into a scratch engine and
+  sends the study from there.
+- **The drill's times are for a few synthetic studies.** Restoring 6.3 TB is
+  measured on PMC hardware in M4.
 
 ## Regenerating `db/schema.sql`
 
@@ -594,7 +779,9 @@ uv pip compile --generate-hashes --python-version 3.14 \
   ICT's admin screens. See [The front door app](#the-front-door-app).
 - **M2.4:** the cine fix for the live WS23 portal, prepared and tested in
   `apps/imaging-portal`. It is deployed only on Dada's go.
-- **M3:** the BizBox-to-worklist connector (against a mock BizBox), feed watch
-  and alerts, and backups with a timed restore drill.
+- **Hardening, next:** the engine's own non-superuser role in its index (see
+  Open).
+- **M3, the rest:** the BizBox-to-worklist connector (against a mock BizBox),
+  and feed watch and alerts, which must also watch the backups.
 - **M4:** migration tooling, the runbook, and the on-prem package for the
   R740xd.

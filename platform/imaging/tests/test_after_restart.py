@@ -8,6 +8,7 @@ import pytest
 
 import synth
 from conftest import RESULTS
+from frontdoor import BASE, sign_in
 from test_worklists import _accessions
 
 pytestmark = pytest.mark.after_restart
@@ -48,3 +49,11 @@ def test_the_engine_still_takes_studies(engine, modalities, run_id):
     study = synth.Study("cr", run_id, "NX_DEFAULT", scale=0.25)
     assert all(s == 0x0000 for s in engine.store("NX_DEFAULT", study.datasets))
     assert engine.instance_id(study.instance_uids[0])
+
+
+def test_the_audit_trail_survived(before):
+    # Kept in PMC's platform database, not the engine's index: the disaster
+    # drill restores it from the off-site copy of its backups alone.
+    audit = before["audit"]
+    trail = sign_in("ict").get(f"{BASE}/pmc/api/audit", params={"study": audit["study"]}, timeout=30).json()["events"]
+    assert [[e["actor"], e["action"]] for e in trail] == audit["trail"]

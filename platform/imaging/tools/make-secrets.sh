@@ -59,7 +59,21 @@ write auth-service-secret-key "$(rand 64)"
 # The platform's own services (connector, monitoring, tests) call the engine
 # with this API key, as the Keycloak user svc-platform.
 write svc-platform-api-key "$(rand 48)"
+# Backups (M3). The Kopia repository's password encrypts every backup of the
+# engine's files and databases: escrow it off both hosts, or no backup can be
+# read. The primary's own password may add snapshots, never delete them.
+write kopia-repo-password "$(rand 48)"
+write kopia-client-password "$(rand)"
+write kopia-control-password "$(rand)"
 
+# The off-site storage account's key is Azure's to issue and ICT's to place.
+# Until then this is an empty file, and the off-site copy stays off (cloud
+# copies wait on the DPO's answer). The tests use a stand-in's key.
+if [[ "${1:-}" == "--test" ]]; then
+  write backup-azure-key "$(rand 88)"
+else
+  write backup-azure-key ""
+fi
 if [[ "${1:-}" == "--test" ]]; then
   # The stand-in Entra ID in tests: its client secret, and the one password
   # its invented users share.

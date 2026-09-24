@@ -58,6 +58,56 @@ services:
       # Renewed at 40 s, before the 60 s token above runs out.
       OAUTH2_PROXY_COOKIE_REFRESH: 40s
 
+  # ---- backups (M3): the R740xd beside the primary, and Azure's stand-in -------
+  kopia-server:
+    environment:
+      PMC_BACKUP_AZURE_ACCOUNT: pmcoffsite
+      # Kopia reaches Azure at https://<account>.<domain>; here, the stand-in.
+      PMC_BACKUP_AZURE_KOPIA_DOMAIN: azurite:10000
+      SSL_CERT_FILE: /run/secrets/test-ca
+    secrets: [test-ca]
+
+  files-backup:
+    environment:
+      PMC_KOPIA_SERVER_URL: https://kopia-server:51515
+      PMC_KOPIA_SERVER_FINGERPRINT: ${PMC_KOPIA_SERVER_FINGERPRINT:-}
+
+  files-restore:
+    environment:
+      PMC_BACKUP_AZURE_ACCOUNT: pmcoffsite
+      PMC_BACKUP_AZURE_KOPIA_DOMAIN: azurite:10000
+      SSL_CERT_FILE: /run/secrets/test-ca
+    secrets: [test-ca]
+
+  azurite:
+    # Stands in for the Azure storage account: Azurite 3.37.0, over TLS with
+    # the test certificate. Its data is the off-site copy, the one volume the
+    # disaster drill keeps. ci/run.sh makes the container in it, as ICT will
+    # make the real one (ci/azure-standin-container.mjs).
+    image: mcr.microsoft.com/azure-storage/azurite:3.37.0@sha256:830430c1da1a2d537e08f3e6764dd1f5ae00cf0346bcaf625b968ec3f0971fd5
+    entrypoint: [/bin/sh, -c]
+    command:
+      - >-
+        export AZURITE_ACCOUNTS="pmcoffsite:$$(cat /run/secrets/backup-azure-key)";
+        exec azurite-blob --blobHost 0.0.0.0 --blobPort 10000 --location /data
+        --cert /run/secrets/azurite-cert --key /run/secrets/azurite-key --skipApiVersionCheck
+    environment:
+      PMC_BACKUP_AZURE_ACCOUNT: pmcoffsite
+    secrets: [backup-azure-key, azurite-cert, azurite-key, test-ca]
+    volumes:
+      - azure-standin:/data
+      - ./ci/azure-standin-container.mjs:/pmc/azure-standin-container.mjs:ro
+    healthcheck:
+      # Ready once the blob service accepts a connection.
+      test: [CMD, node, -e, "require('net').connect(10000, '127.0.0.1').on('connect', () => process.exit(0)).on('error', () => process.exit(1))"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    networks:
+      backup:
+        # Kopia addresses the account as a host name, as real Azure does.
+        aliases: [pmcoffsite.azurite]
+
   tests:
     image: pmc-imaging/tests:local
     pull_policy: never
@@ -109,6 +159,11 @@ networks:
     internal: true
   egress:
     internal: true
+  backup:
+    internal: true
+
+volumes:
+  azure-standin: {}
 
 secrets:
   test-user-password:
@@ -117,3 +172,7 @@ secrets:
   # the Python runner checks the front door's certificate instead of ignoring it.
   test-ca:
     file: ${PMC_SECRETS:-./secrets}/tls/ca.crt
+  azurite-cert:
+    file: ${PMC_SECRETS:-./secrets}/tls/azurite.crt
+  azurite-key:
+    file: ${PMC_SECRETS:-./secrets}/tls/azurite.key

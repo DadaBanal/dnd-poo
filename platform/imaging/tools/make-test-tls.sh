@@ -27,7 +27,25 @@ openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
 openssl x509 -req -in tls.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 30 \
   -extfile <(printf 'subjectAltName=DNS:%s\nextendedKeyUsage=serverAuth\n' "$host") \
   -out tls.crt 2>/dev/null
+# Backups (M3): the R740xd's Kopia server, which the primary pins by the
+# SHA-256 fingerprint of its certificate, and the Azure stand-in, addressed by
+# its account's host name as Azure is.
+issue() {  # issue <name> <dns names...>
+  local name="$1"; shift
+  local san; san="$(printf 'DNS:%s,' "$@")"
+  openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+    -subj "/CN=$1" -keyout "$name.key" -out "$name.csr" 2>/dev/null
+  openssl x509 -req -in "$name.csr" -CA ca.crt -CAkey ca.key -CAcreateserial -days 30 \
+    -extfile <(printf 'subjectAltName=%s\nextendedKeyUsage=serverAuth\n' "${san%,}") \
+    -out "$name.crt" 2>/dev/null
+  rm -f "$name.csr"
+  # Read by containers that run as other users; the 0700 folder guards them.
+  chmod 644 "$name.crt" "$name.key"
+}
+issue kopia-server kopia-server
+issue azurite azurite pmcoffsite.azurite
+openssl x509 -in kopia-server.crt -noout -fingerprint -sha256 | cut -d= -f2 | tr -d : | tr 'A-F' 'a-f' > kopia-server.fp
 rm -f tls.csr ca.srl ca.key
-chmod 644 ca.crt tls.crt
+chmod 644 ca.crt tls.crt kopia-server.fp
 chmod 600 tls.key
-echo "generated a test certificate for $host (30 days, throwaway CA)"
+echo "generated test certificates for $host, the Kopia server and the Azure stand-in (30 days, throwaway CA)"

@@ -1,0 +1,52 @@
+# The second building's host, the Dell R740xd (Path A, M3): the copy of the
+# primary's backups, and the way off-site.
+#
+#   kopia-server   the Kopia repository on the R740xd's own disks. The primary
+#                  snapshots into it nightly (files-backup) and may add, never
+#                  delete; expiry and maintenance run here, as the owner.
+#                  tools/offsite.sh then copies it to Azure (new blobs only).
+#
+# On site this runs on the R740xd itself (M4 packages it). In the tests it
+# runs beside the primary (ci/run.sh adds this file). Only this host holds the
+# off-site storage key.
+
+services:
+  kopia-server:
+    image: kopia/kopia:0.23.1@sha256:89fd95ee2942880ca00eae964266958a394421ddbdf69bca62e38afc55f5900e
+    entrypoint: [/bin/sh, /pmc/kopia/server.sh]
+    environment:
+      PMC_BACKUP_AZURE_ACCOUNT: ${PMC_BACKUP_AZURE_ACCOUNT:-}
+      PMC_BACKUP_AZURE_KOPIA_CONTAINER: ${PMC_BACKUP_AZURE_KOPIA_CONTAINER:-kopia}
+    secrets:
+      - kopia-repo-password
+      - kopia-client-password
+      - kopia-control-password
+      - backup-azure-key
+      - source: kopia-server-cert
+        target: kopia-server-cert
+      - source: kopia-server-key
+        target: kopia-server-key
+    volumes:
+      - kopia-repo:/repo
+      - kopia-config:/app/config
+      - ./backup/kopia:/pmc/kopia:ro
+    healthcheck:
+      # The server answers HTTPS on its port once the repository is open.
+      test: [CMD, curl, -sk, -o, /dev/null, https://127.0.0.1:51515/]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+    restart: unless-stopped
+    networks: [backup]
+
+volumes:
+  kopia-repo: {}
+  kopia-config: {}
+
+secrets:
+  kopia-control-password:
+    file: ${PMC_SECRETS:-./secrets}/kopia-control-password
+  kopia-server-cert:
+    file: ${PMC_SECRETS:-./secrets}/tls/kopia-server.crt
+  kopia-server-key:
+    file: ${PMC_SECRETS:-./secrets}/tls/kopia-server.key
