@@ -70,6 +70,10 @@ test('a cathlab run opens playing', async ({ page }) => {
     await page.waitForTimeout(750);
   }
   expect(positions.size).toBeGreaterThanOrEqual(3);
+  // PMC's mark in the viewer's header, in place of OHIF's (viewer/app-config.js).
+  const mark = page.locator('img[src="/brand/pmc-mark-white.png"]');
+  await expect(mark).toBeVisible();
+  expect(await mark.evaluate((img) => img.naturalWidth)).toBeGreaterThan(0);
   const frames = seen.requests.filter((u) => u.includes('/frames/'));
   expect(new Set(frames).size).toBe(seed.xa.frames);
   expect(seen.errors).toEqual([]);

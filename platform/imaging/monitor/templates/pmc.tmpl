@@ -1,0 +1,101 @@
+{{/*
+  PMC's alert email (README.md, Branding): the letterhead's four-segment bar,
+  PMC Blue for the header, Care Orange for what needs attention, Renewal Green
+  for what has recovered, never alarm red. Plain tables and inline styles,
+  because that is what mail programs render; no images, which they block.
+  The subject stays Alertmanager's own ("[FIRING:1] FeedSilent ..."), so ICT's
+  mail rules can keep matching it. Times are Manila time.
+*/}}
+
+{{ define "pmc.time" }}{{ (. | tz "Asia/Manila").Format "2 Jan 2006, 15:04" }} PHT{{ end }}
+
+{{ define "pmc.alert.html" }}
+<tr><td style="padding:0 24px 16px">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;background:#FFFFFF;border:1px solid #E2E6EC;border-radius:10px">
+    <tr><td style="padding:16px 18px 6px">
+      {{ if eq .Status "firing" }}{{ if eq .Labels.severity "critical" }}
+      <span style="display:inline-block;padding:3px 9px;border-radius:999px;background:#B4450F;color:#FFFFFF;font-size:12px;font-weight:700">Critical</span>
+      {{ else }}
+      <span style="display:inline-block;padding:3px 9px;border-radius:999px;background:#FEF1EA;color:#B4450F;font-size:12px;font-weight:700">Needs attention</span>
+      {{ end }}{{ else }}
+      <span style="display:inline-block;padding:3px 9px;border-radius:999px;background:#E3F3E9;color:#237A4B;font-size:12px;font-weight:700">Recovered</span>
+      {{ end }}
+      <span style="margin-left:6px;font-size:12px;color:#5F6B79">{{ .Labels.alertname }}</span>
+    </td></tr>
+    <tr><td style="padding:4px 18px 0;font-size:17px;line-height:1.35;font-weight:700;color:#101820">{{ .Annotations.summary }}</td></tr>
+    {{ if .Annotations.description }}
+    <tr><td style="padding:6px 18px 0;font-size:14.5px;line-height:1.5;color:#48525F">{{ .Annotations.description }}</td></tr>
+    {{ end }}
+    <tr><td style="padding:12px 18px 16px">
+      <table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:13px;line-height:1.5">
+        {{ range .Labels.SortedPairs }}{{ if and (ne .Name "alertname") (ne .Name "severity") }}
+        <tr><td style="padding:2px 14px 2px 0;color:#5F6B79;white-space:nowrap">{{ .Name }}</td><td style="padding:2px 0;color:#101820;font-family:Consolas,'Cascadia Mono',monospace">{{ .Value }}</td></tr>
+        {{ end }}{{ end }}
+        <tr><td style="padding:2px 14px 2px 0;color:#5F6B79;white-space:nowrap">since</td><td style="padding:2px 0;color:#101820">{{ template "pmc.time" .StartsAt }}</td></tr>
+        {{ if eq .Status "resolved" }}
+        <tr><td style="padding:2px 14px 2px 0;color:#5F6B79;white-space:nowrap">recovered</td><td style="padding:2px 0;color:#101820">{{ template "pmc.time" .EndsAt }}</td></tr>
+        {{ end }}
+      </table>
+    </td></tr>
+  </table>
+</td></tr>
+{{ end }}
+
+{{ define "pmc.email.html" }}<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PMC Imaging alert</title></head>
+<body style="margin:0;padding:0;background:#F4F6FA">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;background:#F4F6FA;font-family:Aptos,'Segoe UI',Arial,sans-serif;color:#101820">
+<tr><td align="center" style="padding:24px 12px">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;max-width:600px;background:#F4F6FA">
+  <tr><td style="padding:0">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse"><tr>
+      <td width="40%" style="height:5px;line-height:5px;font-size:0;background:#0B3F8A">&nbsp;</td>
+      <td width="22%" style="height:5px;line-height:5px;font-size:0;background:#F06423">&nbsp;</td>
+      <td width="22%" style="height:5px;line-height:5px;font-size:0;background:#69B52C">&nbsp;</td>
+      <td width="16%" style="height:5px;line-height:5px;font-size:0;background:#101820">&nbsp;</td>
+    </tr></table>
+  </td></tr>
+  <tr><td style="padding:18px 24px;background:#0B3F8A">
+    <div style="font-family:'Aptos Display',Aptos,'Segoe UI',Arial,sans-serif;font-size:21px;font-weight:800;color:#FFFFFF">PMC <span style="color:#DBE6F6">Imaging</span></div>
+    <div style="margin-top:2px;font-size:13px;color:#DBE6F6">An alert for ICT</div>
+  </td></tr>
+  <tr><td style="padding:20px 24px 14px">
+    {{ if gt (len .Alerts.Firing) 0 }}
+    <div style="padding:10px 14px;border-left:4px solid #F06423;background:#FEF1EA;color:#B4450F;font-size:15px;font-weight:700">
+      {{ len .Alerts.Firing }} {{ if eq (len .Alerts.Firing) 1 }}thing needs{{ else }}things need{{ end }} attention{{ if gt (len .Alerts.Resolved) 0 }}, {{ len .Alerts.Resolved }} recovered{{ end }}
+    </div>
+    {{ else }}
+    <div style="padding:10px 14px;border-left:4px solid #69B52C;background:#E3F3E9;color:#237A4B;font-size:15px;font-weight:700">
+      Recovered: nothing here needs attention any more
+    </div>
+    {{ end }}
+  </td></tr>
+  {{ range .Alerts.Firing }}{{ template "pmc.alert.html" . }}{{ end }}
+  {{ range .Alerts.Resolved }}{{ template "pmc.alert.html" . }}{{ end }}
+  <tr><td style="padding:8px 24px 24px;font-size:12.5px;line-height:1.55;color:#5F6B79">
+    While this stays true the email repeats every 4 hours, and one more comes when it is over.<br>
+    Premiere Medical Center Nueva Ecija &middot; Information &amp; Communications Technology<br>
+    <span style="font-weight:700;color:#0B3F8A">Better Care.</span> <i>For Every Life.</i>
+  </td></tr>
+</table>
+</td></tr>
+</table>
+</body></html>
+{{ end }}
+
+{{ define "pmc.email.text" }}PMC Imaging: an alert for ICT
+{{ if gt (len .Alerts.Firing) 0 }}{{ len .Alerts.Firing }} {{ if eq (len .Alerts.Firing) 1 }}thing needs{{ else }}things need{{ end }} attention{{ if gt (len .Alerts.Resolved) 0 }}, {{ len .Alerts.Resolved }} recovered{{ end }}.{{ else }}Recovered: nothing here needs attention any more.{{ end }}
+{{ range .Alerts.Firing }}
+* {{ if eq .Labels.severity "critical" }}CRITICAL{{ else }}Needs attention{{ end }} ({{ .Labels.alertname }}): {{ .Annotations.summary }}
+  {{ .Annotations.description }}
+{{ range .Labels.SortedPairs }}{{ if and (ne .Name "alertname") (ne .Name "severity") }}  {{ .Name }}: {{ .Value }}
+{{ end }}{{ end }}  since: {{ template "pmc.time" .StartsAt }}
+{{ end }}{{ range .Alerts.Resolved }}
+* Recovered ({{ .Labels.alertname }}): {{ .Annotations.summary }}
+{{ range .Labels.SortedPairs }}{{ if and (ne .Name "alertname") (ne .Name "severity") }}  {{ .Name }}: {{ .Value }}
+{{ end }}{{ end }}  since: {{ template "pmc.time" .StartsAt }}, recovered: {{ template "pmc.time" .EndsAt }}
+{{ end }}
+While this stays true the email repeats every 4 hours, and one more comes when it is over.
+Premiere Medical Center Nueva Ecija - Information & Communications Technology
+Better Care. For Every Life.
+{{ end }}

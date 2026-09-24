@@ -1,7 +1,10 @@
-/* The PMC front door app. The 2026 PMC identity, as in the live portal and
-   the clickable sample: PMC Blue ~70%, Renewal Green ~20%, Care Orange ~10%.
-   Every colour is a token; dark (the reading room) and light are both
-   designed, and the page follows the PC unless the person picks one. */
+/* The PMC front door app, in the 2026 PMC identity as the portal proposal
+   applied it (README.md, Branding): PMC Blue ~70% (the header, primary
+   actions), Renewal Green ~20% (healthy states), Care Orange ~10% (attention
+   only); the four-segment bar along the top edge; the white lock-up on the
+   blue header, the loop alone on a phone. Every colour is a token; dark (the
+   reading room) and light are both designed, and the page follows the PC
+   unless the person picks one. */
 @import "tailwindcss";
 
 :root {
@@ -17,7 +20,10 @@
   --crit: #B42318; --crit-soft: #FBE9E7;
   --focus: #1F5BB0;
   --shadow: 0 1px 2px rgba(16,24,32,.05), 0 10px 30px rgba(11,63,138,.07);
-  --ribbon: linear-gradient(90deg, #0B3F8A 0 70%, #69B52C 70% 90%, #F06423 90% 100%);
+  /* The letterhead's four-segment bar: blue, orange, green, black. */
+  --seg-bar: linear-gradient(90deg, #0B3F8A 0 40%, #F06423 40% 62%, #69B52C 62% 84%, #101820 84% 100%);
+  --brand-bg: #0B3F8A; --on-brand: #FFFFFF; --on-brand-2: #DBE6F6;
+  --brand-hover: rgba(255, 255, 255, .12); --brand-live: #69B52C; --brand-focus: #FFFFFF;
   --f-display: "Aptos Display", "Aptos", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
   --f-body: "Aptos", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --f-mono: "Cascadia Mono", Consolas, "SF Mono", ui-monospace, monospace;
@@ -35,6 +41,7 @@
     --warn-ink: #F2C25B; --warn-soft: #3A2E14;
     --crit: #F08A80; --crit-soft: #3A1F1D;
     --focus: #8DB6EE;
+    --brand-bg: #062449;
     --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 32px rgba(0,0,0,.35);
   }
 }
@@ -50,6 +57,7 @@
   --warn-ink: #F2C25B; --warn-soft: #3A2E14;
   --crit: #F08A80; --crit-soft: #3A1F1D;
   --focus: #8DB6EE;
+  --brand-bg: #062449;
   --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 32px rgba(0,0,0,.35);
 }
 
@@ -101,7 +109,14 @@
 }
 
 @layer components {
-  .ribbon { height: 4px; background: var(--ribbon); }
+  .seg-bar { height: 4px; flex: 0 0 4px; background: var(--seg-bar); }
+  /* The header: PMC Blue, the white lock-up, white and pale-blue text. */
+  .brandbar { background: var(--brand-bg); color: var(--on-brand); }
+  .brandbar :focus-visible { outline-color: var(--brand-focus); }
+  .brandbar .quiet { color: var(--on-brand-2); }
+  .brandbar .hover:hover { background: var(--brand-hover); }
+  .brandbar .avatar { background: var(--brand-hover); color: var(--on-brand); }
+  .brandbar .divider { width: 1px; align-self: stretch; margin-block: 4px; background: rgba(255, 255, 255, .28); }
   .eyebrow {
     font-family: var(--f-display); font-weight: 700; font-size: 11.5px;
     letter-spacing: .14em; text-transform: uppercase; color: var(--blue-ink);

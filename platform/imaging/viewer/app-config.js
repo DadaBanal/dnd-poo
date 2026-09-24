@@ -30,6 +30,49 @@ window.config = {
   // only. Its home link lands on / and the front door sends that to /pmc/.
   showStudyList: false,
 
+  // PMC's mark and name in the viewer's header, in place of OHIF's logo, and a
+  // way back to the reading list (README.md, Branding). The mark is the front
+  // door's /brand/ file. whiteLabeling.createLogoComponentFn is the hook the
+  // 3.13.10 header calls (MEASURED from the bundle, 24 Sep 2026).
+  whiteLabeling: {
+    createLogoComponentFn: (React) =>
+      React.createElement(
+        'a',
+        {
+          href: '/pmc/',
+          title: 'Back to the PMC Imaging reading list',
+          style: {
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            color: '#FFFFFF',
+            textDecoration: 'none',
+            whiteSpace: 'nowrap',
+          },
+        },
+        React.createElement('img', {
+          src: '/brand/pmc-mark-white.png',
+          alt: '',
+          width: 200,
+          height: 183,
+          style: { height: '26px', width: 'auto' },
+        }),
+        React.createElement(
+          'b',
+          {
+            style: {
+              fontFamily: '"Aptos Display", Aptos, "Segoe UI", system-ui, sans-serif',
+              fontSize: '16px',
+              fontWeight: 800,
+              letterSpacing: '-0.01em',
+            },
+          },
+          'PMC ',
+          React.createElement('span', { style: { color: '#DBE6F6' } }, 'Imaging')
+        )
+      ),
+  },
+
   // OHIF's own "investigational use" notice, shown once per browser session
   // (its default). Whether PMC keeps it is a governance decision for Dada.
   investigationalUseDialog: { option: 'always' },

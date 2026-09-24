@@ -2,6 +2,7 @@
 // session. The people are the stand-in Active Directory's invented users; their
 // roles come from their AD groups, mapped in Keycloak (identity/realm-pmc.json).
 import { test, expect } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 import fs from 'node:fs';
 import { HOST, RESULTS, seed, signIn } from './people.js';
 import { dismissOhifNotices, framesSeen, position } from './ohif.js';
@@ -31,6 +32,33 @@ test('without a session, a link goes to sign-in and comes back to the same page'
   const session = (await page.context().cookies()).filter((c) => c.name.startsWith('__Host-pmc-session'));
   expect(session).toHaveLength(1);
   expect(session[0]).toMatchObject({ httpOnly: true, secure: true, sameSite: 'Lax' });
+});
+
+test("the sign-in page is PMC's, and says when Caps Lock is on", async ({ page }) => {
+  await page.goto('/pmc/');
+  await expect(page.locator('#username')).toBeVisible();
+  // PMC's words, and the brand panel: the lock-up (the front door's /brand/)
+  // and the tagline on PMC Blue (identity/theme/pmc; the realm's displayNameHtml).
+  await expect(page.locator('#kc-page-title')).toHaveText('Sign in with your PMC Windows logon');
+  const panel = page.locator('#kc-header');
+  const lockup = panel.getByRole('img', { name: 'Premiere Medical Center Nueva Ecija' });
+  await expect(lockup).toBeVisible();
+  expect(await lockup.evaluate((img) => img.naturalWidth)).toBeGreaterThan(0);
+  await expect(panel).toContainText('Better Care. For Every Life.');
+  expect(await panel.evaluate((h) => getComputedStyle(h).backgroundColor)).toBe('rgb(11, 63, 138)');
+  // Caps Lock on while typing the password: it says so. Off again: it does not.
+  const note = page.locator('#pmc-caps-lock');
+  await page.locator('#password').dispatchEvent('keyup', { key: 'A', modifierCapsLock: true });
+  await expect(note).toHaveText('Caps Lock is on');
+  await page.locator('#password').dispatchEvent('keyup', { key: 'a' });
+  await expect(note).toHaveText('');
+  // Every word on it can be read, in light and in the reading-room theme.
+  for (const colorScheme of ['light', 'dark']) {
+    await page.emulateMedia({ colorScheme });
+    await expect(page.locator('html')).toHaveClass(colorScheme === 'dark' ? /pf-v5-theme-dark/ : /^(?!.*pf-v5-theme-dark)/);
+    const found = await new AxeBuilder({ page }).withRules(['color-contrast']).analyze();
+    expect(found.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`), colorScheme).toEqual([]);
+  }
 });
 
 test('someone in no PMC group gets no session and no images', async ({ page, request }) => {
@@ -99,5 +127,9 @@ test('signing out ends the session', async ({ page }) => {
   await page.goto('/oauth2/sign_out');
   await expect(page).toHaveURL(`${base}/signed-out`);
   await expect(page.locator('h1')).toContainText('signed out');
+  // In PMC's identity: the lock-up on the blue band.
+  const lockup = page.getByRole('img', { name: 'Premiere Medical Center Nueva Ecija' });
+  await expect(lockup).toBeVisible();
+  expect(await lockup.evaluate((img) => img.naturalWidth)).toBeGreaterThan(0);
   expect((await page.request.get(`${base}/dicom-web/studies`)).status()).toBe(401);
 });

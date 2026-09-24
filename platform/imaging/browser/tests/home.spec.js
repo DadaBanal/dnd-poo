@@ -22,6 +22,16 @@ test('the address people are given opens the worklist, live, with every study', 
   expect(outside).toEqual([]);
 });
 
+test("the header is PMC's: the lock-up on PMC Blue, the mark in the tab", async ({ page }) => {
+  await page.goto('/pmc/');
+  const header = page.getByRole('banner');
+  const lockup = header.getByRole('img', { name: 'Premiere Medical Center Nueva Ecija' });
+  await expect(lockup).toBeVisible();
+  expect(await lockup.evaluate((img) => img.naturalWidth)).toBeGreaterThan(0);
+  expect(await header.evaluate((h) => getComputedStyle(h).backgroundColor)).toBe('rgb(11, 63, 138)');
+  expect(await page.locator('link[rel="icon"]').getAttribute('href')).toBe('/brand/pmc-mark.png');
+});
+
 test('Enter opens the selected study in the viewer, in its own window, playing', async ({ page, context }) => {
   await page.goto('/pmc/');
   await rowOf(page, 'xa').getByRole('rowheader').click();

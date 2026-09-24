@@ -3,13 +3,15 @@
 # values, check it, then run it. Alerts go to ICT by email through PMC's mail
 # relay (PMC_ALERT_EMAIL_TO, _FROM, PMC_ALERT_SMTP), to a Teams channel
 # through a Workflows webhook (the secret alert-teams-webhook), both, or, until
-# ICT sets one, nowhere: they then show only in Alertmanager itself.
+# ICT sets one, nowhere: they then show only in Alertmanager itself. The email
+# is PMC's own (monitor/templates/pmc.tmpl; README.md, Branding).
 set -eu
 config=/tmp/alertmanager.yml
 teams=/run/secrets/alert-teams-webhook
 
 {
   cat <<EOF
+templates: [/pmc/templates/*.tmpl]
 route:
   receiver: ict
   group_by: [alertname, modality, server, stanza]
@@ -27,6 +29,8 @@ EOF
         smarthost: '${PMC_ALERT_SMTP:?PMC_ALERT_SMTP is not set}'
         require_tls: ${PMC_ALERT_SMTP_TLS:-true}
         send_resolved: true
+        html: '{{ template "pmc.email.html" . }}'
+        text: '{{ template "pmc.email.text" . }}'
 EOF
   fi
   if [ -s "$teams" ]; then

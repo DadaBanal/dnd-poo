@@ -2,6 +2,8 @@
   "realm": "pmc",
   "enabled": true,
   "displayName": "PMC Imaging",
+  "displayNameHtml": "<img class=\"pmc-lockup\" src=\"/brand/pmc-lockup-white.png\" alt=\"Premiere Medical Center Nueva Ecija\"><p class=\"pmc-product\">PMC <b>Imaging</b></p><span class=\"pmc-rule\"></span><p class=\"pmc-what\">Every study PMC takes, the reading list and the viewer, in one place.</p><p class=\"pmc-tag\">Better Care. <i>For Every Life.</i></p>",
+  "loginTheme": "pmc",
   "sslRequired": "external",
   "registrationAllowed": false,
   "resetPasswordAllowed": false,

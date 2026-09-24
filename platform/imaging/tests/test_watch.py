@@ -93,6 +93,11 @@ def test_a_silent_modality_is_reported_to_ict_by_email(engine, run_id, measureme
         body = requests.get(f"{MAIL}/api/v1/message/{message['ID']}", timeout=10).json()
         assert [to["Address"] for to in body["To"]] == ["ict@pmc.test"]
         assert "SYN_QUIET" in body["HTML"]
+        # PMC's own email (monitor/templates/pmc.tmpl), with a plain-text part
+        # for mail programs that show no HTML.
+        assert "An alert for ICT" in body["HTML"] and "Better Care." in body["HTML"]
+        assert body["Text"].startswith("PMC Imaging: an alert for ICT")
+        assert "aet: SYN_QUIET" in body["Text"]
     finally:
         engine.request("DELETE", "/modalities/watch-quiet")
 

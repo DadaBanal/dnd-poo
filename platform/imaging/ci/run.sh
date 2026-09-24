@@ -46,6 +46,11 @@ tools/make-test-tls.sh
 PMC_KOPIA_SERVER_FINGERPRINT="$(cat "$PMC_SECRETS/tls/kopia-server.fp")"
 export PMC_KOPIA_SERVER_FINGERPRINT
 
+step "PMC's logo files: one source (brand/), and the sign-in theme's copy of the mark matches it"
+cmp brand/pmc-mark.png identity/theme/pmc/login/resources/img/pmc-mark.png ||
+  fail "identity/theme/pmc/login/resources/img/pmc-mark.png is not brand/pmc-mark.png (README: Branding)"
+echo "ok: brand/ is the one source"
+
 step "images: PostgreSQL with pgBackRest, the front door app, the BizBox connector, the feed watch, the stand-in AD, and the two test runners"
 build=(docker build)
 if [[ -n "${HTTPS_PROXY:-}" ]]; then

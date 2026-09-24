@@ -239,6 +239,9 @@ services:
     volumes:
       - ./front/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./front/templates:/etc/nginx/templates:ro
+      # PMC's logo files, at /brand/, for the sign-in page, the app, the viewer
+      # and the signed-out page (README.md, Branding).
+      - ./brand:/pmc/brand:ro
     healthcheck:
       # The TLS server answers for the site's name. (If the template failed to
       # render, nginx would start with no server at all; this catches it.)
@@ -412,6 +415,7 @@ services:
     secrets: [alert-teams-webhook]
     volumes:
       - ./monitor/alertmanager-start.sh:/pmc/alertmanager-start.sh:ro
+      - ./monitor/templates:/pmc/templates:ro
       - alertmanager-data:/alertmanager
     healthcheck:
       test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:9093/-/ready]
@@ -517,6 +521,9 @@ services:
     volumes:
       - ./identity/keycloak-start.sh:/pmc/keycloak-start.sh:ro
       - ./identity/realm-pmc.json:/opt/keycloak/data/import/realm-pmc.json:ro
+      # PMC's sign-in page: Keycloak's own, in PMC's identity (README.md,
+      # Branding).
+      - ./identity/theme/pmc:/opt/keycloak/themes/pmc:ro
     healthcheck:
       # Ready means the pmc realm answers. Keycloak's own readiness endpoint
       # says UP while it is still importing realms and answering 503

@@ -129,14 +129,28 @@ server {
     add_header Referrer-Policy "no-referrer" always;
   }
 
-  # Where sign-out ends. Needs no session, says what happened, offers the way back.
+  # Where sign-out ends. Needs no session, says what happened, offers the way
+  # back, in PMC's identity.
   location = /signed-out {
     default_type text/html;
     add_header Strict-Transport-Security "max-age=31536000" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Cache-Control "no-store" always;
-    add_header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'" always;
-    return 200 '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Signed out - PMC Imaging</title><body style="font:16px system-ui,sans-serif;margin:3rem;max-width:32rem"><h1 style="font-size:1.4rem">You have signed out of PMC Imaging.</h1><p>Close this window on a shared PC.</p><p><a href="/">Sign in again</a></p></body></html>';
+    add_header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; frame-ancestors 'none'" always;
+    return 200 '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>Signed out - PMC Imaging</title><link rel="icon" type="image/png" href="/brand/pmc-mark.png"><style>body{margin:0;font:16px/1.55 Aptos,"Segoe UI",system-ui,sans-serif;background:#F4F6FA;color:#101820}.bar{height:5px;background:linear-gradient(90deg,#0B3F8A 0 40%,#F06423 40% 62%,#69B52C 62% 84%,#101820 84% 100%)}header{background:#0B3F8A;padding:28px 24px}header img{display:block;width:auto;height:56px}main{max-width:34rem;margin:40px auto;padding:0 24px}h1{margin:0 0 .6rem;font:700 1.5rem/1.25 "Aptos Display",Aptos,"Segoe UI",system-ui,sans-serif}a{color:#0B3F8A;font-weight:700}.tag{margin-top:2.5rem;font-size:.9rem;color:#5F6B79}@media (prefers-color-scheme:dark){body{background:#0A0F16;color:#E9EEF5}a{color:#8DB6EE}.tag{color:#8C9AAD}}</style><body><div class="bar"></div><header><img src="/brand/pmc-lockup-white.png" alt="Premiere Medical Center Nueva Ecija"></header><main><h1>You have signed out of PMC Imaging.</h1><p>Close this window on a shared PC.</p><p><a href="/">Sign in again</a></p><p class="tag">Better Care. <i>For Every Life.</i></p></main></body></html>';
+  }
+
+  # ---- PMC's logo files (brand/) ------------------------------------------------
+  # The lock-up and the mark, for the sign-in page, the app, the viewer and the
+  # signed-out page. No session needed: the sign-in page shows them before
+  # anyone has signed in, and they are on the hospital's own signage.
+  location ~ ^/brand/[a-z0-9-]+\.png$ {
+    root /pmc;
+    limit_except GET { deny all; }
+    add_header Cache-Control "public, max-age=86400" always;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Cross-Origin-Resource-Policy "same-origin" always;
   }
 
   # ---- sign-in pages (Keycloak) ------------------------------------------------

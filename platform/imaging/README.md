@@ -50,6 +50,10 @@ modality ─ DICOM 4242 ─────────────────▶  
   [Feed watch and alerts](#feed-watch-and-alerts) below. ICT hears by email
   or Teams when a modality goes quiet, the engine or sign-in is down, space
   runs low, a certificate is about to expire, or a backup is late.
+- **PMC's identity:** see [Branding](#branding) below. The sign-in page, the
+  app, the viewer, the signed-out page and the alert email wear the 2026
+  identity as the portal proposal applied it: PMC Blue, the four-segment
+  bar, the white lock-up, Aptos, *Better Care. For Every Life.*
 
 No port is published to the host in the build. The tests run in containers:
 one on the engine network plays the modalities, and one on the edge network is
@@ -94,7 +98,7 @@ AD (Samba's AD domain controller, `identity/test/ad/`), unless marked:
    token. It lasts 5 minutes, and oauth2-proxy renews it once it is 4 minutes
    old, so a person keeps working past it. Each renewal asks AD again, so
    someone taken out of their group loses access at the next renewal
-   (MEASURED: after 40–42 s in the tests, in two runs, where tokens renew at 40 s; on
+   (MEASURED: after 40–42 s in the tests, in three runs, where tokens renew at 40 s; on
    site within about 4 minutes, INFERRED). The engine's authorization plugin
    asks orthanc-auth-service what the person's role may do, and matches the
    route against the engine's permission table (`orthanc/orthanc.json`). A
@@ -471,8 +475,8 @@ The view's contract, one row per imaging order:
 | `change_seq` | the larger rowversion of the order and its patient, as bigint |
 
 MEASURED here, polling every 2 s: an order reached both X-ray consoles
-1.2 s after BizBox committed it, and 100 orders placed at once reached both
-consoles within 3.8 s (one run).
+1.2–2.3 s after BizBox committed it, and 100 orders placed at once reached both
+consoles within 3.8–3.9 s (two runs).
 
 ### What ICT and PMC's DBA provide
 
@@ -543,7 +547,7 @@ M3.3, built and proven off-prem. What ICT hears about, and how:
 
 The tests register a modality allowed 20 s of silence, have it send one
 study, and wait: the `FeedSilent` email reached ICT's inbox at the stand-in
-relay 65–75 s after that study, in three runs (MEASURED). After the nightly backup,
+relay 65–75 s after that study, in four runs (MEASURED). After the nightly backup,
 the watch showed both clusters' backups and the snapshot within seconds.
 
 ### What ICT provides for alerts
@@ -556,6 +560,62 @@ the watch showed both clusters' backups and the snapshot within seconds.
   `cathlab-qfr=72h,mr-sempra=48h`.
 - **One firewall rule** (M4): Alertmanager may reach the relay, and Teams if
   it is used, and nothing else.
+
+## Branding
+
+The platform wears PMC's 2026 identity as the portal proposal applied it to
+the old archive. The source is the record: `docs/pmc-imaging-portal-built-20260906.md`
+("taken from `rebranding_1.pdf`, not from memory") and
+`deliverables/PMC_Imaging_GUI_Presentation_20260906` (the design-system
+slide), both MEASURED on 24 Sep 2026. The old portal (`apps/imaging-portal`)
+carries the same, and its logo files are the ones in `brand/`.
+
+| | Value | Where it is used here |
+|---|---|---|
+| PMC Blue | `#0B3F8A`; `#062449` in the reading room, as the portal's rail | the app's header, the sign-in panel, the one button, the email's header |
+| Renewal Green | `#69B52C` | healthy states: *Live*, the rule-and-dot, *Recovered* |
+| Care Orange | `#F06423` (text `#B4450F`) | attention only: Caps Lock, a wrong password, an alert. Never alarm red |
+| Clinical Black / Support Grey | `#101820` / `#E7E9ED` | text / surfaces |
+| Type | Aptos Display, Aptos | already on every PMC computer, so nothing is downloaded |
+| The bar | blue 40, orange 22, green 22, black 16 (%) | the top edge of every page and email: the letterhead's device |
+| The logo | the white lock-up on blue; the loop alone on a phone | `brand/`, served by the front door at `/brand/` |
+| The tagline | *Better Care. For Every Life.* | the sign-in page, the signed-out page, the email |
+
+What wears it:
+
+- **The sign-in page** is Keycloak's own v2 page with PMC's theme
+  (`identity/theme/pmc`): a stylesheet, one script, the footer and a few
+  words. The brand panel is the realm's `displayNameHtml`. The form, its fields
+  and what it does stay Keycloak's, so an upgrade keeps working and so do the
+  tests. Like Voyager's sign-in, it says when Caps Lock is on: a Windows
+  password is case-sensitive, and five wrong tries make it wait.
+- **The app's header, the viewer's header** (OHIF's `whiteLabeling`, which
+  also links back to the reading list), **the signed-out page and each tab's
+  icon.**
+- **The alert email** (`monitor/templates/pmc.tmpl`), in HTML and plain text.
+  Its subject stays Alertmanager's own (`[FIRING:1] FeedSilent ...`), so ICT's
+  mail rules keep matching. It has no images, because mail programs block
+  them. Times are Manila time.
+- **`brand/` is the one source** of the logo files. The front door serves them
+  at `/brand/` without a session: the sign-in page shows them before anyone has
+  signed in, and they are on the hospital's signage. Keycloak serves a tab
+  icon only from its theme, so the theme holds one copy of the mark, and
+  `ci/run.sh` checks it matches.
+
+Choices:
+
+- ***For Every Life.* is pale blue, not Renewal Green** as in the portal's
+  rail: green on PMC Blue is 3.9:1, under WCAG AA for text this size
+  (INFERRED from the two colours; axe checks the pages that carry it).
+- **Errors are Care Orange, not red.** The proposal keeps orange for
+  attention; a sign-in error or a failed backup is exactly that.
+
+Open:
+
+- **The Teams message** is Alertmanager's own card, not PMC-styled.
+- **A realm change after the first start** (the brand panel and the theme are
+  realm settings) reaches a running Keycloak only through M4's tool, as for any
+  realm change (see [Open](#open)).
 
 ## Pinned
 
@@ -591,10 +651,10 @@ was pulled on 23 or 24 Sep 2026 (MEASURED). The official images (`postgres`,
 
 ## What the tests prove
 
-`ci/run.sh` runs 96 tests. All passed on 24 Sep 2026 (MEASURED, cloud build,
-about 14 minutes). It starts from empty volumes, checks the platform
-database's schema and grants, and runs 56 engine, API, sign-in, watch and
-orders tests and 23 browser tests. It then removes the containers, starts new ones
+`ci/run.sh` runs 100 tests. All passed on 24 Sep 2026 (MEASURED, cloud build,
+14 minutes). It starts from empty volumes, checks the platform database's
+schema and grants and that the logo files have one source, and runs 58
+engine, API, sign-in, watch, orders and brand tests and 25 browser tests. It then removes the containers, starts new ones
 from the same volumes, and runs 6 engine tests and 2 browser tests again: the
 radiologist signs in afresh, and a cathlab run still opens playing. Then it
 takes the nightly backup, proves the primary cannot delete from the R740xd's
@@ -639,6 +699,7 @@ on site).
 | A referrer opens a study shared with referrers. A search finds only shared studies, and an unshared study is refused even by its UID | `browser/tests/access.spec.js` |
 | A cardiologist opens a cathlab run and it plays | `browser/tests/access.spec.js` |
 | Without a session, DICOMweb answers 401: never data, never a sign-in page. Keycloak's admin console and master realm are not reachable. Signing out ends the session | `browser/tests/access.spec.js` |
+| PMC's identity: the logo files need no session, are only read, and nothing else under `/brand/` is served. The sign-in page carries PMC's theme, the lock-up and tagline on PMC Blue and PMC's words, keeps Keycloak's own form, says when Caps Lock is on, and passes axe's contrast check in light and dark. The app's header, the viewer's header and the signed-out page show the lock-up or mark. The alert email is PMC's, in HTML and plain text | `tests/test_brand.py`, `browser/tests/access.spec.js`, `home.spec.js`, `viewer.spec.js`, `tests/test_watch.py` |
 
 All test data is synthetic (`tests/synth.py`). Pixels are drawn from formulas,
 patients are invented, and each file carries `PatientIdentityRemoved=YES`.
@@ -690,10 +751,10 @@ The AE titles the tests play are PMC's own, as MEASURED in the record.
   copy and restoring the engine's files and the database backups took
   9.8–10.1 s; restoring both clusters from those backups, 3.8–4.3 s; starting
   the platform on them, 49–50 s.
-- **Someone taken out of their AD group lost access 40–42 s later** (two
+- **Someone taken out of their AD group lost access 40–42 s later** (three
   runs; the tests renew a token at 40 s, the site at 4 minutes).
-- **A BizBox order reached both X-ray consoles 1.2 s after BizBox committed
-  it**, and 100 at once reached both within 3.8 s (one run, polling every
+- **A BizBox order reached both X-ray consoles 1.2–2.3 s after BizBox committed
+  it**, and 100 at once reached both within 3.8–3.9 s (two runs, polling every
   2 s; every 30 s on site).
 
 ## Run it
@@ -737,7 +798,8 @@ anonymous pulls, run it with `PMC_LIBRARY=public.ecr.aws/docker/library`.
   import. `keycloak-start.sh` refuses to start without them.
   `pg-platform-init.sh` makes Keycloak's database. `auth-service/` holds what
   each role may do (`permissions.json`) and how the auth service starts.
-  `test/ad/` is the stand-in AD, for tests only.
+  `test/ad/` is the stand-in AD, for tests only. `theme/pmc/` is PMC's
+  sign-in page (see [Branding](#branding)).
 - `app/`: the front door app. `src/web/` is the page (the worklist),
   `src/server/` its server, `src/shared/api.ts` the schemas both sides check.
   `Dockerfile` type-checks, builds and packs it.
@@ -766,8 +828,10 @@ anonymous pulls, run it with `PMC_LIBRARY=public.ecr.aws/docker/library`.
 - `orders/`: the BizBox connector (`pmcorders/`), and the stand-in BizBox for
   the tests (`test/bizbox/`: a synthetic schema, the read-only login).
 - `watch/`: the feed watch. `monitor/`: Prometheus's configuration, the alert
-  rules, and Alertmanager's start, which writes its configuration from the
-  site's values.
+  rules, Alertmanager's start, which writes its configuration from the
+  site's values, and PMC's alert email (`templates/pmc.tmpl`).
+- `brand/`: PMC's logo files, the one source: the white lock-up, the white
+  loop and the coloured loop, from the old portal (see [Branding](#branding)).
 - `secrets/`: generated by `tools/make-secrets.sh`, git-ignored, never
   overwritten. It holds the passwords of both PostgreSQL clusters and of
   Keycloak's database, the front door's client and cookie secrets, the auth

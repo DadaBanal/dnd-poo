@@ -1,0 +1,228 @@
+/* PMC's sign-in page in the 2026 identity, as the portal proposal applied it
+   (README.md, Branding): a PMC Blue brand panel with the white lock-up and
+   the tagline, the four-segment bar along the top edge, PMC Blue for the one
+   button, Care Orange only for what needs attention, Aptos. Light or dark
+   follows the PC. Loaded after Keycloak's own v2 stylesheet; only the look
+   changes here. */
+
+:root {
+  --pmc-blue: #0B3F8A; --pmc-blue-d: #08316D; --pmc-blue-dd: #062449;
+  --pmc-green: #69B52C; --pmc-orange: #F06423; --pmc-black: #101820;
+  --pmc-bg: #F4F6FA; --pmc-surface: #FFFFFF; --pmc-surface-2: #F1F4F9;
+  --pmc-line: #E2E6EC; --pmc-line-2: #CBD2DC;
+  --pmc-ink: #101820; --pmc-ink-2: #48525F; --pmc-ink-3: #5F6B79;
+  --pmc-link: #0B3F8A;
+  --pmc-attention: #B4450F; --pmc-attention-soft: #FEF1EA;
+  --pmc-focus: #1F5BB0;
+  --pmc-panel: #0B3F8A; --pmc-on-blue: #FFFFFF; --pmc-on-blue-2: #DBE6F6;
+  --pmc-shadow: 0 1px 2px rgba(16, 24, 32, .05), 0 10px 30px rgba(11, 63, 138, .08);
+  --pmc-bar: linear-gradient(90deg, #0B3F8A 0 40%, #F06423 40% 62%, #69B52C 62% 84%, #101820 84% 100%);
+  --pmc-f-display: "Aptos Display", "Aptos", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --pmc-f-body: "Aptos", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+}
+/* The reading-room theme: Keycloak marks the page when the PC is dark. */
+html.pf-v5-theme-dark {
+  --pmc-bg: #0A0F16; --pmc-surface: #111925; --pmc-surface-2: #0E1620;
+  --pmc-line: #1F2C3B; --pmc-line-2: #2C3D50;
+  --pmc-ink: #E9EEF5; --pmc-ink-2: #A9B6C6; --pmc-ink-3: #8C9AAD;
+  --pmc-link: #8DB6EE;
+  --pmc-attention: #FF9A66; --pmc-attention-soft: #2A1408;
+  --pmc-focus: #8DB6EE;
+  /* The panel deepens in the reading room, as the portal's rail did. */
+  --pmc-panel: #062449;
+  --pmc-shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 12px 32px rgba(0, 0, 0, .35);
+}
+
+/* ---- the page ---------------------------------------------------------- */
+.login-pf body {
+  background: var(--pmc-bg);
+  color: var(--pmc-ink);
+  font-family: var(--pmc-f-body);
+}
+/* The letterhead's four-segment bar, along the top edge. */
+.login-pf body::before {
+  content: "";
+  position: fixed; inset: 0 0 auto 0; z-index: 2;
+  height: 5px;
+  background: var(--pmc-bar);
+}
+.login-pf .pf-v5-c-login {
+  display: block;
+  min-height: 100vh; min-height: 100dvh;
+  padding: 0;
+  background: none;
+}
+.login-pf .pf-v5-c-login__container {
+  display: grid;
+  /* The panel is the bar's blue 40%, so the orange starts where it ends. */
+  grid-template-columns: minmax(340px, 40%) 1fr;
+  grid-template-areas: "header main";
+  gap: 0;
+  width: 100%; max-width: none;
+  min-height: 100vh; min-height: 100dvh;
+  margin: 0; padding: 0;
+}
+
+/* ---- the brand panel: realm displayNameHtml (identity/realm-pmc.json) --- */
+.login-pf #kc-header.pf-v5-c-login__header {
+  grid-area: header;
+  display: flex;
+  margin: 0;
+  padding: clamp(48px, 9vh, 104px) clamp(28px, 4.5vw, 72px) 40px;
+  background: var(--pmc-panel);
+  color: var(--pmc-on-blue);
+}
+.login-pf #kc-header-wrapper.pf-v5-c-brand {
+  display: flex; flex-direction: column; flex: 1;
+  max-width: 460px;
+  margin: 0;
+  font: 400 16px/1.5 var(--pmc-f-body);
+  letter-spacing: normal; text-transform: none; text-align: left;
+  color: var(--pmc-on-blue) !important;
+}
+.login-pf #kc-header-wrapper p { margin: 0; }
+.login-pf .pmc-lockup {
+  display: block;
+  width: auto; height: 88px;
+  margin: 0 0 clamp(36px, 7vh, 72px);
+}
+.login-pf .pmc-product {
+  font: 800 30px/1.1 var(--pmc-f-display);
+  letter-spacing: -.01em;
+}
+.login-pf .pmc-product b { font-weight: 800; color: var(--pmc-on-blue-2); }
+/* The green rule and dot from under "NUEVA ECIJA" on the logo. */
+.login-pf .pmc-rule {
+  display: flex; align-items: center; gap: 7px;
+  margin: 16px 0 18px;
+}
+.login-pf .pmc-rule::before {
+  content: ""; width: 26px; height: 2px; border-radius: 2px; background: var(--pmc-green);
+}
+.login-pf .pmc-rule::after {
+  content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--pmc-green);
+}
+.login-pf .pmc-what {
+  max-width: 36ch;
+  color: var(--pmc-on-blue-2);
+  font-size: 16.5px;
+}
+.login-pf .pmc-tag {
+  margin-top: auto !important;
+  padding-top: 40px;
+  font: 600 17px/1.3 var(--pmc-f-display);
+}
+.login-pf .pmc-tag i { font-weight: 400; color: var(--pmc-on-blue-2); }
+
+/* ---- the form ------------------------------------------------------------ */
+.login-pf .pf-v5-c-login__main {
+  grid-area: main;
+  align-self: center; justify-self: center;
+  width: min(440px, calc(100% - 32px));
+  margin: 48px 16px;
+  padding: 0;
+  background: var(--pmc-surface);
+  border: 1px solid var(--pmc-line);
+  border-radius: 14px;
+  box-shadow: var(--pmc-shadow);
+}
+.login-pf .pf-v5-c-login__main-header {
+  border-top: 0;
+  padding: 32px 32px 0;
+}
+.login-pf #kc-page-title {
+  font: 700 25px/1.2 var(--pmc-f-display);
+  letter-spacing: -.01em;
+  color: var(--pmc-ink);
+  text-wrap: balance;
+}
+.login-pf .pf-v5-c-login__main-body { padding: 22px 32px 4px; }
+.login-pf .pf-v5-c-login__main-footer { padding: 0 32px; }
+.login-pf .pf-v5-c-login__main-footer:last-child { padding-bottom: 30px; }
+
+.login-pf .pf-v5-c-form__label-text {
+  font-weight: 600;
+  color: var(--pmc-ink);
+}
+.login-pf .pf-v5-c-form-control {
+  --pf-v5-c-form-control--BorderRadius: 8px;
+  --pf-v5-c-form-control--focus--after--BorderBottomColor: var(--pmc-blue);
+  --pf-v5-c-form-control--hover--after--BorderBottomColor: var(--pmc-blue);
+  --pf-v5-c-form-control--m-error--after--BorderBottomColor: var(--pmc-attention);
+  --pf-v5-c-form-control--m-error__icon--m-status--Color: var(--pmc-attention);
+  font-size: 16px;
+}
+.login-pf .pf-v5-c-button.pf-m-primary {
+  --pf-v5-c-button--m-primary--BackgroundColor: var(--pmc-blue);
+  --pf-v5-c-button--m-primary--Color: #FFFFFF;
+  --pf-v5-c-button--m-primary--hover--BackgroundColor: var(--pmc-blue-d);
+  --pf-v5-c-button--m-primary--hover--Color: #FFFFFF;
+  --pf-v5-c-button--m-primary--focus--BackgroundColor: var(--pmc-blue-d);
+  --pf-v5-c-button--m-primary--focus--Color: #FFFFFF;
+  --pf-v5-c-button--m-primary--active--BackgroundColor: var(--pmc-blue-dd);
+  --pf-v5-c-button--m-primary--active--Color: #FFFFFF;
+  --pf-v5-c-button--BorderRadius: 10px;
+  padding-block: 12px;
+  font: 700 16px/1.2 var(--pmc-f-body);
+}
+.login-pf a { color: var(--pmc-link); }
+.login-pf :is(a, button, input, select):focus-visible {
+  outline: 3px solid var(--pmc-focus);
+  outline-offset: 2px;
+}
+
+/* Errors and warnings are attention: Care Orange, never alarm red. */
+.login-pf .pf-v5-c-alert.pf-m-danger,
+.login-pf .pf-v5-c-alert.pf-m-warning {
+  --pf-v5-c-alert--BorderTopColor: var(--pmc-orange);
+  --pf-v5-c-alert--m-inline--BackgroundColor: var(--pmc-attention-soft);
+  --pf-v5-c-alert__icon--Color: var(--pmc-attention);
+  --pf-v5-c-alert__title--Color: var(--pmc-attention);
+}
+.login-pf .pf-v5-c-helper-text__item.pf-m-error,
+.login-pf .pf-v5-c-helper-text__item-text.pf-m-error {
+  --pf-v5-c-helper-text__item--m-error__item-text--Color: var(--pmc-attention);
+  --pf-v5-c-helper-text__item--m-error__item-icon--Color: var(--pmc-attention);
+  color: var(--pmc-attention);
+}
+
+/* Caps Lock (js/pmc.js). Empty, it takes no room. */
+.login-pf .pmc-caps-lock {
+  display: flex; align-items: center; gap: 6px;
+  margin: 8px 0 0;
+  font-size: 14px; font-weight: 700;
+  color: var(--pmc-attention);
+}
+.login-pf .pmc-caps-lock:empty { margin: 0; }
+.login-pf .pmc-caps-lock:not(:empty)::before {
+  content: "\21EA" / "";
+  font-size: 16px;
+}
+.login-pf .pmc-help {
+  margin: 18px 0 0;
+  font-size: 13.5px; line-height: 1.5;
+  color: var(--pmc-ink-3);
+}
+
+/* ---- a phone: the brand panel becomes a band above the form ------------- */
+@media (max-width: 860px) {
+  .login-pf .pf-v5-c-login__container {
+    grid-template-columns: 1fr;
+    grid-template-areas: "header" "main";
+    align-content: start;
+  }
+  .login-pf #kc-header.pf-v5-c-login__header { padding: 30px 20px 26px; }
+  .login-pf .pmc-lockup { height: 56px; margin-bottom: 22px; }
+  .login-pf .pmc-product { font-size: 24px; }
+  .login-pf .pmc-rule, .login-pf .pmc-what { display: none; }
+  .login-pf .pmc-tag { padding-top: 10px; font-size: 15px; }
+  .login-pf .pf-v5-c-login__main { align-self: start; margin: 20px auto 32px; }
+  .login-pf .pf-v5-c-login__main-header { padding: 24px 22px 0; }
+  .login-pf .pf-v5-c-login__main-body { padding: 18px 22px 4px; }
+  .login-pf .pf-v5-c-login__main-footer { padding: 0 22px; }
+  .login-pf .pf-v5-c-login__main-footer:last-child { padding-bottom: 24px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-pf * { transition: none !important; }
+}
