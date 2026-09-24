@@ -1,0 +1,139 @@
+# What ICT is told, and how soon (Path A, M3.3). The feed watch
+# (watch/src/main.mjs) supplies the pmc_* measurements. Every alert says what
+# is wrong and what to look at first. "critical" means imaging, sign-in or the
+# ability to recover is at risk now; "warning" means it will be if nobody acts.
+groups:
+  - name: pmc-imaging
+    rules:
+      - alert: FeedSilent
+        # Each modality's own limit (PMC_FEED_SILENCE, and its overrides).
+        expr: time() - pmc_feed_last_study_timestamp_seconds > pmc_feed_silence_threshold_seconds
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "No study from {{ $labels.modality }} ({{ $labels.aet }}) for {{ $value | humanizeDuration }}"
+          description: >-
+            The engine has had no study from {{ $labels.modality }} (AE title
+            {{ $labels.aet }}) for longer than it expects. Check the modality
+            is switched on and sending to the archive, and its network link.
+
+      - alert: EngineDown
+        expr: pmc_engine_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The imaging engine is not answering"
+          description: >-
+            The engine (Orthanc) has not answered the watch for two minutes.
+            Viewing, the worklist and storing from the modalities are at risk.
+
+      - alert: WatchDown
+        expr: up{job="watch"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The feed watch is not answering"
+          description: >-
+            Prometheus cannot read the feed watch, so no other alert can fire.
+
+      - alert: SignInDown
+        # Every domain controller unreachable: nobody can sign in.
+        expr: max(pmc_directory_up) == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No domain controller answers LDAPS: nobody can sign in"
+          description: >-
+            None of the domain controllers in PMC_AD_URL answered LDAPS with a
+            certificate the platform trusts. People already signed in keep
+            working until their token's next renewal.
+
+      - alert: DomainControllerDown
+        expr: pmc_directory_up == 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.server }} does not answer LDAPS"
+          description: >-
+            One domain controller has not answered LDAPS, or not with a trusted
+            certificate, for 15 minutes. Sign-in carries on through the others.
+
+      - alert: StorageLow
+        expr: pmc_storage_free_bytes / pmc_storage_size_bytes < 0.15
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Image storage is {{ $value | humanizePercentage }} free"
+          description: >-
+            The filesystem holding the images has less than 15% free. The
+            archive never deletes to make room (MaximumStorageSize 0).
+
+      - alert: StorageCritical
+        expr: pmc_storage_free_bytes / pmc_storage_size_bytes < 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Image storage is {{ $value | humanizePercentage }} free"
+          description: >-
+            Less than 5% free where the images are. When it is full, the
+            modalities' studies will be refused.
+
+      - alert: CertificateExpiring
+        expr: pmc_site_certificate_expiry_timestamp_seconds - time() < 21 * 86400
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "The site certificate expires in {{ $value | humanizeDuration }}"
+          description: >-
+            Replace secrets/tls/tls.crt and tls.key before it expires, or
+            every browser will refuse the site.
+
+      - alert: DirectoryCertificateExpiring
+        expr: pmc_directory_certificate_expiry_timestamp_seconds - time() < 21 * 86400
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.server }}'s LDAPS certificate expires in {{ $value | humanizeDuration }}"
+          description: >-
+            When it expires, sign-in through that domain controller stops.
+
+      - alert: DatabaseBackupStale
+        expr: time() - max by (stanza) (pmc_backup_last_success_timestamp_seconds) > 26 * 3600
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No backup of the {{ $labels.stanza }} database for {{ $value | humanizeDuration }}"
+          description: >-
+            The nightly backup (tools/backup.sh) has not finished for this
+            cluster in more than a day. Look at the backup timer's log.
+
+      - alert: DatabaseBackupMissing
+        expr: absent(pmc_backup_last_success_timestamp_seconds)
+        for: 26h
+        labels:
+          severity: critical
+        annotations:
+          summary: "No database backup has ever finished"
+          description: >-
+            The watch finds no pgBackRest backup at all after a day.
+
+      - alert: SnapshotStale
+        expr: time() - pmc_snapshot_last_success_timestamp_seconds > 26 * 3600
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No snapshot to the R740xd for {{ $value | humanizeDuration }}"
+          description: >-
+            The nightly copy of the images and the database backups to the
+            R740xd has not finished in more than a day.

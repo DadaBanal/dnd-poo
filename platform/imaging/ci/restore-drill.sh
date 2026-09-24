@@ -22,10 +22,11 @@ ms() { echo $(( ($(date +%s%N) - $1) / 1000000 )); }
 
 echo "-- the primary and the R740xd are lost"
 "${compose[@]}" --profile test down --remove-orphans
-for volume in pg-index-data pg-platform-data orthanc-storage pgbackrest-repo kopia-repo kopia-config; do
+for volume in pg-index-data pg-platform-data orthanc-storage pgbackrest-repo backup-status \
+    watch-state prometheus-data alertmanager-data kopia-repo kopia-config; do
   docker volume rm "${project}_${volume}" >/dev/null
 done
-echo "deleted: both database clusters, the engine's files, the database backups, the R740xd's copy"
+echo "deleted: both database clusters, the engine's files, the database backups, the monitoring's state, the R740xd's copy"
 
 echo "-- rebuild from the off-site copy"
 t=$(date +%s%N)

@@ -1,8 +1,8 @@
 # Test overlay for ci/run.sh. Never used on-prem.
 #
-# Shortens the clocks the tests wait on, seals the edge, directory and backup
-# networks, stands Samba in for PMC's Active Directory and Azurite for Azure,
-# and adds two runners:
+# Shortens the clocks the tests wait on, seals the edge, directory, backup and
+# alerts networks, stands Samba in for PMC's Active Directory, Azurite for
+# Azure and Mailpit for PMC's mail relay, and adds two runners:
 #   tests    Python, on the engine network: plays the modalities over DICOM
 #            and reads back over REST and DICOMweb (M1). It is on the edge
 #            network too, so it can also sign in at the front door as a
@@ -78,6 +78,28 @@ services:
       # Renewed at 40 s, before the 60 s token above runs out.
       OAUTH2_PROXY_COOKIE_REFRESH: 40s
 
+  # ---- feed watch and alerts (M3): faster clocks, and a mail relay to read ----
+  watch:
+    environment:
+      PMC_AD_URL: ldaps://dc1.pmc.test:636
+      # One test modality may stay silent 20 s, not a day.
+      PMC_FEED_SILENCE_OVERRIDES: watch-quiet=20s
+      POLL_SECONDS: "2"
+      CHECK_SECONDS: "5"
+
+  alertmanager:
+    environment:
+      PMC_ALERT_EMAIL_TO: ict@pmc.test
+      PMC_ALERT_EMAIL_FROM: imaging-alerts@pmc.test
+      PMC_ALERT_SMTP: mailpit:1025
+      PMC_ALERT_SMTP_TLS: "false"
+
+  mailpit:
+    # Stands in for PMC's mail relay: it keeps every message it is sent, and
+    # the tests read them through its API.
+    image: ghcr.io/axllent/mailpit:v1.31.2@sha256:74d609a42ec279aa63c6b4622a6fa9b5408d1ad5b1d76a1c4be40a265ce0863d
+    networks: [alerts]
+
   # ---- backups (M3): the R740xd beside the primary, and Azure's stand-in -------
   kopia-server:
     environment:
@@ -147,6 +169,9 @@ services:
       AD_URL: ldaps://dc1.pmc.test:636
       AD_BASE: DC=pmc,DC=test
       AD_ADMIN_PASSWORD_SECRET: /run/secrets/ad-admin-password
+      # The feed watch, and the stand-in mail relay's inbox.
+      WATCH_URL: http://watch:9100
+      MAILPIT_URL: http://mailpit:8025
     secrets:
       - svc-platform-api-key
       - test-user-password
@@ -154,7 +179,7 @@ services:
       - ad-admin-password
     volumes:
       - ./.results:/results
-    networks: [engine, edge, directory]
+    networks: [engine, edge, directory, monitor, alerts]
 
   browser:
     image: pmc-imaging/browser:local
@@ -185,6 +210,8 @@ networks:
   directory:
     internal: true
   backup:
+    internal: true
+  alerts:
     internal: true
 
 volumes:

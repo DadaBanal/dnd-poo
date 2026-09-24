@@ -1,8 +1,9 @@
 # platform/imaging — the Path A platform
 
 **Status, 24 Sep 2026: M1 (the engine), M2.1 (the front door and the viewer),
-M2.2 (sign-in), the first part of M2.3 (the worklist) and M3.1 (backups and a
-disaster drill) are built and proven off-prem. Nothing is deployed.** Dada's rule
+M2.2 (sign-in), the first part of M2.3 (the worklist), M3.1 (backups and a
+disaster drill) and M3.3 (the feed watch and alerts) are built and proven
+off-prem. Nothing is deployed.** Dada's rule
 (23 Sep): nothing goes on-prem until the whole platform is built, and the
 on-prem go is his. Deployment also stays gated on ADR-001 (still *Proposed*)
 and on the safety work in [`../README.md`](../README.md), "What it is gated
@@ -42,6 +43,10 @@ modality ─ DICOM 4242 ─────────────────▶  
   the R740xd, which the primary can add to but never delete from, and from
   there off-site. A disaster drill rebuilds the platform from the off-site
   copy alone.
+- **M3.3, the feed watch and alerts:** see
+  [Feed watch and alerts](#feed-watch-and-alerts) below. ICT hears by email
+  or Teams when a modality goes quiet, the engine or sign-in is down, space
+  runs low, a certificate is about to expire, or a backup is late.
 
 No port is published to the host in the build. The tests run in containers:
 one on the engine network plays the modalities, and one on the edge network is
@@ -416,6 +421,53 @@ though not for the images.
   snapshot missed. The first version got that order from the alphabet;
   `backup/kopia/snapshot.sh` now names it.
 
+## Feed watch and alerts
+
+M3.3, built and proven off-prem. What ICT hears about, and how:
+
+- **The watch** (`watch/src/main.mjs`: Node 24, one file, no packages) only
+  reads. It follows the engine's change feed and notes, for each registered
+  modality, when it last sent a study (once the engine holds it stable). It
+  checks that the engine answers, that each domain controller answers LDAPS
+  with a certificate the platform trusts, and how much space is free where
+  the images are. It reads when the site's and the domain controllers'
+  certificates expire, the newest backup of each database cluster (from
+  pgBackRest's own record), and when the newest snapshot to the R740xd
+  finished.
+- **Prometheus 3.14** reads the watch every 15 s, keeps 90 days, and
+  evaluates the alert rules (`monitor/rules.yml`).
+- **Alertmanager 0.34** sends what fires to ICT: by email through PMC's mail
+  relay, to a Teams channel through a Workflows webhook, or both. Neither is
+  set until ICT sets it; until then alerts show only in Alertmanager.
+
+| Alert | Fires when | Severity |
+|---|---|---|
+| `FeedSilent` | a modality has sent nothing for longer than its limit: 24 h, unless ICT sets another for it | warning |
+| `EngineDown` | the engine has not answered for 2 minutes | critical |
+| `SignInDown` | no domain controller has answered LDAPS for 5 minutes: nobody can sign in | critical |
+| `DomainControllerDown` | one domain controller has not, for 15 minutes | warning |
+| `StorageLow`, `StorageCritical` | under 15%, then under 5%, free where the images are | warning, critical |
+| `CertificateExpiring`, `DirectoryCertificateExpiring` | the site's, or a domain controller's, certificate has under 21 days left | warning |
+| `DatabaseBackupStale`, `DatabaseBackupMissing` | no backup of a cluster for 26 hours; or none at all, a day after the start | critical |
+| `SnapshotStale` | no snapshot to the R740xd for 26 hours | critical |
+| `WatchDown` | Prometheus cannot read the watch for 5 minutes, so nothing else can fire | critical |
+
+The tests register a modality allowed 20 s of silence, have it send one
+study, and wait: the `FeedSilent` email reached ICT's inbox at the stand-in
+relay 65–70 s after that study, in two runs (MEASURED). After the nightly backup,
+the watch showed both clusters' backups and the snapshot within seconds.
+
+### What ICT provides for alerts
+
+- **Where alerts go:** `PMC_ALERT_EMAIL_TO` and `PMC_ALERT_EMAIL_FROM`, and
+  the mail relay as `PMC_ALERT_SMTP` (host:port) with `PMC_ALERT_SMTP_TLS`;
+  and/or a Teams Workflows webhook URL in `secrets/alert-teams-webhook`.
+- **Each modality's limit**, where a day is wrong: a cathlab idle over a
+  weekend, say. `PMC_FEED_SILENCE_OVERRIDES`, by registered name:
+  `cathlab-qfr=72h,mr-sempra=48h`.
+- **One firewall rule** (M4): Alertmanager may reach the relay, and Teams if
+  it is used, and nothing else.
+
 ## Pinned
 
 | Component | Version | Pinned by | Evidence |
@@ -433,6 +485,9 @@ though not for the images.
 | Nightly copy and off-site: `kopia/kopia:0.23.1` | Kopia 0.23.1. Repository format 3, AES256-GCM-HMAC-SHA256, BLAKE2B-256-128 | image digest | MEASURED: `kopia --version` and `kopia repository status`, 24 Sep 2026 |
 | Off-site stand-in, tests only: `mcr.microsoft.com/azure-storage/azurite:3.37.0` | Azurite 3.37.0, blob service only, over TLS | image digest | MEASURED: `azurite-blob --version`, 24 Sep 2026 |
 | Stand-in Active Directory, tests only: `pmc-imaging/ad-standin`, built here from `identity/test/ad/` on `debian:trixie-slim` | Samba 4.22.11 (`2:4.22.11+dfsg-0+deb13u1`) as an AD domain controller | base image digest, and the exact package version | MEASURED: `samba --version`, 24 Sep 2026 |
+| Feed watch: `pmc-imaging/watch`, built here from `watch/` | Node 24.21.0 (`node:24.21.0-trixie-slim`), no packages | base image digest | MEASURED: built and run by `ci/run.sh` |
+| Alerts: `quay.io/prometheus/prometheus:v3.14.0` and `quay.io/prometheus/alertmanager:v0.34.1` | Prometheus 3.14.0, Alertmanager 0.34.1 | image digests | MEASURED: `--version` from each image. Both are the latest releases (VERIFIED on GitHub, 24 Sep 2026) |
+| Mail relay stand-in, tests only: `ghcr.io/axllent/mailpit:v1.31.2` | Mailpit 1.31.2 | image digest | VERIFIED as the latest release on GitHub, 24 Sep 2026 |
 | Test runner: `python:3.14-slim-trixie` | Python 3.14.7, pydicom 3.0.2, pynetdicom 3.0.4, pylibjpeg-libjpeg 2.4.0, pytest 9.1.1, ldap3 2.9.1 | image digest, and a hash for every package | MEASURED. ldap3 2.9.1 is its latest release (VERIFIED on pypi.org, 24 Sep 2026) |
 | Browser runner: `mcr.microsoft.com/playwright:v1.63.0-noble` | Playwright 1.63.0, Chromium | image digest, and an integrity hash for every package | MEASURED |
 
@@ -445,15 +500,16 @@ was pulled on 23 or 24 Sep 2026 (MEASURED). The official images (`postgres`,
 
 ## What the tests prove
 
-`ci/run.sh` runs 84 tests. All passed on 24 Sep 2026 (MEASURED, cloud build,
-about 11 minutes). It starts from empty volumes, checks the platform
-database's schema and grants, and runs 45 engine, API and sign-in tests and
-23 browser tests. It then removes the containers, starts new ones
+`ci/run.sh` runs 88 tests. All passed on 24 Sep 2026 (MEASURED, cloud build,
+about 13 minutes). It starts from empty volumes, checks the platform
+database's schema and grants, and runs 48 engine, API, sign-in and watch
+tests and 23 browser tests. It then removes the containers, starts new ones
 from the same volumes, and runs 6 engine tests and 2 browser tests again: the
 radiologist signs in afresh, and a cathlab run still opens playing. Then it
 takes the nightly backup, proves the primary cannot delete from the R740xd's
-copy, copies that off-site, deletes every volume of both hosts, rebuilds the
-platform from the off-site copy alone, and runs the same 6 and 2 once more.
+copy, checks the watch saw it, copies it off-site, deletes every volume of
+both hosts, rebuilds the platform from the off-site copy alone, and runs the
+same 6 and 2 once more.
 
 The test overlay shortens three clocks so the tests can wait them out: a
 study is stable after 5 s (60 s on site), worklist housekeeping runs every
@@ -474,6 +530,7 @@ on site).
 | An order reaches only its own modality's worklist and leaves it once the study has arrived and is stable. A cancelled order is withdrawn | `test_worklists.py` |
 | After the restart, every study, every file (MD5), every registered modality, a pending order and the audit trail are still there, and the engine still takes studies | `test_after_restart.py` |
 | Both clusters archive every log segment as it is written. The nightly backup takes both clusters and checks them, then snapshots them and the engine's files to the R740xd's Kopia server, which copies its repository off-site. The primary cannot delete a snapshot, even its own | `ci/run.sh`, `tools/backup.sh`, `tools/offsite.sh` |
+| The watch sees the engine, the domain controller, the images' free space and the certificates. Every registered modality has a feed and a limit. A modality that goes quiet past its limit reaches ICT's inbox as a `FeedSilent` email. After the nightly backup the watch shows both clusters' backups and the snapshot | `tests/test_watch.py` |
 | Disaster: with both hosts' volumes deleted, the platform is rebuilt from the off-site copy alone. Every file is verified, both clusters are restored and their logs replayed, and archiving works again. Then every study, every file (MD5), every modality, a pending order and the audit trail are back, the radiologist signs in, and a cathlab run opens playing | `ci/restore-drill.sh`, then `test_after_restart.py` and `browser/tests/viewer.spec.js` |
 | The front door answers only for the site name, over TLS 1.3 and HTTP/2, and sends plain HTTP to HTTPS | `browser/tests/viewer.spec.js` |
 | A cathlab run opens already playing. A CT series opens and every slice arrives. An ultrasound run that arrived as JPEG plays as sent. No console errors | `browser/tests/viewer.spec.js` |
@@ -537,10 +594,10 @@ The AE titles the tests play are PMC's own, as MEASURED in the record.
   compressed again: they are already JPEG-LS.
 - **The off-site copy** of the whole 60 MB repository took 1.4 s (one run, to
   the stand-in on the same host).
-- **The disaster drill**, in four runs: verifying every file of the off-site
+- **The disaster drill**, in five runs: verifying every file of the off-site
   copy and restoring the engine's files and the database backups took
-  9.8–10.1 s; restoring both clusters from those backups, 3.8–4.2 s; starting
-  the platform on them, 49 s.
+  9.8–10.1 s; restoring both clusters from those backups, 3.8–4.3 s; starting
+  the platform on them, 49–50 s.
 - **Someone taken out of their AD group lost access 42 s later** (one run;
   the tests renew a token at 40 s, the site at 4 minutes).
 
@@ -611,6 +668,9 @@ anonymous pulls, run it with `PMC_LIBRARY=public.ecr.aws/docker/library`.
 - `tools/backup.sh` and `tools/offsite.sh`: the nightly backup, and the copy
   off-site. `ci/restore-drill.sh`: the disaster drill, for the test project
   only.
+- `watch/`: the feed watch. `monitor/`: Prometheus's configuration, the alert
+  rules, and Alertmanager's start, which writes its configuration from the
+  site's values.
 - `secrets/`: generated by `tools/make-secrets.sh`, git-ignored, never
   overwritten. It holds the passwords of both PostgreSQL clusters and of
   Keycloak's database, the front door's client and cookie secrets, the auth
@@ -638,7 +698,11 @@ anonymous pulls, run it with `PMC_LIBRARY=public.ecr.aws/docker/library`.
     which the primary pins. The nightly snapshot refuses to run without them;
   - `PMC_BACKUP_AZURE_ACCOUNT` and `PMC_BACKUP_AZURE_KOPIA_CONTAINER`: the
     off-site storage account and container, set on the R740xd once the cloud
-    copy is decided.
+    copy is decided;
+  - `PMC_FEED_SILENCE` and `PMC_FEED_SILENCE_OVERRIDES`: how long a modality
+    may stay silent (default 24h), and the exceptions;
+  - `PMC_ALERT_EMAIL_TO`, `_FROM`, `PMC_ALERT_SMTP`, `PMC_ALERT_SMTP_TLS`:
+    where alerts are emailed, and through which relay.
 - **The TLS certificate** is the site's own; for PMC, the existing `*.pmcne.ph`
   wildcard. It goes in `secrets/tls/` as `tls.crt` and `tls.key`.
   `tools/make-test-tls.sh` makes a throwaway one for tests and never replaces
@@ -730,6 +794,13 @@ These are INFERRED, not decided by anyone but this build. Argue with them.
   copy does not: a server whose users can be allowed to add snapshots but not
   delete them; encryption before anything leaves; and `sync-to`, which copies
   the whole repository to Azure without the primary ever holding the key.
+- **The watch reads the record, not a report.** It reads pgBackRest's own
+  record of each backup, and the engine's own change feed, so a job that never
+  ran cannot claim it did. Only the snapshot to the R740xd is noted by the
+  job itself, when it succeeds.
+- **Alerts leave by one door.** Only Alertmanager reaches outside the
+  platform, and only to the mail relay and Teams. Prometheus and the watch
+  sit on a network with no route out.
 - **The drill restores from off-site only.** The R740xd's copy would be
   quicker, but the case worth proving is the one where both buildings are
   gone.
@@ -792,6 +863,14 @@ These are INFERRED, not decided by anyone but this build. Argue with them.
 - **Putting back one study**, not the whole site, needs the engine's index to
   find its files. The runbook (M4) restores a copy into a scratch engine and
   sends the study from there.
+- **The off-site copy's freshness** is watched on the R740xd, which the
+  primary cannot see into: M4 puts a watch there too.
+- **Nobody looks at Prometheus or Alertmanager directly yet.** The front door
+  does not route them. ICT's admin screens (M2.3) can show what is firing.
+- **The host itself** (its CPU, memory and system disk) is not watched yet:
+  M4, or PMC's existing monitoring if it has one.
+- **A modality refused for a wrong AE title** is in the engine's log, but not
+  counted yet.
 - **The drill's times are for a few synthetic studies.** Restoring 6.3 TB is
   measured on PMC hardware in M4.
 
@@ -821,7 +900,7 @@ uv pip compile --generate-hashes --python-version 3.14 \
   ICT's admin screens. See [The front door app](#the-front-door-app).
 - **M2.4:** the cine fix for the live WS23 portal, prepared and tested in
   `apps/imaging-portal`. It is deployed only on Dada's go.
-- **M3, the rest:** the BizBox-to-worklist connector (against a mock BizBox),
-  and feed watch and alerts, which must also watch the backups.
+- **M3, the rest:** the BizBox-to-worklist connector, against a stand-in
+  BizBox.
 - **M4:** migration tooling, the runbook, and the on-prem package for the
   R740xd.

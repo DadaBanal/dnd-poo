@@ -5,7 +5,8 @@
 #       (Keycloak checking PMC's Active Directory, oauth2-proxy holding each
 #       person's session, orthanc-auth-service deciding what each role may
 #       do), and the PMC front door app: the worklist at /pmc/
-#   M3  backups: to the R740xd (compose.r740xd.yaml) and off-site
+#   M3  backups: to the R740xd (compose.r740xd.yaml) and off-site; the feed
+#       watch, Prometheus and Alertmanager, which tell ICT what went wrong
 #
 # Every image is pinned by digest. The engine and its index sit on a network
 # with no route out. The front door is the only service on the edge network,
@@ -28,6 +29,13 @@
 #                  people and the five groups are, the read-only account, and
 #                  the group behind each role. No default: Keycloak refuses
 #                  to start without them. See README.md, Sign-in.
+#   PMC_FEED_SILENCE, PMC_FEED_SILENCE_OVERRIDES
+#                  how long a modality may stay silent (default 24h), and
+#                  per-modality limits ("cathlab-qfr=72h,mr-sempra=48h")
+#   PMC_ALERT_*    where alerts go: PMC_ALERT_EMAIL_TO and _FROM, and the mail
+#                  relay PMC_ALERT_SMTP (host:port), PMC_ALERT_SMTP_TLS; and/or
+#                  a Teams Workflows webhook in secrets/alert-teams-webhook.
+#                  Neither set: alerts show in Alertmanager only.
 
 name: pmc-imaging
 
@@ -255,6 +263,7 @@ services:
     volumes:
       - orthanc-storage:/sources/engine-files:ro
       - pgbackrest-repo:/sources/database-backups:ro
+      - backup-status:/status
       - ./backup/kopia:/pmc/kopia:ro
     restart: "no"
     logging: *logging
@@ -278,6 +287,97 @@ services:
     restart: "no"
     logging: *logging
     networks: [backup]
+
+  # ---- feed watch and alerts (M3) ---------------------------------------------
+  watch:
+    # What ICT should hear about before a radiologist does: when each
+    # modality last sent a study, whether the engine and the domain
+    # controllers answer, free space, certificate expiry, and the newest
+    # backups (watch/src/main.mjs). It only reads. Metrics on :9100.
+    image: pmc-imaging/watch:local
+    pull_policy: never
+    build: ./watch
+    depends_on:
+      # Its key is checked through the auth service, so it waits for that too.
+      orthanc: { condition: service_healthy }
+      auth-service: { condition: service_healthy }
+    environment:
+      TZ: Asia/Manila
+      ENGINE_URL: http://orthanc:8042
+      API_KEY_SECRET: /run/secrets/svc-platform-api-key
+      PMC_AD_URL: ${PMC_AD_URL:-}
+      PMC_FEED_SILENCE: ${PMC_FEED_SILENCE:-24h}
+      PMC_FEED_SILENCE_OVERRIDES: ${PMC_FEED_SILENCE_OVERRIDES:-}
+    secrets:
+      - svc-platform-api-key
+      - tls-certificate
+      - source: ad-ca
+        target: ad-ca.pem
+    # pgBackRest's repository is readable by the postgres group (999).
+    group_add: ["999"]
+    volumes:
+      - orthanc-storage:/storage:ro
+      - pgbackrest-repo:/pgbackrest:ro
+      - backup-status:/status:ro
+      - watch-state:/state
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:9100/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    logging: *logging
+    # engine: the engine. directory: the domain controllers. monitor: Prometheus.
+    networks: [engine, directory, monitor]
+
+  prometheus:
+    # Reads the watch every 15 s, keeps 90 days, and evaluates the alert
+    # rules (monitor/rules.yml). Not routed by the front door.
+    image: quay.io/prometheus/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=90d
+    volumes:
+      - ./monitor/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitor/rules.yml:/etc/prometheus/rules.yml:ro
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:9090/-/ready]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    logging: *logging
+    networks: [monitor]
+
+  alertmanager:
+    # Sends what fires to ICT: email through PMC's mail relay and/or a Teams
+    # channel, from the site's values (monitor/alertmanager-start.sh).
+    image: quay.io/prometheus/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a
+    entrypoint: [/bin/sh, /pmc/alertmanager-start.sh]
+    environment:
+      PMC_ALERT_EMAIL_TO: ${PMC_ALERT_EMAIL_TO:-}
+      PMC_ALERT_EMAIL_FROM: ${PMC_ALERT_EMAIL_FROM:-}
+      PMC_ALERT_SMTP: ${PMC_ALERT_SMTP:-}
+      PMC_ALERT_SMTP_TLS: ${PMC_ALERT_SMTP_TLS:-true}
+    secrets: [alert-teams-webhook]
+    volumes:
+      - ./monitor/alertmanager-start.sh:/pmc/alertmanager-start.sh:ro
+      - alertmanager-data:/alertmanager
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:9093/-/ready]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    logging: *logging
+    # monitor: Prometheus. alerts: the mail relay and Teams, nothing else (M4's
+    # firewall).
+    networks: [monitor, alerts]
 
   # ---- sign-in (M2.2) ---------------------------------------------------------
 
@@ -510,6 +610,13 @@ networks:
   sessions:
     # oauth2-proxy and its session store, and nothing else.
     internal: true
+  monitor:
+    # The watch, Prometheus and Alertmanager, and nothing else.
+    internal: true
+  alerts:
+    # Alertmanager to PMC's mail relay and Teams; on site the host's firewall
+    # lets it reach those and nothing else (M4).
+    {}
   backup:
     # From the primary's backup jobs to the R740xd, and from there to Azure.
     # The databases and the engine are not on it.
@@ -522,6 +629,13 @@ volumes:
   # Both clusters' pgBackRest repository: backups and archived write-ahead
   # log. Snapshotted nightly to the R740xd (files-backup).
   pgbackrest-repo: {}
+  # When the newest snapshot to the R740xd finished, for the watch.
+  backup-status: {}
+  # The watch's place in the engine's change feed; Prometheus's 90 days;
+  # Alertmanager's silences.
+  watch-state: {}
+  prometheus-data: {}
+  alertmanager-data: {}
 
 secrets:
   kopia-client-password:
@@ -530,6 +644,9 @@ secrets:
     # Encrypts the Kopia repository. Escrowed off both hosts: without it no
     # backup can be read.
     file: ${PMC_SECRETS:-./secrets}/kopia-repo-password
+  alert-teams-webhook:
+    # A Teams Workflows webhook for alerts; empty (off) until ICT places one.
+    file: ${PMC_SECRETS:-./secrets}/alert-teams-webhook
   backup-azure-key:
     # The off-site storage account's key; empty until ICT places it (cloud
     # copies wait on the DPO's answer).

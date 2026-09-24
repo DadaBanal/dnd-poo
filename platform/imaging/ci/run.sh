@@ -46,7 +46,7 @@ tools/make-test-tls.sh
 PMC_KOPIA_SERVER_FINGERPRINT="$(cat "$PMC_SECRETS/tls/kopia-server.fp")"
 export PMC_KOPIA_SERVER_FINGERPRINT
 
-step "images: PostgreSQL with pgBackRest, the front door app, the stand-in AD, and the two test runners"
+step "images: PostgreSQL with pgBackRest, the front door app, the feed watch, the stand-in AD, and the two test runners"
 build=(docker build)
 if [[ -n "${HTTPS_PROXY:-}" ]]; then
   # A build host behind a proxy (the cloud build): let the build reach it,
@@ -57,6 +57,7 @@ if [[ -n "${HTTPS_PROXY:-}" ]]; then
 fi
 "${build[@]}" --build-arg "PMC_LIBRARY=${PMC_LIBRARY:-docker.io/library}" -t pmc-imaging/postgres:local backup/postgres
 "${build[@]}" --build-arg "PMC_LIBRARY=${PMC_LIBRARY:-docker.io/library}" -t pmc-imaging/app:local app
+"${build[@]}" --build-arg "PMC_LIBRARY=${PMC_LIBRARY:-docker.io/library}" -t pmc-imaging/watch:local watch
 "${build[@]}" --build-arg "PMC_LIBRARY=${PMC_LIBRARY:-docker.io/library}" -t pmc-imaging/ad-standin:local identity/test/ad
 "${build[@]}" -t pmc-imaging/tests:local tests
 "${build[@]}" -t pmc-imaging/browser:local browser
@@ -100,8 +101,8 @@ psql_platform() { "${compose[@]}" exec -T pg-platform psql -U pmc -d platform -A
   || fail "the app's role may change or delete the audit record"
 echo "ok: schema as committed; the app may only add to the audit record"
 
-step "engine tests (DICOM, REST, DICOMweb, a person's session, the app's API) against a fresh engine"
-"${compose[@]}" --profile test run --rm "${as_me[@]}" tests -m "not after_restart"
+step "engine tests (DICOM, REST, DICOMweb, sign-in against AD, the app's API, the feed watch and its alerts) against a fresh engine"
+"${compose[@]}" --profile test run --rm "${as_me[@]}" tests -m "not after_restart and not after_backup"
 
 step "browser tests: sign-in, the front door, the worklist and the viewer"
 "${compose[@]}" --profile test run --rm "${as_me[@]}" --entrypoint python tests seed.py
@@ -121,6 +122,7 @@ tools/backup.sh full --prove-append-only
 # the first copy; here the test makes it in the stand-in.
 "${compose[@]}" exec -T azurite node /pmc/azure-standin-container.mjs
 tools/offsite.sh
+RUN_PHASE=after_backup "${compose[@]}" --profile test run --rm "${as_me[@]}" tests -m after_backup
 
 step "disaster: the primary and the R740xd are lost; rebuild from the off-site copy alone"
 ci/restore-drill.sh

@@ -69,6 +69,10 @@ write kopia-repo-password "$(rand 48)"
 write kopia-client-password "$(rand)"
 write kopia-control-password "$(rand)"
 
+# Alerts (M3): a Teams Workflows webhook, if ICT wants alerts in a channel.
+# Empty until ICT places one; email through the mail relay needs no secret.
+write alert-teams-webhook ""
+
 # The off-site storage account's key is Azure's to issue and ICT's to place.
 # Until then this is an empty file, and the off-site copy stays off (cloud
 # copies wait on the DPO's answer). The tests use a stand-in's key.

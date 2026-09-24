@@ -24,6 +24,10 @@ for name in database-backups engine-files; do
   [ -n "$last" ] || { echo "no snapshot listed for $src"; exit 1; }
   echo "snapshot $last of $src"
 done
+# For the feed watch (M3.3): when the newest snapshot finished.
+if [ -d /status ]; then
+  printf '{"finished": %s}\n' "$(date +%s)" > /status/snapshot.json.tmp && mv /status/snapshot.json.tmp /status/snapshot.json
+fi
 if [ "${1:-}" = "--prove-append-only" ]; then
   if $k snapshot delete "$last" --delete >/tmp/delete.log 2>&1; then
     echo "FAIL: the primary deleted its own snapshot"; exit 1
