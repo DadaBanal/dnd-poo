@@ -16,6 +16,36 @@ async function get<T>(path: string, schema: { parse: (v: unknown) => T }, signal
 
 export const fetchMe = (signal?: AbortSignal) => get('/me', Me, signal);
 
+// A change. The browser says which site sent it (Origin), and the server takes
+// changes only from this one.
+async function send(method: 'POST' | 'DELETE', path: string): Promise<Response> {
+  const r = await fetch(`/pmc/api${path}`, { method, headers: { Accept: 'application/json' }, keepalive: true });
+  if (r.status === 401) throw new SignedOut('signed out');
+  return r;
+}
+
+export type ClaimResult = { ok: true } | { ok: false; by: string };
+
+export async function claimStudy(studyUid: string): Promise<ClaimResult> {
+  const r = await send('POST', `/studies/${studyUid}/claim`);
+  if (r.status === 409) {
+    const body = (await r.json()) as { claim?: { readerName?: string } };
+    return { ok: false, by: body.claim?.readerName ?? 'someone else' };
+  }
+  if (!r.ok) throw new Error(`claim: ${r.status}`);
+  return { ok: true };
+}
+
+export async function releaseStudy(studyUid: string): Promise<void> {
+  const r = await send('DELETE', `/studies/${studyUid}/claim`);
+  if (!r.ok && r.status !== 409) throw new Error(`release: ${r.status}`);
+}
+
+// Recorded in the audit trail; opening the study never waits for it.
+export function markOpened(studyUid: string): void {
+  void send('POST', `/studies/${studyUid}/opened`).catch(() => {});
+}
+
 export function fetchStudies(q: Partial<StudiesQuery>, signal?: AbortSignal): Promise<Studies> {
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== '') params.set(k, String(v));

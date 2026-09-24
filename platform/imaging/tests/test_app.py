@@ -123,3 +123,59 @@ def test_a_new_study_reaches_an_open_page_within_seconds(radiologist, engine, mo
     measurements["app"] = {"new_study_announced_after_s": round(announced, 1)}
     assert announced < 15
     assert study.study_uid in uids(studies(radiologist, q=study.patient_id, range="all"))
+
+
+# ---- claims and the audit trail (the platform database) ---------------------------
+ORIGIN = {"Origin": BASE}  # what a browser sends with every change from this site
+
+
+def claim_url(uid: str) -> str:
+    return f"{BASE}/pmc/api/studies/{uid}/claim"
+
+
+def test_a_reader_claims_a_study_and_everyone_sees_who(radiologist, sent):
+    uid = sent["ct"].study_uid
+    r = radiologist.post(claim_url(uid), headers=ORIGIN, timeout=30)
+    assert r.status_code == 200, r.text
+    assert r.json()["claim"]["reader"] == "rad.test@pmc.test"
+    # Claiming it again changes nothing: it is still the radiologist's.
+    assert radiologist.post(claim_url(uid), headers=ORIGIN, timeout=30).status_code == 200
+
+    cardiologist = sign_in("cardiologist")
+    seen = {s["studyUid"]: s for s in studies(cardiologist, range="all", limit=200)["studies"]}
+    assert seen[uid]["claim"]["readerName"] == "Test Radiologist"
+    # Someone else's claim can be neither taken nor released.
+    taken = cardiologist.post(claim_url(uid), headers=ORIGIN, timeout=30)
+    assert taken.status_code == 409
+    assert taken.json()["claim"]["readerName"] == "Test Radiologist"
+    assert cardiologist.delete(claim_url(uid), headers=ORIGIN, timeout=30).status_code == 409
+
+    # "Claimed by me" is exactly the radiologist's claims.
+    assert uids(studies(radiologist, range="all", mine="1")) == {uid}
+    assert radiologist.delete(claim_url(uid), headers=ORIGIN, timeout=30).status_code == 204
+    after = studies(radiologist, q=sent["ct"].patient_id, range="all")["studies"]
+    assert after[0]["claim"] is None
+
+
+def test_only_readers_claim_only_what_they_can_see_and_only_from_this_site(radiologist, sent):
+    uid = sent["mr"].study_uid
+    assert sign_in("referrer").post(claim_url(uid), headers=ORIGIN, timeout=30).status_code == 403
+    # A change without this site's Origin is refused: another site's page
+    # cannot claim studies in a signed-in person's name.
+    assert radiologist.post(claim_url(uid), timeout=30).status_code == 403
+    assert radiologist.post(claim_url(uid), headers={"Origin": "https://example.org"}, timeout=30).status_code == 403
+    # A study the engine does not show this person does not exist for them.
+    assert radiologist.post(claim_url("1.2.3.4.5"), headers=ORIGIN, timeout=30).status_code == 404
+    assert radiologist.post(claim_url("not-a-uid"), headers=ORIGIN, timeout=30).status_code == 400
+
+
+def test_ict_reads_who_opened_and_claimed_a_study(radiologist, sent):
+    uid = sent["dx"].study_uid
+    assert radiologist.post(f"{BASE}/pmc/api/studies/{uid}/opened", headers=ORIGIN, timeout=30).status_code == 204
+    assert radiologist.post(claim_url(uid), headers=ORIGIN, timeout=30).status_code == 200
+    assert radiologist.delete(claim_url(uid), headers=ORIGIN, timeout=30).status_code == 204
+    assert radiologist.get(f"{BASE}/pmc/api/audit", timeout=30).status_code == 403
+    trail = sign_in("ict").get(f"{BASE}/pmc/api/audit", params={"study": uid}, timeout=30).json()["events"]
+    # Newest first.
+    assert [(e["actor"], e["action"]) for e in trail] == [
+        ("rad.test@pmc.test", "release"), ("rad.test@pmc.test", "claim"), ("rad.test@pmc.test", "open")]

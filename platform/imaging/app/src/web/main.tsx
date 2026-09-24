@@ -1,8 +1,6 @@
 // The PMC front door app: the page every person lands on at imaging.pmcne.ph.
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
-import {
-  Outlet, RouterProvider, createRootRoute, createRoute, createRouter, parseSearchWith, stringifySearchWith,
-} from '@tanstack/react-router';
+import { Outlet, RouterProvider, createRootRoute, createRoute, createRouter } from '@tanstack/react-router';
 import { LogOut, SunMoon } from 'lucide-react';
 import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -122,12 +120,18 @@ const worklistRoute = createRoute({
 });
 
 // Filters stay plain text in the URL ("?mod=ct,xa&range=today"), so a view
-// can be read, typed and shared.
+// can be read, typed and shared. Read as text only: the router's own parser
+// turns "?q=12345" into a number, and a numeric patient ID would be lost.
 const router = createRouter({
   routeTree: rootRoute.addChildren([worklistRoute]),
   basepath: '/pmc',
-  parseSearch: parseSearchWith((v) => v),
-  stringifySearch: stringifySearchWith((v) => String(v)),
+  parseSearch: (search) => Object.fromEntries(new URLSearchParams(search)),
+  stringifySearch: (search) => {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(search)) if (v !== undefined && v !== '') params.set(k, String(v));
+    const text = params.toString();
+    return text ? `?${text}` : '';
+  },
 });
 
 declare module '@tanstack/react-router' {

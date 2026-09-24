@@ -78,6 +78,15 @@ if "${compose[@]}" exec -T orthanc python3 -c \
 fi
 echo "ok: no SQLite index, no route out"
 
+step "the platform database: the committed schema, and an audit record the app cannot change"
+"${compose[@]}" run --rm --no-deps -v "$here/.results:/out" --entrypoint /bin/sh migrate -c \
+  'DATABASE_URL="postgres://platform_owner:$(cat /run/secrets/platform-owner-password)@pg-platform:5432/platform?sslmode=disable" exec dbmate --schema-file /out/schema.sql dump'
+diff -u db/schema.sql .results/schema.sql || fail "the platform database is not db/schema.sql (README: Regenerating db/schema.sql)"
+psql_platform() { "${compose[@]}" exec -T pg-platform psql -U pmc -d platform -Atc "$1"; }
+[[ "$(psql_platform "select has_table_privilege('platform_app', 'audit.event', 'UPDATE') or has_table_privilege('platform_app', 'audit.event', 'DELETE')")" == f ]] \
+  || fail "the app's role may change or delete the audit record"
+echo "ok: schema as committed; the app may only add to the audit record"
+
 step "engine tests (DICOM, REST, DICOMweb, a person's session, the app's API) against a fresh engine"
 "${compose[@]}" --profile test run --rm "${as_me[@]}" tests -m "not after_restart"
 

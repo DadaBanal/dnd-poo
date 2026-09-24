@@ -45,12 +45,12 @@ test('Enter opens the selected study in the viewer, in its own window, playing',
 
 test('filters are part of the address, so a view is a link', async ({ page }) => {
   await page.goto('/pmc/');
-  await page.getByRole('button', { name: 'CT' }).click();
+  await page.getByRole('button', { name: 'CT', exact: true }).click();
   await expect(page).toHaveURL(/[?&]mod=ct(&|$)/);
   await expect(rowOf(page, 'ct')).toBeVisible();
   await expect(rowOf(page, 'xa')).toHaveCount(0);
   await page.reload();
-  await expect(page.getByRole('button', { name: 'CT' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'CT', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(rowOf(page, 'xa')).toHaveCount(0);
 });
 
@@ -63,6 +63,10 @@ test('the keyboard: / finds, Enter searches, j and k move', async ({ page }) => 
   await expect(page).toHaveURL(new RegExp(`[?&]q=${seed.ct.patient_id}`));
   await expect(rows(page)).toHaveCount(1);
 
+  // A numeric search (PMC's patient IDs are numbers) survives the address.
+  await page.goto('/pmc/?q=20260924');
+  await expect(page.getByRole('searchbox')).toHaveValue('20260924');
+
   await page.goto('/pmc/');
   await expect(rows(page).nth(1)).toBeVisible();
   await page.keyboard.press('j');
@@ -71,6 +75,38 @@ test('the keyboard: / finds, Enter searches, j and k move', async ({ page }) => 
   await expect(rows(page).nth(1)).toBeFocused();
   await page.keyboard.press('k');
   await expect(rows(page).nth(0)).toBeFocused();
+});
+
+test('A claims a study, and a colleague sees who has it without reloading', async ({ page, browser }) => {
+  // A cardiologist already has the worklist open on another PC: a browser of
+  // their own, with no session until they sign in.
+  const colleague = await browser.newContext({
+    baseURL: base, ignoreHTTPSErrors: true, viewport: { width: 1600, height: 900 },
+    storageState: { cookies: [], origins: [] },
+  });
+  const theirs = await colleague.newPage();
+  await signIn(theirs, 'cardiologist', '/pmc/');
+  await expect(theirs.getByRole('banner')).toContainText('Test Cardiologist');
+  await expect(rowOf(theirs, 'us-jpeg')).toBeVisible();
+  await expect(theirs.getByTestId('live')).toHaveText('Live');
+
+  // Start from an unclaimed study, whatever an earlier run left behind.
+  await page.request.delete(`${base}/pmc/api/studies/${seed['us-jpeg'].study}/claim`, { headers: { Origin: base } });
+  await page.goto('/pmc/');
+  await expect(rowOf(page, 'us-jpeg').getByRole('button', { name: /^Claim / })).toBeVisible();
+  await rowOf(page, 'us-jpeg').getByRole('rowheader').click();
+  await page.keyboard.press('a');
+  await expect(rowOf(page, 'us-jpeg')).toContainText('You');
+  await expect(rowOf(theirs, 'us-jpeg')).toContainText('Test Radiologist', { timeout: 15_000 });
+
+  // "Claimed by me" shows just that study; releasing it empties the list.
+  await page.getByRole('button', { name: 'Claimed by me' }).click();
+  await expect(page).toHaveURL(/[?&]mine=1(&|$)/);
+  await expect(rows(page)).toHaveCount(1);
+  await rowOf(page, 'us-jpeg').getByRole('button', { name: /^Release / }).click();
+  await expect(page.getByText('No study matches these filters.')).toBeVisible();
+  await expect(rowOf(theirs, 'us-jpeg')).not.toContainText('Test Radiologist', { timeout: 15_000 });
+  await colleague.close();
 });
 
 for (const colorScheme of ['light', 'dark']) {

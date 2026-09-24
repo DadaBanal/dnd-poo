@@ -1,7 +1,7 @@
 // The worklist: every study a person may see, newest first, filtered in the
 // URL so any view is a link. Enter or a double-click opens the study in the
 // viewer, in one named window that stays on the second screen.
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { ExternalLink, RotateCcw, Search, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -10,9 +10,9 @@ import {
   ToggleButton, ToggleButtonGroup, type Key, type Selection, type SortDescriptor,
 } from 'react-aria-components';
 import {
-  GROUP_KEYS, MODALITY_GROUPS, modalityGroups, type ModalityGroup, type Study, type WorklistSearch,
+  GROUP_KEYS, MODALITY_GROUPS, READERS, modalityGroups, type ModalityGroup, type Study, type WorklistSearch,
 } from '../shared/api.ts';
-import { SignedOut, fetchMe, fetchStudies } from './api.ts';
+import { SignedOut, claimStudy, fetchMe, fetchStudies, markOpened, releaseStudy } from './api.ts';
 import { ago, personName, sexAge, studyMoment, when } from './format.ts';
 
 const PAGE = 50;
@@ -23,6 +23,7 @@ const COLUMN_SORT = { time: 'time', patient: 'patient', accession: 'accession' }
 export const viewerUrl = (s: Study) => `/viewer?StudyInstanceUIDs=${encodeURIComponent(s.studyUid)}`;
 
 function openViewer(s: Study) {
+  markOpened(s.studyUid);
   window.open(viewerUrl(s), VIEWER_WINDOW);
 }
 
@@ -43,11 +44,39 @@ export function Worklist() {
 
   const me = useQuery({ queryKey: ['me'], queryFn: ({ signal }) => fetchMe(signal), staleTime: 60_000 });
   const referrerOnly = me.data?.roles.length === 1 && me.data.roles[0] === 'pmc-referrer';
+  const canClaim = me.data?.roles.some((r) => READERS.includes(r)) ?? false;
+  const client = useQueryClient();
+  const [notice, setNotice] = useState<string>();
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(undefined), 6_000);
+    return () => clearTimeout(t);
+  }, [notice]);
+  const toggleClaim = useMutation({
+    mutationFn: async (s: Study) => {
+      if (s.claim?.reader === me.data?.email) {
+        await releaseStudy(s.studyUid);
+        return { released: s };
+      }
+      return { claimed: s, result: await claimStudy(s.studyUid) };
+    },
+    onSuccess: (r) => {
+      if ('result' in r && r.result && !r.result.ok) {
+        setNotice(`${personName(r.claimed.patientName)} is already claimed by ${r.result.by}.`);
+      } else if ('released' in r && r.released) {
+        setNotice(`You released ${personName(r.released.patientName)}.`);
+      } else if ('claimed' in r && r.claimed) {
+        setNotice(`You claimed ${personName(r.claimed.patientName)}.`);
+      }
+      void client.invalidateQueries({ queryKey: ['studies'] });
+    },
+    onError: () => setNotice('That did not go through. Try again.'),
+  });
 
   const range = search.range ?? '7d';
   const sort = search.sort ?? 'time';
   const groups = modalityGroups(search.mod);
-  const params = { q: search.q, mod: groups.join(',') || undefined, range, sort, dir: search.dir };
+  const params = { q: search.q, mod: groups.join(',') || undefined, range, sort, dir: search.dir, mine: search.mine };
 
   const studies = useInfiniteQuery({
     queryKey: ['studies', params],
@@ -65,7 +94,14 @@ export function Worklist() {
   const searchInput = useRef<HTMLInputElement>(null);
   const table = useRef<HTMLTableElement>(null);
 
-  // "/" finds, j and k move, Escape leaves the search box.
+  // "a" claims or releases the study the keyboard is on.
+  const claimKey = useRef<(id: string) => void>(() => {});
+  claimKey.current = (id: string) => {
+    const s = byId.get(id);
+    if (s && canClaim && !toggleClaim.isPending) toggleClaim.mutate(s);
+  };
+
+  // "/" finds, j and k move, a claims, Escape leaves the search box.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
@@ -79,6 +115,13 @@ export function Worklist() {
         const next = at < 0 ? 0 : Math.min(list.length - 1, Math.max(0, at + (e.key === 'j' ? 1 : -1)));
         list[next]?.focus();
         e.preventDefault();
+      } else if (e.key === 'a' && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const row = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>('tbody [role="row"]');
+        const id = row?.dataset.key;
+        if (id) {
+          claimKey.current(id);
+          e.preventDefault();
+        }
       }
     };
     document.addEventListener('keydown', onKey);
@@ -104,6 +147,7 @@ export function Worklist() {
         </div>
         <p className="m-0 hidden text-[12.5px] text-ink-3 md:block">
           <kbd>/</kbd> find · <kbd>J</kbd> <kbd>K</kbd> move · <kbd>Enter</kbd> open
+          {canClaim && <> · <kbd>A</kbd> claim</>}
         </p>
       </div>
 
@@ -144,6 +188,16 @@ export function Worklist() {
           ))}
         </ToggleButtonGroup>
 
+        {canClaim && (
+          <ToggleButton
+            isSelected={search.mine === '1'}
+            onChange={(on) => set({ mine: on ? '1' : undefined })}
+            className="rounded-full border border-line-2 bg-surface px-2.5 py-[3px] font-display text-[12px] font-bold text-ink-2 outline-none data-[focus-visible]:outline-2 data-[focus-visible]:outline-offset-2 data-[focus-visible]:outline-[var(--focus)] data-[selected]:border-accent data-[selected]:bg-accent data-[selected]:text-on-accent"
+          >
+            Claimed by me
+          </ToggleButton>
+        )}
+
         <ToggleButtonGroup
           aria-label="How far back"
           selectionMode="single"
@@ -165,6 +219,12 @@ export function Worklist() {
             </ToggleButton>
           ))}
         </ToggleButtonGroup>
+      </div>
+
+      <div role="status" aria-live="polite" className="min-h-0 empty:hidden">
+        {notice && (
+          <div className="inline-block rounded-lg border border-line bg-surface px-3 py-1.5 text-[13.5px] text-ink-2">{notice}</div>
+        )}
       </div>
 
       {signedOut ? (
@@ -203,6 +263,7 @@ export function Worklist() {
               <Column id="accession" allowsSorting>Accession</Column>
               <Column id="images">Images</Column>
               <Column id="state">State</Column>
+              <Column id="reader">Reader</Column>
               <Column id="open"><span className="sr-only">Open</span></Column>
             </TableHeader>
             <TableBody
@@ -214,7 +275,15 @@ export function Worklist() {
                 </div>
               )}
             >
-              {(s) => <StudyRow study={s} now={now} />}
+              {(s) => (
+                <StudyRow
+                  study={s}
+                  now={now}
+                  me={me.data?.email}
+                  canClaim={canClaim}
+                  onClaim={() => toggleClaim.mutate(s)}
+                />
+              )}
             </TableBody>
           </Table>
           {(studies.hasNextPage || cut) && (
@@ -238,8 +307,13 @@ export function Worklist() {
   );
 }
 
-function StudyRow({ study: s, now }: { study: Study; now: number }) {
+function StudyRow({ study: s, now, me, canClaim, onClaim }: {
+  study: Study; now: number; me: string | undefined; canClaim: boolean; onClaim: () => void;
+}) {
   const moment = studyMoment(s.studyDate, s.studyTime);
+  const mine = s.claim !== null && s.claim.reader === me;
+  const patient = personName(s.patientName);
+  const claimButton = 'rounded-md border border-line-2 px-2 py-0.5 text-[12.5px] font-semibold text-ink-2 outline-none hover:bg-surface-2 data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)]';
   return (
     <Row id={s.id} textValue={personName(s.patientName)}>
       <Cell>
@@ -269,8 +343,25 @@ function StudyRow({ study: s, now }: { study: Study; now: number }) {
           : <span className="pill bg-warn-soft text-warn-ink">Arriving</span>}
       </Cell>
       <Cell>
+        <div className="flex items-center gap-2 whitespace-nowrap">
+          {mine ? (
+            <span className="pill bg-accent-soft text-accent-ink">You</span>
+          ) : s.claim ? (
+            <span className="text-[13px] text-ink-2">{s.claim.readerName}</span>
+          ) : !canClaim ? (
+            <span className="text-ink-3">—</span>
+          ) : null}
+          {canClaim && (!s.claim || mine) && (
+            <Button className={claimButton} onPress={onClaim} aria-label={`${mine ? 'Release' : 'Claim'} ${patient}`}>
+              {mine ? 'Release' : 'Claim'}
+            </Button>
+          )}
+        </div>
+      </Cell>
+      <Cell>
         <Link
           href={viewerUrl(s)}
+          onPress={() => markOpened(s.studyUid)}
           target={VIEWER_WINDOW}
           aria-label={`Open ${personName(s.patientName)}, ${s.description || 'study'}, in the viewer`}
           className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[13px] font-semibold text-accent-ink outline-none hover:bg-accent-soft data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)]"

@@ -129,6 +129,26 @@ services:
     logging: *logging
     networks: [engine]
 
+  migrate:
+    # PMC's platform database schema, as code (db/migrations), applied by
+    # dbmate as the role that owns it. It runs once and exits; the app starts
+    # only after it has succeeded.
+    image: ghcr.io/amacneil/dbmate:2.36.0@sha256:520c740c6e0ad73fde2cd1ea7e2b779aaf789d22aca8858f87a478e7094535fb
+    depends_on:
+      pg-platform: { condition: service_healthy }
+    entrypoint: [/bin/sh, -c]
+    command:
+      - >-
+        DATABASE_URL="postgres://platform_owner:$$(cat /run/secrets/platform-owner-password)@pg-platform:5432/platform?sslmode=disable"
+        exec dbmate --migrations-dir /db/migrations --no-dump-schema --wait up --strict
+    secrets:
+      - platform-owner-password
+    volumes:
+      - ./db:/db:ro
+    restart: "no"
+    logging: *logging
+    networks: [engine]
+
   app:
     # The PMC front door app (M2.3): the worklist every person lands on, at
     # /pmc/. It asks the engine with each person's own token, so the engine
@@ -141,14 +161,18 @@ services:
     depends_on:
       orthanc: { condition: service_healthy }
       keycloak: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
     environment:
       TZ: Asia/Manila
       PMC_HOSTNAME: ${PMC_HOSTNAME:-imaging.pmcne.ph}
       ENGINE_URL: http://orthanc:8042
       KEYCLOAK_REALM_URL: http://keycloak:8080/auth/realms/pmc
       API_KEY_SECRET: /run/secrets/svc-platform-api-key
+      PLATFORM_DB_HOST: pg-platform
+      PLATFORM_DB_PASSWORD_SECRET: /run/secrets/platform-app-password
     secrets:
       - svc-platform-api-key
+      - platform-app-password
     # It writes nothing and needs no privilege.
     read_only: true
     cap_drop: [ALL]
@@ -197,8 +221,8 @@ services:
   # ---- sign-in (M2.2) ---------------------------------------------------------
 
   pg-platform:
-    # The platform's own database cluster, apart from the engine's index.
-    # Today it holds Keycloak's database; the platform's schemas join it in M3.
+    # The platform's own database cluster, apart from the engine's index:
+    # Keycloak's database, and PMC's platform database (db/migrations).
     image: ${PMC_LIBRARY:-docker.io/library}/postgres:18.6-trixie@sha256:86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae
     environment:
       POSTGRES_DB: pmc
@@ -206,10 +230,10 @@ services:
       POSTGRES_PASSWORD_FILE: /run/secrets/pg-platform-password
       POSTGRES_INITDB_ARGS: --locale-provider=builtin --builtin-locale=C.UTF-8
       TZ: Asia/Manila
-    secrets: [pg-platform-password, keycloak-db-password]
+    secrets: [pg-platform-password, keycloak-db-password, platform-owner-password, platform-app-password]
     volumes:
       - pg-platform-data:/var/lib/postgresql
-      - ./identity/pg-platform-init.sh:/docker-entrypoint-initdb.d/10-keycloak.sh:ro
+      - ./identity/pg-platform-init.sh:/docker-entrypoint-initdb.d/10-databases.sh:ro
     shm_size: 256mb
     healthcheck:
       test: [CMD-SHELL, pg_isready -U pmc -d pmc]
@@ -411,6 +435,10 @@ volumes:
   pg-platform-data: {}
 
 secrets:
+  platform-owner-password:
+    file: ${PMC_SECRETS:-./secrets}/platform-owner-password
+  platform-app-password:
+    file: ${PMC_SECRETS:-./secrets}/platform-app-password
   pg-index-password:
     file: ${PMC_SECRETS:-./secrets}/pg-index-password
   pg-platform-password:

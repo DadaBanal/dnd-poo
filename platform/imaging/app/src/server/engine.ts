@@ -102,6 +102,7 @@ function toStudy(s: FoundStudy): Study {
     stable: s.IsStable ?? false,
     lastUpdate: s.LastUpdate ?? '',
     labels: s.Labels ?? [],
+    claim: null, // the platform database's, merged in by the caller
   };
 }
 
@@ -133,10 +134,15 @@ function sortPage(rows: Study[], q: StudiesQuery): Study[] {
 
 // A search box matches a patient's name, their patient ID or the accession
 // number: three questions to the engine, merged. Without a search, one
-// question, one page at a time.
-export async function worklist(token: string, apiKey: string, q: StudiesQuery): Promise<Studies> {
+// question, one page at a time. `only` limits the answer to those studies
+// (a reader's own claims).
+export async function worklist(token: string, apiKey: string, q: StudiesQuery, only?: string[]): Promise<Studies> {
   const sorted = await engineCanSort(apiKey);
   const base: Record<string, string> = {};
+  if (only) {
+    if (!only.length) return { studies: [], more: false, sortedBy: 'engine' };
+    base.StudyInstanceUID = only.join('\\');
+  }
   if (q.range !== 'all') base.StudyDate = `${manilaDate(RANGE_DAYS[q.range])}-`;
   const modalities = modalityFilter(q.mod);
   if (modalities) base.ModalitiesInStudy = modalities;
@@ -157,6 +163,17 @@ export async function worklist(token: string, apiKey: string, q: StudiesQuery): 
   let studies = found.map(toStudy);
   if (q.q || !sorted) studies = sortPage(studies, q);
   return { studies: studies.slice(0, q.limit), more, sortedBy: sorted && !q.q ? 'engine' : 'page' };
+}
+
+// Whether this person may see this study at all: the engine answers with
+// the person's own token, so a study they cannot see is simply not found.
+export async function visible(token: string, studyUid: string): Promise<boolean> {
+  const found = (await call('/tools/find', asPerson(token), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ Level: 'Study', Query: { StudyInstanceUID: studyUid }, Limit: 1 }),
+  })) as unknown[];
+  return found.length > 0;
 }
 
 // ---- what changed ---------------------------------------------------------------

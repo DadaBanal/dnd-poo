@@ -41,6 +41,10 @@ write() {
 write pg-index-password "$(rand)"
 write pg-platform-password "$(rand)"
 write keycloak-db-password "$(rand)"
+# PMC's platform database: the role that owns its schema (the migrations) and
+# the role the front door app uses (grants only).
+write platform-owner-password "$(rand)"
+write platform-app-password "$(rand)"
 
 # Sign-in. oauth2-proxy wants a cookie secret of exactly 32 bytes.
 write front-door-client-secret "$(rand)"

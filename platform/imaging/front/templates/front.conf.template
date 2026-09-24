@@ -3,7 +3,7 @@
 #
 #   /                     sends everyone to /pmc/
 #   /pmc/                 the PMC front door app: the worklist (M2.3)
-#   /pmc/api/             its API, read-only for now, never cached
+#   /pmc/api/             its API, never cached
 #   /oauth2/              the session (oauth2-proxy)
 #   /auth/realms/pmc/…    sign-in pages (Keycloak, which sends people on to
 #                         Entra ID). Keycloak's admin console is not routed.
@@ -168,6 +168,8 @@ server {
 
   # Its API. Like DICOMweb: a session is required, the person's own token is
   # passed on, and a background request without a session gets a plain 401.
+  # Changes (claiming a study) are POST and DELETE; the app accepts them only
+  # from this site's own pages (the browser's Origin header).
   location /pmc/api/ {
     auth_request /oauth2/auth;
     auth_request_set $pmc_user $upstream_http_x_auth_request_email;
@@ -175,7 +177,8 @@ server {
     auth_request_set $pmc_cookie $upstream_http_set_cookie;
     add_header Set-Cookie $pmc_cookie;
 
-    limit_except GET { deny all; }
+    limit_except GET POST DELETE { deny all; }
+    client_max_body_size 16k;
     proxy_pass http://app;
     proxy_http_version 1.1;
     proxy_set_header Connection "";

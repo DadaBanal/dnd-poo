@@ -11,6 +11,9 @@ export const ROLES = [
 ] as const;
 export type Role = (typeof ROLES)[number];
 
+// Who may claim a study to read it.
+export const READERS: readonly Role[] = ['pmc-radiologist', 'pmc-cardiologist'];
+
 export const Me = z.object({
   email: z.string(),
   name: z.string(),
@@ -43,6 +46,7 @@ export const WorklistSearch = z.object({
   range: z.enum(RANGES).optional().catch(undefined),
   sort: z.enum(SORTS).optional().catch(undefined),
   dir: z.enum(['asc', 'desc']).optional().catch(undefined),
+  mine: z.enum(['1']).optional().catch(undefined), // only the studies I have claimed
 });
 export type WorklistSearch = z.infer<typeof WorklistSearch>;
 
@@ -54,10 +58,19 @@ export const StudiesQuery = z.object({
   range: z.enum(RANGES).default('7d'),
   sort: z.enum(SORTS).default('time'),
   dir: z.enum(['asc', 'desc']).optional(),
+  mine: z.enum(['1']).optional(),
   since: z.coerce.number().int().min(0).max(100_000).default(0),
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
 export type StudiesQuery = z.infer<typeof StudiesQuery>;
+
+// A reader's claim on a study, so no study is read twice.
+export const Claim = z.object({
+  reader: z.string(), // the reader's sign-in email
+  readerName: z.string(),
+  claimedAt: z.string(),
+});
+export type Claim = z.infer<typeof Claim>;
 
 export const Study = z.object({
   id: z.string(), // the engine's own ID for the study
@@ -75,8 +88,17 @@ export const Study = z.object({
   stable: z.boolean(), // false while images are still arriving
   lastUpdate: z.string(),
   labels: z.array(z.string()),
+  claim: Claim.nullable(),
 });
 export type Study = z.infer<typeof Study>;
+
+export const AuditEvent = z.object({
+  at: z.string(),
+  actor: z.string(),
+  action: z.enum(['open', 'claim', 'release']),
+  studyUid: z.string().nullable(),
+});
+export const AuditTrail = z.object({ events: z.array(AuditEvent) });
 
 export const Studies = z.object({
   studies: z.array(Study),
