@@ -262,8 +262,13 @@ services:
       # ci/run.sh runs this as the invoking user, who has no home in the image.
       HOME: /tmp
       TEST_USER_PASSWORD_SECRET: /run/secrets/test-user-password
+      # The throwaway CA, which the browser is made to trust (tests/trust-ca.js),
+      # and which the test runner's own requests (Node, not Chromium) trust here.
+      TEST_CA_SECRET: /run/secrets/test-ca
+      NODE_EXTRA_CA_CERTS: /run/secrets/test-ca
     secrets:
       - test-user-password
+      - test-ca
     volumes:
       - ./.results:/results
     # Chromium wants more shared memory than Docker's 64 MB default.

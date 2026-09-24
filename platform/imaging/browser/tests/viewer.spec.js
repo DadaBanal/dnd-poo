@@ -5,6 +5,7 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import { RESULTS, HOST, seed } from './people.js';
+import { dismissOhifNotices, firstImage, transferred } from './ohif.js';
 
 const measured = {};
 
@@ -25,13 +26,12 @@ function watch(page) {
   return seen;
 }
 
-// Open a study the way a link would, and get OHIF's first-visit tour and its
-// once-a-session notice out of the way.
+// Open a study the way a link would. The signed-in session has already seen
+// OHIF's notice and tour (signin.setup.js), so nothing waits for them, and the
+// time to the first image is the viewer's own.
 async function open(page, study) {
   const started = Date.now();
   await page.goto(`/viewer?StudyInstanceUIDs=${study}`);
-  await page.getByRole('button', { name: /Confirm and Hide|Accept/i }).click({ timeout: 5_000 }).catch(() => {});
-  await page.getByText('Skip all').click({ timeout: 30_000 }).catch(() => {});
   return started;
 }
 
@@ -61,8 +61,10 @@ test('plain http is sent to https', async ({ request }) => {
 test('a cathlab run opens playing', async ({ page }) => {
   const seen = watch(page);
   const started = await open(page, seed.xa.study);
+  const shown = await firstImage(page, started);
+  expect(shown, 'an image on screen').not.toBeNull();
+  await dismissOhifNotices(page);
   await expect.poll(() => position(page), { timeout: 60_000 }).toMatchObject({ of: seed.xa.frames });
-  const shown = Date.now() - started;
   // Playing means the position moves on its own, more than once.
   const positions = new Set();
   for (let i = 0; i < 12 && positions.size < 3; i++) {
@@ -77,14 +79,30 @@ test('a cathlab run opens playing', async ({ page }) => {
   const frames = seen.requests.filter((u) => u.includes('/frames/'));
   expect(new Set(frames).size).toBe(seed.xa.frames);
   expect(seen.errors).toEqual([]);
-  measured.xa_cine = { frames: seed.xa.frames, first_image_shown_ms: shown, frame_requests: frames.length };
+  // Opened again in the same browser: the viewer's own files come from the
+  // PC's cache (kept a year, by content hash), the images do not (no-store).
+  const cold = await transferred(page, /[0-9a-f]{16}\.(js|wasm)$/);
+  const again = await open(page, seed.xa.study);
+  const shownAgain = await firstImage(page, again);
+  await dismissOhifNotices(page);
+  const warm = await transferred(page, /[0-9a-f]{16}\.(js|wasm)$/);
+  const images = await transferred(page, /\/frames\//);
+  expect(cold.bytes).toBeGreaterThan(1_000_000);
+  expect(warm.count).toBe(cold.count);
+  expect(warm.from_cache, 'the viewer, from the cache').toBe(warm.count);
+  expect(images.from_cache, 'images, never from the cache').toBe(0);
+  measured.xa_cine = {
+    frames: seed.xa.frames, first_image_shown_ms: shown, first_image_shown_again_ms: shownAgain,
+    frame_requests: frames.length, viewer_files_bytes: cold.bytes, viewer_files_bytes_again: warm.bytes,
+  };
 });
 
 test('a CT series opens and every slice arrives', async ({ page }) => {
   const seen = watch(page);
   const started = await open(page, seed.ct.study);
+  const shown = await firstImage(page, started);
+  await dismissOhifNotices(page);
   await expect.poll(() => position(page), { timeout: 60_000 }).toEqual({ at: 1, of: seed.ct.instances });
-  const shown = Date.now() - started;
   await expect.poll(() => new Set(seen.requests.filter((u) => u.includes('/frames/'))).size,
     { timeout: 120_000 }).toBe(seed.ct.instances);
   measured.ct_stack = { slices: seed.ct.instances, first_image_shown_ms: shown, all_slices_ms: Date.now() - started };
@@ -94,6 +112,7 @@ test('a CT series opens and every slice arrives', async ({ page }) => {
 test('an ultrasound run that arrived as JPEG plays as sent', async ({ page }) => {
   const seen = watch(page);
   await open(page, seed['us-jpeg'].study);
+  await dismissOhifNotices(page);
   await expect.poll(() => position(page), { timeout: 60_000 }).toMatchObject({ of: seed['us-jpeg'].frames });
   const positions = new Set();
   for (let i = 0; i < 12 && positions.size < 2; i++) {
@@ -107,6 +126,7 @@ test('an ultrasound run that arrived as JPEG plays as sent', async ({ page }) =>
 test('every request stays on the front door, and images are never cached', async ({ page }) => {
   const seen = watch(page);
   await open(page, seed.cr.study);
+  await dismissOhifNotices(page);
   // A single image has no position counter; wait for its pixels and its window.
   await expect.poll(() => seen.requests.filter((u) => u.includes('/frames/')).length,
     { timeout: 60_000 }).toBeGreaterThan(0);

@@ -20,13 +20,15 @@ export default defineConfig({
   reporter: [['list']],
   // Screenshots and traces of a failure land beside the other results.
   outputDir: `${RESULTS}/playwright`,
+  // The test certificate comes from a throwaway CA, which the browser is made
+  // to trust first (tests/trust-ca.js): it then checks the front door's
+  // certificate as a ward PC would, and caches what the front door allows.
+  globalSetup: './tests/trust-ca.js',
   use: {
     baseURL: `https://${process.env.PMC_HOSTNAME}`,
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
-    // The test certificate comes from a throwaway CA; the tests check the
-    // TLS details themselves.
-    ignoreHTTPSErrors: true,
+    ignoreHTTPSErrors: false,
     viewport: { width: 1600, height: 900 },
     launchOptions: { args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] },
   },

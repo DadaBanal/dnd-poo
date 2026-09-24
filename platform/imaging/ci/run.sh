@@ -116,6 +116,17 @@ step "browser tests: sign-in, the front door, the worklist and the viewer"
 "${compose[@]}" --profile test run --rm "${as_me[@]}" --entrypoint python tests seed.py
 "${compose[@]}" --profile test run --rm "${as_me[@]}" browser
 
+step "opening a study in the viewer, phase by phase (no test tracing)"
+"${compose[@]}" --profile test run --rm "${as_me[@]}" --entrypoint node browser measure/open-study.mjs > .results/measurements-open.json
+python3 - <<'PY' .results/measurements-open.json || fail "the viewer's open times were not measured"
+import json, sys
+for r in json.load(open(sys.argv[1])):
+    f = r["phases"]["frames"]; sc = r["phases"]["scripts"]
+    assert r["first_image_ms"], r
+    print(f"  {r['kind']} {r['round']}: first image {r['first_image_ms']} ms; viewer files transferred {sc['transferred']/1e6:.2f} MB;"
+          f" frames {f['first_start_ms']}-{f['last_end_ms']} ms; cine {r['cine_fps_seen']}")
+PY
+
 step "remove the containers, keep the volumes, start again"
 "${compose[@]}" --profile test down --remove-orphans
 "${compose[@]}" up -d --wait
@@ -140,6 +151,6 @@ RUN_PHASE=after_disaster "${compose[@]}" --profile test run --rm "${as_me[@]}" t
 RUN_PHASE=after_disaster "${compose[@]}" --profile test run --rm "${as_me[@]}" browser -g "cathlab run opens playing"
 
 step "measured on synthetic data, on this host"
-cat .results/measurements-first.json .results/measurements-browser-first.json .results/measurements-access.json .results/measurements-drill.json
+cat .results/measurements-first.json .results/measurements-browser-first.json .results/measurements-open.json .results/measurements-access.json .results/measurements-drill.json
 echo
 step "PASS"

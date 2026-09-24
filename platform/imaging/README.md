@@ -685,7 +685,7 @@ on site).
 | The watch sees the engine, the domain controller, the images' free space and the certificates. Every registered modality has a feed and a limit. A modality that goes quiet past its limit reaches ICT's inbox as a `FeedSilent` email. After the nightly backup the watch shows both clusters' backups and the snapshot | `tests/test_watch.py` |
 | Disaster: with both hosts' volumes deleted, the platform is rebuilt from the off-site copy alone. Every file is verified, both clusters are restored and their logs replayed, and archiving works again. Then every study, every file (MD5), every modality, a pending order and the audit trail are back, the radiologist signs in, and a cathlab run opens playing | `ci/restore-drill.sh`, then `test_after_restart.py` and `browser/tests/viewer.spec.js` |
 | The front door answers only for the site name, over TLS 1.3 and HTTP/2, and sends plain HTTP to HTTPS | `browser/tests/viewer.spec.js` |
-| A cathlab run opens already playing. A CT series opens and every slice arrives. An ultrasound run that arrived as JPEG plays as sent. No console errors | `browser/tests/viewer.spec.js` |
+| A cathlab run opens already playing, and opened again it costs no download of the viewer (its content-hashed files come from the PC's cache) while no image ever does. A CT series opens and every slice arrives. An ultrasound run that arrived as JPEG plays as sent. No console errors. The time to the first image is recorded, cold and warm | `browser/tests/viewer.spec.js`, `browser/measure/open-study.mjs` |
 | Every request the viewer makes goes to the front door and nowhere else, and every DICOMweb answer says `no-store` | `browser/tests/viewer.spec.js` |
 | From where people sit, the engine cannot be reached by name. Its REST API is not routed. DICOMweb refuses writes | `browser/tests/viewer.spec.js` |
 | A link opened without a session goes straight to PMC's sign-in page, with no image request first, and comes back to the same page after the Windows logon. The session cookie is HttpOnly, Secure and SameSite=Lax | `browser/tests/access.spec.js` |
@@ -718,20 +718,29 @@ The AE titles the tests play are PMC's own, as MEASURED in the record.
   INFERRED: a viewer should fetch a cine run in one request, or in a few large
   batches, and never frame by frame. The fix for the live portal's cine
   complaint starts from this.
-- **Through the browser** (headless Chromium, software rendering, same host):
-  - before sign-in (M2.1), the 59-frame run showed its first image about
-    6–9 s after the link opened, then played; the 40-slice CT showed its first
-    slice in about 4.5–7.5 s, with every slice loaded by then;
-  - with sign-in (M2.2), the run showed its first image after 9.7–11.0 s, and
-    the CT after 7.3 s, all slices by 7.7 s;
-  - OHIF fetched the cathlab run frame by frame: 59 requests, the slowest
-    pattern above. With sign-in, each of them also passes the session check
-    and the engine's permission check.
+- **Opening a study in the viewer** (`browser/measure/open-study.mjs`:
+  headless Chromium, software rendering, same host, no test tracing; 24 Sep,
+  after the viewer's files became cacheable):
+  - the 59-frame cathlab run: first image **3.8–3.9 s on the PC's first
+    visit** (two runs), of which about 2.5 s is the viewer's own 5.0 MB of
+    scripts, then **0.8–1.0 s** once the PC has them, playing at 12–15
+    frames a second;
+  - the 40-slice CT: 1.8–1.9 s, then 1.1–1.2 s;
+  - the engine and the front door are not the limit: the 59 frames came
+    through the front door, session check and permission check included, in
+    172 ms with 16 in flight (2.9 ms a frame), one at a time in 344 ms, and
+    the whole run as one instance in 47 ms. What remains is the browser's
+    own: fetching, decoding and drawing.
+  - **JPEG-LS to the browser beats uncompressed.** Asked for uncompressed
+    frames, the viewer took 2–4 times longer on the run (frames 2.1–3.5 s
+    against 1.1–1.3 s) and the first cold cine ran at 8 frames a second: the
+    extra bytes cost more than the decode saves, even on one host. The
+    configuration asks for the images as stored.
 
-  How much of the slower start is sign-in and how much is this shared host is
-  NOT VERIFIED; it is measured next (see Open). All of these include OHIF's own
-  start-up and a CPU-rendered canvas, so a ward PC with a GPU should do better.
-  That too is NOT VERIFIED: it is measured on PMC hardware in M4.
+  Earlier figures in this section (6–11 s) were the tests waiting up to 25 s
+  for OHIF dialogs that were not there; they are withdrawn. All of these
+  include OHIF's own start-up on a CPU-rendered canvas, so a ward PC with a
+  GPU should do better: NOT VERIFIED until measured on PMC hardware.
 - **A new share reached a referrer after 60–64 s**, in three runs: the
   engine's authorization plugin caches what it knows about a study.
 - **An expired token was refused 63 s after it expired**, in two runs (the
@@ -803,7 +812,8 @@ anonymous pulls, run it with `PMC_LIBRARY=public.ecr.aws/docker/library`.
 - `app/`: the front door app. `src/web/` is the page (the worklist),
   `src/server/` its server, `src/shared/api.ts` the schemas both sides check.
   `Dockerfile` type-checks, builds and packs it.
-- `browser/`: the browser tests (Playwright). `tests/people.js` is who signs
+- `browser/`: the browser tests (Playwright), and `measure/open-study.mjs`,
+  which times a study's open phase by phase. `tests/people.js` is who signs
   in, `tests/access.spec.js` what each person may see, `tests/home.spec.js`
   the worklist.
 - `db/`: PMC's platform database. `migrations/` is its schema as plain SQL,
@@ -912,6 +922,23 @@ These are INFERRED, not decided by anyone but this build. Argue with them.
 - **A worklist entry nobody performs is removed after 72 h.** A performed one
   goes as soon as its study is stable.
 - **The Housekeeper runs on weekday nights and weekends**, Manila time.
+- **The viewer's files are kept on the PC for a year, the images never.**
+  OHIF names every script, stylesheet, decoder and font by its content hash,
+  so those are served `immutable`; the page and its configuration are
+  `no-cache` with an ETag, so a new viewer image reaches every PC at its next
+  open. Without this, every open of a study fetched 5.2 MB of viewer again
+  (MEASURED, 24 Sep). Images stay `no-store` at the front door.
+- **The test browser trusts the test CA** (`browser/tests/trust-ca.js`, in
+  Chromium's own store), instead of ignoring certificate errors: Chromium
+  caches nothing from an origin whose certificate it rejects (MEASURED), so
+  the old setting hid the viewer's caching, and it let the tests skip the
+  check a ward PC makes. The test runner's own requests trust it through
+  `NODE_EXTRA_CA_CERTS`.
+- **The tests never wait for a dialog that is not there.** OHIF's
+  investigational-use notice and first-visit tour are met once, at the
+  sign-in that every viewer test reuses; a helper clears them wherever they
+  can still appear and returns as soon as an image is on screen. The fixed
+  waits it replaces (5 s and 20–30 s) were most of every earlier open time.
 - **Cathlab runs open playing.** OHIF 3.13 turns the cine player on by itself
   only for `OT` and `US` (MEASURED from its bundle). `viewer/app-config.js`
   adds `XA` and `RF` and sets `autoPlayCine`, so a coronary run plays the
@@ -987,9 +1014,10 @@ These are INFERRED, not decided by anyone but this build. Argue with them.
 - **DICOM from the modalities on-prem:** the engine sits on a network with no
   route out, which also means port 4242 cannot be published from it. M4 gives
   the engine a second, DICOM-only network for the modalities.
-- **What sign-in costs each image request**, and whether the viewer can fetch
-  a cathlab run in fewer requests (see Measured). OHIF's frame-by-frame
-  fetching is the pattern the engine measures as slowest.
+- **The viewer's first visit costs 5 MB and 2.5 s** on each PC (see
+  Measured); every later open is under a second. The reading room (M5.4)
+  keeps the viewer loaded between studies, and the worklist can fetch it
+  ahead of the first click.
 - **A realm change after the first start does not reach a running platform.**
   M4 adds a tool that applies `identity/realm-pmc.json` to a running Keycloak.
 - **Cutting someone off at once.** Removing a person from a group, or
