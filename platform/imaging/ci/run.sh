@@ -40,7 +40,7 @@ rm -rf "$PMC_SECRETS"
 tools/make-secrets.sh --test
 tools/make-test-tls.sh
 
-step "test runner images"
+step "images: the front door app, and the two test runners"
 build=(docker build)
 if [[ -n "${HTTPS_PROXY:-}" ]]; then
   # A build host behind a proxy (the cloud build): let the build reach it,
@@ -49,6 +49,7 @@ if [[ -n "${HTTPS_PROXY:-}" ]]; then
   ca="${PIP_CERT:-${SSL_CERT_FILE:-}}"
   if [[ -n "$ca" && -s "$ca" ]]; then build+=(--secret "id=build-ca,src=$ca"); fi
 fi
+"${build[@]}" --build-arg "PMC_LIBRARY=${PMC_LIBRARY:-docker.io/library}" -t pmc-imaging/app:local app
 "${build[@]}" -t pmc-imaging/tests:local tests
 "${build[@]}" -t pmc-imaging/browser:local browser
 
@@ -77,10 +78,10 @@ if "${compose[@]}" exec -T orthanc python3 -c \
 fi
 echo "ok: no SQLite index, no route out"
 
-step "engine tests (DICOM, REST, DICOMweb, a person's session) against a fresh engine"
+step "engine tests (DICOM, REST, DICOMweb, a person's session, the app's API) against a fresh engine"
 "${compose[@]}" --profile test run --rm "${as_me[@]}" tests -m "not after_restart"
 
-step "browser tests: sign-in, the front door and the viewer"
+step "browser tests: sign-in, the front door, the worklist and the viewer"
 "${compose[@]}" --profile test run --rm "${as_me[@]}" --entrypoint python tests seed.py
 "${compose[@]}" --profile test run --rm "${as_me[@]}" browser
 

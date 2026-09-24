@@ -5,6 +5,8 @@
 //   viewer   the viewer, as that radiologist (viewer.spec.js)
 //   access   who gets in and what each person may see, each from no session
 //            (access.spec.js)
+//   home     the PMC front door app: the worklist, as that radiologist
+//            (home.spec.js)
 import { defineConfig } from '@playwright/test';
 
 const RESULTS = process.env.RESULTS_DIR || '/results';
@@ -37,5 +39,11 @@ export default defineConfig({
       use: { storageState: `${RESULTS}/.auth/radiologist.json` },
     },
     { name: 'access', testMatch: /access\.spec\.js/ },
+    {
+      name: 'home',
+      testMatch: /home\.spec\.js/,
+      dependencies: ['sign-in'],
+      use: { storageState: `${RESULTS}/.auth/radiologist.json` },
+    },
   ],
 });

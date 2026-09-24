@@ -8,64 +8,14 @@ renewed at 40 s (on site: 5 min and 4 min).
 
 from __future__ import annotations
 
-import base64
-import html
-import json
-import os
-import re
 import time
-from pathlib import Path
 
 import pytest
 import requests
 
-HOST = os.environ.get("PMC_HOSTNAME", "imaging.pmcne.test")
-BASE = f"https://{HOST}"
-CA = os.environ.get("TEST_CA_SECRET", "/run/secrets/test-ca")
-PASSWORD_FILE = os.environ.get("TEST_USER_PASSWORD_SECRET", "/run/secrets/test-user-password")
+from frontdoor import BASE, DICOMWEB_JSON, claims, sign_in, token_of
+
 RADIOLOGIST = "rad.test@pmc.test"
-COOKIE = "__Host-pmc-session"
-# oauth2-proxy, asked directly on the engine network the way the front door
-# asks it: this is where the front door gets the token it passes on.
-SESSION_CHECK = "http://oauth2-proxy:4180/oauth2/auth"
-DICOMWEB_JSON = {"Accept": "application/dicom+json"}
-
-# A browser loading a page says so; only a page load may start a sign-in.
-PAGE_LOAD = {"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}
-
-
-def sign_in(user: str) -> requests.Session:
-    """Sign in at the front door as `user`, through the stand-in Entra ID."""
-    s = requests.Session()
-    s.verify = CA
-    r = s.get(f"{BASE}/viewer", headers=PAGE_LOAD, timeout=60)
-    r.raise_for_status()
-    assert "/auth/realms/entra-sim/" in r.url, r.url
-    form = re.search(r'<form\b[^>]*\bid="kc-form-login"[^>]*>', r.text)
-    assert form, "no sign-in form at the stand-in Entra ID"
-    action = html.unescape(re.search(r'\baction="([^"]+)"', form.group(0)).group(1))
-    password = Path(PASSWORD_FILE).read_text().strip()
-    r = s.post(action, data={"username": user, "password": password, "credentialId": ""},
-               headers=PAGE_LOAD, timeout=60)
-    r.raise_for_status()
-    assert r.url == f"{BASE}/viewer", r.url
-    assert s.cookies.get(COOKIE), "no session cookie after signing in"
-    return s
-
-
-def token_of(session: requests.Session) -> str:
-    """The access token the front door would hand the engine right now."""
-    r = requests.get(SESSION_CHECK, timeout=30,
-                     cookies={COOKIE: session.cookies.get(COOKIE)},
-                     headers={"X-Forwarded-Proto": "https", "X-Forwarded-Host": HOST})
-    assert r.status_code == 202, r.status_code
-    return r.headers["X-Auth-Request-Access-Token"]
-
-
-def claims(token: str) -> dict:
-    """A JWT's claims, unverified: the engine's side does the verifying."""
-    body = token.split(".")[1]
-    return json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
 
 
 def engine_with(engine, token: str) -> int:
@@ -76,7 +26,7 @@ def engine_with(engine, token: str) -> int:
 
 @pytest.fixture(scope="module")
 def radiologist() -> requests.Session:
-    return sign_in(RADIOLOGIST)
+    return sign_in("radiologist", "/viewer")
 
 
 def test_the_engine_is_handed_the_persons_own_short_lived_token(engine, radiologist):

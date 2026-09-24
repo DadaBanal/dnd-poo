@@ -1,0 +1,152 @@
+/* The PMC front door app. The 2026 PMC identity, as in the live portal and
+   the clickable sample: PMC Blue ~70%, Renewal Green ~20%, Care Orange ~10%.
+   Every colour is a token; dark (the reading room) and light are both
+   designed, and the page follows the PC unless the person picks one. */
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+  --bg: #F4F6FA; --surface: #FFFFFF; --surface-2: #F1F4F9; --surface-3: #E7E9ED;
+  --ink: #101820; --ink-2: #48525F; --ink-3: #5F6B79;
+  --line: #E2E6EC; --line-2: #CBD2DC;
+  --accent: #0B3F8A; --accent-ink: #0B3F8A; --accent-soft: #EEF3FB; --on-accent: #FFFFFF;
+  --blue: #1F5BB0; --blue-ink: #08316D; --blue-soft: #DBE6F6;
+  --orange: #F06423; --orange-ink: #B4450F; --orange-soft: #FEF1EA;
+  --green: #69B52C; --ok: #237A4B; --ok-soft: #E3F3E9;
+  --warn-ink: #7A5000; --warn-soft: #FBF1DA;
+  --crit: #B42318; --crit-soft: #FBE9E7;
+  --focus: #1F5BB0;
+  --shadow: 0 1px 2px rgba(16,24,32,.05), 0 10px 30px rgba(11,63,138,.07);
+  --ribbon: linear-gradient(90deg, #0B3F8A 0 70%, #69B52C 70% 90%, #F06423 90% 100%);
+  --f-display: "Aptos Display", "Aptos", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Aptos", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "Cascadia Mono", Consolas, "SF Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0A0F16; --surface: #111925; --surface-2: #0E1620; --surface-3: #1F2C3B;
+    --ink: #E9EEF5; --ink-2: #A9B6C6; --ink-3: #8C9AAD;
+    --line: #1F2C3B; --line-2: #2C3D50;
+    --accent: #5C93E0; --accent-ink: #8DB6EE; --accent-soft: #12294A; --on-accent: #0A0F16;
+    --blue: #5C93E0; --blue-ink: #9CC0F0; --blue-soft: #0E1E33;
+    --orange: #F06423; --orange-ink: #FF9A66; --orange-soft: #2A1408;
+    --ok: #7BD39B; --ok-soft: #17312A;
+    --warn-ink: #F2C25B; --warn-soft: #3A2E14;
+    --crit: #F08A80; --crit-soft: #3A1F1D;
+    --focus: #8DB6EE;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 32px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0A0F16; --surface: #111925; --surface-2: #0E1620; --surface-3: #1F2C3B;
+  --ink: #E9EEF5; --ink-2: #A9B6C6; --ink-3: #8C9AAD;
+  --line: #1F2C3B; --line-2: #2C3D50;
+  --accent: #5C93E0; --accent-ink: #8DB6EE; --accent-soft: #12294A; --on-accent: #0A0F16;
+  --blue: #5C93E0; --blue-ink: #9CC0F0; --blue-soft: #0E1E33;
+  --orange: #F06423; --orange-ink: #FF9A66; --orange-soft: #2A1408;
+  --ok: #7BD39B; --ok-soft: #17312A;
+  --warn-ink: #F2C25B; --warn-soft: #3A2E14;
+  --crit: #F08A80; --crit-soft: #3A1F1D;
+  --focus: #8DB6EE;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 32px rgba(0,0,0,.35);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-line: var(--line);
+  --color-line-2: var(--line-2);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-on-accent: var(--on-accent);
+  --color-blue: var(--blue);
+  --color-blue-ink: var(--blue-ink);
+  --color-blue-soft: var(--blue-soft);
+  --color-orange: var(--orange);
+  --color-orange-ink: var(--orange-ink);
+  --color-orange-soft: var(--orange-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn-ink: var(--warn-ink);
+  --color-warn-soft: var(--warn-soft);
+  --color-crit: var(--crit);
+  --color-crit-soft: var(--crit-soft);
+  --font-display: var(--f-display);
+  --font-sans: var(--f-body);
+  --font-mono: var(--f-mono);
+}
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--f-body); font-size: 15px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  kbd {
+    font-family: var(--f-mono); font-size: 11px; border: 1px solid var(--line-2);
+    border-bottom-width: 2px; border-radius: 4px; padding: 0 4px;
+    background: var(--surface); color: var(--ink-2);
+  }
+}
+
+@layer components {
+  .ribbon { height: 4px; background: var(--ribbon); }
+  .eyebrow {
+    font-family: var(--f-display); font-weight: 700; font-size: 11.5px;
+    letter-spacing: .14em; text-transform: uppercase; color: var(--blue-ink);
+  }
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+    font-family: var(--f-display); font-weight: 700; font-size: 11px; letter-spacing: .04em;
+    padding: 2px 8px; border-radius: 999px;
+  }
+  /* One colour per kind of machine, from the sample; the label carries the
+     meaning, so colour is never alone. */
+  .chip-XA, .chip-RF { background: var(--accent-soft); color: var(--accent-ink); }
+  .chip-CT { background: var(--blue-soft); color: var(--blue-ink); }
+  .chip-CR, .chip-DX { background: var(--surface-3); color: var(--ink-2); }
+  .chip-MR { background: var(--orange-soft); color: var(--orange-ink); }
+  .chip-US { background: var(--ok-soft); color: var(--ok); }
+  .chip-other { background: var(--surface-3); color: var(--ink-2); }
+
+  /* the worklist table (React Aria) */
+  .wl { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .wl [role="columnheader"] {
+    text-align: left; font-family: var(--f-display); font-weight: 700; font-size: 11px;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3);
+    padding: 9px 10px; border-bottom: 1px solid var(--line); background: var(--surface-2);
+    white-space: nowrap; position: sticky; top: 0; z-index: 1;
+  }
+  .wl [role="columnheader"][data-allows-sorting] { cursor: pointer; }
+  .wl [role="columnheader"][data-hovered] { color: var(--ink); }
+  .wl [role="row"] { cursor: default; outline: none; }
+  .wl tbody [role="row"]:hover { background: var(--surface-2); }
+  /* After hover, and as specific, so a selected row stays marked under the
+     pointer; the bar on its edge carries the mark without colour alone. */
+  .wl tbody [role="row"][data-selected] { background: var(--accent-soft); }
+  .wl tbody [role="row"][data-selected] > :first-child { box-shadow: inset 3px 0 0 var(--accent); }
+  .wl tbody [role="row"][data-focus-visible] > :first-child { box-shadow: inset 3px 0 0 var(--focus); }
+  .wl [role="gridcell"], .wl [role="rowheader"] {
+    padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: middle;
+  }
+  /* A phone: taken, patient and study only; a tap opens the study. */
+  @media (max-width: 720px) {
+    .wl [role="columnheader"]:nth-child(n + 4), .wl [role="gridcell"]:nth-child(n + 4) { display: none; }
+    .wl [role="columnheader"], .wl [role="gridcell"], .wl [role="rowheader"] { padding: 8px 8px; }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}

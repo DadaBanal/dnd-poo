@@ -1,0 +1,3 @@
+# npm ci and vite build, inside the image build or a dev container. Never committed.
+node_modules/
+dist/

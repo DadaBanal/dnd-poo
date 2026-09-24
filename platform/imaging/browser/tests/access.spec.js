@@ -4,6 +4,7 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import { HOST, RESULTS, seed, signIn } from './people.js';
+import { dismissOhifNotices, framesSeen, position } from './ohif.js';
 
 const base = `https://${HOST}`;
 const measured = {};
@@ -13,18 +14,6 @@ test.afterAll(() => {
     fs.writeFileSync(`${RESULTS}/measurements-access.json`, JSON.stringify(measured, null, 2));
   }
 });
-
-// The viewport overlay reads "I:<instance> (<position>/<count>)".
-async function position(page) {
-  const text = await page.locator('[data-cy="viewport-grid"]').innerText().catch(() => '');
-  const m = text.match(/I:\s*\d+\s*\((\d+)\/(\d+)\)/);
-  return m ? { at: Number(m[1]), of: Number(m[2]) } : null;
-}
-
-async function dismissOhifNotices(page) {
-  await page.getByRole('button', { name: /Confirm and Hide|Accept/i }).click({ timeout: 5_000 }).catch(() => {});
-  await page.getByText('Skip all').click({ timeout: 20_000 }).catch(() => {});
-}
 
 test('without a session, a link goes to sign-in and comes back to the same page', async ({ page }) => {
   const dicomweb = [];
@@ -88,12 +77,7 @@ test('a cardiologist opens a cathlab run, and it plays', async ({ page }) => {
   await signIn(page, 'cardiologist', `/viewer?StudyInstanceUIDs=${seed.xa.study}`);
   await dismissOhifNotices(page);
   await expect.poll(() => position(page), { timeout: 60_000 }).toMatchObject({ of: seed.xa.frames });
-  const seen = new Set();
-  for (let i = 0; i < 12 && seen.size < 3; i++) {
-    seen.add((await position(page)).at);
-    await page.waitForTimeout(750);
-  }
-  expect(seen.size).toBeGreaterThanOrEqual(3);
+  expect(await framesSeen(page)).toBeGreaterThanOrEqual(3);
 });
 
 test('without a session, DICOMweb answers 401, never data and never a sign-in page', async ({ request }) => {

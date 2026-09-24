@@ -1,6 +1,9 @@
 # The front door: the only way in (Path A, M2). One origin, ${PMC_HOSTNAME},
 # over TLS and HTTP/2:
 #
+#   /                     sends everyone to /pmc/
+#   /pmc/                 the PMC front door app: the worklist (M2.3)
+#   /pmc/api/             its API, read-only for now, never cached
 #   /oauth2/              the session (oauth2-proxy)
 #   /auth/realms/pmc/…    sign-in pages (Keycloak, which sends people on to
 #                         Entra ID). Keycloak's admin console is not routed.
@@ -32,6 +35,11 @@ upstream session {
 
 upstream signin {
   server keycloak:8080;
+  keepalive 8;
+}
+
+upstream app {
+  server app:8080;
   keepalive 8;
 }
 
@@ -150,6 +158,64 @@ server {
   # Keycloak's admin console and anything else under /auth/: not from here.
   location /auth/ {
     return 404;
+  }
+
+  # ---- the PMC front door app (M2.3) --------------------------------------------
+  # The address people are given: the front door app, not the viewer.
+  location = / {
+    return 302 /pmc/;
+  }
+
+  # Its API. Like DICOMweb: a session is required, the person's own token is
+  # passed on, and a background request without a session gets a plain 401.
+  location /pmc/api/ {
+    auth_request /oauth2/auth;
+    auth_request_set $pmc_user $upstream_http_x_auth_request_email;
+    auth_request_set $pmc_token $upstream_http_x_auth_request_access_token;
+    auth_request_set $pmc_cookie $upstream_http_set_cookie;
+    add_header Set-Cookie $pmc_cookie;
+
+    limit_except GET { deny all; }
+    proxy_pass http://app;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header Cookie "";
+    proxy_set_header Authorization "Bearer $pmc_token";
+    # Live updates are a stream the app keeps open (server-sent events); it
+    # asks the front door not to buffer them (X-Accel-Buffering: no).
+    proxy_read_timeout 90s;
+    add_header Cache-Control "no-store" always;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Cross-Origin-Resource-Policy "same-origin" always;
+  }
+
+  # The page. Its own scripts only: no 'unsafe-eval', unlike the viewer.
+  # Inline style attributes are allowed because the page's components set
+  # positions with them.
+  location /pmc/ {
+    auth_request /oauth2/auth;
+    error_page 401 = @unauthorized;
+    auth_request_set $pmc_user $upstream_http_x_auth_request_email;
+    auth_request_set $pmc_cookie $upstream_http_set_cookie;
+    add_header Set-Cookie $pmc_cookie;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header Cross-Origin-Opener-Policy "same-origin" always;
+    add_header Cross-Origin-Embedder-Policy "require-corp" always;
+    add_header Cross-Origin-Resource-Policy "same-origin" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" always;
+
+    limit_except GET { deny all; }
+    proxy_pass http://app;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $host;
+    proxy_set_header Cookie "";
   }
 
   # ---- the engine: DICOMweb, read-only until writing is designed ---------------

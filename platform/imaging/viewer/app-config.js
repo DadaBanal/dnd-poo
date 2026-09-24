@@ -26,9 +26,9 @@ window.config = {
   },
   autoPlayCine: true,
 
-  // M2.1: OHIF's own study list stands in as the worklist. It goes off when
-  // the PMC front door (/pmc/) arrives in M2.3.
-  showStudyList: true,
+  // The worklist is the PMC front door app (/pmc/, M2.3); OHIF is the viewer
+  // only. Its home link lands on / and the front door sends that to /pmc/.
+  showStudyList: false,
 
   // OHIF's own "investigational use" notice, shown once per browser session
   // (its default). Whether PMC keeps it is a governance decision for Dada.

@@ -1,7 +1,8 @@
 # platform/imaging — the Path A platform
 
-**Status, 23 Sep 2026: M1 (the engine), M2.1 (the front door and the viewer)
-and M2.2 (sign-in) are built and proven off-prem. Nothing is deployed.** Dada's rule
+**Status, 24 Sep 2026: M1 (the engine), M2.1 (the front door and the viewer),
+M2.2 (sign-in) and the first part of M2.3 (the worklist) are built and proven
+off-prem. Nothing is deployed.** Dada's rule
 (23 Sep): nothing goes on-prem until the whole platform is built, and the
 on-prem go is his. Deployment also stays gated on ADR-001 (still *Proposed*)
 and on the safety work in [`../README.md`](../README.md), "What it is gated
@@ -14,11 +15,12 @@ This replaces the 6 Sep skeleton in `platform/`, which was never run.
 ```
             edge                         engine network (no route out)
 person ─ HTTPS 443 ─▶ front (nginx) ─┬─▶ oauth2-proxy ─▶ sessions (Valkey)
-                                     │        │
                                      ├─▶ keycloak ─▶ pg-platform ─ egress ─▶ Entra ID
                                      ├─▶ viewer (OHIF, static files)
-                                     └─▶ orthanc ─▶ auth-service ─▶ keycloak
+                                     ├─▶ app (the worklist) ──┐
+                                     └─▶ orthanc ◀────────────┘
 modality ─ DICOM 4242 ─────────────────▶   │
+                                           ├─▶ auth-service ─▶ keycloak
                                            ├─▶ pg-index         the index
                                            └─▶ orthanc-storage  the images
 ```
@@ -27,11 +29,13 @@ modality ─ DICOM 4242 ─────────────────▶  
   route out.
 - **M2.1, the front door and the viewer:** one origin over TLS and HTTP/2.
   `/viewer?StudyInstanceUIDs=…` is OHIF; `/dicom-web/` is the engine's DICOMweb,
-  read-only and never cached. Nothing else of the engine is routed. OHIF's own
-  study list stands in as the worklist until the PMC front door app (M2.3).
+  read-only and never cached. Nothing else of the engine is routed.
 - **M2.2, sign-in:** see [Sign-in](#sign-in) below. Every page and every
   image request needs a session, and the engine decides, per role, what each
   person may see.
+- **M2.3, the front door app, first part:** see
+  [The front door app](#the-front-door-app) below. The site's address opens
+  the PMC worklist at `/pmc/`, which opens the viewer.
 
 No port is published to the host in the build. The tests run in containers:
 one on the engine network plays the modalities, and one on the edge network is
@@ -183,6 +187,63 @@ MEASURED, 23 Sep 2026, unless marked.
   browser, so this is a one-minute window for a token stolen from inside, not
   for a person at a PC.
 
+## The front door app
+
+The site's address, `https://imaging.pmcne.ph/`, now opens the PMC worklist
+at `/pmc/`, not the viewer. It is PMC's own code (`app/`): a page in React
+and a small server in Node, in one container. OHIF is the viewer only.
+
+What a person gets. Each point is MEASURED by the tests unless marked:
+
+- **The worklist:** every study they may see, newest first. When it was taken
+  and how long ago; the patient's name, ID, sex and age; the kinds of image;
+  the description; the accession number; the image count; and whether images
+  are still arriving.
+- **Filters and search:** the kind of study (X-ray, CT, MR, ultrasound, cath
+  lab), how far back, and one box for a name, a patient ID or an accession
+  number. The filters are part of the address, so a view is a link.
+- **Opening a study:** Enter or a double-click opens the viewer in one named
+  window, and the next study opens in that same window. On two screens the
+  list stays on one and the viewer on the other.
+- **Live:** a new study appears on every open worklist without a reload. The
+  page heard of one 1.6–1.7 s after the modality started sending it (two
+  runs).
+- **The keyboard:** `/` finds, `J` and `K` move, `Enter` opens.
+- **Light and dark**, both designed; the page follows the PC unless the person
+  picks one. PMC's 2026 identity, as in the sample Dada saw. On a phone the
+  worklist narrows to when, who and what.
+- **Accessibility:** WCAG 2.2 AA, checked by axe-core in both themes on every
+  run.
+
+How it keeps the engine in charge:
+
+- **The engine decides what each person sees.** The app asks the engine for a
+  worklist with the person's own token. A referrer's worklist therefore comes
+  back cut to the studies shared with referrers, whatever the app asks for,
+  and at once: a search is filtered by label in the index, not cached.
+- **It believes only tokens Keycloak signed.** It checks each token against
+  Keycloak's signing keys, so nothing else on the engine network can pose as
+  a person. An unsigned or tampered token gets 401.
+- **Its own key reads only the change log.** The app polls the engine's
+  change log with the platform's key, and all it passes on is "the studies
+  changed". Each open page then asks again with its own person's token.
+- **It sorts only where the engine can.** OrderBy goes only to an engine that
+  reports `HasExtendedFind` (the PostgreSQL index). Pointed at the legacy
+  ODBC index, which answers OrderBy with HTTP 500, it would sort each page
+  itself instead (INFERRED: the code path exists; that index is not in the
+  build).
+
+Not there yet, and where each part comes from:
+
+| Missing | Comes with |
+|---|---|
+| Priority and STAT, from the BizBox order | M3, the BizBox connector |
+| Assigning a reader; read and unread | M2.3, next |
+| Sharing a study with referrers from the page | M2.3, after Dada decides who may share and for how long |
+| ICT's admin screens | M2.3 |
+| Reports | after the reporting decision (the record's open question) |
+| Filipino, for anything a patient sees | with the first patient-facing page |
+
 ## Pinned
 
 | Component | Version | Pinned by | Evidence |
@@ -194,6 +255,7 @@ MEASURED, 23 Sep 2026, unless marked.
 | Sign-in broker: `quay.io/keycloak/keycloak:26.7.4` | Keycloak 26.7.4, on its own PostgreSQL 18.6 cluster (`pg-platform`) | image digest | MEASURED: it starts, imports both realms and brokers the test sign-ins |
 | Session: `quay.io/oauth2-proxy/oauth2-proxy:v7.15.4` | oauth2-proxy 7.15.4, sessions in `valkey/valkey:9.2-trixie` (Valkey 9.2.0) | image digests | MEASURED by the browser tests |
 | Permissions: `orthancteam/orthanc-auth-service:26.8.1` | orthanc-auth-service 26.8.1, with the engine's authorization plugin 0.12.0 | image digest | MEASURED: `/plugins`, and the access tests |
+| Front door app: `pmc-imaging/app`, built here from `app/` | Node 24.21.0 LTS (`node:24.21.0-trixie-slim`). The page: React 19.3.0, TanStack Router 1.170.39 and Query 5.103.2, React Aria Components 1.21.1, Tailwind CSS 4.3.3, lucide-react 1.47.0; built by Vite 8.3.0 and type-checked by TypeScript 7.0.2. The server: Hono 4.13.8 with @hono/node-server 2.1.1, and zod 4.6.5 on both sides | base image digest, and an integrity hash for every package | MEASURED: built and run by `ci/run.sh`. Versions VERIFIED on registry.npmjs.org, 23 Sep 2026. The base digest was read from the mirror (Docker Hub answered 429 that day) |
 | Test runner: `python:3.14-slim-trixie` | Python 3.14.7, pydicom 3.0.2, pynetdicom 3.0.4, pylibjpeg-libjpeg 2.4.0, pytest 9.1.1 | image digest, and a hash for every package | MEASURED |
 | Browser runner: `mcr.microsoft.com/playwright:v1.63.0-noble` | Playwright 1.63.0, Chromium | image digest, and an integrity hash for every package | MEASURED |
 
@@ -204,10 +266,10 @@ Each was pulled on 23 Sep 2026 (MEASURED). The official images (`postgres`,
 
 ## What the tests prove
 
-`ci/run.sh` runs 52 tests. All passed on 23 Sep 2026 (MEASURED, cloud build,
-about 10 minutes). It starts from empty volumes and runs 30 engine tests and
-15 browser tests. It then removes the containers, starts new ones from the
-same volumes, and runs 5 engine tests and 2 browser tests again: the
+`ci/run.sh` runs 67 tests. All passed on 24 Sep 2026 (MEASURED, cloud build,
+about 8 minutes). It starts from empty volumes and runs 38 engine and API
+tests and 22 browser tests. It then removes the containers, starts new ones
+from the same volumes, and runs 5 engine tests and 2 browser tests again: the
 radiologist signs in afresh, and a cathlab run still opens playing.
 
 The test overlay shortens three clocks so the tests can wait them out: a
@@ -235,6 +297,8 @@ on site).
 | A link opened without a session goes straight to Entra ID (the stand-in), with no image request first, and comes back to the same page. The session cookie is HttpOnly, Secure and SameSite=Lax | `browser/tests/access.spec.js` |
 | Someone signed in to Entra ID but in no PMC group gets no session and no images | `browser/tests/access.spec.js` |
 | The engine is handed the person's own short-lived token. A session outlives its first token, and the engine refuses the expired one | `tests/test_session.py` |
+| The site's address opens the front door app, whose pages run only their own scripts. Its API needs a session, believes only tokens Keycloak signed, and answers the engine's own view of each person: newest first, sorted by the index, filtered and searched; a referrer's list holds only shared studies. A new study reaches an open page within seconds | `tests/test_app.py` |
+| The worklist lists every study, live; Enter opens the selected study in the viewer's own window, playing, and the next study reuses that window. Filters live in the address. The keyboard finds and moves. A referrer sees only shared studies. It passes WCAG 2.2 AA (axe-core) in light and dark | `browser/tests/home.spec.js` |
 | A referrer opens a study shared with referrers. A search finds only shared studies, and an unshared study is refused even by its UID | `browser/tests/access.spec.js` |
 | A cardiologist opens a cathlab run and it plays | `browser/tests/access.spec.js` |
 | Without a session, DICOMweb answers 401: never data, never a sign-in page. Keycloak's admin console and master realm are not reachable. Signing out ends the session | `browser/tests/access.spec.js` |
@@ -272,8 +336,12 @@ The AE titles the tests play are PMC's own, as MEASURED in the record.
   That too is NOT VERIFIED: it is measured on PMC hardware in M4.
 - **A new share reached a referrer after 60–64 s**, in three runs: the
   engine's authorization plugin caches what it knows about a study.
-- **An expired token was refused 63 s after it expired** (the same cache; see
-  Sign-in).
+- **An expired token was refused 63 s after it expired**, in two runs (the
+  same cache; see Sign-in).
+- **A new study reached an open worklist 1.6–1.7 s** after the modality began
+  sending it, in two runs.
+- **The worklist page** is one 646 KB script and a 15 KB stylesheet (198 KB
+  and 4 KB compressed); Vite 8.3 builds it in about 1.3 s.
 
 ## Run it
 
@@ -312,8 +380,15 @@ anonymous pulls, run it with `PMC_LIBRARY=public.ecr.aws/docker/library`.
   makes Keycloak's database. `auth-service/` holds what each role may do
   (`permissions.json`) and how the auth service starts. `test/` is the
   stand-in Entra ID, for tests only.
+- `app/`: the front door app. `src/web/` is the page (the worklist),
+  `src/server/` its server, `src/shared/api.ts` the schemas both sides check.
+  `Dockerfile` type-checks, builds and packs it.
 - `browser/`: the browser tests (Playwright). `tests/people.js` is who signs
-  in, `tests/access.spec.js` what each person may see.
+  in, `tests/access.spec.js` what each person may see, `tests/home.spec.js`
+  the worklist.
+- `tests/frontdoor.py`: signing in at the front door from Python, as a
+  person would, for the tests that look behind it (`test_session.py`,
+  `test_app.py`).
 - `secrets/`: generated by `tools/make-secrets.sh`, git-ignored, never
   overwritten. It holds the passwords of both PostgreSQL clusters and of
   Keycloak's database, the front door's client and cookie secrets, the auth
@@ -384,8 +459,19 @@ These are INFERRED, not decided by anyone but this build. Argue with them.
 - **Images stay off disks on the way through.** DICOMweb answers carry
   `Cache-Control: no-store`, and the front door is barred from spilling a
   response to a temp file.
-- **OHIF's own study list** is on until the PMC front door app (M2.3) replaces
-  it.
+- **OHIF is the viewer only.** Its study list is off; the worklist is the
+  front door app, and OHIF's home link lands on `/`, which the front door
+  sends to `/pmc/`.
+- **The front door app runs no script but its own.** Its pages get a
+  stricter content security policy than the viewer's: no `'unsafe-eval'`, no
+  inline scripts, no framing. Inline style attributes are allowed, because
+  the table component positions things with them.
+- **The front door app's server is TypeScript run as it is.** Node 24 strips
+  the types at start, so there is no server build step and nothing compiled
+  to drift from its source. The page is built once, in the image, and served
+  as hashed files.
+- **No second viewer.** The worklist shows no image previews yet; opening a
+  study is one keystroke away, in the one viewer.
 - **OHIF's "investigational use" notice** is left at OHIF's default: once per
   browser session. Whether PMC keeps it is a governance decision for Dada.
 
@@ -418,6 +504,15 @@ These are INFERRED, not decided by anyone but this build. Argue with them.
 - **Cutting someone off at once.** Removing a person from a group waits for
   their next sign-in. The runbook (M4) gets a step that ends a person's
   sessions straight away.
+- **The page is one 646 KB script (198 KB compressed).** Fine on PMC's LAN;
+  over mobile data, splitting it would start the page sooner. Not measured on
+  a phone.
+- **Node 24 leaves active support in October 2026**, when Node 26 becomes the
+  LTS line (the date is from the front-door research, NOT VERIFIED here). The
+  move is a base-image change plus a test run.
+- **The worklist has no totals yet** ("41 studies"): counting what a person may
+  see has to respect the same labels as the search, and the engine's count
+  endpoint is not in the permission table.
 
 ## Regenerating `tests/requirements.txt`
 
@@ -433,9 +528,9 @@ uv pip compile --generate-hashes --python-version 3.14 \
 
 ## Next
 
-- **M2.3:** the PMC front door app at `/pmc/`: the worklist and study search,
-  sharing with referrers, and ICT's admin screens. It opens the viewer, and
-  OHIF's own study list goes off.
+- **M2.3, the rest:** assigning a reader and read or unread; sharing with
+  referrers from the page, once Dada decides who may share and for how long;
+  ICT's admin screens. See [The front door app](#the-front-door-app).
 - **M2.4:** the cine fix for the live WS23 portal, prepared and tested in
   `apps/imaging-portal`. It is deployed only on Dada's go.
 - **M3:** the BizBox-to-worklist connector (against a mock BizBox), feed watch

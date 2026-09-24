@@ -1,9 +1,10 @@
 # PMC imaging platform: Path A (WS23).
 #
 #   M1  the engine (Orthanc) and its index (PostgreSQL)
-#   M2  the front door (nginx: TLS, HTTP/2), the viewer (OHIF), and sign-in:
-#       Keycloak brokering to Entra ID, oauth2-proxy holding each person's
-#       session, orthanc-auth-service deciding what each role may do
+#   M2  the front door (nginx: TLS, HTTP/2), the viewer (OHIF), sign-in
+#       (Keycloak brokering to Entra ID, oauth2-proxy holding each person's
+#       session, orthanc-auth-service deciding what each role may do), and
+#       the PMC front door app: the worklist at /pmc/
 #
 # Every image is pinned by digest. The engine and its index sit on a network
 # with no route out. The front door is the only service on the edge network,
@@ -128,11 +129,45 @@ services:
     logging: *logging
     networks: [engine]
 
+  app:
+    # The PMC front door app (M2.3): the worklist every person lands on, at
+    # /pmc/. It asks the engine with each person's own token, so the engine
+    # decides what each person sees; the platform's key reads only the
+    # engine's change log, to tell open pages that something arrived.
+    # Built from ./app (ci/run.sh builds it; M4 ships it as an image).
+    image: pmc-imaging/app:local
+    pull_policy: never
+    build: ./app
+    depends_on:
+      orthanc: { condition: service_healthy }
+      keycloak: { condition: service_healthy }
+    environment:
+      TZ: Asia/Manila
+      PMC_HOSTNAME: ${PMC_HOSTNAME:-imaging.pmcne.ph}
+      ENGINE_URL: http://orthanc:8042
+      KEYCLOAK_REALM_URL: http://keycloak:8080/auth/realms/pmc
+      API_KEY_SECRET: /run/secrets/svc-platform-api-key
+    secrets:
+      - svc-platform-api-key
+    # It writes nothing and needs no privilege.
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8080/pmc/api/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    logging: *logging
+    networks: [engine]
+
   front:
     image: ${PMC_LIBRARY:-docker.io/library}/nginx:1.30.5@sha256:0aa2d81d65bc0cac0407e738b8f07d312c8685a84225fcb4db7bcbdd8c9bdf11
     depends_on:
       orthanc: { condition: service_healthy }
       viewer: { condition: service_healthy }
+      app: { condition: service_healthy }
       oauth2-proxy: { condition: service_started }
       keycloak: { condition: service_healthy }
     environment:
