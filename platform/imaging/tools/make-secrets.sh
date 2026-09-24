@@ -38,7 +38,9 @@ write() {
   echo "generated $1"
 }
 
-# Databases.
+# Databases. The index cluster has its own superuser, for backups and ICT;
+# the engine logs in with pg-index-password, as a role that is not one.
+write pg-index-admin-password "$(rand)"
 write pg-index-password "$(rand)"
 write pg-platform-password "$(rand)"
 write keycloak-db-password "$(rand)"

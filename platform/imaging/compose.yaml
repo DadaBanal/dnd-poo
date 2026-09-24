@@ -51,20 +51,24 @@ services:
     environment:
       PMC_BACKUP_STANZA: index
       POSTGRES_DB: orthanc
-      POSTGRES_USER: orthanc
-      POSTGRES_PASSWORD_FILE: /run/secrets/pg-index-password
+      # The cluster's superuser, for backups and ICT. The engine logs in as
+      # orthanc, which owns its database and nothing else
+      # (orthanc/pg-index-init.sh; ci/run.sh checks it is no superuser).
+      POSTGRES_USER: pmc
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg-index-admin-password
       # Built-in C.UTF-8 collation: sort order that no glibc update can
       # change under an existing index. PostgreSQL 18 turns data checksums
       # on by default; ci/run.sh checks both.
       POSTGRES_INITDB_ARGS: --locale-provider=builtin --builtin-locale=C.UTF-8
       TZ: Asia/Manila
-    secrets: [pg-index-password]
+    secrets: [pg-index-admin-password, pg-index-password]
     volumes:
       # PostgreSQL 18 images keep PGDATA under /var/lib/postgresql/18/docker;
       # the volume is mounted one level up, as the image documents.
       - pg-index-data:/var/lib/postgresql
       - pgbackrest-repo:/var/lib/pgbackrest
       - ./backup:/pmc/backup:ro
+      - ./orthanc/pg-index-init.sh:/docker-entrypoint-initdb.d/10-engine-role.sh:ro
       - ./backup/initdb-stanza.sh:/docker-entrypoint-initdb.d/90-backup-stanza.sh:ro
     shm_size: 256mb
     healthcheck:
@@ -534,7 +538,11 @@ secrets:
     file: ${PMC_SECRETS:-./secrets}/platform-owner-password
   platform-app-password:
     file: ${PMC_SECRETS:-./secrets}/platform-app-password
+  pg-index-admin-password:
+    # The index cluster's superuser (pmc): backups and ICT, never the engine.
+    file: ${PMC_SECRETS:-./secrets}/pg-index-admin-password
   pg-index-password:
+    # The engine's own login to its index (orthanc).
     file: ${PMC_SECRETS:-./secrets}/pg-index-password
   pg-platform-password:
     file: ${PMC_SECRETS:-./secrets}/pg-platform-password

@@ -67,14 +67,19 @@ rm -rf .results
 mkdir -p .results
 "${compose[@]}" up -d --wait
 
-step "the index: PostgreSQL 18.6, data checksums on, built-in C.UTF-8 collation"
+step "the index: PostgreSQL 18.6, data checksums on, built-in C.UTF-8 collation, and the engine no superuser"
 sql() { "${compose[@]}" exec -T pg-index psql -U orthanc -d orthanc -Atc "$1"; }
 version="$(sql 'show server_version')"
 [[ "$version" == 18.6* ]] || fail "server_version is $version"
 [[ "$(sql 'show data_checksums')" == on ]] || fail "data checksums are off"
 locale="$(sql "select datlocprovider::text || ' ' || datlocale from pg_database where datname = current_database()")"
 [[ "$locale" == "b C.UTF-8" ]] || fail "collation is $locale"
-echo "ok: $version, checksums on, $locale"
+# sql() logs in as the engine does. It owns the index, and nothing more.
+[[ "$(sql 'select rolsuper from pg_roles where rolname = current_user')" == f ]] \
+  || fail "the engine logs in to its index as a superuser"
+[[ "$(sql 'select pg_get_userbyid(datdba) from pg_database where datname = current_database()')" == orthanc ]] \
+  || fail "the engine does not own its database"
+echo "ok: $version, checksums on, $locale; the engine owns its database and is no superuser"
 
 step "the engine: index in PostgreSQL only, and no route out"
 if "${compose[@]}" exec -T orthanc test -e /var/lib/orthanc/db/index; then

@@ -462,7 +462,7 @@ on site).
 
 | Property | Test |
 |---|---|
-| The engine is the configured one: versions, PostgreSQL index, no SQLite index file, exact plugin set, JPEG-LS ingest, never overwrite, never recycle | `test_engine.py`, `ci/run.sh` |
+| The engine is the configured one: versions, PostgreSQL index, no SQLite index file, exact plugin set, JPEG-LS ingest, never overwrite, never recycle. It logs in to its index as a role that owns its database and is no superuser | `test_engine.py`, `ci/run.sh` |
 | Nothing on the engine network can reach the internet | `ci/run.sh` |
 | A modality is admitted only if its AE title is registered, it calls this engine's AE title, and it connects from its registered address. A store-only modality cannot search | `test_engine.py` |
 | The engine's REST API refuses a caller with no credentials or a wrong API key. A route the permission table does not name is refused even to the platform's own service account | `test_engine.py` |
@@ -537,7 +537,7 @@ The AE titles the tests play are PMC's own, as MEASURED in the record.
   compressed again: they are already JPEG-LS.
 - **The off-site copy** of the whole 60 MB repository took 1.4 s (one run, to
   the stand-in on the same host).
-- **The disaster drill**, in three runs: verifying every file of the off-site
+- **The disaster drill**, in four runs: verifying every file of the off-site
   copy and restoring the engine's files and the database backups took
   9.8–10.1 s; restoring both clusters from those backups, 3.8–4.2 s; starting
   the platform on them, 49 s.
@@ -715,6 +715,13 @@ These are INFERRED, not decided by anyone but this build. Argue with them.
   cookie, another site's page cannot act in a signed-in person's name.
 - **OHIF's "investigational use" notice** is left at OHIF's default: once per
   browser session. Whether PMC keeps it is a governance decision for Dada.
+- **The engine owns its database and nothing more.** The official image makes
+  its `POSTGRES_USER` a superuser, and until 24 Sep the engine logged in as
+  that user (MEASURED). A superuser can run programs inside the database's
+  container, where the index's own backups also live. Now the superuser is
+  `pmc`, for backups and ICT, and the engine's `orthanc` role only owns the
+  `orthanc` database (`orthanc/pg-index-init.sh`). `ci/run.sh` checks both on
+  every run.
 - **A database is backed up by pgBackRest, never by copying its files.** A
   copy of a running cluster's files is not a database. pgBackRest takes a
   consistent backup and every log segment needed to replay it, and keeps
@@ -771,13 +778,6 @@ These are INFERRED, not decided by anyone but this build. Argue with them.
 - **The worklist has no totals yet** ("41 studies"): counting what a person may
   see has to respect the same labels as the search, and the engine's count
   endpoint is not in the permission table.
-- **The engine logs in to its index as that cluster's superuser**
-  (MEASURED: `orthanc` has `rolsuper`; Keycloak's role and the app's do not).
-  The official image makes `POSTGRES_USER` a superuser, and M1 let the engine
-  use it. A superuser can run programs inside the database's container, where
-  the index's own backups also live; the R740xd's copy is out of its reach.
-  Next: an owner role for the engine that is not a superuser, with the
-  superuser kept for backups and administration.
 - **`secrets/` after a disaster.** The drill keeps the test secrets, so it
   proves the data comes back, not the credentials. On site, losing the
   primary loses `secrets/` too. Either ICT escrows the whole directory with
@@ -821,8 +821,6 @@ uv pip compile --generate-hashes --python-version 3.14 \
   ICT's admin screens. See [The front door app](#the-front-door-app).
 - **M2.4:** the cine fix for the live WS23 portal, prepared and tested in
   `apps/imaging-portal`. It is deployed only on Dada's go.
-- **Hardening, next:** the engine's own non-superuser role in its index (see
-  Open).
 - **M3, the rest:** the BizBox-to-worklist connector (against a mock BizBox),
   and feed watch and alerts, which must also watch the backups.
 - **M4:** migration tooling, the runbook, and the on-prem package for the
