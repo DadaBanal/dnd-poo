@@ -161,6 +161,7 @@ def _visible_files(ctx, work_item_id: str):
     ids = _identities(ctx)
     return ctx.conn.execute(
         "SELECT * FROM attachment WHERE work_item_id = ? AND review_status <> 'WITHHELD'"
+        " AND purged_at IS NULL"
         " AND (review_status = 'CLEARED' OR LOWER(uploaded_by) IN (%s))"
         " ORDER BY attachment_id" % ",".join("?" * len(ids) or ["NULL"]),
         [work_item_id] + ids).fetchall()

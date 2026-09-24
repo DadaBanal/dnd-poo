@@ -44,6 +44,12 @@ def ticket_card(ctx, tk, *, can_work: bool) -> str:
     items = []
     for r in rows:
         name = t.esc(r["filename"])
+        if r["purged_at"]:
+            items.append(f"<li><s>{name}</s> <span class=muted>{_size(r['size_received'])} · "
+                         f"{t.esc(r['uploaded_by'])} · removed {t.esc(r['purged_at'][:10])}"
+                         f" ({'missing' if r['purge_reason'] == 'MISSING' else 'retention'})"
+                         "</span></li>")
+            continue
         served = r["review_status"] != "WITHHELD" or is_admin
         link = (f"<a href='/ticket/{wid}/file/{r['attachment_id']}'>{name}</a>" if served
                 else f"<s>{name}</s>")
@@ -69,7 +75,7 @@ def ticket_card(ctx, tk, *, can_work: bool) -> str:
                   "</form><p class=why style='margin:6px 0 0'>Up to 10 MB. Screenshots, photos, "
                   "PDFs, logs and Office documents. Every file waits for a patient-information "
                   "review.</p>")
-    pending = sum(1 for r in rows if r["review_status"] == "PENDING")
+    pending = sum(1 for r in rows if r["review_status"] == "PENDING" and not r["purged_at"])
     head = f"Files · {len(rows)}" + (f" · {pending} to review" if pending else "")
     return (f"<div class=card><h3>{head if rows else 'Files'}</h3>"
             + (f"<ul class=plain>{''.join(items)}</ul>" if items
@@ -97,6 +103,8 @@ def serve(ctx, row, *, board_id: str):
                f" via {ctx.user.via}")
     try:
         _, data = attachments.read(ctx.conn, row["attachment_id"])
+    except attachments.Removed:
+        raise HttpError("410 Gone", "That file was removed under the retention rule.")
     except (OSError, LookupError):
         raise HttpError("404 Not Found", "That file is missing or damaged; it was not served.")
     ascii_name = row["filename"].encode("ascii", "replace").decode().replace("?", "_") \
@@ -138,6 +146,8 @@ def download(ctx, work_item_id, attachment_id):
     from .ticket import _load
     tk = _load(ctx, work_item_id)
     row = _attachment_on(ctx, work_item_id, attachment_id)
+    if row["purged_at"]:
+        raise HttpError("410 Gone", "That file was removed under the retention rule.")
     if row["review_status"] == "WITHHELD" and \
             not common.may_access_board(ctx, tk["board_id"], need="ADMIN"):
         raise HttpError("404 Not Found", "That file was withheld for patient information.")
@@ -152,6 +162,8 @@ def review(ctx, work_item_id, attachment_id):
     decision = ctx.request.form().get("decision", "")
     if decision not in ("CLEARED", "WITHHELD"):
         return _back(work_item_id, err="Not reviewed: choose Clear or Withhold")
+    if row["purged_at"]:
+        return _back(work_item_id, err="That file was removed under retention; nothing to review")
     if row["review_status"] != "PENDING":
         return _back(work_item_id, err="That file has already been reviewed")
     attachments.review(ctx.conn, row["attachment_id"], decision, actor=ctx.user.id, at=ctx.now)

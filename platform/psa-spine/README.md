@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 408 tests
+python3 tests/test_spine.py          # 418 tests
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -214,6 +214,31 @@ workbook column A. (Sources are in `schema/022_record_type.sql`.)
   `EMAIL`. A refused file is written on the ticket and in data quality
   (`ATTACHMENT_REFUSED`); small inline signature images are counted
   (`INLINE_IMAGE_SKIPPED`), not kept.
+- **How much (INFERRED, nothing measured yet):** at today's ~700 tickets a
+  month, roughly 3 GB a year; hospital-wide at 2,000 a month, roughly
+  9 GB; phone photos decide it, because lossless compression only removes
+  their metadata. `attachments-usage` gives the measured number once the
+  desk is live. Files live outside the database because SQL Server Express
+  caps a database at 10 GB (VERIFIED,
+  learn.microsoft.com/sql/sql-server/editions-and-components-of-sql-server-2022).
+- **Keeping it whole, and not for ever (028):**
+  ```bash
+  python3 -m psaspine attachments-usage  spine.db                 # by month and board, and on disk
+  python3 -m psaspine attachments-verify spine.db [--hashes]      # every live row has its file, every file a row
+  python3 -m psaspine attachments-purge  spine.db --withheld-days 30 --closed-days 730   # PREVIEW
+  python3 -m psaspine attachments-purge  spine.db --withheld-days 30 --closed-days 730 --apply
+  ```
+  A withheld file goes N days after its review; any file goes N days after
+  its ticket closed; a reopened ticket keeps its files. The periods are
+  the operator's arguments, never a default in code, until the Data
+  Protection Officer has signed them (§6.1 point 3). The row stays with
+  `purged_at`, so the ticket still says what was sent and by whom; the
+  bytes go only when no live row points at them. The purge previews unless
+  told to apply, commits the rows before it deletes a byte, and refuses to
+  run over a store that is not whole -- an unmounted drive looks like every
+  file missing, and `attachments-verify --mark-missing` is a person's
+  decision. `scripts/Invoke-PmcAttachmentRetention.ps1` runs verify then
+  purge on DND-SQL01, preview by default, counts-only log.
 
 ### Emails to the requester
 
@@ -227,8 +252,9 @@ workbook column A. (Sources are in `schema/022_record_type.sql`.)
   by its subject token.
 - **Not twice:** while one requester email for a ticket is still unsent, a
   further update adds none. Only an address that resolves is queued.
-- **Off switch:** per board, *Email the requester…* on the board's settings
-  (unset means on).
+- **Off until turned on:** per board, *Email the requester…* on the board's
+  settings. Unset means off, as ConnectWise leaves contact emails until a
+  board enables them; turn it on once the portal is reachable over https.
 - **The link** is deployment config: `outbox-pending --portal-url https://…`
   or `PSA_PORTAL_URL` (`Send-PmcNotifications.ps1 -PortalUrl`). It must be
   https; without one the email says to sign in to the IT portal.

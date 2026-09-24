@@ -29,6 +29,16 @@ reviews it: CLEARED, or WITHHELD because it shows patient information. A
 WITHHELD file is never served again except to the board's administrator, and
 every read of a file on a restricted board is audited like any other read.
 
+**Keeping the store whole, and not for ever (028).** `usage` says what is held,
+as the database counts it and as the disk does. `verify` says whether every
+live row has its file and every file has a row. `purge` removes files under a
+retention rule -- a withheld file so many days after its review, any file so
+many days after its ticket closed -- with the periods given by the operator,
+never defaulted here (§6.1 point 3: retention is designed, not inherited). It
+previews unless told to apply, refuses to run over a store that is not whole,
+and leaves the row behind with `purged_at` set, so the ticket's history still
+says what was sent and by whom.
+
 Standard library only.
 """
 from __future__ import annotations
@@ -40,7 +50,7 @@ import re
 import sqlite3
 import struct
 import zlib
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import db
@@ -55,10 +65,18 @@ PNG_SIG = b"\x89PNG\r\n\x1a\n"
 PNG_KEEP = {b"IHDR", b"PLTE", b"tRNS", b"gAMA", b"cHRM", b"sRGB", b"iCCP", b"sBIT",
             b"pHYs", b"IDAT", b"IEND"}
 REVIEW = ("PENDING", "CLEARED", "WITHHELD")
+# A file on disk with no row is an orphan only once it is older than this: the
+# desk writes the file before it commits the row, and a purge that walked the
+# disk in that gap would otherwise delete a file whose row is a moment away.
+ORPHAN_GRACE_SECONDS = 3600
 
 
 class Refused(ValueError):
     """The file is not one the desk keeps."""
+
+
+class Removed(LookupError):
+    """The file was removed under retention; its row remains."""
 
 
 # ------------------------------------------------------------ what is it
@@ -276,6 +294,9 @@ def read(conn: sqlite3.Connection, attachment_id: int) -> tuple[sqlite3.Row, byt
                        (attachment_id,)).fetchone()
     if row is None:
         raise LookupError(f"no attachment {attachment_id}")
+    if row["purged_at"]:
+        raise Removed(f"attachment {attachment_id} was removed under retention on "
+                      f"{row['purged_at']}")
     stored = _path(store_dir(conn), row["sha256"]).read_bytes()
     data = gzip.decompress(stored) if row["encoding"] == "GZIP" else stored
     if hashlib.sha256(data).hexdigest() != row["sha256"]:
@@ -294,6 +315,9 @@ def review(conn: sqlite3.Connection, attachment_id: int, decision: str, *, actor
                        (attachment_id,)).fetchone()
     if row is None:
         raise LookupError(f"no attachment {attachment_id}")
+    if row["purged_at"]:
+        raise Removed(f"attachment {attachment_id} was removed under retention; "
+                      "there is nothing left to review")
     stamp = at.isoformat(sep=" ", timespec="minutes")
     conn.execute("UPDATE attachment SET review_status = ?, reviewed_by = ?, reviewed_at = ?"
                  " WHERE attachment_id = ?", (decision, actor, stamp, attachment_id))
@@ -311,3 +335,196 @@ def review(conn: sqlite3.Connection, attachment_id: int, decision: str, *, actor
 
 def _kb(n: int) -> str:
     return f"{n / 1024:.0f} KB" if n >= 1024 else f"{n} B"
+
+
+# ------------------------------------------------------------ keeping it whole
+
+def _files_on_disk(root: Path) -> dict[str, Path]:
+    """Every stored file by its name (the sha), .part leftovers excluded."""
+    if not root.is_dir():
+        return {}
+    return {p.name: p for p in root.rglob("*") if p.is_file() and not p.name.endswith(".part")}
+
+
+def usage(conn: sqlite3.Connection) -> dict:
+    """What the store holds: by month and board as the database counts it, and
+    on disk as the file system does. The two differ by design -- the same file
+    on two tickets is one file on disk -- so both are reported."""
+    rows = [dict(r) for r in conn.execute(
+        "SELECT substr(a.uploaded_at, 1, 7) AS month, t.board_id, COUNT(*) AS files,"
+        "       SUM(a.size_received) AS received,"
+        "       SUM(CASE WHEN a.purged_at IS NULL THEN a.size_stored ELSE 0 END) AS stored,"
+        "       SUM(a.review_status = 'PENDING' AND a.purged_at IS NULL) AS pending,"
+        "       SUM(a.review_status = 'WITHHELD' AND a.purged_at IS NULL) AS withheld,"
+        "       SUM(a.purged_at IS NOT NULL) AS purged"
+        "  FROM attachment a JOIN ticket t USING (work_item_id)"
+        " GROUP BY month, t.board_id ORDER BY month, t.board_id")]
+    totals = {k: sum(r[k] for r in rows) for k in ("files", "received", "stored", "pending",
+                                                    "withheld", "purged")}
+    totals["live"] = totals["files"] - totals["purged"]
+    totals["distinct_live"] = conn.execute(
+        "SELECT COUNT(DISTINCT sha256) FROM attachment WHERE purged_at IS NULL").fetchone()[0]
+    root = store_dir(conn)
+    on_disk = _files_on_disk(root)
+    return {"store": str(root), "rows": rows, "totals": totals,
+            "disk": {"files": len(on_disk), "bytes": sum(p.stat().st_size for p in on_disk.values())}}
+
+
+def verify(conn: sqlite3.Connection, *, check_hashes: bool = False,
+           now: float | None = None) -> dict:
+    """Is the store whole? `missing`: live rows whose file is not there.
+    `orphans`: files no live row points at (a purge that stopped half way, or a
+    row that was rolled back), once they are past the grace period.
+    `mismatched`: with check_hashes, files that no longer hash to their name."""
+    import time
+    root = store_dir(conn)
+    live = {r["sha256"]: r["encoding"] for r in conn.execute(
+        "SELECT DISTINCT sha256, encoding FROM attachment WHERE purged_at IS NULL")}
+    present = _files_on_disk(root)
+    now = time.time() if now is None else now
+    orphans, recent = [], 0
+    for sha, path in present.items():
+        if sha in live:
+            continue
+        if now - path.stat().st_mtime < ORPHAN_GRACE_SECONDS:
+            recent += 1
+        else:
+            orphans.append(sha)
+    partial = sum(1 for p in root.rglob("*.part") if p.is_file()) if root.is_dir() else 0
+    mismatched = []
+    if check_hashes:
+        for sha, encoding in live.items():
+            if sha not in present:
+                continue
+            try:
+                data = present[sha].read_bytes()
+                if encoding == "GZIP":
+                    data = gzip.decompress(data)
+            except (OSError, gzip.BadGzipFile, EOFError, zlib.error):
+                mismatched.append(sha)
+                continue
+            if hashlib.sha256(data).hexdigest() != sha:
+                mismatched.append(sha)
+    return {"store": str(root), "store_exists": root.is_dir(), "live": len(live),
+            "present": len(present), "missing": sorted(set(live) - set(present)),
+            "orphans": sorted(orphans), "recent_unindexed": recent, "partial": partial,
+            "mismatched": sorted(mismatched), "checked_hashes": check_hashes}
+
+
+def record_missing(conn: sqlite3.Connection, shas: list[str], *, actor: str,
+                   at: datetime) -> int:
+    """Settle rows whose file is gone: mark them purged with reason MISSING, so
+    the ticket says the file is not there rather than serving an error, and so
+    retention can run again. An operator's decision, audited; never automatic."""
+    from .board import _event
+    if not shas:
+        return 0
+    stamp = at.isoformat(sep=" ", timespec="minutes")
+    rows = conn.execute(
+        "SELECT attachment_id, work_item_id, filename FROM attachment WHERE purged_at IS NULL"
+        " AND sha256 IN (%s)" % ",".join("?" * len(shas)), shas).fetchall()
+    for r in rows:
+        conn.execute("UPDATE attachment SET purged_at = ?, purge_reason = 'MISSING'"
+                     " WHERE attachment_id = ?", (stamp, r["attachment_id"]))
+        _event(conn, r["work_item_id"], stamp, "ATTACHMENT", actor,
+               f"file {r['filename']} is missing from the store; recorded as gone")
+    db.audit(conn, at=stamp, actor=actor, action="ATTACHMENT_MISSING",
+             subject_kind="attachment_store", detail=f"{len(rows)} row(s) recorded as missing")
+    return len(rows)
+
+
+def purge(conn: sqlite3.Connection, *, at: datetime, withheld_days: int, closed_days: int,
+          apply: bool = False, actor: str = "retention") -> dict:
+    """Remove files under the retention rule. Previews unless `apply`.
+
+    Due: a WITHHELD file `withheld_days` after its review; any file
+    `closed_days` after its ticket closed (a reopened ticket has no closed_at,
+    so its files stay). The row is kept with purged_at and the reason; the
+    ticket gets an event. The bytes go only when no live row still points at
+    them -- the same file on another open ticket keeps them.
+
+    Refuses to run over a store that is not whole: a data drive that is not
+    mounted looks like every file missing, and a purge that marked those rows
+    would delete the files as orphans the day the drive came back.
+
+    With `apply`, the rows are committed BEFORE any file is deleted, so a stop
+    between the two leaves orphans (which the next run removes) and never a
+    live row with no file.
+    """
+    if withheld_days < 1 or closed_days < 1:
+        raise ValueError("retention periods are whole days, at least 1")
+    root = store_dir(conn)
+    check = verify(conn)
+    if check["live"] and not check["store_exists"]:
+        raise RuntimeError(f"the attachment store {root} is not there; nothing is purged "
+                           "until it is back")
+    if check["missing"]:
+        raise RuntimeError(f"{len(check['missing'])} live file(s) are missing from the store;"
+                           " run attachments-verify and settle that before purging")
+    stamp = at.isoformat(sep=" ", timespec="minutes")
+    withheld_before = (at - timedelta(days=withheld_days)).isoformat(sep=" ", timespec="minutes")
+    closed_before = (at - timedelta(days=closed_days)).isoformat(sep=" ", timespec="minutes")
+    due = conn.execute(
+        "SELECT a.attachment_id, a.work_item_id, a.sha256, a.filename, a.size_stored, t.board_id,"
+        "       CASE WHEN a.review_status = 'WITHHELD' AND a.reviewed_at <= ? THEN 'WITHHELD'"
+        "            ELSE 'CLOSED' END AS reason"
+        "  FROM attachment a JOIN ticket t USING (work_item_id)"
+        " WHERE a.purged_at IS NULL"
+        "   AND ((a.review_status = 'WITHHELD' AND a.reviewed_at <= ?)"
+        "        OR (t.closed_at IS NOT NULL AND t.closed_at <= ?))"
+        " ORDER BY a.attachment_id", (withheld_before, withheld_before, closed_before)).fetchall()
+
+    by_reason: dict[str, int] = {"WITHHELD": 0, "CLOSED": 0}
+    by_board: dict[str, int] = {}
+    tickets: dict[str, int] = {}
+    for r in due:
+        by_reason[r["reason"]] += 1
+        by_board[r["board_id"]] = by_board.get(r["board_id"], 0) + 1
+        tickets[r["work_item_id"]] = tickets.get(r["work_item_id"], 0) + 1
+    # Bytes that would go: files no live row would still point at afterwards.
+    due_ids = {r["attachment_id"] for r in due}
+    still_live = {r[0] for r in conn.execute(
+        "SELECT sha256 FROM attachment WHERE purged_at IS NULL AND attachment_id NOT IN (%s)"
+        % (",".join("?" * len(due_ids)) or "NULL"), list(due_ids))}
+    freeable = {r["sha256"]: r["size_stored"] for r in due if r["sha256"] not in still_live}
+    plan = {"applied": False, "due": len(due), "by_reason": by_reason, "by_board": by_board,
+            "tickets": tickets, "files_to_free": len(freeable),
+            "bytes_to_free": sum(freeable.values()), "orphans": len(check["orphans"]),
+            "files_removed": 0, "orphans_removed": 0, "bytes_freed": 0,
+            "withheld_before": withheld_before, "closed_before": closed_before}
+    if not apply:
+        return plan
+
+    from .board import _event
+    for r in due:
+        conn.execute("UPDATE attachment SET purged_at = ?, purge_reason = ? WHERE attachment_id = ?",
+                     (stamp, r["reason"], r["attachment_id"]))
+        why = (f"{withheld_days} days after it was withheld" if r["reason"] == "WITHHELD"
+               else f"{closed_days} days after the ticket closed")
+        _event(conn, r["work_item_id"], stamp, "ATTACHMENT", actor,
+               f"file {r['filename']} removed under retention: {why}")
+    db.audit(conn, at=stamp, actor=actor, action="ATTACHMENT_PURGE", subject_kind="attachment_store",
+             detail=f"{len(due)} row(s): {by_reason['WITHHELD']} withheld, {by_reason['CLOSED']} on "
+                    f"closed tickets; periods {withheld_days}/{closed_days} days")
+    conn.commit()                        # rows first: durable before any byte goes
+
+    gone = [r[0] for r in conn.execute(
+        "SELECT sha256 FROM attachment GROUP BY sha256 HAVING SUM(purged_at IS NULL) = 0")]
+    for sha in gone + check["orphans"]:
+        path = _path(root, sha)
+        if not path.exists():
+            continue
+        size = path.stat().st_size
+        path.unlink()
+        plan["bytes_freed"] += size
+        if sha in check["orphans"]:
+            plan["orphans_removed"] += 1
+        else:
+            plan["files_removed"] += 1
+        for parent in (path.parent, path.parent.parent):
+            try:
+                parent.rmdir()               # only when empty; otherwise it stays
+            except OSError:
+                break
+    plan["applied"] = True
+    return plan

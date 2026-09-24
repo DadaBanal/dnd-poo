@@ -2049,9 +2049,16 @@ ALTER TABLE psa.[workflow_action] ADD [target_template_id] NVARCHAR(64) NULL CON
 -- Emailing the requester: ConnectWise mails the contact on a new ticket and on a
 -- Discussion note, per board. Here the mail says only that the ticket moved and
 -- links to the portal; the note's words never leave the desk (§6.1). NULL reads
--- as on.
+-- as off: no email leaves until a board turns it on, once the portal is
+-- reachable over https.
 IF COL_LENGTH(N'psa.[board]', N'notify_requester') IS NULL
 ALTER TABLE psa.[board] ADD [notify_requester] INT NULL CONSTRAINT [CK_board_notify_requester_01] CHECK (notify_requester IN (0, 1));
+
+IF COL_LENGTH(N'psa.[attachment]', N'purged_at') IS NULL
+ALTER TABLE psa.[attachment] ADD [purged_at] NVARCHAR(64) NULL;
+
+IF COL_LENGTH(N'psa.[attachment]', N'purge_reason') IS NULL
+ALTER TABLE psa.[attachment] ADD [purge_reason] NVARCHAR(32) NULL CONSTRAINT [CK_attachment_purge_reason_01] CHECK (purge_reason IN ('WITHHELD', 'CLOSED', 'MISSING'));
 
 -- --------------------------------------------------------------------------
 -- indexes

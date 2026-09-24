@@ -14,6 +14,12 @@ def _as_of(value: str | None) -> date:
     return date.fromisoformat(value) if value else date.today()
 
 
+def _mb(n: int) -> str:
+    if n >= 1024 * 1024:
+        return f"{n / (1024 * 1024):.1f} MB"
+    return f"{n / 1024:.0f} KB" if n >= 1024 else f"{n} B"
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="psaspine", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -116,6 +122,26 @@ def main(argv: list[str] | None = None) -> int:
     pom.add_argument("database")
     pom.add_argument("--id", type=int, required=True)
     pom.add_argument("--status", choices=("SENT", "FAILED"), required=True)
+
+    pau = sub.add_parser("attachments-usage",
+                         help="what the attachment store holds, by month and board, and on disk")
+    pau.add_argument("database")
+    pav = sub.add_parser("attachments-verify",
+                         help="is the store whole: every live row has its file, every file a row")
+    pav.add_argument("database")
+    pav.add_argument("--hashes", action="store_true",
+                     help="also read every live file and check it against its name (slow)")
+    pav.add_argument("--mark-missing", action="store_true",
+                     help="record rows whose file is gone as removed (reason MISSING), audited")
+    pap = sub.add_parser("attachments-purge",
+                         help="remove files under the retention rule; PREVIEW unless --apply")
+    pap.add_argument("database")
+    pap.add_argument("--withheld-days", type=int, required=True,
+                     help="remove a withheld file this many days after its review")
+    pap.add_argument("--closed-days", type=int, required=True,
+                     help="remove any file this many days after its ticket closed")
+    pap.add_argument("--apply", action="store_true", help="change something (default: preview)")
+    pap.add_argument("--as-of", help="today, for a rehearsal (default: now)")
 
     pu = sub.add_parser("setup-board",
                         help="give a board the starter statuses, calendar and SLA "
@@ -264,6 +290,74 @@ def main(argv: list[str] | None = None) -> int:
         if not ok:
             print(f"refused: notification {a.id} is not pending", file=sys.stderr)
         return 0 if ok else 1
+
+    if a.cmd == "attachments-usage":
+        from . import attachments
+        u = attachments.usage(conn)
+        print(f"{'month':7} {'board':16} {'files':>6} {'received':>10} {'stored':>10}"
+              f" {'pending':>7} {'withheld':>8} {'purged':>6}")
+        for r in u["rows"]:
+            print(f"{r['month']:7} {r['board_id'][:16]:16} {r['files']:6d} {_mb(r['received']):>10}"
+                  f" {_mb(r['stored']):>10} {r['pending']:7d} {r['withheld']:8d} {r['purged']:6d}")
+        tt = u["totals"]
+        print(f"total: {tt['files']} files ({tt['live']} live, {tt['distinct_live']} distinct);"
+              f" {_mb(tt['received'])} received, {_mb(tt['stored'])} stored;"
+              f" {tt['pending']} awaiting review, {tt['withheld']} withheld, {tt['purged']} removed")
+        print(f"on disk: {u['disk']['files']} files, {_mb(u['disk']['bytes'])} in {u['store']}")
+        return 0
+
+    if a.cmd == "attachments-verify":
+        from . import attachments
+        v = attachments.verify(conn, check_hashes=a.hashes)
+        print(f"store {v['store']}: {'present' if v['store_exists'] else 'NOT THERE'};"
+              f" {v['live']} live file(s) expected, {v['present']} on disk")
+        problems = 0
+        for key, words in (("missing", "missing (a live row with no file)"),
+                           ("orphans", "orphaned (a file no live row points at)"),
+                           ("mismatched", "not matching their name")):
+            n = len(v[key])
+            if n:
+                problems += n
+                print(f"  {n} {words}: " + ", ".join(x[:12] for x in v[key][:10])
+                      + (" ..." if n > 10 else ""))
+        if v["partial"]:
+            print(f"  {v['partial']} .part file(s) from an interrupted write")
+        if v["recent_unindexed"]:
+            print(f"  {v['recent_unindexed']} recent file(s) not yet indexed (within the grace period)")
+        if a.mark_missing and v["missing"]:
+            n = attachments.record_missing(conn, v["missing"], actor="cli", at=datetime.now())
+            conn.commit()
+            print(f"  recorded {n} row(s) as missing")
+            problems -= len(v["missing"])
+        if not a.hashes:
+            print("  (contents not checked; add --hashes to read every file)")
+        print("OK: the store is whole" if not problems else f"PROBLEMS: {problems}")
+        return 0 if not problems else 1
+
+    if a.cmd == "attachments-purge":
+        from . import attachments
+        as_of = _as_of(a.as_of)
+        at = (datetime.now() if a.as_of is None
+              else datetime(as_of.year, as_of.month, as_of.day))
+        try:
+            r = attachments.purge(conn, at=at, withheld_days=a.withheld_days,
+                                  closed_days=a.closed_days, apply=a.apply)
+        except (RuntimeError, ValueError) as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        head = "APPLIED" if r["applied"] else "PREVIEW"
+        print(f"{head}: {r['due']} file(s) due -- {r['by_reason']['WITHHELD']} withheld before "
+              f"{r['withheld_before']}, {r['by_reason']['CLOSED']} on tickets closed before "
+              f"{r['closed_before']}; {len(r['tickets'])} ticket(s); {r['files_to_free']} file(s),"
+              f" {_mb(r['bytes_to_free'])} to free; {r['orphans']} orphan(s)")
+        for board_id, n in sorted(r["by_board"].items()):
+            print(f"  {board_id}: {n}")
+        if r["applied"]:
+            print(f"removed {r['files_removed']} file(s) and {r['orphans_removed']} orphan(s),"
+                  f" {_mb(r['bytes_freed'])} freed")
+        else:
+            print("nothing changed; re-run with --apply")
+        return 0
 
     if a.cmd == "setup-board":
         from . import setup

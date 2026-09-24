@@ -558,6 +558,8 @@
     "attachment.uploaded_at": "TIMESTAMP_TEXT",
     "attachment.review_status": "CODE",
     "attachment.reviewed_by": "PERSON",
-    "attachment.reviewed_at": "TIMESTAMP_TEXT"
+    "attachment.reviewed_at": "TIMESTAMP_TEXT",
+    "attachment.purged_at": "TIMESTAMP_TEXT",
+    "attachment.purge_reason": "CODE"
   }
 }
