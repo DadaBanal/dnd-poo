@@ -31,6 +31,7 @@ CREATE INDEX ix_attachment_ticket ON attachment (work_item_id);
 -- Emailing the requester: ConnectWise mails the contact on a new ticket and on a
 -- Discussion note, per board. Here the mail says only that the ticket moved and
 -- links to the portal; the note's words never leave the desk (§6.1). NULL reads
--- as on.
+-- as off: no email leaves until a board turns it on, once the portal is
+-- reachable over https.
 ALTER TABLE board ADD COLUMN notify_requester INTEGER
   CHECK (notify_requester IN (0, 1));

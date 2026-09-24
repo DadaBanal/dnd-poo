@@ -163,8 +163,9 @@ def board_setup(ctx, board_id):
             f"<div style='grid-column:1/-1'><label>Description</label><input name=description value='{t.esc(b['description'] or '')}'></div>"
             "<div>" + chk("restricted", b["restricted"], "Restricted — members only, every read audited")
             + chk("closed_loop_required", b["closed_loop_required"], "Closed loop required")
-            + chk("notify_requester", b["notify_requester"] != 0,
-                  "Email the requester when their ticket is opened or updated (no note text)")
+            + chk("notify_requester", b["notify_requester"] == 1,
+                  "Email the requester when their ticket is opened or updated (no note text;"
+                  " needs the portal address on the sender)")
             + "</div><div>" + chk("is_live", b["is_live"], "Live (needs an owner and a deputy)")
             + chk("inactive", b["inactive"], "Retired — no new tickets; history kept") + "</div>"
             "</div><div style='margin-top:12px'><button type=submit>Save board</button></div></form>"

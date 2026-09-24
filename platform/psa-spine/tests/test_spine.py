@@ -4676,6 +4676,199 @@ class AttachmentsTest(unittest.TestCase):
         self.assertFalse(any("xxxx" in x for x in texts))
 
 
+class AttachmentRetentionTest(unittest.TestCase):
+    """028: what the store holds, whether it is whole, and removing files under
+    a retention rule that previews first and refuses over a broken store."""
+
+    def setUp(self) -> None:
+        from psaspine import attachments
+        self.att = attachments
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tmp.name) / "spine.db"
+        self.store = Path(str(self.db_path) + ".attachments")
+        self.conn = db.init(self.db_path)
+        self.at = datetime(2026, 9, 23, 9, 0)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _ticket(self, *, at=None):
+        return tickets.open_ticket(self.conn, board_id="IT_HELP", summary="Printer", impact="I3",
+                                   urgency="U3", requested_by=None, at=at or self.at)
+
+    def _close(self, wid, at):
+        board.change_status(self.conn, wid, "IT_HELP.CLOSED", at=at, actor="alice")
+
+    def _add(self, wid, data, name, at=None):
+        return self.att.add(self.conn, wid, data, name, actor="alice", at=at or self.at)
+
+    def _purge(self, at, **kw):
+        kw.setdefault("withheld_days", 30)
+        kw.setdefault("closed_days", 730)
+        return self.att.purge(self.conn, at=at, **kw)
+
+    def _files(self):
+        return sorted(p.name for p in self.store.rglob("*") if p.is_file())
+
+    def test_usage_counts_rows_by_month_and_board_and_files_once_on_disk(self):
+        a, b = self._ticket(), self._ticket(at=datetime(2026, 10, 2, 9, 0))
+        self._add(a, _png(), "one.png")
+        self._add(b, _png(), "same.png", at=datetime(2026, 10, 2, 9, 0))
+        self._add(b, b"log line\n" * 100, "b.log", at=datetime(2026, 10, 2, 9, 0))
+        u = self.att.usage(self.conn)
+        self.assertEqual([(r["month"], r["board_id"], r["files"]) for r in u["rows"]],
+                         [("2026-09", "IT_HELP", 1), ("2026-10", "IT_HELP", 2)])
+        self.assertEqual((u["totals"]["live"], u["totals"]["distinct_live"], u["disk"]["files"]),
+                         (3, 2, 2))
+        self.assertLess(u["disk"]["bytes"], u["totals"]["received"])
+
+    def test_verify_sees_a_missing_file_an_orphan_and_a_corrupt_one(self):
+        wid = self._ticket()
+        info = self._add(wid, b"trace\n" * 200, "t.log")
+        self.assertEqual(self.att.verify(self.conn)["missing"], [])
+        stored = self.store / info["sha256"][:2] / info["sha256"][2:4] / info["sha256"]
+        stored.write_bytes(b"garbage")
+        self.assertEqual(self.att.verify(self.conn, check_hashes=True)["mismatched"], [info["sha256"]])
+        stored.unlink()
+        self.assertEqual(self.att.verify(self.conn)["missing"], [info["sha256"]])
+        orphan = self.store / "ab" / "cd" / ("ab" + "c" * 62)
+        orphan.parent.mkdir(parents=True)
+        orphan.write_bytes(b"nobody points here")
+        v = self.att.verify(self.conn)
+        self.assertEqual((v["orphans"], v["recent_unindexed"]), ([], 1))   # just written: grace
+        later = _time.time() + self.att.ORPHAN_GRACE_SECONDS + 1
+        self.assertEqual(self.att.verify(self.conn, now=later)["orphans"], [orphan.name])
+
+    def test_a_missing_file_is_recorded_as_gone_by_a_person_not_by_the_purge(self):
+        wid = self._ticket()
+        info = self._add(wid, b"trace\n" * 200, "t.log")
+        (self.store / info["sha256"][:2] / info["sha256"][2:4] / info["sha256"]).unlink()
+        with self.assertRaises(RuntimeError):
+            self._purge(datetime(2030, 1, 1))
+        n = self.att.record_missing(self.conn, self.att.verify(self.conn)["missing"],
+                                    actor="ops", at=self.at)
+        self.assertEqual(n, 1)
+        row = self.conn.execute("SELECT purge_reason FROM attachment").fetchone()
+        self.assertEqual(row[0], "MISSING")
+        with self.assertRaises(self.att.Removed):
+            self.att.read(self.conn, info["attachment_id"])
+        self.assertEqual(self._purge(datetime(2030, 1, 1))["due"], 0)
+
+    def test_purge_previews_then_removes_withheld_and_closed_files_keeping_the_rows(self):
+        old, live = self._ticket(), self._ticket()
+        w = self._add(old, _png(), "his.png")
+        self.att.review(self.conn, w["attachment_id"], "WITHHELD", actor="lead",
+                        at=datetime(2026, 9, 24, 9, 0))
+        c = self._add(old, b"closed ticket log\n" * 50, "closed.log")
+        shared = self._add(old, b"same bytes on two tickets\n" * 50, "shared-a.txt")
+        self._add(live, b"same bytes on two tickets\n" * 50, "shared-b.txt")
+        self._close(old, datetime(2026, 10, 1, 9, 0))
+
+        soon = datetime(2026, 10, 30, 9, 0)                   # 36 days after the review
+        plan = self._purge(soon)
+        self.assertFalse(plan["applied"])
+        self.assertEqual((plan["due"], plan["by_reason"]), (1, {"WITHHELD": 1, "CLOSED": 0}))
+        self.assertEqual(len(self._files()), 3)                # preview changed nothing
+        self.assertIsNone(self.conn.execute("SELECT purged_at FROM attachment WHERE"
+                                            " attachment_id = ?", (w["attachment_id"],)).fetchone()[0])
+
+        done = self._purge(soon, apply=True)
+        self.assertEqual((done["files_removed"], done["bytes_freed"] > 0), (1, True))
+        self.assertNotIn(w["sha256"], self._files())
+        with self.assertRaises(self.att.Removed):
+            self.att.read(self.conn, w["attachment_id"])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM attachment").fetchone()[0], 4)
+
+        later = datetime(2028, 10, 2, 9, 0)                   # 731 days after closing
+        plan = self._purge(later)
+        self.assertEqual((plan["due"], plan["by_reason"]["CLOSED"], plan["files_to_free"]),
+                         (2, 2, 1))                            # the shared file stays: live points at it
+        done = self._purge(later, apply=True)
+        self.assertEqual(done["files_removed"], 1)
+        self.assertNotIn(c["sha256"], self._files())
+        self.assertIn(shared["sha256"], self._files())
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM attachment WHERE purged_at IS NULL"
+                                           " AND work_item_id = ?", (live,)).fetchone()[0], 1)
+        self.assertEqual(self._purge(later, apply=True)["due"], 0)
+        events = [r[0] for r in self.conn.execute("SELECT detail FROM ticket_event WHERE"
+                                                  " work_item_id = ? AND detail LIKE '%retention%'", (old,))]
+        self.assertEqual(len(events), 3)
+        self.assertTrue(self.conn.execute("SELECT 1 FROM audit_event WHERE action ="
+                                          " 'ATTACHMENT_PURGE'").fetchone())
+
+    def test_a_reopened_ticket_keeps_its_files(self):
+        wid = self._ticket()
+        self._add(wid, b"keep me\n" * 50, "k.log")
+        self._close(wid, datetime(2026, 10, 1, 9, 0))
+        board.change_status(self.conn, wid, "IT_HELP.IN_PROGRESS", at=datetime(2026, 10, 5), actor="a")
+        self.conn.execute("UPDATE ticket SET closed_at = NULL WHERE work_item_id = ?", (wid,))
+        self.assertEqual(self._purge(datetime(2030, 1, 1))["due"], 0)
+
+    def test_purge_refuses_an_unmounted_store_and_bad_periods(self):
+        wid = self._ticket()
+        self._add(wid, b"x\n" * 50, "x.log")
+        import shutil
+        shutil.move(str(self.store), str(self.store) + ".away")   # the drive is not there
+        with self.assertRaises(RuntimeError):
+            self._purge(datetime(2030, 1, 1))
+        shutil.move(str(self.store) + ".away", str(self.store))
+        with self.assertRaises(ValueError):
+            self._purge(datetime(2030, 1, 1), closed_days=0)
+        self.assertEqual(self._purge(datetime(2030, 1, 1))["due"], 0)  # nothing closed: nothing due
+
+    def test_the_cli_previews_with_counts_only_and_verify_exits_nonzero_on_a_gap(self):
+        import contextlib
+        from psaspine.__main__ import main as cli_main
+        wid = self._ticket()
+        info = self._add(wid, b"CANARY-NAME\n" * 50, "patient-list-CANARY.txt")
+        self.att.review(self.conn, info["attachment_id"], "WITHHELD", actor="lead", at=self.at)
+        self.conn.commit()
+        self.conn.close()
+        out = _io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = cli_main(["attachments-purge", str(self.db_path), "--withheld-days", "30",
+                             "--closed-days", "730", "--as-of", "2026-12-01"])
+        self.assertEqual(code, 0)
+        text = out.getvalue()
+        self.assertIn("PREVIEW: 1 file(s) due", text)
+        self.assertNotIn("CANARY", text)
+        self.assertEqual(len(self._files()), 1)
+        out = _io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli_main(["attachments-verify", str(self.db_path)]), 0)
+            self.assertEqual(cli_main(["attachments-usage", str(self.db_path)]), 0)
+        self.assertIn("OK: the store is whole", out.getvalue())
+        self.assertIn("1 files (1 live, 1 distinct)", out.getvalue())
+        (self.store / info["sha256"][:2] / info["sha256"][2:4] / info["sha256"]).unlink()
+        with contextlib.redirect_stdout(_io.StringIO()):
+            self.assertEqual(cli_main(["attachments-verify", str(self.db_path)]), 1)
+        self.conn = db.connect(self.db_path)
+
+
+class AttachmentRetentionScriptTest(unittest.TestCase):
+    """scripts/Invoke-PmcAttachmentRetention.ps1: ASCII, verify before purge,
+    --apply only under -Apply, no default period, counts-only logs."""
+
+    SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "Invoke-PmcAttachmentRetention.ps1"
+
+    def setUp(self) -> None:
+        self.text = self.SCRIPT.read_bytes().decode("ascii")
+
+    def test_periods_are_mandatory_and_nothing_is_purged_without_apply(self):
+        for name in ("WithheldDays", "ClosedDays"):
+            self.assertIn(f"[Parameter(Mandatory = $true)] [int] ${name}", self.text)
+        self.assertIn("if ($Apply) { $purgeArgs += '--apply' }", self.text)
+        self.assertLess(self.text.index("'attachments-verify'"), self.text.index("'attachments-purge'"))
+
+    def test_it_holds_no_secret_and_logs_no_names(self):
+        lowered = self.text.lower()
+        for shape in ("client_secret", "password", "convertto-securestring", "apikey"):
+            self.assertNotIn(shape, lowered, shape)
+        self.assertNotIn("filename", lowered)
+
+
 class AttachmentsWebTest(unittest.TestCase):
     """The desk and the portal: upload, download, review, and who may see what."""
 
@@ -4815,6 +5008,30 @@ class AttachmentsWebTest(unittest.TestCase):
                                       " = 'ITO-1'").fetchone()[0], 1)
         conn.close()
 
+    def test_a_file_removed_under_retention_is_shown_as_gone_and_never_served(self):
+        from psaspine import attachments
+        conn = self._conn()
+        conn.execute("UPDATE ticket SET requested_by = 'bob@pmcne.ph' WHERE work_item_id = 'ITO-1'")
+        at = datetime(2026, 9, 17, 9)
+        aid = attachments.add(conn, "ITO-1", b"old trace\n" * 30, "old.log", actor="bob@pmcne.ph",
+                              at=at)["attachment_id"]
+        attachments.review(conn, aid, "WITHHELD", actor="alice", at=at)
+        conn.commit()
+        done = attachments.purge(conn, at=datetime(2026, 12, 1), withheld_days=30,
+                                 closed_days=730, apply=True)
+        conn.close()
+        self.assertEqual(done["files_removed"], 1)
+        status, _, _ = self._send("GET", f"/ticket/ITO-1/file/{aid}", cookie=self._cookie_for("alice"))
+        self.assertTrue(status.startswith("410"), status)
+        _, _, page = self._send("GET", "/ticket/ITO-1", cookie=self._cookie_for("alice"))
+        self.assertIn(b"removed 2026-12-01", page)
+        self.assertNotIn(b"Withhold", page)
+        bob = self._cookie_for("bob", email="bob@pmcne.ph")
+        _, _, page = self._send("GET", "/my/ITO-1", cookie=bob)
+        self.assertNotIn(b"old.log", page)
+        status, _, _ = self._send("GET", f"/my/ITO-1/file/{aid}", cookie=bob)
+        self.assertTrue(status.startswith("404"))
+
     def test_a_body_over_the_limit_is_refused_unread(self):
         import io as _io_
         from psaspine.web import MAX_BODY
@@ -4843,6 +5060,7 @@ class RequesterMailTest(unittest.TestCase):
         self.conn = db.init(Path(self.tmp.name) / "spine.db")
         self.at = datetime(2026, 9, 23, 9, 0)
         setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        self.conn.execute("UPDATE board SET notify_requester = 1 WHERE board_id = 'IT_HELP'")
 
     def tearDown(self) -> None:
         self.conn.close()
@@ -4892,10 +5110,12 @@ class RequesterMailTest(unittest.TestCase):
         self.assertEqual(self._mail(self._open(source="API")), [])
         self.assertEqual(self._mail(self._open(requester="nobody-we-know")), [])
         self.assertEqual(self._mail(self._open(requester=None)), [])
-        self.conn.execute("UPDATE board SET notify_requester = 0 WHERE board_id = 'IT_HELP'")
-        wid = self._open()
-        self._note(wid, "DISCUSSION")
-        self.assertEqual(self._mail(wid), [])
+        for off in (0, None):                      # switched off, and never switched on
+            self.conn.execute("UPDATE board SET notify_requester = ? WHERE board_id = 'IT_HELP'",
+                              (off,))
+            wid = self._open()
+            self._note(wid, "DISCUSSION")
+            self.assertEqual(self._mail(wid), [])
 
     def test_the_portal_link_must_be_https_and_is_optional(self):
         self._open()

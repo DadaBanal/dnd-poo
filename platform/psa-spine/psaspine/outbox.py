@@ -19,8 +19,9 @@ updated, and a link to the portal. Never the summary, never the note: a note is
 written for the portal, where sign-in and the §6.1 controls apply, and mail
 leaves the building. A second update before the first has gone adds nothing,
 Internal notes never send, and a board can switch it off
-(`board.notify_requester` = 0; unset means on). The portal's address is
-deployment config (`PSA_PORTAL_URL` or `--portal-url`), never the repository.
+(`board.notify_requester`; unset means OFF, as ConnectWise leaves contact
+emails off until a board turns them on). The portal's address is deployment
+config (`PSA_PORTAL_URL` or `--portal-url`), never the repository.
 """
 from __future__ import annotations
 
@@ -53,8 +54,8 @@ def queue_requester(conn: sqlite3.Connection, work_item_id: str, reason: str, *,
         "SELECT t.requested_by, t.intake_source, b.notify_requester FROM ticket t"
         " JOIN board b ON b.board_id = t.board_id WHERE t.work_item_id = ?",
         (work_item_id,)).fetchone()
-    if row is None or row["notify_requester"] == 0 or not row["requested_by"]:
-        return False
+    if row is None or not row["notify_requester"] or not row["requested_by"]:
+        return False                          # off until the board turns it on
     if reason == "OPENED" and row["intake_source"] not in NOTIFY_ON_OPEN:
         return False
     if not address_for(conn, row["requested_by"]):
