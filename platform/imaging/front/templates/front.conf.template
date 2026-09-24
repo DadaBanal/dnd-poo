@@ -5,8 +5,8 @@
 #   /pmc/                 the PMC front door app: the worklist (M2.3)
 #   /pmc/api/             its API, never cached
 #   /oauth2/              the session (oauth2-proxy)
-#   /auth/realms/pmc/…    sign-in pages (Keycloak, which sends people on to
-#                         Entra ID). Keycloak's admin console is not routed.
+#   /auth/realms/pmc/…    the sign-in page (Keycloak, which checks the Windows
+#                         logon against PMC's AD). Its admin console is not routed.
 #   /dicom-web/, /wado    the engine's DICOMweb, read-only, never cached
 #   everything else       the viewer (OHIF 3.13), static files
 #
@@ -112,7 +112,7 @@ server {
     proxy_set_header X-Forwarded-Uri $request_uri;
   }
 
-  # Sign-in, the return from Entra ID, and sign-out. A page asked for without
+  # Sign-in, the return from the sign-in page, and sign-out. A page asked for without
   # a session lands here too (error_page 401 below), and $request_uri is still
   # that page, so the person comes back to it after signing in.
   location /oauth2/ {

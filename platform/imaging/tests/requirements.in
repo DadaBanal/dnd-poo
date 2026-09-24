@@ -8,3 +8,6 @@ pylibjpeg-libjpeg==2.4.0
 pillow==12.3.0
 requests==2.34.2
 pytest==9.1.1
+# The stand-in Active Directory: the tests change a group and read a lockout
+# counter the way ICT's tools would, over LDAPS.
+ldap3==2.9.1

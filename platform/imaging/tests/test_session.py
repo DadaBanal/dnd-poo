@@ -1,7 +1,7 @@
 """A person's session, seen from behind the front door: renewal and expiry.
 
 This runner signs in at the front door as a person would (the stand-in
-Entra ID's radiologist), then looks at the access token the front door hands
+Active Directory's radiologist), then looks at the access token the front door hands
 the engine. The test overlay shortens the clocks: the token lives 60 s and is
 renewed at 40 s (on site: 5 min and 4 min).
 """
@@ -15,7 +15,7 @@ import requests
 
 from frontdoor import BASE, DICOMWEB_JSON, claims, sign_in, token_of
 
-RADIOLOGIST = "rad.test@pmc.test"
+RADIOLOGIST = "rad.test"
 
 
 def engine_with(engine, token: str) -> int:
@@ -32,7 +32,7 @@ def radiologist() -> requests.Session:
 def test_the_engine_is_handed_the_persons_own_short_lived_token(engine, radiologist):
     token = token_of(radiologist)
     c = claims(token)
-    assert c["email"] == RADIOLOGIST
+    assert c["preferred_username"] == RADIOLOGIST
     assert "pmc-radiologist" in c["realm_access"]["roles"]
     # 60 s in the test overlay; 300 s on site (PMC_ACCESS_TOKEN_SECONDS).
     assert c["exp"] - c["iat"] == 60

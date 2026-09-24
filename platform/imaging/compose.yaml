@@ -2,9 +2,10 @@
 #
 #   M1  the engine (Orthanc) and its index (PostgreSQL)
 #   M2  the front door (nginx: TLS, HTTP/2), the viewer (OHIF), sign-in
-#       (Keycloak brokering to Entra ID, oauth2-proxy holding each person's
-#       session, orthanc-auth-service deciding what each role may do), and
-#       the PMC front door app: the worklist at /pmc/
+#       (Keycloak checking PMC's Active Directory, oauth2-proxy holding each
+#       person's session, orthanc-auth-service deciding what each role may
+#       do), and the PMC front door app: the worklist at /pmc/
+#   M3  backups: to the R740xd (compose.r740xd.yaml) and off-site
 #
 # Every image is pinned by digest. The engine and its index sit on a network
 # with no route out. The front door is the only service on the edge network,
@@ -23,9 +24,10 @@
 #   PMC_LIBRARY    where official images are pulled from (default Docker Hub).
 #                  The digest pins the content, so a mirror serves the
 #                  identical image.
-#   PMC_ENTRA_*    PMC's Entra ID tenant and the group behind each role. No
-#                  default: Keycloak refuses to start without them. See
-#                  README.md, Sign-in.
+#   PMC_AD_*       PMC's Active Directory: its domain controllers, where the
+#                  people and the five groups are, the read-only account, and
+#                  the group behind each role. No default: Keycloak refuses
+#                  to start without them. See README.md, Sign-in.
 
 name: pmc-imaging
 
@@ -314,9 +316,10 @@ services:
     networks: [engine]
 
   keycloak:
-    # Brokers sign-in to PMC's Entra ID and turns Microsoft 365 groups into
-    # PMC roles. It keeps no passwords: the pmc realm has no local accounts
-    # for people. Its admin console is not routed by the front door.
+    # Signs people in against PMC's Active Directory (LDAPS, read-only) and
+    # turns five AD groups into PMC roles. It keeps no passwords: AD checks
+    # each one, and the pmc realm has no local accounts for people. Its admin
+    # console is not routed by the front door.
     image: quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c
     depends_on:
       pg-platform: { condition: service_healthy }
@@ -339,23 +342,28 @@ services:
       # How long a person's access token lives. oauth2-proxy renews it before
       # then (OAUTH2_PROXY_COOKIE_REFRESH), and the engine refuses it after.
       PMC_ACCESS_TOKEN_SECONDS: "300"
-      PMC_ENTRA_CLIENT_ID: ${PMC_ENTRA_CLIENT_ID:-}
-      PMC_ENTRA_AUTHORIZATION_URL: ${PMC_ENTRA_AUTHORIZATION_URL:-}
-      PMC_ENTRA_TOKEN_URL: ${PMC_ENTRA_TOKEN_URL:-}
-      PMC_ENTRA_JWKS_URL: ${PMC_ENTRA_JWKS_URL:-}
-      PMC_ENTRA_USERINFO_URL: ${PMC_ENTRA_USERINFO_URL:-}
-      PMC_ENTRA_ISSUER: ${PMC_ENTRA_ISSUER:-}
-      PMC_ENTRA_GROUP_RADIOLOGISTS: ${PMC_ENTRA_GROUP_RADIOLOGISTS:-}
-      PMC_ENTRA_GROUP_CARDIOLOGISTS: ${PMC_ENTRA_GROUP_CARDIOLOGISTS:-}
-      PMC_ENTRA_GROUP_TECHNOLOGISTS: ${PMC_ENTRA_GROUP_TECHNOLOGISTS:-}
-      PMC_ENTRA_GROUP_REFERRERS: ${PMC_ENTRA_GROUP_REFERRERS:-}
-      PMC_ENTRA_GROUP_ICT_ADMINS: ${PMC_ENTRA_GROUP_ICT_ADMINS:-}
+      # PMC's Active Directory (site values; README.md, Sign-in): its domain
+      # controllers as LDAPS URLs, space-separated (ldaps://<dc>:636 ...);
+      # where the people are; where the five imaging groups are; the
+      # read-only account's DN; and the name (cn) of the group behind each
+      # role.
+      PMC_AD_URL: ${PMC_AD_URL:-}
+      PMC_AD_USERS_DN: ${PMC_AD_USERS_DN:-}
+      PMC_AD_GROUPS_DN: ${PMC_AD_GROUPS_DN:-}
+      PMC_AD_BIND_DN: ${PMC_AD_BIND_DN:-}
+      PMC_AD_GROUP_RADIOLOGISTS: ${PMC_AD_GROUP_RADIOLOGISTS:-}
+      PMC_AD_GROUP_CARDIOLOGISTS: ${PMC_AD_GROUP_CARDIOLOGISTS:-}
+      PMC_AD_GROUP_TECHNOLOGISTS: ${PMC_AD_GROUP_TECHNOLOGISTS:-}
+      PMC_AD_GROUP_REFERRERS: ${PMC_AD_GROUP_REFERRERS:-}
+      PMC_AD_GROUP_ICT_ADMINS: ${PMC_AD_GROUP_ICT_ADMINS:-}
     secrets:
       - keycloak-db-password
       - front-door-client-secret
       - admin-cli-client-secret
       - svc-platform-api-key
-      - entra-client-secret
+      - ad-bind-password
+      - source: ad-ca
+        target: ad-ca.pem
     volumes:
       - ./identity/keycloak-start.sh:/pmc/keycloak-start.sh:ro
       - ./identity/realm-pmc.json:/opt/keycloak/data/import/realm-pmc.json:ro
@@ -375,8 +383,9 @@ services:
       retries: 30
     restart: unless-stopped
     logging: *logging
-    # engine: its own database and the services that call it. egress: Entra ID.
-    networks: [engine, egress]
+    # engine: its own database and the services that call it. directory:
+    # PMC's domain controllers, and nothing else.
+    networks: [engine, directory]
 
   auth-service:
     # Decides, for the engine, who a caller is and what that caller's roles
@@ -428,11 +437,11 @@ services:
       - --cookie-expire=12h
       - --redirect-url=https://${PMC_HOSTNAME:-imaging.pmcne.ph}/oauth2/callback
       - --whitelist-domain=${PMC_HOSTNAME:-imaging.pmcne.ph}
-      # The browser goes to the public name, and straight on to Entra ID;
-      # the proxy itself talks to Keycloak inside.
+      # The browser goes to the public name, where Keycloak asks for the
+      # person's Windows logon; the proxy itself talks to Keycloak inside.
       - --oidc-issuer-url=https://${PMC_HOSTNAME:-imaging.pmcne.ph}/auth/realms/pmc
       - --skip-oidc-discovery=true
-      - --login-url=https://${PMC_HOSTNAME:-imaging.pmcne.ph}/auth/realms/pmc/protocol/openid-connect/auth?kc_idp_hint=entra
+      - --login-url=https://${PMC_HOSTNAME:-imaging.pmcne.ph}/auth/realms/pmc/protocol/openid-connect/auth
       - --redeem-url=http://keycloak:8080/auth/realms/pmc/protocol/openid-connect/token
       - --oidc-jwks-url=http://keycloak:8080/auth/realms/pmc/protocol/openid-connect/certs
       - --profile-url=http://keycloak:8080/auth/realms/pmc/protocol/openid-connect/userinfo
@@ -489,9 +498,10 @@ networks:
   edge:
     # Where people arrive. Only the front door is on it.
     {}
-  egress:
-    # The way out, for the one service that must reach the internet: Keycloak,
-    # to Entra ID.
+  directory:
+    # Keycloak to PMC's domain controllers (LDAPS, 636), for the sign-in.
+    # Nothing on the platform needs the internet; on site the host's firewall
+    # lets this network reach the domain controllers and nothing else (M4).
     {}
   sessions:
     # oauth2-proxy and its session store, and nothing else.
@@ -542,9 +552,12 @@ secrets:
     file: ${PMC_SECRETS:-./secrets}/auth-service-password
   auth-service-secret-key:
     file: ${PMC_SECRETS:-./secrets}/auth-service-secret-key
-  entra-client-secret:
-    # Issued by Entra ID for PMC's app registration; placed here by ICT.
-    file: ${PMC_SECRETS:-./secrets}/entra-client-secret
+  ad-bind-password:
+    # The read-only AD account's password; placed here by ICT.
+    file: ${PMC_SECRETS:-./secrets}/ad-bind-password
+  ad-ca:
+    # The CA behind the domain controllers' LDAPS certificates; placed by ICT.
+    file: ${PMC_SECRETS:-./secrets}/tls/ad-ca.crt
   tls-certificate:
     file: ${PMC_SECRETS:-./secrets}/tls/tls.crt
   tls-key:

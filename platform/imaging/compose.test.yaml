@@ -1,7 +1,8 @@
 # Test overlay for ci/run.sh. Never used on-prem.
 #
-# Shortens the clocks the tests wait on, seals the edge and egress networks,
-# stands a test realm in for Microsoft Entra ID, and adds two runners:
+# Shortens the clocks the tests wait on, seals the edge, directory and backup
+# networks, stands Samba in for PMC's Active Directory and Azurite for Azure,
+# and adds two runners:
 #   tests    Python, on the engine network: plays the modalities over DICOM
 #            and reads back over REST and DICOMweb (M1). It is on the edge
 #            network too, so it can also sign in at the front door as a
@@ -18,40 +19,59 @@ services:
       ORTHANC__WORKLISTS__HOUSEKEEPING_INTERVAL: "5"
 
   front:
-    environment:
-      PMC_PUBLIC_REALMS: pmc|entra-sim
     networks:
       engine: {}
       edge:
         aliases: ["${PMC_HOSTNAME:-imaging.pmcne.test}"]
 
   keycloak:
-    # A second realm in the same Keycloak plays Entra ID: it signs in the
-    # invented users and issues a "groups" claim of object IDs, as Entra
-    # does. The IDs below are invented too.
+    # Signs people in against the stand-in Active Directory below: the same
+    # realm, the same LDAPS, only the domain is invented.
+    depends_on:
+      ad-dc: { condition: service_healthy }
     environment:
       # A person's token lives 60 s here, not 5 min, so a test can outlive it.
       PMC_ACCESS_TOKEN_SECONDS: "60"
-      PMC_ENTRA_CLIENT_ID: pmc-keycloak-broker
-      PMC_ENTRA_AUTHORIZATION_URL: https://${PMC_HOSTNAME:-imaging.pmcne.test}/auth/realms/entra-sim/protocol/openid-connect/auth
-      PMC_ENTRA_TOKEN_URL: http://keycloak:8080/auth/realms/entra-sim/protocol/openid-connect/token
-      PMC_ENTRA_JWKS_URL: http://keycloak:8080/auth/realms/entra-sim/protocol/openid-connect/certs
-      PMC_ENTRA_USERINFO_URL: http://keycloak:8080/auth/realms/entra-sim/protocol/openid-connect/userinfo
-      PMC_ENTRA_ISSUER: https://${PMC_HOSTNAME:-imaging.pmcne.test}/auth/realms/entra-sim
-      PMC_ENTRA_GROUP_RADIOLOGISTS: 0e5b1c2a-0000-4000-8000-000000000001
-      PMC_ENTRA_GROUP_CARDIOLOGISTS: 0e5b1c2a-0000-4000-8000-000000000002
-      PMC_ENTRA_GROUP_TECHNOLOGISTS: 0e5b1c2a-0000-4000-8000-000000000003
-      PMC_ENTRA_GROUP_REFERRERS: 0e5b1c2a-0000-4000-8000-000000000004
-      PMC_ENTRA_GROUP_ICT_ADMINS: 0e5b1c2a-0000-4000-8000-000000000005
+      PMC_AD_URL: ldaps://dc1.pmc.test:636
+      PMC_AD_USERS_DN: CN=Users,DC=pmc,DC=test
+      PMC_AD_GROUPS_DN: OU=PMC Imaging,DC=pmc,DC=test
+      PMC_AD_BIND_DN: CN=svc-pmc-imaging,CN=Users,DC=pmc,DC=test
+      PMC_AD_GROUP_RADIOLOGISTS: PMC Imaging Radiologists
+      PMC_AD_GROUP_CARDIOLOGISTS: PMC Imaging Cardiologists
+      PMC_AD_GROUP_TECHNOLOGISTS: PMC Imaging Technologists
+      PMC_AD_GROUP_REFERRERS: PMC Imaging Referrers
+      PMC_AD_GROUP_ICT_ADMINS: PMC Imaging ICT Admins
+
+  ad-dc:
+    # Stands in for PMC's Active Directory: Samba's AD domain controller
+    # (identity/test/ad/), with invented people and groups, answering LDAPS
+    # as dc1.pmc.test with a certificate from the test CA. Its data is kept,
+    # as a real domain's would be, through the restart and the disaster
+    # drill: the imaging platform's disaster is not the directory's.
+    image: pmc-imaging/ad-standin:local
+    pull_policy: never
+    hostname: dc1
     secrets:
-      - keycloak-db-password
-      - front-door-client-secret
-      - admin-cli-client-secret
-      - svc-platform-api-key
-      - entra-client-secret
+      - ad-admin-password
+      - ad-bind-password
       - test-user-password
+      - test-ca
+      - source: ad-tls-cert
+        target: ad-tls-cert
+      - source: ad-tls-key
+        target: ad-tls-key
     volumes:
-      - ./identity/test/realm-entra-sim.json:/opt/keycloak/data/import/realm-entra-sim.json:ro
+      - ad-standin:/var/lib/samba
+    healthcheck:
+      # Ready once LDAPS accepts a connection (after the first start's
+      # provisioning).
+      test: [CMD, bash, -c, "exec 3<>/dev/tcp/127.0.0.1/636"]
+      interval: 2s
+      timeout: 5s
+      retries: 90
+    networks:
+      directory:
+        aliases: [dc1.pmc.test]
 
   oauth2-proxy:
     environment:
@@ -123,13 +143,18 @@ services:
       PMC_HOSTNAME: ${PMC_HOSTNAME:-imaging.pmcne.test}
       TEST_USER_PASSWORD_SECRET: /run/secrets/test-user-password
       TEST_CA_SECRET: /run/secrets/test-ca
+      # The stand-in AD, changed the way ICT's tools would change it.
+      AD_URL: ldaps://dc1.pmc.test:636
+      AD_BASE: DC=pmc,DC=test
+      AD_ADMIN_PASSWORD_SECRET: /run/secrets/ad-admin-password
     secrets:
       - svc-platform-api-key
       - test-user-password
       - test-ca
+      - ad-admin-password
     volumes:
       - ./.results:/results
-    networks: [engine, edge]
+    networks: [engine, edge, directory]
 
   browser:
     image: pmc-imaging/browser:local
@@ -157,13 +182,14 @@ networks:
   # leave shows up as a failure.
   edge:
     internal: true
-  egress:
+  directory:
     internal: true
   backup:
     internal: true
 
 volumes:
   azure-standin: {}
+  ad-standin: {}
 
 secrets:
   test-user-password:
@@ -176,3 +202,9 @@ secrets:
     file: ${PMC_SECRETS:-./secrets}/tls/azurite.crt
   azurite-key:
     file: ${PMC_SECRETS:-./secrets}/tls/azurite.key
+  ad-admin-password:
+    file: ${PMC_SECRETS:-./secrets}/ad-admin-password
+  ad-tls-cert:
+    file: ${PMC_SECRETS:-./secrets}/tls/ad-dc.crt
+  ad-tls-key:
+    file: ${PMC_SECRETS:-./secrets}/tls/ad-dc.key

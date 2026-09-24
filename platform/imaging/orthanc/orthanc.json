@@ -97,12 +97,13 @@
 
   // ---- HTTP: who may do what ----
   // Reachable only on the engine network. People arrive through the front
-  // door, signed in with Entra ID; the platform's own services present an API
-  // key. Orthanc's own user list is off: every request is decided by the
-  // authorization plugin below, which asks orthanc-auth-service who the
-  // caller is and checks the permission this table requires. A route the
-  // table does not name is refused. DICOM from the modalities does not pass
-  // through here, so ingest keeps working even while sign-in is down.
+  // door, signed in with their Windows logon (PMC's Active Directory); the
+  // platform's own services present an API key. Orthanc's own user list is
+  // off: every request is decided by the authorization plugin below, which
+  // asks orthanc-auth-service who the caller is and checks the permission
+  // this table requires. A route the table does not name is refused. DICOM
+  // from the modalities does not pass through here, so ingest keeps working
+  // even while sign-in is down.
   "RemoteAccessAllowed": true,
   "AuthenticationEnabled": false,
 

@@ -52,7 +52,8 @@ def test_the_address_people_are_given_opens_the_worklist(radiologist):
 
 def test_the_app_knows_who_is_signed_in(radiologist):
     me = radiologist.get(f"{BASE}/pmc/api/me", timeout=30).json()
-    assert me == {"email": "rad.test@pmc.test", "name": "Test Radiologist", "roles": ["pmc-radiologist"]}
+    assert me == {"username": "rad.test", "name": "Test Radiologist", "email": "rad.test@pmc.test",
+                  "roles": ["pmc-radiologist"]}
 
 
 def test_without_a_session_the_api_answers_401_never_a_sign_in_page():
@@ -137,7 +138,7 @@ def test_a_reader_claims_a_study_and_everyone_sees_who(radiologist, sent):
     uid = sent["ct"].study_uid
     r = radiologist.post(claim_url(uid), headers=ORIGIN, timeout=30)
     assert r.status_code == 200, r.text
-    assert r.json()["claim"]["reader"] == "rad.test@pmc.test"
+    assert r.json()["claim"]["reader"] == "rad.test"
     # Claiming it again changes nothing: it is still the radiologist's.
     assert radiologist.post(claim_url(uid), headers=ORIGIN, timeout=30).status_code == 200
 
@@ -178,6 +179,6 @@ def test_ict_reads_who_opened_and_claimed_a_study(radiologist, sent, ledger):
     trail = sign_in("ict").get(f"{BASE}/pmc/api/audit", params={"study": uid}, timeout=30).json()["events"]
     # Newest first.
     assert [(e["actor"], e["action"]) for e in trail] == [
-        ("rad.test@pmc.test", "release"), ("rad.test@pmc.test", "claim"), ("rad.test@pmc.test", "open")]
+        ("rad.test", "release"), ("rad.test", "claim"), ("rad.test", "open")]
     # The restart and the disaster drill look for this same trail again.
     ledger["audit"] = {"study": uid, "trail": [[e["actor"], e["action"]] for e in trail]}

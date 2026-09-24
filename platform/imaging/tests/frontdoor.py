@@ -1,4 +1,5 @@
-"""The front door, as a person reaches it: sign in through the stand-in Entra ID.
+"""The front door, as a person reaches it: sign in with a Windows logon from the
+stand-in Active Directory.
 
 The tests container is on the (sealed) edge network too, so it can do what a
 browser does, and also look behind the front door at what the engine and the
@@ -26,32 +27,45 @@ COOKIE = "__Host-pmc-session"
 SESSION_CHECK = "http://oauth2-proxy:4180/oauth2/auth"
 DICOMWEB_JSON = {"Accept": "application/dicom+json"}
 
-# The stand-in Entra ID's invented people (identity/test/realm-entra-sim.json).
+# The stand-in Active Directory's invented people, by Windows logon name
+# (identity/test/ad/provision.sh).
 PEOPLE = {
-    "radiologist": "rad.test@pmc.test",
-    "cardiologist": "card.test@pmc.test",
-    "referrer": "ref.test@pmc.test",
-    "ict": "ict.test@pmc.test",
-    "nogroup": "none.test@pmc.test",
+    "radiologist": "rad.test",
+    "cardiologist": "card.test",
+    "referrer": "ref.test",
+    "ict": "ict.test",
+    "nogroup": "none.test",
+    "disabled": "off.test",
+    "leaver": "gone.test",
+    "lockout": "lock.test",
 }
+SIGN_IN_PAGE = "/auth/realms/pmc/"
 
 # A browser loading a page says so; only a page load may start a sign-in.
 PAGE_LOAD = {"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}
 
 
-def sign_in(who: str, path: str = "/pmc/") -> requests.Session:
-    """Sign in at the front door as one of PEOPLE, through the stand-in Entra ID."""
+def attempt(who: str, path: str = "/pmc/", password: str | None = None) -> tuple[requests.Session, requests.Response]:
+    """Ask for a page, and answer PMC's sign-in page as one of PEOPLE: their
+    Windows logon name and a password (theirs, unless another is given)."""
     s = requests.Session()
     s.verify = CA
     r = s.get(BASE + path, headers=PAGE_LOAD, timeout=60)
     r.raise_for_status()
-    assert "/auth/realms/entra-sim/" in r.url, r.url
+    assert SIGN_IN_PAGE in r.url, r.url
     form = re.search(r'<form\b[^>]*\bid="kc-form-login"[^>]*>', r.text)
-    assert form, "no sign-in form at the stand-in Entra ID"
+    assert form, "no sign-in form"
     action = html.unescape(re.search(r'\baction="([^"]+)"', form.group(0)).group(1))
-    password = Path(PASSWORD_FILE).read_text().strip()
+    if password is None:
+        password = Path(PASSWORD_FILE).read_text().strip()
     r = s.post(action, data={"username": PEOPLE[who], "password": password, "credentialId": ""},
                headers=PAGE_LOAD, timeout=60)
+    return s, r
+
+
+def sign_in(who: str, path: str = "/pmc/") -> requests.Session:
+    """Sign in at the front door as one of PEOPLE, with their Windows logon."""
+    s, r = attempt(who, path)
     r.raise_for_status()
     assert r.url == BASE + path, r.url
     assert s.cookies.get(COOKIE), "no session cookie after signing in"

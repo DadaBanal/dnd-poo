@@ -86,7 +86,7 @@ api.get('/studies', async (c) => {
   const parsed = StudiesQuery.safeParse(c.req.query());
   if (!parsed.success) return c.json({ error: 'bad query' }, 400);
   try {
-    const only = parsed.data.mine ? await claimedBy(me.email, 200) : undefined;
+    const only = parsed.data.mine ? await claimedBy(me.username, 200) : undefined;
     const answer = await worklist(bearer(c), API_KEY, parsed.data, only);
     const claims = await claimsFor(answer.studies.map((s) => s.studyUid));
     for (const s of answer.studies) s.claim = claims.get(s.studyUid) ?? null;

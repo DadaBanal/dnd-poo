@@ -15,7 +15,7 @@ This replaces the 6 Sep skeleton in `platform/`, which was never run.
 ```
             edge                         engine network (no route out)
 person ─ HTTPS 443 ─▶ front (nginx) ─┬─▶ oauth2-proxy ─▶ sessions (Valkey)
-                                     ├─▶ keycloak ─▶ pg-platform (keycloak); and, by egress, ─▶ Entra ID
+                                     ├─▶ keycloak ─▶ pg-platform (keycloak); and, by LDAPS, ─▶ PMC's AD
                                      ├─▶ viewer (OHIF, static files)
                                      ├─▶ app (the worklist) ─┬─▶ pg-platform (platform)
                                      └─▶ orthanc ◀───────────┘
@@ -30,9 +30,10 @@ modality ─ DICOM 4242 ─────────────────▶  
 - **M2.1, the front door and the viewer:** one origin over TLS and HTTP/2.
   `/viewer?StudyInstanceUIDs=…` is OHIF; `/dicom-web/` is the engine's DICOMweb,
   read-only and never cached. Nothing else of the engine is routed.
-- **M2.2, sign-in:** see [Sign-in](#sign-in) below. Every page and every
-  image request needs a session, and the engine decides, per role, what each
-  person may see.
+- **M2.2, sign-in:** see [Sign-in](#sign-in) below. People sign in with
+  their PMC Windows logon, checked against PMC's Active Directory, and five
+  AD groups give the roles. Every page and every image request needs a
+  session, and the engine decides, per role, what each person may see.
 - **M2.3, the front door app, first part:** see
   [The front door app](#the-front-door-app) below. The site's address opens
   the PMC worklist at `/pmc/`, which opens the viewer.
@@ -45,37 +46,48 @@ modality ─ DICOM 4242 ─────────────────▶  
 No port is published to the host in the build. The tests run in containers:
 one on the engine network plays the modalities, and one on the edge network is
 a person at a PC, with Chromium, who can reach the front door and nothing else.
-Nothing is mocked, except Entra ID itself: the tests sign in against a stand-in
-(a second Keycloak realm, `identity/test/realm-entra-sim.json`, with invented
-people), which is never deployed.
+Nothing is mocked, except PMC's Active Directory and Azure themselves: the
+tests sign in against a stand-in AD (Samba's AD domain controller,
+`identity/test/ad/`, with invented people and groups) and copy off-site to a
+stand-in Azure (Azurite). Neither is ever deployed.
 
 ## Sign-in
 
-People sign in with their Microsoft 365 account. Nobody has a PMC imaging
-password, and there is no PMC login form.
+**Dada's decision, 24 Sep 2026: people sign in with their PMC Windows logon,
+checked against PMC's own Active Directory, and AD groups decide the roles.
+Not Entra ID.** The Entra ID version (23 Sep) is in git history.
 
-How a sign-in goes. Each step is MEASURED by the browser tests, against the
-stand-in Entra ID, unless marked:
+People type the Windows username and password they already use at PMC.
+Nobody has a separate imaging password, and the platform stores none: AD
+checks every one.
+
+How a sign-in goes. Each step is MEASURED by the tests, against a stand-in
+AD (Samba's AD domain controller, `identity/test/ad/`), unless marked:
 
 1. A person opens a link, say a study in the viewer. The front door asks
    oauth2-proxy whether the request carries a session. It does not, so the
    person is sent to sign in. A request a page makes in the background (a
    script, an image) gets a plain 401 instead and can never start a sign-in.
-2. oauth2-proxy sends them to Keycloak, which sends them straight on to
-   Entra ID.
-3. Entra ID signs them in and returns them to Keycloak with an ID token that
-   lists their groups. Whatever MFA and Conditional Access PMC's tenant
-   applies, it applies here too (INFERRED; the tests use the stand-in).
-4. Keycloak turns five Entra groups into five PMC roles (below) and issues its
-   own tokens. Someone in none of the groups gets no role, and oauth2-proxy
-   refuses them a session.
+2. oauth2-proxy sends them to PMC's sign-in page (Keycloak), which asks for
+   their Windows username and password.
+3. Keycloak finds the person in AD with a read-only account, and checks
+   their password with a domain controller, over LDAPS. It trusts the domain
+   controller's certificate only through the CA ICT names. A disabled
+   account is refused.
+4. Keycloak asks AD which of the five imaging groups the person is in,
+   directly or through nested groups, and turns them into PMC roles (below).
+   Someone in none of them gets no role, and oauth2-proxy refuses them a
+   session.
 5. oauth2-proxy keeps the session in Valkey and gives the browser one cookie,
    `__Host-pmc-session`: HttpOnly, Secure, SameSite=Lax. It holds a ticket,
    not a token, and the page's scripts cannot read it. The person lands on the
    page they asked for.
 6. On every request the front door hands the engine the person's own access
    token. It lasts 5 minutes, and oauth2-proxy renews it once it is 4 minutes
-   old, so a person keeps working past it. The engine's authorization plugin
+   old, so a person keeps working past it. Each renewal asks AD again, so
+   someone taken out of their group loses access at the next renewal
+   (MEASURED: after 42 s in the tests, where tokens renew at 40 s; on
+   site within about 4 minutes, INFERRED). The engine's authorization plugin
    asks orthanc-auth-service what the person's role may do, and matches the
    route against the engine's permission table (`orthanc/orthanc.json`). A
    route the table does not name is refused, whoever asks. An expired token
@@ -84,19 +96,30 @@ stand-in Entra ID, unless marked:
 Signing out (`/oauth2/sign_out`) ends the session, and the viewer's own
 requests cannot revive it.
 
+Two more things the tests prove:
+
+- **Guessing at the sign-in cannot lock someone out of Windows.** After five
+  wrong passwords Keycloak stops asking AD for a while (1 minute, doubling up
+  to 15), so AD's own lockout, which would lock the person out of Windows as
+  well, is never reached (MEASURED: AD counted five bad passwords, short of
+  the stand-in's lockout at ten, and the Windows account still worked).
+- **Nothing on the platform needs the internet.** Keycloak talks to the
+  domain controllers and nothing else.
+
 ### Roles
 
-| Role | Entra group | May | Sees |
+| Role | AD group (site value) | May | Sees |
 |---|---|---|---|
-| `pmc-radiologist` | radiologists | search, view, download | every study |
-| `pmc-cardiologist` | cardiologists | search, view, download | every study |
-| `pmc-technologist` | technologists | search, view | every study |
-| `pmc-referrer` | referring doctors | search, view | only studies shared with referrers |
-| `pmc-ict-admin` | ICT administrators | as a radiologist, plus worklists, modalities, upload, labels, delete | every study |
+| `pmc-radiologist` | `PMC_AD_GROUP_RADIOLOGISTS` | search, view, download | every study |
+| `pmc-cardiologist` | `PMC_AD_GROUP_CARDIOLOGISTS` | search, view, download | every study |
+| `pmc-technologist` | `PMC_AD_GROUP_TECHNOLOGISTS` | search, view | every study |
+| `pmc-referrer` | `PMC_AD_GROUP_REFERRERS` | search, view | only studies shared with referrers |
+| `pmc-ict-admin` | `PMC_AD_GROUP_ICT_ADMINS` | as a radiologist, plus worklists, modalities, upload, labels, delete | every study |
 | `pmc-service` | none: the platform's own services, by API key | as ICT, except delete | every study |
 
-The roles are in `identity/realm-pmc.json`, and what each may do is in
-`identity/auth-service/permissions.json`. Two things the table does not say:
+The roles and the group behind each are in `identity/realm-pmc.json`, and
+what each may do is in `identity/auth-service/permissions.json`. Two things
+the table does not say:
 
 - **Viewing is copying.** A viewer works by fetching a study's DICOM through
   DICOMweb, so anyone who may view a study can, with some effort, save it
@@ -119,45 +142,41 @@ The design works either way on each of these; the build has a placeholder.
   12 hours at most (a shift). Set in `identity/realm-pmc.json`.
 - **Who may share a study with referrers, and for how long.** The front door
   app (M2.3) carries the answer.
+- **A second factor.** AD on its own is a password. Keycloak can add an
+  authenticator app or a passkey, for everyone or only from outside PMC's
+  network. Not built.
+- **Windows single sign-on.** On domain-joined PCs people could skip the
+  password prompt altogether (Kerberos). It needs a service account and a
+  keytab from ICT. Not built.
+- **Referring doctors from outside PMC** need an AD account to sign in.
 - **OHIF's investigational-use notice** (see Choices).
 
 ### What ICT provides at go-live
 
-None of it goes in git.
+None of it goes in git. Keycloak refuses to start if any of it is missing.
 
-1. **An Entra app registration** for PMC Imaging, with:
-   - the redirect URI
-     `https://imaging.pmcne.ph/auth/realms/pmc/broker/entra/endpoint`;
-   - a client secret, placed in `secrets/entra-client-secret`;
-   - a groups claim in the ID token, as group IDs (Token configuration, Add
-     groups claim).
-2. **Five security groups**, one per role, and their object IDs.
-3. **The site's values**, in the site's env file: `PMC_ENTRA_CLIENT_ID`; the
-   tenant's `PMC_ENTRA_AUTHORIZATION_URL`, `_TOKEN_URL`, `_JWKS_URL`,
-   `_USERINFO_URL` and `_ISSUER`; and `PMC_ENTRA_GROUP_RADIOLOGISTS`,
-   `_CARDIOLOGISTS`, `_TECHNOLOGISTS`, `_REFERRERS` and `_ICT_ADMINS`.
-   Keycloak refuses to start if any is missing.
-
-What Entra does with groups (VERIFIED, 23 Sep 2026, Microsoft Learn):
-
-- A token carries at most 200 groups. For someone in more, Entra leaves the
-  groups out altogether
-  ([limits](https://learn.microsoft.com/entra/identity/users/directory-service-limits-restrictions)).
-  Here that fails closed: no groups means no role and no session (INFERRED
-  from the no-group test, which is MEASURED).
-- The fix is to emit only the groups assigned to the app. That counts direct
-  members only, and needs Entra ID P1 or P2
-  ([group claims](https://learn.microsoft.com/security/zero-trust/develop/configure-tokens-group-claims-app-roles#group-overages),
-  [assignment](https://learn.microsoft.com/entra/identity/enterprise-apps/assign-user-or-group-access-portal)).
-  Whether PMC's tenant has P1 is NOT VERIFIED.
-- For a new application Microsoft recommends app roles over groups
-  ([caveats](https://learn.microsoft.com/entra/identity/hybrid/connect/how-to-connect-fed-group-claims#important-caveats-for-this-functionality)).
-  Switching means changing the five mappers in `identity/realm-pmc.json` to
-  read the `roles` claim (INFERRED). See Open.
+1. **A read-only AD account** for the sign-in. A plain domain user will do:
+   AD lets any user read the directory. Its password goes in
+   `secrets/ad-bind-password`, and its DN in `PMC_AD_BIND_DN`.
+2. **LDAPS on the domain controllers**, and the certificate of the CA that
+   signed theirs, in `secrets/tls/ad-ca.crt`. `PMC_AD_URL` names the domain
+   controllers, as `ldaps://<name>:636`, space-separated; Keycloak tries them
+   in turn.
+3. **Five security groups**, one per role, in one OU (`PMC_AD_GROUPS_DN`),
+   with their names (`cn`) in `PMC_AD_GROUP_RADIOLOGISTS`,
+   `_CARDIOLOGISTS`, `_TECHNOLOGISTS`, `_REFERRERS` and `_ICT_ADMINS`. People
+   may be members directly or through other groups.
+4. **Where the people are**, in `PMC_AD_USERS_DN`: searched with everything
+   below it.
+5. **An account lockout threshold above five** wrong passwords, or Keycloak's
+   `failureFactor` is lowered to stay below it. PMC's threshold is NOT
+   VERIFIED.
+6. **One firewall rule** (M4): the platform may reach the domain controllers
+   on port 636, and nothing else outside.
 
 ### Found while building it
 
-MEASURED, 23 Sep 2026, unless marked.
+MEASURED, 23 and 24 Sep 2026, unless marked.
 
 - **orthanc-auth-service 26.8.1 writes the tokens it checks to its log** at
   INFO level. Here it runs at WARNING (`identity/auth-service/pmc_quiet.py`),
@@ -165,7 +184,7 @@ MEASURED, 23 Sep 2026, unless marked.
 - **Its permission names are a fixed list.** The engine's table uses
   `api-view` for search, `view` to read a study and `admin-permissions` for
   administration.
-- **Keycloak reports itself ready before it has imported the realms.** Its
+- **Keycloak reports itself ready before it has imported the realm.** Its
   health check therefore waits for the `pmc` realm itself, and the auth
   service waits for Keycloak.
 - **A new share takes about a minute to reach a referrer**, because the
@@ -177,13 +196,25 @@ MEASURED, 23 Sep 2026, unless marked.
 - **The engine dropped idle connections after 1 s** (its default), racing
   clients that reused them. Its `KeepAliveTimeout` is now 10 s, and the front
   door lets go after 5 s.
-- **The realms are imported only at Keycloak's first start.** A later change
-  to `identity/realm-pmc.json` does not reach a running platform. See Open.
+- **The realm is imported only at Keycloak's first start.** A later change to
+  `identity/realm-pmc.json`, including the AD settings, does not reach a
+  running platform. See Open.
 - **There is no Keycloak administrator.** When ICT needs one, `kc.sh
   bootstrap-admin` creates a temporary one (NOT VERIFIED here).
-- **Removing someone from a group takes effect at their next sign-in**: at
-  most 12 hours later, or 1 hour after they stop using it (INFERRED: roles are
-  copied from Entra when a person signs in). See Open.
+- **Keycloak asks AD every time.** It keeps a record of each person after
+  their first sign-in, but reads their groups and whether their account is
+  enabled from AD on every sign-in and every renewal (its cache is off).
+  That is what makes a leaver's access end at the next renewal.
+- **AD counts every wrong password** (`badPwdCount`), including those typed
+  at PMC's sign-in page, which is why Keycloak's own limit sits below AD's.
+- **Samba 4.22 runs as a domain controller in an ordinary container**, once
+  it keeps Windows ACLs in `user.NTACL` (an option since Samba 4.18), with no
+  extra privilege.
+- **The tests' LDAP client is old.** ldap3 2.9.1 (2021) is its latest
+  release, and it imports two pyasn1 names that pyasn1 has deprecated (two
+  warnings in every run). The runner pins pyasn1 0.6.4 by hash, so nothing
+  changes under it; a pyasn1 that drops the names would need ldap3 replaced.
+  Only the tests use it.
 - **An expired token is still accepted for up to a minute.** The engine
   refused one 63 s after it expired. orthanc-auth-service 26.8.1 tells the
   authorization plugin to keep a person's profile for 60 s, and that figure
@@ -393,7 +424,7 @@ though not for the images.
 | Index: `postgres:18.6-trixie` | 18.6. Data checksums on; built-in `C.UTF-8` collation, which no glibc update can reorder | image digest | MEASURED by `ci/run.sh` on every run |
 | Viewer: `ohif/app:v3.13.10` | OHIF 3.13.10, served only through the front door | image digest | MEASURED: the option names in `viewer/app-config.js` were read from this image's bundle |
 | Front door: `nginx:1.30.5` (trixie) | nginx 1.30.5, TLS 1.3, HTTP/2 | image digest | MEASURED by the browser tests |
-| Sign-in broker: `quay.io/keycloak/keycloak:26.7.4` | Keycloak 26.7.4, on its own PostgreSQL 18.6 cluster (`pg-platform`) | image digest | MEASURED: it starts, imports both realms and brokers the test sign-ins |
+| Sign-in: `quay.io/keycloak/keycloak:26.7.4` | Keycloak 26.7.4, on its own PostgreSQL 18.6 cluster (`pg-platform`), reading AD over LDAPS | image digest | MEASURED: it starts, imports the realm and signs the test people in against the stand-in AD |
 | Session: `quay.io/oauth2-proxy/oauth2-proxy:v7.15.4` | oauth2-proxy 7.15.4, sessions in `valkey/valkey:9.2-trixie` (Valkey 9.2.0) | image digests | MEASURED by the browser tests |
 | Permissions: `orthancteam/orthanc-auth-service:26.8.1` | orthanc-auth-service 26.8.1, with the engine's authorization plugin 0.12.0 | image digest | MEASURED: `/plugins`, and the access tests |
 | Front door app: `pmc-imaging/app`, built here from `app/` | Node 24.21.0 LTS (`node:24.21.0-trixie-slim`). The page: React 19.3.0, TanStack Router 1.170.39 and Query 5.103.2, React Aria Components 1.21.1, Tailwind CSS 4.3.3, lucide-react 1.47.0; built by Vite 8.3.0 and type-checked by TypeScript 7.0.2. The server: Hono 4.13.8 with @hono/node-server 2.1.1, and zod 4.6.5 on both sides | base image digest, and an integrity hash for every package | MEASURED: built and run by `ci/run.sh`. Versions VERIFIED on registry.npmjs.org, 23 Sep 2026. The base digest was read from the mirror (Docker Hub answered 429 that day) |
@@ -401,21 +432,23 @@ though not for the images.
 | Database backups: pgBackRest, in `pmc-imaging/postgres`, built here from `backup/postgres/` on `postgres:18.6-trixie` | pgBackRest 2.59.1 (`2.59.1-1.pgdg13+1`, from the PostgreSQL project's Debian repository) | base image digest, and the exact package version | MEASURED: `pgbackrest version` at build, and the backups and the drill on every run |
 | Nightly copy and off-site: `kopia/kopia:0.23.1` | Kopia 0.23.1. Repository format 3, AES256-GCM-HMAC-SHA256, BLAKE2B-256-128 | image digest | MEASURED: `kopia --version` and `kopia repository status`, 24 Sep 2026 |
 | Off-site stand-in, tests only: `mcr.microsoft.com/azure-storage/azurite:3.37.0` | Azurite 3.37.0, blob service only, over TLS | image digest | MEASURED: `azurite-blob --version`, 24 Sep 2026 |
-| Test runner: `python:3.14-slim-trixie` | Python 3.14.7, pydicom 3.0.2, pynetdicom 3.0.4, pylibjpeg-libjpeg 2.4.0, pytest 9.1.1 | image digest, and a hash for every package | MEASURED |
+| Stand-in Active Directory, tests only: `pmc-imaging/ad-standin`, built here from `identity/test/ad/` on `debian:trixie-slim` | Samba 4.22.11 (`2:4.22.11+dfsg-0+deb13u1`) as an AD domain controller | base image digest, and the exact package version | MEASURED: `samba --version`, 24 Sep 2026 |
+| Test runner: `python:3.14-slim-trixie` | Python 3.14.7, pydicom 3.0.2, pynetdicom 3.0.4, pylibjpeg-libjpeg 2.4.0, pytest 9.1.1, ldap3 2.9.1 | image digest, and a hash for every package | MEASURED. ldap3 2.9.1 is its latest release (VERIFIED on pypi.org, 24 Sep 2026) |
 | Browser runner: `mcr.microsoft.com/playwright:v1.63.0-noble` | Playwright 1.63.0, Chromium | image digest, and an integrity hash for every package | MEASURED |
 
 The digests are in `compose.yaml`, `compose.r740xd.yaml`, `compose.test.yaml`
-and the Dockerfiles (`app/`, `backup/postgres/`, `tests/`, `browser/`). Each
+and the Dockerfiles (`app/`, `backup/postgres/`, `identity/test/ad/`,
+`tests/`, `browser/`). Each
 was pulled on 23 or 24 Sep 2026 (MEASURED). The official images (`postgres`,
 `nginx`) gave the same digest from Docker Hub and from its public mirror, so
 `PMC_LIBRARY` can point at a mirror without changing what runs.
 
 ## What the tests prove
 
-`ci/run.sh` runs 80 tests. All passed on 24 Sep 2026 (MEASURED, cloud build,
-about 10 minutes). It starts from empty volumes, checks the platform
-database's schema and grants, and runs 41 engine and API tests and 23
-browser tests. It then removes the containers, starts new ones
+`ci/run.sh` runs 84 tests. All passed on 24 Sep 2026 (MEASURED, cloud build,
+about 11 minutes). It starts from empty volumes, checks the platform
+database's schema and grants, and runs 45 engine, API and sign-in tests and
+23 browser tests. It then removes the containers, starts new ones
 from the same volumes, and runs 6 engine tests and 2 browser tests again: the
 radiologist signs in afresh, and a cathlab run still opens playing. Then it
 takes the nightly backup, proves the primary cannot delete from the R740xd's
@@ -446,8 +479,9 @@ on site).
 | A cathlab run opens already playing. A CT series opens and every slice arrives. An ultrasound run that arrived as JPEG plays as sent. No console errors | `browser/tests/viewer.spec.js` |
 | Every request the viewer makes goes to the front door and nowhere else, and every DICOMweb answer says `no-store` | `browser/tests/viewer.spec.js` |
 | From where people sit, the engine cannot be reached by name. Its REST API is not routed. DICOMweb refuses writes | `browser/tests/viewer.spec.js` |
-| A link opened without a session goes straight to Entra ID (the stand-in), with no image request first, and comes back to the same page. The session cookie is HttpOnly, Secure and SameSite=Lax | `browser/tests/access.spec.js` |
-| Someone signed in to Entra ID but in no PMC group gets no session and no images | `browser/tests/access.spec.js` |
+| A link opened without a session goes straight to PMC's sign-in page, with no image request first, and comes back to the same page after the Windows logon. The session cookie is HttpOnly, Secure and SameSite=Lax | `browser/tests/access.spec.js` |
+| Someone in AD but in no PMC group gets no session and no images | `browser/tests/access.spec.js` |
+| A role can come through a nested AD group. A disabled AD account cannot sign in. Five wrong passwords stop Keycloak asking AD, so AD's own lockout is never reached and the Windows account still works. Someone taken out of their AD group loses access at their token's next renewal | `tests/test_directory.py` |
 | The engine is handed the person's own short-lived token. A session outlives its first token, and the engine refuses the expired one | `tests/test_session.py` |
 | The site's address opens the front door app, whose pages run only their own scripts. Its API needs a session, believes only tokens Keycloak signed, and answers the engine's own view of each person: newest first, sorted by the index, filtered and searched; a referrer's list holds only shared studies. A new study reaches an open page within seconds | `tests/test_app.py` |
 | A radiologist claims a study and a cardiologist sees who has it; nobody else can take or release it; "claimed by me" is exactly one's own. Only readers claim, only studies the engine shows them, and only from this site's pages (Origin). ICT reads who opened, claimed and released a study | `tests/test_app.py` |
@@ -503,18 +537,21 @@ The AE titles the tests play are PMC's own, as MEASURED in the record.
   compressed again: they are already JPEG-LS.
 - **The off-site copy** of the whole 60 MB repository took 1.4 s (one run, to
   the stand-in on the same host).
-- **The disaster drill**, in two runs: verifying every file of the off-site
+- **The disaster drill**, in three runs: verifying every file of the off-site
   copy and restoring the engine's files and the database backups took
-  9.8–9.9 s; restoring both clusters from those backups, 3.8–3.9 s; starting
+  9.8–10.1 s; restoring both clusters from those backups, 3.8–4.2 s; starting
   the platform on them, 49 s.
+- **Someone taken out of their AD group lost access 42 s later** (one run;
+  the tests renew a token at 40 s, the site at 4 minutes).
 
 ## Run it
 
 ```sh
 tools/make-secrets.sh        # once: generates secrets/ (git-ignored); never overwrites.
-                             # ICT adds secrets/entra-client-secret, the site's
-                             # certificate in secrets/tls/, and the PMC_ENTRA_*
-                             # values in .env beside compose.yaml (git-ignored)
+                             # ICT adds secrets/ad-bind-password, the site's
+                             # certificate and the AD's CA in secrets/tls/, and
+                             # the PMC_AD_* values in .env beside compose.yaml
+                             # (git-ignored)
 docker compose up -d --wait  # the platform, as project pmc-imaging
 tools/backup.sh              # the nightly backup: both databases, then the
                              # snapshot to the R740xd (M4 runs it on a timer)
@@ -543,12 +580,12 @@ anonymous pulls, run it with `PMC_LIBRARY=public.ecr.aws/docker/library`.
 - `viewer/`: OHIF's configuration (`app-config.js`) and the server block that
   serves its files inside its own container.
 - `identity/`: sign-in. `realm-pmc.json` is the Keycloak realm: the roles,
-  the two clients, the Entra ID broker and the group-to-role mappers, with
-  every site value and secret as a placeholder Keycloak fills in at import.
-  `keycloak-start.sh` refuses to start without them. `pg-platform-init.sh`
-  makes Keycloak's database. `auth-service/` holds what each role may do
-  (`permissions.json`) and how the auth service starts. `test/` is the
-  stand-in Entra ID, for tests only.
+  the two clients, the connection to PMC's AD and the group behind each role,
+  with every site value and secret as a placeholder Keycloak fills in at
+  import. `keycloak-start.sh` refuses to start without them.
+  `pg-platform-init.sh` makes Keycloak's database. `auth-service/` holds what
+  each role may do (`permissions.json`) and how the auth service starts.
+  `test/ad/` is the stand-in AD, for tests only.
 - `app/`: the front door app. `src/web/` is the page (the worklist),
   `src/server/` its server, `src/shared/api.ts` the schemas both sides check.
   `Dockerfile` type-checks, builds and packs it.
@@ -580,9 +617,8 @@ anonymous pulls, run it with `PMC_LIBRARY=public.ecr.aws/docker/library`.
   service's password and signing key, admin-cli's secret, the platform's API
   key, the Kopia repository's password and its three users' passwords, the
   off-site storage key (empty on site until ICT places it), and the TLS
-  certificate. `entra-client-secret` comes from Entra ID, and
-  ICT places it. The containers read them all as Docker secrets; none is in
-  any file in git.
+  certificate. `ad-bind-password` and `tls/ad-ca.crt` come from ICT. The
+  containers read them all as Docker secrets; none is in any file in git.
 - **Modality addresses** live in the engine's database, registered at runtime
   (`PUT /modalities/{name}`), never in git (CLAUDE.md). The tests register
   their own container's address. A registration tool that reads the private
@@ -593,8 +629,10 @@ anonymous pulls, run it with `PMC_LIBRARY=public.ecr.aws/docker/library`.
   - `PMC_DICOM_AET`: the engine's AE title (default `PMC-IMAGING`);
   - `PMC_SECRETS`: where the secrets are (default `./secrets`);
   - `PMC_LIBRARY`: where the official images come from (default Docker Hub);
-  - `PMC_ENTRA_*`: PMC's Entra ID tenant and the group behind each role. These
-    have no default (see [Sign-in](#sign-in)); they go in the site's env file;
+  - `PMC_AD_*`: PMC's Active Directory: the domain controllers, where the
+    people and the five groups are, the read-only account, and the group
+    behind each role. These have no default (see [Sign-in](#sign-in)); they
+    go in the site's env file;
   - `PMC_KOPIA_SERVER_URL` and `PMC_KOPIA_SERVER_FINGERPRINT`: the R740xd's
     Kopia server, by name, and the SHA-256 fingerprint of its certificate,
     which the primary pins. The nightly snapshot refuses to run without them;
@@ -624,9 +662,10 @@ These are INFERRED, not decided by anyone but this build. Argue with them.
   can block the very restart that would recover it. Compose runs one engine.
 - **Explorer 2 is off.** ICT's admin screens come with the front door app
   (M2.3). Nothing of the engine's REST API is routed from the front door.
-- **No local accounts.** Everyone signs in through Entra ID. The `pmc` realm
-  holds no people, only the platform's two service accounts, so a leaver is
-  handled where ICT already handles leavers.
+- **No local accounts.** Everyone signs in with their AD account. The `pmc`
+  realm holds no passwords for people, only the platform's two service
+  accounts, so a leaver is handled where ICT already handles leavers: in
+  AD.
 - **The engine decides, not the front door.** The front door checks only that
   a session exists. What a person may see is decided by the engine on every
   request, so any later client (the front door app, a report tool) gets the
@@ -634,10 +673,12 @@ These are INFERRED, not decided by anyone but this build. Argue with them.
 - **Default deny.** The engine's permission table lists every route anyone may
   use, and refuses the rest (MEASURED: its script endpoint is refused even to
   the platform's own service account).
-- **Only Keycloak can reach the internet**, and only to talk to Entra ID. Its
-  admin console and the master realm are never routed.
+- **Nothing reaches the internet.** Keycloak reaches only the domain
+  controllers. Its admin console and the master realm are never routed.
+- **Keycloak reads AD, never writes to it**, and keeps no copy of anyone's
+  groups: it asks AD at every sign-in and every renewal.
 - **Sessions are kept in memory only.** A restart of the session store signs
-  everyone out, and Entra ID signs them straight back in (INFERRED).
+  everyone out, and they sign in again (INFERRED).
 - **A worklist entry nobody performs is removed after 72 h.** A performed one
   goes as soon as its study is stable.
 - **The Housekeeper runs on weekday nights and weekends**, Manila time.
@@ -705,16 +746,17 @@ These are INFERRED, not decided by anyone but this build. Argue with them.
 - **What sign-in costs each image request**, and whether the viewer can fetch
   a cathlab run in fewer requests (see Measured). OHIF's frame-by-frame
   fetching is the pattern the engine measures as slowest.
-- **Groups or app roles** (see [Sign-in](#sign-in)). ICT confirms whether
-  PMC's tenant has Entra ID P1. With it, the groups claim can be limited to the
-  five groups; without it, a person in more than 200 groups cannot sign in.
-  App roles avoid the limit and are Microsoft's recommendation for a new
-  application.
 - **A realm change after the first start does not reach a running platform.**
   M4 adds a tool that applies `identity/realm-pmc.json` to a running Keycloak.
-- **Cutting someone off at once.** Removing a person from a group waits for
-  their next sign-in. The runbook (M4) gets a step that ends a person's
+- **Cutting someone off at once.** Removing a person from a group, or
+  disabling them in AD, takes effect at their next token renewal (within
+  about 4 minutes on site). The runbook (M4) gets a step that ends a person's
   sessions straight away.
+- **A password AD says must be changed** (a new account, or after a reset)
+  cannot be changed at PMC's sign-in page, which only reads AD: the person
+  changes it in Windows first (INFERRED; not tested).
+- **People type their Windows username**, not `PMC\name` or an email
+  address. What the sign-in page does with those is NOT VERIFIED.
 - **The page is one 646 KB script (198 KB compressed).** Fine on PMC's LAN;
   over mobile data, splitting it would start the page sooner. Not measured on
   a phone.

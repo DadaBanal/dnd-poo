@@ -1,6 +1,6 @@
 // Who gets in, and what each person may see. Every test starts with no
-// session. The people are the stand-in Entra ID's invented users; their roles
-// come from their Entra groups, mapped in Keycloak (identity/realm-pmc.json).
+// session. The people are the stand-in Active Directory's invented users; their
+// roles come from their AD groups, mapped in Keycloak (identity/realm-pmc.json).
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import { HOST, RESULTS, seed, signIn } from './people.js';
@@ -20,9 +20,10 @@ test('without a session, a link goes to sign-in and comes back to the same page'
   page.on('request', (r) => r.url().includes('/dicom-web/') && dicomweb.push(r.url()));
   const link = `/viewer?StudyInstanceUIDs=${seed.xa.study}`;
   await page.goto(link);
-  // Straight to Entra ID (here, its stand-in): no PMC login form in between,
-  // and not one image request before signing in.
-  expect(page.url()).toContain('/auth/realms/entra-sim/protocol/openid-connect/auth');
+  // Straight to PMC's sign-in page, which asks for the Windows logon, and not
+  // one image request before signing in.
+  expect(page.url()).toContain('/auth/realms/pmc/protocol/openid-connect/auth');
+  await expect(page.locator('#username')).toBeVisible();
   expect(dicomweb).toEqual([]);
   await signIn(page, 'radiologist', link);
   await expect(page).toHaveURL(`${base}${link}`);
@@ -34,7 +35,7 @@ test('without a session, a link goes to sign-in and comes back to the same page'
 
 test('someone in no PMC group gets no session and no images', async ({ page, request }) => {
   await signIn(page, 'nogroup', '/viewer');
-  // oauth2-proxy refuses at the door: signed in to Entra, but no PMC role.
+  // oauth2-proxy refuses at the door: AD knows them, but no PMC group does.
   await expect(page.locator('body')).toContainText(/forbidden|permission/i);
   const cookies = await page.context().cookies();
   expect(cookies.filter((c) => c.name.startsWith('__Host-pmc-session'))).toEqual([]);

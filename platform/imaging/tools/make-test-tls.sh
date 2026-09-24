@@ -44,8 +44,13 @@ issue() {  # issue <name> <dns names...>
 }
 issue kopia-server kopia-server
 issue azurite azurite pmcoffsite.azurite
+# Sign-in: the stand-in Active Directory's domain controller answers LDAPS by
+# its full name, as PMC's do, with a certificate from this same CA; on site
+# ICT places the certificate of the CA behind its domain controllers.
+issue ad-dc dc1.pmc.test
+cp ca.crt ad-ca.crt
 openssl x509 -in kopia-server.crt -noout -fingerprint -sha256 | cut -d= -f2 | tr -d : | tr 'A-F' 'a-f' > kopia-server.fp
 rm -f tls.csr ca.srl ca.key
-chmod 644 ca.crt tls.crt kopia-server.fp
+chmod 644 ca.crt ad-ca.crt tls.crt kopia-server.fp
 chmod 600 tls.key
-echo "generated test certificates for $host, the Kopia server and the Azure stand-in (30 days, throwaway CA)"
+echo "generated test certificates for $host, the Kopia server, the Azure stand-in and the AD stand-in (30 days, throwaway CA)"

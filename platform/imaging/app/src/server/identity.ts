@@ -50,11 +50,12 @@ interface Claims {
 
 export function person(c: Context): Me | undefined {
   const claims = c.get('jwtPayload') as Claims | undefined;
-  if (!claims || claims.azp !== CLIENT) return undefined;
+  if (!claims || claims.azp !== CLIENT || !claims.preferred_username) return undefined;
   const roles = (claims.realm_access?.roles ?? []).filter((r): r is Role => (ROLES as readonly string[]).includes(r));
   return {
+    username: claims.preferred_username,
+    name: claims.name ?? claims.preferred_username,
     email: claims.email ?? '',
-    name: claims.name ?? claims.preferred_username ?? claims.email ?? '',
     roles,
   };
 }

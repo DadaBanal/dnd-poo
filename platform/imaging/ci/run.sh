@@ -39,14 +39,14 @@ finish() {
 }
 trap finish EXIT
 
-step "throwaway secrets, a stand-in Entra ID and a test certificate for $PMC_HOSTNAME"
+step "throwaway secrets, a stand-in Active Directory and test certificates for $PMC_HOSTNAME"
 rm -rf "$PMC_SECRETS"
 tools/make-secrets.sh --test
 tools/make-test-tls.sh
 PMC_KOPIA_SERVER_FINGERPRINT="$(cat "$PMC_SECRETS/tls/kopia-server.fp")"
 export PMC_KOPIA_SERVER_FINGERPRINT
 
-step "images: PostgreSQL with pgBackRest, the front door app, and the two test runners"
+step "images: PostgreSQL with pgBackRest, the front door app, the stand-in AD, and the two test runners"
 build=(docker build)
 if [[ -n "${HTTPS_PROXY:-}" ]]; then
   # A build host behind a proxy (the cloud build): let the build reach it,
@@ -57,6 +57,7 @@ if [[ -n "${HTTPS_PROXY:-}" ]]; then
 fi
 "${build[@]}" --build-arg "PMC_LIBRARY=${PMC_LIBRARY:-docker.io/library}" -t pmc-imaging/postgres:local backup/postgres
 "${build[@]}" --build-arg "PMC_LIBRARY=${PMC_LIBRARY:-docker.io/library}" -t pmc-imaging/app:local app
+"${build[@]}" --build-arg "PMC_LIBRARY=${PMC_LIBRARY:-docker.io/library}" -t pmc-imaging/ad-standin:local identity/test/ad
 "${build[@]}" -t pmc-imaging/tests:local tests
 "${build[@]}" -t pmc-imaging/browser:local browser
 

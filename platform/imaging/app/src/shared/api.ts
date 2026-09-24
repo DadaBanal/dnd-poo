@@ -14,9 +14,12 @@ export type Role = (typeof ROLES)[number];
 // Who may claim a study to read it.
 export const READERS: readonly Role[] = ['pmc-radiologist', 'pmc-cardiologist'];
 
+// A person is their Windows logon name (AD's sAMAccountName), which every AD
+// account has; email is shown when AD has one.
 export const Me = z.object({
-  email: z.string(),
+  username: z.string(),
   name: z.string(),
+  email: z.string(),
   roles: z.array(z.enum(ROLES)),
 });
 export type Me = z.infer<typeof Me>;
@@ -66,7 +69,7 @@ export type StudiesQuery = z.infer<typeof StudiesQuery>;
 
 // A reader's claim on a study, so no study is read twice.
 export const Claim = z.object({
-  reader: z.string(), // the reader's sign-in email
+  reader: z.string(), // the reader's Windows logon name
   readerName: z.string(),
   claimedAt: z.string(),
 });

@@ -18,7 +18,7 @@ const pool = new pg.Pool({
 });
 
 export interface Person {
-  email: string;
+  username: string; // the Windows logon name
   name: string;
 }
 
@@ -27,7 +27,7 @@ type Action = 'open' | 'claim' | 'release';
 async function audit(client: pg.PoolClient | pg.Pool, who: Person, action: Action, studyUid: string,
   detail: Record<string, unknown> = {}): Promise<void> {
   await client.query('INSERT INTO audit.event (actor, action, study_uid, detail) VALUES ($1, $2, $3, $4)',
-    [who.email, action, studyUid, JSON.stringify(detail)]);
+    [who.username, action, studyUid, JSON.stringify(detail)]);
 }
 
 export async function claimsFor(studyUids: string[]): Promise<Map<string, Claim>> {
@@ -53,14 +53,14 @@ export async function claim(studyUid: string, who: Person): Promise<{ ok: true; 
     await client.query('BEGIN');
     const inserted = await client.query<{ claimed_at: Date }>(
       `INSERT INTO reading.claim (study_uid, reader, reader_name) VALUES ($1, $2, $3)
-       ON CONFLICT (study_uid) DO NOTHING RETURNING claimed_at`, [studyUid, who.email, who.name]);
+       ON CONFLICT (study_uid) DO NOTHING RETURNING claimed_at`, [studyUid, who.username, who.name]);
     if (inserted.rowCount) await audit(client, who, 'claim', studyUid);
     const now = await client.query<{ reader: string; reader_name: string; claimed_at: Date }>(
       'SELECT reader, reader_name, claimed_at FROM reading.claim WHERE study_uid = $1', [studyUid]);
     await client.query('COMMIT');
     const row = now.rows[0]!;
     const current = { reader: row.reader, readerName: row.reader_name, claimedAt: row.claimed_at.toISOString() };
-    return { ok: row.reader === who.email, claim: current };
+    return { ok: row.reader === who.username, claim: current };
   } catch (e) {
     await client.query('ROLLBACK');
     throw e;
@@ -74,7 +74,7 @@ export async function release(studyUid: string, who: Person): Promise<boolean> {
   try {
     await client.query('BEGIN');
     const gone = await client.query('DELETE FROM reading.claim WHERE study_uid = $1 AND reader = $2',
-      [studyUid, who.email]);
+      [studyUid, who.username]);
     if (gone.rowCount) await audit(client, who, 'release', studyUid);
     await client.query('COMMIT');
     return Boolean(gone.rowCount);

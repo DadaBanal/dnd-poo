@@ -54,7 +54,7 @@ export function Worklist() {
   }, [notice]);
   const toggleClaim = useMutation({
     mutationFn: async (s: Study) => {
-      if (s.claim?.reader === me.data?.email) {
+      if (s.claim?.reader === me.data?.username) {
         await releaseStudy(s.studyUid);
         return { released: s };
       }
@@ -279,7 +279,7 @@ export function Worklist() {
                 <StudyRow
                   study={s}
                   now={now}
-                  me={me.data?.email}
+                  me={me.data?.username}
                   canClaim={canClaim}
                   onClaim={() => toggleClaim.mutate(s)}
                 />

@@ -4,15 +4,16 @@
 # own, so a test run never touches a site's real secrets.
 #
 #   tools/make-secrets.sh          the platform's own secrets
-#   tools/make-secrets.sh --test   also the stand-in Entra ID's (tests only)
+#   tools/make-secrets.sh --test   also the stand-in Active Directory's (tests only)
 #
 # Idempotent: an existing secret is never overwritten, because databases and
 # Keycloak were initialised with it. Prints no secret. Rotating one is a
 # deliberate act: change it where it is used first, then replace the file.
 #
-# One secret is NOT generated: entra-client-secret. Entra ID issues it for
-# PMC's app registration and ICT places it here; Keycloak will not start
-# without it.
+# One secret is NOT generated: ad-bind-password, the password of the
+# read-only account ICT makes in PMC's Active Directory for the sign-in. ICT
+# places it here, with the certificate of the CA behind the domain
+# controllers' LDAPS in tls/ad-ca.crt; Keycloak will not start without them.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -75,8 +76,9 @@ else
   write backup-azure-key ""
 fi
 if [[ "${1:-}" == "--test" ]]; then
-  # The stand-in Entra ID in tests: its client secret, and the one password
-  # its invented users share.
-  write entra-client-secret "$(rand)"
+  # The stand-in Active Directory in tests: its administrator, the sign-in's
+  # read-only account, and the one password its invented people share.
+  write ad-admin-password "$(rand)"
+  write ad-bind-password "$(rand)"
   write test-user-password "$(rand 24)"
 fi
