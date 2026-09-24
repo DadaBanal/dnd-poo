@@ -48,6 +48,8 @@ write keycloak-db-password "$(rand)"
 # the role the front door app uses (grants only).
 write platform-owner-password "$(rand)"
 write platform-app-password "$(rand)"
+# The BizBox connector's role in the platform database (M3.2).
+write platform-orders-password "$(rand)"
 
 # Sign-in. oauth2-proxy wants a cookie secret of exactly 32 bytes.
 write front-door-client-secret "$(rand)"
@@ -68,6 +70,16 @@ write svc-platform-api-key "$(rand 48)"
 write kopia-repo-password "$(rand 48)"
 write kopia-client-password "$(rand)"
 write kopia-control-password "$(rand)"
+
+# The BizBox connector (M3): the read-only BizBox login's password is ICT's
+# to place (PMC's DBA makes the login); until then this is empty, and the
+# connector idles. The tests make their own, and the stand-in's administrator.
+if [[ "${1:-}" == "--test" ]]; then
+  write bizbox-password "$(rand)"
+  write bizbox-sa-password "$(rand)"
+else
+  write bizbox-password ""
+fi
 
 # Alerts (M3): a Teams Workflows webhook, if ICT wants alerts in a channel.
 # Empty until ICT places one; email through the mail relay needs no secret.

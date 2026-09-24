@@ -141,6 +141,7 @@
       // Modality worklists, as the BizBox connector keeps them (M3).
       ["get", "^/worklists(/[^/]+)?$", "worklists"],
       ["post", "^/worklists/create$", "worklists"],
+      ["put", "^/worklists/[^/]+$", "worklists"],
       ["delete", "^/worklists/[^/]+$", "worklists"],
 
       // Administration: ICT and the platform's own tools.

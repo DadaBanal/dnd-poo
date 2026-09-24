@@ -46,7 +46,7 @@ tools/make-test-tls.sh
 PMC_KOPIA_SERVER_FINGERPRINT="$(cat "$PMC_SECRETS/tls/kopia-server.fp")"
 export PMC_KOPIA_SERVER_FINGERPRINT
 
-step "images: PostgreSQL with pgBackRest, the front door app, the feed watch, the stand-in AD, and the two test runners"
+step "images: PostgreSQL with pgBackRest, the front door app, the BizBox connector, the feed watch, the stand-in AD, and the two test runners"
 build=(docker build)
 if [[ -n "${HTTPS_PROXY:-}" ]]; then
   # A build host behind a proxy (the cloud build): let the build reach it,
@@ -58,6 +58,7 @@ fi
 "${build[@]}" --build-arg "PMC_LIBRARY=${PMC_LIBRARY:-docker.io/library}" -t pmc-imaging/postgres:local backup/postgres
 "${build[@]}" --build-arg "PMC_LIBRARY=${PMC_LIBRARY:-docker.io/library}" -t pmc-imaging/app:local app
 "${build[@]}" --build-arg "PMC_LIBRARY=${PMC_LIBRARY:-docker.io/library}" -t pmc-imaging/watch:local watch
+"${build[@]}" -t pmc-imaging/orders:local orders
 "${build[@]}" --build-arg "PMC_LIBRARY=${PMC_LIBRARY:-docker.io/library}" -t pmc-imaging/ad-standin:local identity/test/ad
 "${build[@]}" -t pmc-imaging/tests:local tests
 "${build[@]}" -t pmc-imaging/browser:local browser
@@ -99,9 +100,11 @@ diff -u db/schema.sql .results/schema.sql || fail "the platform database is not 
 psql_platform() { "${compose[@]}" exec -T pg-platform psql -U pmc -d platform -Atc "$1"; }
 [[ "$(psql_platform "select has_table_privilege('platform_app', 'audit.event', 'UPDATE') or has_table_privilege('platform_app', 'audit.event', 'DELETE')")" == f ]] \
   || fail "the app's role may change or delete the audit record"
-echo "ok: schema as committed; the app may only add to the audit record"
+[[ "$(psql_platform "select has_table_privilege('platform_orders', 'ris.event', 'UPDATE') or has_table_privilege('platform_orders', 'ris.event', 'DELETE') or has_table_privilege('platform_app', 'ris.order_map', 'UPDATE')")" == f ]] \
+  || fail "the connector may change its own log, or the app may change an order"
+echo "ok: schema as committed; the app and the connector may only add to their records"
 
-step "engine tests (DICOM, REST, DICOMweb, sign-in against AD, the app's API, the feed watch and its alerts) against a fresh engine"
+step "engine tests (DICOM, REST, DICOMweb, sign-in against AD, the app's API, BizBox orders, the feed watch and its alerts) against a fresh engine"
 "${compose[@]}" --profile test run --rm "${as_me[@]}" tests -m "not after_restart and not after_backup"
 
 step "browser tests: sign-in, the front door, the worklist and the viewer"

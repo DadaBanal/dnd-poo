@@ -5,8 +5,9 @@
 #       (Keycloak checking PMC's Active Directory, oauth2-proxy holding each
 #       person's session, orthanc-auth-service deciding what each role may
 #       do), and the PMC front door app: the worklist at /pmc/
-#   M3  backups: to the R740xd (compose.r740xd.yaml) and off-site; the feed
-#       watch, Prometheus and Alertmanager, which tell ICT what went wrong
+#   M3  the BizBox connector (orders reach the consoles' worklists); backups
+#       to the R740xd (compose.r740xd.yaml) and off-site; the feed watch,
+#       Prometheus and Alertmanager, which tell ICT what went wrong
 #
 # Every image is pinned by digest. The engine and its index sit on a network
 # with no route out. The front door is the only service on the edge network,
@@ -32,6 +33,10 @@
 #   PMC_FEED_SILENCE, PMC_FEED_SILENCE_OVERRIDES
 #                  how long a modality may stay silent (default 24h), and
 #                  per-modality limits ("cathlab-qfr=72h,mr-sempra=48h")
+#   PMC_BIZBOX_*, PMC_ORDERS_STATIONS
+#                  BizBox's SQL Server (host,port), database, read-only login
+#                  and view, and which consoles take each section's orders
+#                  (JSON). No server set: the connector idles.
 #   PMC_ALERT_*    where alerts go: PMC_ALERT_EMAIL_TO and _FROM, and the mail
 #                  relay PMC_ALERT_SMTP (host:port), PMC_ALERT_SMTP_TLS; and/or
 #                  a Teams Workflows webhook in secrets/alert-teams-webhook.
@@ -288,6 +293,46 @@ services:
     logging: *logging
     networks: [backup]
 
+  # ---- the BizBox connector (M3) ----------------------------------------------
+  orders:
+    # Orders placed in BizBox reach the consoles' worklists, and leave them
+    # once the study has arrived (orders/). It reads one agreed view in
+    # BizBox's database through a login allowed SELECT on it and nothing
+    # else, and never writes to BizBox. Its record is the ris schema of the
+    # platform database. With no BizBox server set, it idles.
+    image: pmc-imaging/orders:local
+    pull_policy: never
+    build: ./orders
+    depends_on:
+      orthanc: { condition: service_healthy }
+      auth-service: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    environment:
+      TZ: Asia/Manila
+      ENGINE_URL: http://orthanc:8042
+      PLATFORM_DB_HOST: pg-platform
+      PMC_BIZBOX_SERVER: ${PMC_BIZBOX_SERVER:-}
+      PMC_BIZBOX_DATABASE: ${PMC_BIZBOX_DATABASE:-}
+      PMC_BIZBOX_USER: ${PMC_BIZBOX_USER:-}
+      PMC_BIZBOX_VIEW: ${PMC_BIZBOX_VIEW:-dbo.v_pmc_imaging_orders}
+      PMC_BIZBOX_TRUST_SERVER_CERT: ${PMC_BIZBOX_TRUST_SERVER_CERT:-no}
+      PMC_ORDERS_STATIONS: ${PMC_ORDERS_STATIONS:-}
+      PMC_ISSUER_OF_PATIENT_ID: ${PMC_ISSUER_OF_PATIENT_ID:-PMC}
+    secrets: [bizbox-password, platform-orders-password, svc-platform-api-key]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    logging: *logging
+    # engine: the engine and the platform database. his: BizBox's SQL Server.
+    # monitor: Prometheus reads its /metrics.
+    networks: [engine, his, monitor]
+
   # ---- feed watch and alerts (M3) ---------------------------------------------
   watch:
     # What ICT should hear about before a radiologist does: when each
@@ -401,7 +446,8 @@ services:
       POSTGRES_PASSWORD_FILE: /run/secrets/pg-platform-password
       POSTGRES_INITDB_ARGS: --locale-provider=builtin --builtin-locale=C.UTF-8
       TZ: Asia/Manila
-    secrets: [pg-platform-password, keycloak-db-password, platform-owner-password, platform-app-password]
+    secrets: [pg-platform-password, keycloak-db-password, platform-owner-password, platform-app-password,
+              platform-orders-password]
     volumes:
       - pg-platform-data:/var/lib/postgresql
       - pgbackrest-repo:/var/lib/pgbackrest
@@ -611,8 +657,12 @@ networks:
     # oauth2-proxy and its session store, and nothing else.
     internal: true
   monitor:
-    # The watch, Prometheus and Alertmanager, and nothing else.
+    # The watch, the connector's metrics, Prometheus and Alertmanager.
     internal: true
+  his:
+    # The BizBox connector to BizBox's SQL Server; on site the host's firewall
+    # lets it reach that server's port and nothing else (M4).
+    {}
   alerts:
     # Alertmanager to PMC's mail relay and Teams; on site the host's firewall
     # lets it reach those and nothing else (M4).
@@ -655,6 +705,11 @@ secrets:
     file: ${PMC_SECRETS:-./secrets}/platform-owner-password
   platform-app-password:
     file: ${PMC_SECRETS:-./secrets}/platform-app-password
+  platform-orders-password:
+    file: ${PMC_SECRETS:-./secrets}/platform-orders-password
+  bizbox-password:
+    # The read-only BizBox login's password; empty until ICT places it.
+    file: ${PMC_SECRETS:-./secrets}/bizbox-password
   pg-index-admin-password:
     # The index cluster's superuser (pmc): backups and ICT, never the engine.
     file: ${PMC_SECRETS:-./secrets}/pg-index-admin-password

@@ -17,7 +17,10 @@ REVOKE CONNECT ON DATABASE keycloak FROM PUBLIC;
 \set app_password `cat /run/secrets/platform-app-password`
 CREATE ROLE platform_owner LOGIN PASSWORD :'owner_password';
 CREATE ROLE platform_app LOGIN PASSWORD :'app_password';
+-- The BizBox connector (M3.2): its own role, granted only the ris schema.
+\set orders_password `cat /run/secrets/platform-orders-password`
+CREATE ROLE platform_orders LOGIN PASSWORD :'orders_password';
 CREATE DATABASE platform OWNER platform_owner;
 REVOKE CONNECT ON DATABASE platform FROM PUBLIC;
-GRANT CONNECT ON DATABASE platform TO platform_app;
+GRANT CONNECT ON DATABASE platform TO platform_app, platform_orders;
 SQL

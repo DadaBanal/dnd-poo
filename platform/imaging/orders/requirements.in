@@ -1,0 +1,5 @@
+# The BizBox connector's packages. requirements.txt is generated from this file
+# with a hash for every package (see README.md) and is what the image installs.
+mssql-python==1.15.0
+psycopg[binary]==3.3.6
+requests==2.34.2

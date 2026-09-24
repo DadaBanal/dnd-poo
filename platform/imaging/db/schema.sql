@@ -29,6 +29,13 @@ CREATE SCHEMA audit;
 CREATE SCHEMA reading;
 
 
+--
+-- Name: ris; Type: SCHEMA; Schema: -; Owner: -
+--
+
+CREATE SCHEMA ris;
+
+
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
@@ -50,6 +57,13 @@ CREATE TABLE audit.event (
 
 
 --
+-- Name: COLUMN event.actor; Type: COMMENT; Schema: audit; Owner: -
+--
+
+COMMENT ON COLUMN audit.event.actor IS 'the Windows logon name, or a service name';
+
+
+--
 -- Name: schema_migrations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -68,6 +82,58 @@ CREATE TABLE reading.claim (
     reader_name text NOT NULL,
     claimed_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT claim_study_uid_check CHECK ((study_uid ~ '^[0-9.]{1,64}$'::text))
+);
+
+
+--
+-- Name: COLUMN claim.reader; Type: COMMENT; Schema: reading; Owner: -
+--
+
+COMMENT ON COLUMN reading.claim.reader IS 'the reader''s Windows logon name (AD sAMAccountName)';
+
+
+--
+-- Name: event; Type: TABLE; Schema: ris; Owner: -
+--
+
+CREATE TABLE ris.event (
+    id uuid DEFAULT uuidv7() NOT NULL,
+    at timestamp with time zone DEFAULT now() NOT NULL,
+    actor text NOT NULL,
+    action text NOT NULL,
+    order_no text NOT NULL,
+    detail jsonb DEFAULT '{}'::jsonb NOT NULL
+);
+
+
+--
+-- Name: order_map; Type: TABLE; Schema: ris; Owner: -
+--
+
+CREATE TABLE ris.order_map (
+    order_no text NOT NULL,
+    accession text NOT NULL,
+    patient_id text NOT NULL,
+    study_uid text NOT NULL,
+    worklist_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
+    tags_hash text NOT NULL,
+    change_seq bigint NOT NULL,
+    state text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT order_map_accession_check CHECK (((length(accession) >= 1) AND (length(accession) <= 16))),
+    CONSTRAINT order_map_state_check CHECK ((state = ANY (ARRAY['SCHEDULED'::text, 'PERFORMED'::text, 'CANCELLED'::text, 'NEEDS_REVIEW'::text]))),
+    CONSTRAINT order_map_study_uid_check CHECK ((study_uid ~ '^[0-9.]{1,64}$'::text))
+);
+
+
+--
+-- Name: sync_cursor; Type: TABLE; Schema: ris; Owner: -
+--
+
+CREATE TABLE ris.sync_cursor (
+    name text NOT NULL,
+    value bigint NOT NULL
 );
 
 
@@ -96,10 +162,56 @@ ALTER TABLE ONLY reading.claim
 
 
 --
+-- Name: event event_pkey; Type: CONSTRAINT; Schema: ris; Owner: -
+--
+
+ALTER TABLE ONLY ris.event
+    ADD CONSTRAINT event_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: order_map order_map_accession_key; Type: CONSTRAINT; Schema: ris; Owner: -
+--
+
+ALTER TABLE ONLY ris.order_map
+    ADD CONSTRAINT order_map_accession_key UNIQUE (accession);
+
+
+--
+-- Name: order_map order_map_pkey; Type: CONSTRAINT; Schema: ris; Owner: -
+--
+
+ALTER TABLE ONLY ris.order_map
+    ADD CONSTRAINT order_map_pkey PRIMARY KEY (order_no);
+
+
+--
+-- Name: sync_cursor sync_cursor_pkey; Type: CONSTRAINT; Schema: ris; Owner: -
+--
+
+ALTER TABLE ONLY ris.sync_cursor
+    ADD CONSTRAINT sync_cursor_pkey PRIMARY KEY (name);
+
+
+--
 -- Name: event_study; Type: INDEX; Schema: audit; Owner: -
 --
 
 CREATE INDEX event_study ON audit.event USING btree (study_uid, at);
+
+
+--
+-- Name: event_order; Type: INDEX; Schema: ris; Owner: -
+--
+
+CREATE INDEX event_order ON ris.event USING btree (order_no, at);
+
+
+--
+-- Name: order_map_study; Type: INDEX; Schema: ris; Owner: -
+--
+
+CREATE INDEX order_map_study ON ris.order_map USING btree (study_uid);
 
 
 --
@@ -114,4 +226,5 @@ CREATE INDEX event_study ON audit.event USING btree (study_uid, at);
 --
 
 INSERT INTO public.schema_migrations (version) VALUES
-    ('20260924000100');
+    ('20260924000100'),
+    ('20260924000200');

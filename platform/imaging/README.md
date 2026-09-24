@@ -1,9 +1,9 @@
 # platform/imaging — the Path A platform
 
 **Status, 24 Sep 2026: M1 (the engine), M2.1 (the front door and the viewer),
-M2.2 (sign-in), the first part of M2.3 (the worklist), M3.1 (backups and a
-disaster drill) and M3.3 (the feed watch and alerts) are built and proven
-off-prem. Nothing is deployed.** Dada's rule
+M2.2 (sign-in), the first part of M2.3 (the worklist) and M3 (the BizBox
+connector, backups with a disaster drill, and the feed watch and alerts) are
+built and proven off-prem. Nothing is deployed.** Dada's rule
 (23 Sep): nothing goes on-prem until the whole platform is built, and the
 on-prem go is his. Deployment also stays gated on ADR-001 (still *Proposed*)
 and on the safety work in [`../README.md`](../README.md), "What it is gated
@@ -38,6 +38,9 @@ modality ─ DICOM 4242 ─────────────────▶  
 - **M2.3, the front door app, first part:** see
   [The front door app](#the-front-door-app) below. The site's address opens
   the PMC worklist at `/pmc/`, which opens the viewer.
+- **M3.2, the BizBox connector:** see
+  [The BizBox connector](#the-bizbox-connector) below. Orders placed in
+  BizBox reach the consoles' worklists, read-only from one agreed view.
 - **M3.1, backups:** see [Backups](#backups) below. Every database change is
   kept as it happens; every night the images and the database backups go to
   the R740xd, which the primary can add to but never delete from, and from
@@ -91,7 +94,7 @@ AD (Samba's AD domain controller, `identity/test/ad/`), unless marked:
    token. It lasts 5 minutes, and oauth2-proxy renews it once it is 4 minutes
    old, so a person keeps working past it. Each renewal asks AD again, so
    someone taken out of their group loses access at the next renewal
-   (MEASURED: after 42 s in the tests, where tokens renew at 40 s; on
+   (MEASURED: after 40–42 s in the tests, in two runs, where tokens renew at 40 s; on
    site within about 4 minutes, INFERRED). The engine's authorization plugin
    asks orthanc-auth-service what the person's role may do, and matches the
    route against the engine's permission table (`orthanc/orthanc.json`). A
@@ -421,6 +424,92 @@ though not for the images.
   snapshot missed. The first version got that order from the alphabet;
   `backup/kopia/snapshot.sh` now names it.
 
+## The BizBox connector
+
+M3.2, built and proven off-prem against a stand-in BizBox. BizBox's own view
+does not exist yet: it needs PMC's DBA and the vendor (see below).
+
+- **Orders reach the consoles.** An order placed in BizBox appears on the
+  worklist of every console of its section within one poll (30 s on site),
+  with the patient's name, ID, birth date and sex, the procedure and its
+  priority as BizBox has them. A change in BizBox updates the waiting entry;
+  a cancellation withdraws it. When the console sends the study under the
+  order's identifiers, the engine takes the entries off, and the connector
+  marks the order performed.
+- **Read-only.** It reads one view in BizBox's database through a login
+  allowed SELECT on that view and nothing else (MEASURED: every table, and
+  every write, is refused). Nothing is ever written to BizBox.
+- **Nothing lost, nothing held up.** A row's change marker (`change_seq`) is
+  SQL Server's rowversion, a database-wide counter rather than a clock. It is
+  taken when a row is written, not when it commits, so the connector reads
+  only below `MIN_ACTIVE_ROWVERSION()` and passes over rows another
+  transaction holds (`READCOMMITTEDLOCK, READPAST`) instead of waiting on
+  them. MEASURED here: an order whose transaction commits after a later one
+  is not lost, and an open BizBox transaction holds nothing up.
+- **One worklist entry per console.** DICOM allows one entry to name several
+  consoles, but the engine's worklist then reaches none of them (MEASURED by
+  the research proof). All of an order's entries share its StudyInstanceUID,
+  which the order number fixes (`2.25.` and a UUID), so the images land on the
+  study the order expects, whichever console does the exam.
+- **After the exam, a person decides.** A BizBox change to an order already
+  performed is never applied to the images by itself: the order is marked
+  for review, and ICT is told (`OrderNeedsReview`).
+- **Its record** is the `ris` schema of the platform database: each order's
+  worklist entries and state, where it is in BizBox and in the engine's
+  change feed, and what it did (`ris.event`, append-only by grant).
+
+The view's contract, one row per imaging order:
+
+| Column | What it is |
+|---|---|
+| `order_no` | BizBox's order number: the accession number, 1 to 16 characters |
+| `hospital_no`, `last_name`, `first_name`, `middle_name`, `birth_date`, `sex` | the patient |
+| `encounter_no` | the admission or visit |
+| `section`, `procedure_code`, `procedure_desc`, `priority`, `scheduled_at` | what is ordered, where, and when |
+| `referring_doctor` | who ordered it |
+| `status` | `ORDERED` or `CANCELLED` |
+| `change_seq` | the larger rowversion of the order and its patient, as bigint |
+
+MEASURED here, polling every 2 s: an order reached both X-ray consoles
+1.2 s after BizBox committed it, and 100 orders placed at once reached both
+consoles within 3.8 s (one run).
+
+### What ICT and PMC's DBA provide
+
+1. **The view** (`dbo.v_pmc_imaging_orders`, or another name in
+   `PMC_BIZBOX_VIEW`), mapping BizBox's tables onto the contract, with the
+   vendor. The stand-in (`orders/test/bizbox/schema.sql`) shows its shape.
+   BizBox's own tables, and whether its orders carry all of this, are NOT
+   VERIFIED: no cloud session reaches DND-SQL01, so the SQL01 row maps them.
+2. **A SQL Server login** with SELECT on that view and nothing else, and its
+   password in `secrets/bizbox-password`.
+3. **The site values:** `PMC_BIZBOX_SERVER` (host,port), `PMC_BIZBOX_DATABASE`,
+   `PMC_BIZBOX_USER`, and `PMC_ORDERS_STATIONS`: which consoles (AE titles)
+   take each BizBox section's orders, as JSON. Without a server the connector
+   idles.
+4. **A certificate the connector can check** on SQL Server's connection
+   (`PMC_BIZBOX_TRUST_SERVER_CERT` stays `no` on site). What DND-SQL01
+   presents is NOT VERIFIED.
+5. **Each console set to ask the engine for its worklist**, with its own AE
+   title. Which of PMC's consoles can is NOT VERIFIED (the record's open
+   question on the Azurion and the CT consoles).
+6. **One firewall rule** (M4): the connector may reach SQL Server's port and
+   nothing else.
+
+### Not built yet
+
+The research proof went further, and those parts wait on decisions:
+
+- **MPPS**, a console's "exam started, exam done" messages. The engine does not
+  accept them (MEASURED by the proof), so the proof's connector received them
+  itself. Built when ICT confirms which consoles send them.
+- **A study done without an order, and a BizBox correction to images already
+  stored.** The proof reconciled both through a journal, because the engine's
+  own modify call, used one way, deletes the study it was asked to correct
+  (MEASURED by the proof). Nothing on the platform calls it.
+- **Reports** (the proof signed them as DICOM SR, HL7 ORU and FHIR) wait for
+  Dada's decision on where reporting lives.
+
 ## Feed watch and alerts
 
 M3.3, built and proven off-prem. What ICT hears about, and how:
@@ -454,7 +543,7 @@ M3.3, built and proven off-prem. What ICT hears about, and how:
 
 The tests register a modality allowed 20 s of silence, have it send one
 study, and wait: the `FeedSilent` email reached ICT's inbox at the stand-in
-relay 65–70 s after that study, in two runs (MEASURED). After the nightly backup,
+relay 65–75 s after that study, in three runs (MEASURED). After the nightly backup,
 the watch showed both clusters' backups and the snapshot within seconds.
 
 ### What ICT provides for alerts
@@ -485,6 +574,8 @@ the watch showed both clusters' backups and the snapshot within seconds.
 | Nightly copy and off-site: `kopia/kopia:0.23.1` | Kopia 0.23.1. Repository format 3, AES256-GCM-HMAC-SHA256, BLAKE2B-256-128 | image digest | MEASURED: `kopia --version` and `kopia repository status`, 24 Sep 2026 |
 | Off-site stand-in, tests only: `mcr.microsoft.com/azure-storage/azurite:3.37.0` | Azurite 3.37.0, blob service only, over TLS | image digest | MEASURED: `azurite-blob --version`, 24 Sep 2026 |
 | Stand-in Active Directory, tests only: `pmc-imaging/ad-standin`, built here from `identity/test/ad/` on `debian:trixie-slim` | Samba 4.22.11 (`2:4.22.11+dfsg-0+deb13u1`) as an AD domain controller | base image digest, and the exact package version | MEASURED: `samba --version`, 24 Sep 2026 |
+| BizBox connector: `pmc-imaging/orders`, built here from `orders/` | Python 3.14.7 (`python:3.14-slim-trixie`), mssql-python 1.15.0 (with Microsoft's ODBC driver 18.6.2.1 inside), psycopg 3.3.6, requests 2.34.2 | base image digest, a hash for every package, exact system library versions | MEASURED: built and run by `ci/run.sh`. Both drivers publish Python 3.14 wheels (VERIFIED on pypi.org, 24 Sep 2026). mssql-python's licence is not in its package metadata: NOT VERIFIED |
+| BizBox stand-in, tests only: `mcr.microsoft.com/mssql/server:2022-latest` | SQL Server 2022 CU27 (16.0.4295.3), Developer edition | image digest | MEASURED by the research proof, which used the same digest |
 | Feed watch: `pmc-imaging/watch`, built here from `watch/` | Node 24.21.0 (`node:24.21.0-trixie-slim`), no packages | base image digest | MEASURED: built and run by `ci/run.sh` |
 | Alerts: `quay.io/prometheus/prometheus:v3.14.0` and `quay.io/prometheus/alertmanager:v0.34.1` | Prometheus 3.14.0, Alertmanager 0.34.1 | image digests | MEASURED: `--version` from each image. Both are the latest releases (VERIFIED on GitHub, 24 Sep 2026) |
 | Mail relay stand-in, tests only: `ghcr.io/axllent/mailpit:v1.31.2` | Mailpit 1.31.2 | image digest | VERIFIED as the latest release on GitHub, 24 Sep 2026 |
@@ -500,10 +591,10 @@ was pulled on 23 or 24 Sep 2026 (MEASURED). The official images (`postgres`,
 
 ## What the tests prove
 
-`ci/run.sh` runs 88 tests. All passed on 24 Sep 2026 (MEASURED, cloud build,
-about 13 minutes). It starts from empty volumes, checks the platform
-database's schema and grants, and runs 48 engine, API, sign-in and watch
-tests and 23 browser tests. It then removes the containers, starts new ones
+`ci/run.sh` runs 96 tests. All passed on 24 Sep 2026 (MEASURED, cloud build,
+about 14 minutes). It starts from empty volumes, checks the platform
+database's schema and grants, and runs 56 engine, API, sign-in, watch and
+orders tests and 23 browser tests. It then removes the containers, starts new ones
 from the same volumes, and runs 6 engine tests and 2 browser tests again: the
 radiologist signs in afresh, and a cathlab run still opens playing. Then it
 takes the nightly backup, proves the primary cannot delete from the R740xd's
@@ -530,6 +621,7 @@ on site).
 | An order reaches only its own modality's worklist and leaves it once the study has arrived and is stable. A cancelled order is withdrawn | `test_worklists.py` |
 | After the restart, every study, every file (MD5), every registered modality, a pending order and the audit trail are still there, and the engine still takes studies | `test_after_restart.py` |
 | Both clusters archive every log segment as it is written. The nightly backup takes both clusters and checks them, then snapshots them and the engine's files to the R740xd's Kopia server, which copies its repository off-site. The primary cannot delete a snapshot, even its own | `ci/run.sh`, `tools/backup.sh`, `tools/offsite.sh` |
+| A BizBox login may read its view and nothing else. An order reaches every console of its section and no other, with its own StudyInstanceUID; a Filipino name arrives intact; a change in BizBox updates the waiting entry; a cancellation withdraws it; the exam takes it off the worklist and marks it performed; an order whose transaction commits late is neither lost nor holding anything up; 100 orders at once all arrive | `tests/test_orders.py` |
 | The watch sees the engine, the domain controller, the images' free space and the certificates. Every registered modality has a feed and a limit. A modality that goes quiet past its limit reaches ICT's inbox as a `FeedSilent` email. After the nightly backup the watch shows both clusters' backups and the snapshot | `tests/test_watch.py` |
 | Disaster: with both hosts' volumes deleted, the platform is rebuilt from the off-site copy alone. Every file is verified, both clusters are restored and their logs replayed, and archiving works again. Then every study, every file (MD5), every modality, a pending order and the audit trail are back, the radiologist signs in, and a cathlab run opens playing | `ci/restore-drill.sh`, then `test_after_restart.py` and `browser/tests/viewer.spec.js` |
 | The front door answers only for the site name, over TLS 1.3 and HTTP/2, and sends plain HTTP to HTTPS | `browser/tests/viewer.spec.js` |
@@ -598,8 +690,11 @@ The AE titles the tests play are PMC's own, as MEASURED in the record.
   copy and restoring the engine's files and the database backups took
   9.8–10.1 s; restoring both clusters from those backups, 3.8–4.3 s; starting
   the platform on them, 49–50 s.
-- **Someone taken out of their AD group lost access 42 s later** (one run;
-  the tests renew a token at 40 s, the site at 4 minutes).
+- **Someone taken out of their AD group lost access 40–42 s later** (two
+  runs; the tests renew a token at 40 s, the site at 4 minutes).
+- **A BizBox order reached both X-ray consoles 1.2 s after BizBox committed
+  it**, and 100 at once reached both within 3.8 s (one run, polling every
+  2 s; every 30 s on site).
 
 ## Run it
 
@@ -668,6 +763,8 @@ anonymous pulls, run it with `PMC_LIBRARY=public.ecr.aws/docker/library`.
 - `tools/backup.sh` and `tools/offsite.sh`: the nightly backup, and the copy
   off-site. `ci/restore-drill.sh`: the disaster drill, for the test project
   only.
+- `orders/`: the BizBox connector (`pmcorders/`), and the stand-in BizBox for
+  the tests (`test/bizbox/`: a synthetic schema, the read-only login).
 - `watch/`: the feed watch. `monitor/`: Prometheus's configuration, the alert
   rules, and Alertmanager's start, which writes its configuration from the
   site's values.
@@ -676,8 +773,9 @@ anonymous pulls, run it with `PMC_LIBRARY=public.ecr.aws/docker/library`.
   Keycloak's database, the front door's client and cookie secrets, the auth
   service's password and signing key, admin-cli's secret, the platform's API
   key, the Kopia repository's password and its three users' passwords, the
-  off-site storage key (empty on site until ICT places it), and the TLS
-  certificate. `ad-bind-password` and `tls/ad-ca.crt` come from ICT. The
+  off-site storage key (empty on site until ICT places it), the BizBox
+  connector's platform database password and its BizBox login's password
+  (empty until ICT places it), and the TLS certificate. `ad-bind-password` and `tls/ad-ca.crt` come from ICT. The
   containers read them all as Docker secrets; none is in any file in git.
 - **Modality addresses** live in the engine's database, registered at runtime
   (`PUT /modalities/{name}`), never in git (CLAUDE.md). The tests register
@@ -699,6 +797,10 @@ anonymous pulls, run it with `PMC_LIBRARY=public.ecr.aws/docker/library`.
   - `PMC_BACKUP_AZURE_ACCOUNT` and `PMC_BACKUP_AZURE_KOPIA_CONTAINER`: the
     off-site storage account and container, set on the R740xd once the cloud
     copy is decided;
+  - `PMC_BIZBOX_SERVER`, `_DATABASE`, `_USER`, `_VIEW` and
+    `PMC_ORDERS_STATIONS`: BizBox's SQL Server, the connector's login and
+    view, and which consoles take each section's orders. No server, no
+    connector;
   - `PMC_FEED_SILENCE` and `PMC_FEED_SILENCE_OVERRIDES`: how long a modality
     may stay silent (default 24h), and the exceptions;
   - `PMC_ALERT_EMAIL_TO`, `_FROM`, `PMC_ALERT_SMTP`, `PMC_ALERT_SMTP_TLS`:
@@ -900,7 +1002,5 @@ uv pip compile --generate-hashes --python-version 3.14 \
   ICT's admin screens. See [The front door app](#the-front-door-app).
 - **M2.4:** the cine fix for the live WS23 portal, prepared and tested in
   `apps/imaging-portal`. It is deployed only on Dada's go.
-- **M3, the rest:** the BizBox-to-worklist connector, against a stand-in
-  BizBox.
 - **M4:** migration tooling, the runbook, and the on-prem package for the
   R740xd.

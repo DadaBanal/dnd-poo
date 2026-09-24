@@ -18,6 +18,33 @@ groups:
             {{ $labels.aet }}) for longer than it expects. Check the modality
             is switched on and sending to the archive, and its network link.
 
+      - alert: OrdersNotFlowing
+        # Configured, but BizBox and the engine have not both been read for
+        # 10 minutes: new orders are not reaching the consoles.
+        expr: pmc_orders_configured == 1 and time() - pmc_orders_last_sync_timestamp_seconds > 600
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "BizBox orders are not reaching the worklists"
+          description: >-
+            The BizBox connector has not read BizBox and the engine for
+            {{ $value | humanizeDuration }}. New orders will not appear on the
+            consoles; technologists must type patients in by hand. Check
+            BizBox's SQL Server, the read-only login, and the connector's log.
+
+      - alert: OrderNeedsReview
+        expr: pmc_orders_needs_review > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} order(s) changed in BizBox after the exam"
+          description: >-
+            BizBox changed an order whose exam has already happened. The images
+            are never rewritten automatically: a person checks them against
+            BizBox.
+
       - alert: EngineDown
         expr: pmc_engine_up == 0
         for: 2m
