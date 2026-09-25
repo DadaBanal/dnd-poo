@@ -41,7 +41,7 @@ def day(conn: sqlite3.Connection, boards, on: str):
     marks = ",".join("?" * len(boards))
     return conn.execute(
         "SELECT s.*, w.name AS summary, t.board_id, t.priority, t.state"
-        "  FROM ticket_schedule s JOIN ticket t USING (work_item_id) JOIN work_item w USING (work_item_id)"
+        "  FROM ticket_schedule s JOIN ticket t ON t.work_item_id = s.work_item_id JOIN work_item w ON w.work_item_id = t.work_item_id"
         f" WHERE substr(s.starts_at, 1, 10) = ? AND t.board_id IN ({marks})"
         " ORDER BY s.member, s.starts_at", (on, *boards)).fetchall()
 

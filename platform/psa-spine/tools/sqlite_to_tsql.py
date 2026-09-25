@@ -16,9 +16,12 @@ tools/tsql-decisions.json and a column missing from that file stops the build.
 A rule that quietly stops being enforced on the port is the failure this whole
 exercise exists to prevent, so nothing is allowed to be inferred.
 
-NOT VERIFIED: nothing here has been executed against DND-SQL01\\PMC_SS. This
-session has no network route to it. The output is written to be run by somebody
-who has one — preview by default, a verify gate, and a rollback in the footer.
+VERIFIED against SQL Server 2022 Express (16.0, Linux container) on 25 Sep 2026:
+the script applies, the verify gate passes and both triggers fire. It has still
+not been run on DND-SQL01 itself -- no session here has a route to it -- so the
+output stays written to be run by somebody who has one: preview by default, a
+verify gate, and a rollback in the footer. The database name it expects is D7's:
+PMC_PSA, a database of its own on the existing instance.
 """
 from __future__ import annotations
 
@@ -42,7 +45,7 @@ OUTPUT = ROOT / "sqlserver" / "PMC_PSA_Spine_SqlServer.sql"
 
 SCHEMA = "psa"
 TARGET_SERVER = "DND-SQL01\\PMC_SS"
-TARGET_DATABASE = "PMC_SS"
+TARGET_DATABASE = "PMC_PSA"    # D7: its own database on the existing instance
 
 # The only functions that may appear in a CHECK or a trigger condition. Anything
 # else raises: a function silently dropped is a constraint silently weakened.
@@ -120,8 +123,28 @@ def _qualify(expr: str, tables: set[str]) -> str:
     return re.sub(r"\b(FROM|JOIN|UPDATE|INTO)\s+(\w+)\b", sub, expr, flags=re.I)
 
 
+def _boolean_equality(expr: str) -> str:
+    """SQLite lets two predicates be compared: (a IS NULL) = (b IS NULL) says
+    "both or neither". T-SQL has no boolean value to compare, so the same rule
+    is written out as (both) OR (neither). Only the whole-expression shape
+    "(P) = (Q)" is recognised; a predicate compared anywhere else is refused by
+    the parser on the server, which is the right place for a shape nobody
+    decided here."""
+    if not expr.startswith("("):
+        return expr
+    left, close = _balanced(expr, 0)
+    rest = expr[close + 1:]
+    m = re.match(r"\s*=\s*\(", rest)
+    if not m:
+        return expr
+    right, close2 = _balanced(rest, m.end() - 1)
+    if rest[close2 + 1:].strip():
+        return expr
+    return f"((({left}) AND ({right})) OR (NOT ({left}) AND NOT ({right})))"
+
+
 def expression(expr: str, tables: set[str]) -> str:
-    return _qualify(_rewrite_calls(" ".join(expr.split())), tables)
+    return _qualify(_rewrite_calls(_boolean_equality(" ".join(expr.split()))), tables)
 
 
 def _literals(expr: str) -> list[str]:
@@ -231,8 +254,10 @@ def emit_table(table: Table, dec: Decisions, tables: set[str]) -> str:
         piece = [f"    [{col.name}]", sql_type]
 
         # INTEGER PRIMARY KEY is a rowid alias in SQLite: the value is generated
-        # when it is not supplied. IDENTITY is the same bargain in SQL Server.
-        if col.primary_key and col.sqlite_type == "INTEGER" and len(pk_cols) == 1:
+        # when it is not supplied. IDENTITY is the same bargain in SQL Server --
+        # unless a CHECK pins the key (ticket_numbering's id = 1): a checked key
+        # is a chosen value, and IDENTITY would refuse the one value allowed.
+        if col.primary_key and col.sqlite_type == "INTEGER" and len(pk_cols) == 1 and not col.checks:
             piece.append("IDENTITY(1,1)")
 
         piece.append("NOT NULL" if (col.not_null or col.primary_key) else "NULL")
@@ -374,7 +399,13 @@ def _comment_block(text: str, indent: str = "") -> list[str]:
 
 
 def generate(schema_dir: Path = SCHEMA_DIR, decisions: Path = DECISIONS) -> str:
-    files = [(p.name, p.read_text(encoding="utf-8")) for p in sorted(schema_dir.glob("*.sql"))]
+    # schema/local/ (the break-glass and API credential tables) was kept out of
+    # the port while the spine on SQL Server was to be the commercial record
+    # alone. D7 (25 Sep 2026) puts the whole desk there, and a desk signs people
+    # in, so those tables go too: scrypt hashes and token hashes, never a secret.
+    files = ([(p.name, p.read_text(encoding="utf-8")) for p in sorted(schema_dir.glob("*.sql"))]
+             + [(f"local/{p.name}", p.read_text(encoding="utf-8"))
+                for p in sorted((schema_dir / "local").glob("*.sql"))])
     tables, indexes, triggers, alters = parse_schema(files)
     dec = Decisions(decisions)
     names = {t.name for t in tables}
@@ -408,7 +439,7 @@ def generate(schema_dir: Path = SCHEMA_DIR, decisions: Path = DECISIONS) -> str:
   Target: {TARGET_SERVER}, database {TARGET_DATABASE}, schema [{SCHEMA}]
 
   GENERATED FILE -- DO NOT EDIT.
-      source:     platform/psa-spine/schema/*.sql   (SQLite, the one source)
+      source:     platform/psa-spine/schema/  (the SQLite files, the one source)
       translator: platform/psa-spine/tools/sqlite_to_tsql.py
       decisions:  platform/psa-spine/tools/tsql-decisions.json
       regenerate: python3 tools/sqlite_to_tsql.py --write
@@ -416,7 +447,7 @@ def generate(schema_dir: Path = SCHEMA_DIR, decisions: Path = DECISIONS) -> str:
 
   An edit made here is lost on the next regeneration and, worse, is invisible in
   the SQLite copy that the importer and the reports actually run against. Change
-  schema/*.sql and regenerate.
+  the files under schema/ and regenerate.
 
   ---------------------------------------------------------------------------
   HOW TO RUN IT
@@ -445,9 +476,12 @@ def generate(schema_dir: Path = SCHEMA_DIR, decisions: Path = DECISIONS) -> str:
   no signed clinical floor -- those are decisions with names attached and the
   schema refuses to hold them until somebody with the authority makes them.
 
-  NOT VERIFIED: this script has never been executed. It was generated in an
-  environment with no network route to {TARGET_SERVER}. Run it with @Apply = 0
-  first and read the plan.
+  VERIFIED on SQL Server 2022 Express (16.0) in a container, 25 Sep 2026: applies,
+  passes its own gate, both triggers fire. NOT VERIFIED on {TARGET_SERVER} itself,
+  which no session here can reach. Run it with @Apply = 0 first and read the plan.
+
+  Comments in this file never contain a slash-star pair: T-SQL nests block
+  comments, and the first run found the header itself unterminated because of one.
 ==============================================================================*/
 
 SET NOCOUNT ON;
@@ -460,6 +494,7 @@ DECLARE @Apply         BIT = 0;      -- <<<< set to 1 to make changes
 DECLARE @AllowExisting BIT = 0;      -- <<<< set to 1 to fill in what is missing
 
 DECLARE @Schema        SYSNAME = N'{SCHEMA}';
+DECLARE @Database      SYSNAME = N'{TARGET_DATABASE}';  -- D7's name; the desk refuses any other
 DECLARE @DbName        SYSNAME = DB_NAME();   -- RAISERROR takes variables, not calls
 DECLARE @Existing      INT;
 DECLARE @Tables        INT;
@@ -468,10 +503,10 @@ DECLARE @Indexes       INT;
 
 /*------------------------------------------------------------------ preflight */
 
-IF @DbName <> N'{TARGET_DATABASE}'
+IF @DbName <> @Database
 BEGIN
-    RAISERROR(N'Refusing: connected to database [%s], expected [{TARGET_DATABASE}] on {TARGET_SERVER}. Nothing was changed.',
-              16, 1, @DbName);
+    RAISERROR(N'Refusing: connected to database [%s], expected [%s] on {TARGET_SERVER}. Nothing was changed.',
+              16, 1, @DbName, @Database);
     RETURN;
 END;
 

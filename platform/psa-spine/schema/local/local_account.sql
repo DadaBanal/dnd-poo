@@ -1,12 +1,12 @@
--- PSA spine — break-glass local accounts (SQLite only, never ported)
+-- PSA spine — break-glass local accounts
 --
--- This file is NOT under schema/*.sql, and that is deliberate. The generator in
--- tools/sqlite_to_tsql.py globs schema/*.sql non-recursively; so does
--- db.create(). Living one directory down, this table is applied to the local
--- SQLite pilot database by db.create() explicitly, and is never emitted into the
--- SQL Server port on DND-SQL01. A credential table has no business on the
--- commercial spine, and a T-SQL copy of one is a credential store nobody
--- reviewed.
+-- This file lives under schema/local/, one directory below the migrations, and
+-- until 25 Sep 2026 that kept it out of the SQL Server port: the spine on
+-- DND-SQL01 was to be the commercial record alone, and a credential table had no
+-- business there. D7 now puts the whole desk on that instance (its own database,
+-- PMC_PSA), and a desk has to sign people in, so the translator includes this
+-- file and db.create() applies it wherever it runs. What it holds is unchanged:
+-- a salted scrypt digest, never a password, and the table ships empty.
 --
 -- WHY THESE EXIST. Entra SSO is the normal way in and the only way in for
 -- everyone but the on-call rota. But the desk has to answer when the WAN is down
@@ -26,7 +26,7 @@
 
 PRAGMA foreign_keys = ON;
 
-CREATE TABLE IF NOT EXISTS local_account (
+CREATE TABLE local_account (
   username       TEXT PRIMARY KEY,
   -- 'scrypt$N$r$p$salt_hex$hash_hex'. Never a password, never reversible.
   scrypt_hash    TEXT NOT NULL,

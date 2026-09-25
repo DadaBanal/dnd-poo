@@ -16,7 +16,8 @@ LIMIT = 8
 
 
 def _like(needle: str) -> str:
-    return "%" + needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    from .board import _like as like        # one escaping rule for the whole desk
+    return like(needle)
 
 
 def search(ctx):
@@ -33,10 +34,10 @@ def search(ctx):
         "SELECT t.work_item_id, t.board_id, t.state, t.priority, w.name AS summary,"
         "       COALESCE((SELECT ct.display_name FROM contact ct WHERE ct.contact_id = t.contact_id),"
         "                t.requested_by) AS who"
-        f"  FROM ticket t JOIN work_item w USING (work_item_id) WHERE t.board_id IN ({marks})"
+        f"  FROM ticket t JOIN work_item w ON w.work_item_id = t.work_item_id WHERE t.board_id IN ({marks})"
         "   AND (LOWER(t.work_item_id) LIKE ? ESCAPE '\\' OR LOWER(w.name) LIKE ? ESCAPE '\\'"
         "        OR LOWER(t.requested_by) LIKE ? ESCAPE '\\')"
-        " ORDER BY (t.state NOT IN ('RESOLVED','CLOSED','CANCELLED')) DESC, t.opened_at DESC LIMIT ?",
+        " ORDER BY CASE WHEN t.state IN ('RESOLVED','CLOSED','CANCELLED') THEN 1 ELSE 0 END, t.opened_at DESC LIMIT ?",
         list(boards) + [like, like, like, LIMIT]).fetchall()
     seen: dict[str, int] = {}
     for r in rows:

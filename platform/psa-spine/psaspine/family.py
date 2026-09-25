@@ -32,7 +32,7 @@ def _stamp(at: datetime) -> str:
 def _ticket(conn: sqlite3.Connection, work_item_id: str):
     row = conn.execute(
         "SELECT t.work_item_id, t.parent_id, t.state, t.closed_at, t.board_id, w.name AS summary"
-        "  FROM ticket t JOIN work_item w USING (work_item_id) WHERE t.work_item_id = ?",
+        "  FROM ticket t JOIN work_item w ON w.work_item_id = t.work_item_id WHERE t.work_item_id = ?",
         (work_item_id,)).fetchone()
     if row is None:
         raise LookupError(f"no ticket {work_item_id!r}")
@@ -43,7 +43,7 @@ def children_of(conn: sqlite3.Connection, parent_id: str) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT t.work_item_id, t.board_id, t.state, t.priority, t.owner, t.requested_by,"
         "       t.closed_at, w.name AS summary, s.name AS status_name"
-        "  FROM ticket t JOIN work_item w USING (work_item_id)"
+        "  FROM ticket t JOIN work_item w ON w.work_item_id = t.work_item_id"
         "  LEFT JOIN board_status s ON s.board_status_id = t.board_status_id"
         " WHERE t.parent_id = ? ORDER BY t.opened_at, t.work_item_id", (parent_id,)).fetchall()
 

@@ -1,8 +1,9 @@
--- PSA spine -- machine API tokens (SQLite only, never ported)
+-- PSA spine -- machine API tokens
 --
--- Beside local_account.sql, and for the same reason: this is a credential table,
--- and a credential table has no business on the commercial spine on DND-SQL01.
--- It lives one directory below schema/*.sql so the translator never sees it.
+-- Beside local_account.sql, and ported for the same reason since 25 Sep 2026:
+-- the desk runs on the SQL Server instance (D7), so the table that lets a
+-- monitoring machine raise a ticket runs there too. It holds the sha256 of a
+-- token, never the token.
 --
 -- WHY A TOKEN AND NOT ENTRA. A machine could hold an Entra app registration and
 -- present a client-credentials token, and the RS256 check in web/auth.py would
@@ -23,10 +24,10 @@
 
 PRAGMA foreign_keys = ON;
 
-CREATE TABLE IF NOT EXISTS api_token (
+CREATE TABLE api_token (
   token_id      TEXT PRIMARY KEY,
   -- sha256 of the token, lower-case hex. The token itself is never stored.
-  token_sha256  TEXT NOT NULL UNIQUE,
+  token_sha256  TEXT NOT NULL,
   -- What it is for, in words: 'orthanc monitoring', 'UPS alerts'.
   label         TEXT NOT NULL,
   board_id      TEXT NOT NULL REFERENCES board(board_id),
@@ -35,3 +36,7 @@ CREATE TABLE IF NOT EXISTS api_token (
   last_used_at  TEXT,
   disabled      INTEGER NOT NULL DEFAULT 0 CHECK (disabled IN (0, 1))
 );
+
+-- One token, one row. A table-level unique index rather than an inline UNIQUE
+-- because the port's DDL reader takes the former and refuses the latter.
+CREATE UNIQUE INDEX ux_api_token_sha256 ON api_token (token_sha256);

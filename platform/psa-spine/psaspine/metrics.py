@@ -15,7 +15,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime
 
-from . import clocks
+from . import clocks, db
 
 CLOSED = "('RESOLVED','CLOSED','CANCELLED')"
 
@@ -108,9 +108,9 @@ def desk(conn: sqlite3.Connection, boards, *, now: datetime, months: int = 6,
     out["by_source"] = mix("t.intake_source")
     out["by_priority"] = sorted(mix("t.priority"), key=lambda x: x[0])
 
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'survey_response'").fetchone():
+    if db.table_exists(conn, "survey_response"):
         row = conn.execute(
-            f"SELECT AVG(s.score), COUNT(*) FROM survey_response s JOIN ticket t USING (work_item_id)"
+            f"SELECT AVG(s.score), COUNT(*) FROM survey_response s JOIN ticket t ON t.work_item_id = s.work_item_id"
             f" WHERE t.board_id IN ({marks}) AND s.answered_at >= ?", (*boards, since)).fetchone()
         if row and row[1]:
             out["satisfaction"], out["satisfaction_n"] = round(row[0], 2), row[1]

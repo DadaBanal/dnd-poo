@@ -480,7 +480,7 @@ def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: st
     if not body:
         raise ValueError("a note needs some words")
     ticket = conn.execute(
-        "SELECT w.entity_id FROM ticket t JOIN work_item w USING (work_item_id)"
+        "SELECT w.entity_id FROM ticket t JOIN work_item w ON w.work_item_id = t.work_item_id"
         " WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
     if ticket is None:
         raise LookupError(f"no ticket {work_item_id!r}")
@@ -553,7 +553,7 @@ def update_fields(conn: sqlite3.Connection, work_item_id: str, *, at: datetime,
 
     row = conn.execute(
         "SELECT t.*, w.entity_id, w.contract_basis FROM ticket t"
-        " JOIN work_item w USING (work_item_id) WHERE t.work_item_id = ?",
+        " JOIN work_item w ON w.work_item_id = t.work_item_id WHERE t.work_item_id = ?",
         (work_item_id,)).fetchone()
     if row is None:
         raise LookupError(f"no ticket {work_item_id!r}")

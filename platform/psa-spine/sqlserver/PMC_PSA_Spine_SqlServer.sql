@@ -1,9 +1,9 @@
 /*==============================================================================
   PMC / Dada IT -- PSA spine, SQL Server schema
-  Target: DND-SQL01\PMC_SS, database PMC_SS, schema [psa]
+  Target: DND-SQL01\PMC_SS, database PMC_PSA, schema [psa]
 
   GENERATED FILE -- DO NOT EDIT.
-      source:     platform/psa-spine/schema/*.sql   (SQLite, the one source)
+      source:     platform/psa-spine/schema/  (the SQLite files, the one source)
       translator: platform/psa-spine/tools/sqlite_to_tsql.py
       decisions:  platform/psa-spine/tools/tsql-decisions.json
       regenerate: python3 tools/sqlite_to_tsql.py --write
@@ -11,12 +11,12 @@
 
   An edit made here is lost on the next regeneration and, worse, is invisible in
   the SQLite copy that the importer and the reports actually run against. Change
-  schema/*.sql and regenerate.
+  the files under schema/ and regenerate.
 
   ---------------------------------------------------------------------------
   HOW TO RUN IT
 
-      sqlcmd -S "DND-SQL01\PMC_SS" -d PMC_SS -i PMC_PSA_Spine_SqlServer.sql
+      sqlcmd -S "DND-SQL01\PMC_SS" -d PMC_PSA -i PMC_PSA_Spine_SqlServer.sql
 
   IT PREVIEWS BY DEFAULT. @Apply is 0 below and nothing is created until you set
   it to 1. That is the discipline this programme uses for anything that touches a
@@ -40,9 +40,12 @@
   no signed clinical floor -- those are decisions with names attached and the
   schema refuses to hold them until somebody with the authority makes them.
 
-  NOT VERIFIED: this script has never been executed. It was generated in an
-  environment with no network route to DND-SQL01\PMC_SS. Run it with @Apply = 0
-  first and read the plan.
+  VERIFIED on SQL Server 2022 Express (16.0) in a container, 25 Sep 2026: applies,
+  passes its own gate, both triggers fire. NOT VERIFIED on DND-SQL01\PMC_SS itself,
+  which no session here can reach. Run it with @Apply = 0 first and read the plan.
+
+  Comments in this file never contain a slash-star pair: T-SQL nests block
+  comments, and the first run found the header itself unterminated because of one.
 ==============================================================================*/
 
 SET NOCOUNT ON;
@@ -55,6 +58,7 @@ DECLARE @Apply         BIT = 0;      -- <<<< set to 1 to make changes
 DECLARE @AllowExisting BIT = 0;      -- <<<< set to 1 to fill in what is missing
 
 DECLARE @Schema        SYSNAME = N'psa';
+DECLARE @Database      SYSNAME = N'PMC_PSA';  -- D7's name; the desk refuses any other
 DECLARE @DbName        SYSNAME = DB_NAME();   -- RAISERROR takes variables, not calls
 DECLARE @Existing      INT;
 DECLARE @Tables        INT;
@@ -63,10 +67,10 @@ DECLARE @Indexes       INT;
 
 /*------------------------------------------------------------------ preflight */
 
-IF @DbName <> N'PMC_SS'
+IF @DbName <> @Database
 BEGIN
-    RAISERROR(N'Refusing: connected to database [%s], expected [PMC_SS] on DND-SQL01\PMC_SS. Nothing was changed.',
-              16, 1, @DbName);
+    RAISERROR(N'Refusing: connected to database [%s], expected [%s] on DND-SQL01\PMC_SS. Nothing was changed.',
+              16, 1, @DbName, @Database);
     RETURN;
 END;
 
@@ -160,6 +164,8 @@ BEGIN
     PRINT N'    psa.standard_note';
     PRINT N'    psa.ticket_schedule';
     PRINT N'    psa.survey_response';
+    PRINT N'    psa.api_token';
+    PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
     PRINT N'    psa.ix_time_entry_period';
     PRINT N'    psa.ix_workflow_run_event';
@@ -184,12 +190,13 @@ BEGIN
     PRINT N'    psa.ix_ticket_merged';
     PRINT N'    psa.ix_ticket_schedule_day';
     PRINT N'    psa.ix_ticket_schedule_ticket';
+    PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  71 tables, 24 indexes, 4 triggers.';
+    PRINT N'  73 tables, 25 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -1498,7 +1505,7 @@ END;
 IF OBJECT_ID(N'psa.[ticket_numbering]', N'U') IS NULL
 BEGIN
 CREATE TABLE psa.[ticket_numbering] (
-    [id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_ticket_numbering] PRIMARY KEY CONSTRAINT [CK_ticket_numbering_01] CHECK (id = 1),
+    [id] INT NOT NULL CONSTRAINT [PK_ticket_numbering] PRIMARY KEY CONSTRAINT [CK_ticket_numbering_01] CHECK (id = 1),
     [prefix] NVARCHAR(32) NOT NULL CONSTRAINT [DF_ticket_numbering_prefix] DEFAULT ('PMC'),
 
     -- Zero padding, so PMC-000001 sorts as text in the order it was issued for
@@ -1564,7 +1571,7 @@ CREATE TABLE psa.[intake_message] (
     -- Dates are kept as the source wrote them. These read them,
     -- without deciding for the reader which shape was meant.
     [received_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [received_at], 126), CASE WHEN [received_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [received_at], 112) END)),
-    CONSTRAINT [CK_intake_message_02] CHECK ((disposition IN ('NEW_TICKET','APPENDED')) = (work_item_id IS NOT NULL))
+    CONSTRAINT [CK_intake_message_02] CHECK ((((disposition IN ('NEW_TICKET','APPENDED')) AND (work_item_id IS NOT NULL)) OR (NOT (disposition IN ('NEW_TICKET','APPENDED')) AND NOT (work_item_id IS NOT NULL))))
 );
 END;
 
@@ -1886,7 +1893,7 @@ CREATE TABLE psa.[ticket_task] (
     -- without deciding for the reader which shape was meant.
     [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END)),
     [done_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [done_at], 126), CASE WHEN [done_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [done_at], 112) END)),
-    CONSTRAINT [CK_ticket_task_01] CHECK ((done_at IS NULL) = (done_by IS NULL))
+    CONSTRAINT [CK_ticket_task_01] CHECK ((((done_at IS NULL) AND (done_by IS NULL)) OR (NOT (done_at IS NULL) AND NOT (done_by IS NULL))))
 );
 END;
 
@@ -1923,7 +1930,7 @@ CREATE TABLE psa.[attachment] (
     -- without deciding for the reader which shape was meant.
     [uploaded_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [uploaded_at], 126), CASE WHEN [uploaded_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [uploaded_at], 112) END)),
     [reviewed_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [reviewed_at], 126), CASE WHEN [reviewed_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [reviewed_at], 112) END)),
-    CONSTRAINT [CK_attachment_06] CHECK ((review_status = 'PENDING') = (reviewed_by IS NULL))
+    CONSTRAINT [CK_attachment_06] CHECK ((((review_status = 'PENDING') AND (reviewed_by IS NULL)) OR (NOT (review_status = 'PENDING') AND NOT (reviewed_by IS NULL))))
 );
 END;
 
@@ -2010,6 +2017,60 @@ CREATE TABLE psa.[survey_response] (
     -- Dates are kept as the source wrote them. These read them,
     -- without deciding for the reader which shape was meant.
     [answered_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [answered_at], 126), CASE WHEN [answered_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [answered_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- api_token   (from schema/local/api_token.sql)
+IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[api_token] (
+    [token_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_api_token] PRIMARY KEY,
+
+    -- sha256 of the token, lower-case hex. The token itself is never stored.
+    [token_sha256] NVARCHAR(64) NOT NULL,
+
+    -- What it is for, in words: 'orthanc monitoring', 'UPS alerts'.
+    [label] NVARCHAR(400) NOT NULL,
+    [board_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_api_token_board_id] REFERENCES psa.[board]([board_id]),
+    [created_at] NVARCHAR(64) NOT NULL,
+    [created_by] NVARCHAR(200) NOT NULL,
+    [last_used_at] NVARCHAR(64) NULL,
+    [disabled] INT NOT NULL CONSTRAINT [DF_api_token_disabled] DEFAULT (0) CONSTRAINT [CK_api_token_01] CHECK (disabled IN (0, 1)),
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END)),
+    [last_used_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [last_used_at], 126), CASE WHEN [last_used_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [last_used_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- local_account   (from schema/local/local_account.sql)
+IF OBJECT_ID(N'psa.[local_account]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[local_account] (
+    [username] NVARCHAR(200) NOT NULL CONSTRAINT [PK_local_account] PRIMARY KEY,
+
+    -- 'scrypt$N$r$p$salt_hex$hash_hex'. Never a password, never reversible.
+    [scrypt_hash] NVARCHAR(256) NOT NULL,
+
+    -- Cross-board admin (calendars, clinical floors, catalogue) as against a
+    -- board-scoped ADMIN membership. Off by default; a break-glass account is not
+    -- a superuser unless somebody deliberately made it one.
+    [is_sysadmin] INT NOT NULL CONSTRAINT [DF_local_account_is_sysadmin] DEFAULT (0) CONSTRAINT [CK_local_account_01] CHECK (is_sysadmin IN (0, 1)),
+    [created_at] NVARCHAR(64) NOT NULL,
+
+    -- 'cli' always. The column exists so a future non-CLI path would have to lie
+    -- to hide itself, which is harder than leaving a truthful field blank.
+    [created_by] NVARCHAR(200) NOT NULL,
+    [last_login_at] NVARCHAR(64) NULL,
+    [disabled] INT NOT NULL CONSTRAINT [DF_local_account_disabled] DEFAULT (0) CONSTRAINT [CK_local_account_02] CHECK (disabled IN (0, 1)),
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END)),
+    [last_login_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [last_login_at], 126), CASE WHEN [last_login_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [last_login_at], 112) END))
 );
 END;
 
@@ -2248,6 +2309,11 @@ CREATE INDEX [ix_ticket_schedule_day] ON psa.[ticket_schedule] ([starts_at]);
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ticket_schedule_ticket' AND object_id = OBJECT_ID(N'psa.[ticket_schedule]'))
 CREATE INDEX [ix_ticket_schedule_ticket] ON psa.[ticket_schedule] ([work_item_id]);
 
+-- One token, one row. A table-level unique index rather than an inline UNIQUE
+-- because the port's DDL reader takes the former and refuses the latter.
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
+CREATE UNIQUE INDEX [ux_api_token_sha256] ON psa.[api_token] ([token_sha256]);
+
 -- ==========================================================================
 -- THE GATE
 --
@@ -2378,10 +2444,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 71 OR @Triggers <> 4 OR @Indexes < 24
+IF @Tables <> 73 OR @Triggers <> 4 OR @Indexes < 25
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 71), %d triggers (expected 4), %d indexes (expected at least 24). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 73), %d triggers (expected 4), %d indexes (expected at least 25). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -2417,6 +2483,8 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[board] DROP CONSTRAINT IF EXISTS [FK_board_calendar_id];
     ALTER TABLE psa.[time_entry] DROP CONSTRAINT IF EXISTS [FK_time_entry_loop_reply_id];
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
+    DROP TABLE IF EXISTS psa.[local_account];
+    DROP TABLE IF EXISTS psa.[api_token];
     DROP TABLE IF EXISTS psa.[survey_response];
     DROP TABLE IF EXISTS psa.[ticket_schedule];
     DROP TABLE IF EXISTS psa.[standard_note];

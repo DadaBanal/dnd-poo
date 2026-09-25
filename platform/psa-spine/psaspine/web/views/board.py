@@ -76,7 +76,10 @@ FROM = (
 
 
 def _like(needle: str) -> str:
-    return "%" + needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    """A contains-match with every wildcard escaped: SQLite's two, and '[',
+    which SQL Server's LIKE reads as a character class."""
+    return "%" + (needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                  .replace("[", "\\[")) + "%"
 
 
 def _where(ctx, boards, f, tile_ids: dict[str, set]) -> tuple[str, list]:

@@ -249,20 +249,28 @@ def copy_setup(conn: sqlite3.Connection, from_board: str, to_board: str) -> None
             (status_id(to_board, s["name"]), to_board, s["name"], s["customer_description"],
              s["escalation_status"], s["is_default"], s["is_closed"], s["time_entry_allowed"],
              s["display_on_board"], s["sort_order"], s["inactive"], s["requires_approval"]))
-    conn.execute("INSERT OR IGNORE INTO board_record_type (board_id, record_type, is_default)"
-                 " SELECT ?, record_type, is_default FROM board_record_type WHERE board_id = ?",
-                 (to_board, from_board))
+    # INSERT ... SELECT ... WHERE NOT EXISTS rather than INSERT OR IGNORE: the
+    # same rows on both stores, in words both dialects run.
+    conn.execute("INSERT INTO board_record_type (board_id, record_type, is_default)"
+                 " SELECT ?, f.record_type, f.is_default FROM board_record_type f WHERE f.board_id = ?"
+                 " AND NOT EXISTS (SELECT 1 FROM board_record_type x WHERE x.board_id = ?"
+                 " AND x.record_type = f.record_type)",
+                 (to_board, from_board, to_board))
     conn.execute(
-        "INSERT OR IGNORE INTO sla_target_type (board_id, record_type, priority, clock,"
+        "INSERT INTO sla_target_type (board_id, record_type, priority, clock,"
         " target_minutes, calendar, attainment_percent, enforced, note)"
-        " SELECT ?, record_type, priority, clock, target_minutes, calendar, attainment_percent,"
-        " 0, 'copied from ' || board_id FROM sla_target_type WHERE board_id = ?",
-        (to_board, from_board))
+        " SELECT ?, f.record_type, f.priority, f.clock, f.target_minutes, f.calendar, f.attainment_percent,"
+        " 0, 'copied from ' || f.board_id FROM sla_target_type f WHERE f.board_id = ?"
+        " AND NOT EXISTS (SELECT 1 FROM sla_target_type x WHERE x.board_id = ? AND x.record_type = f.record_type"
+        " AND x.priority = f.priority AND x.clock = f.clock)",
+        (to_board, from_board, to_board))
     conn.execute(
-        "INSERT OR IGNORE INTO sla_target (board_id, priority, clock, target_minutes, calendar,"
-        " attainment_percent, enforced, note) SELECT ?, priority, clock, target_minutes, calendar,"
-        " attainment_percent, 0, 'copied from ' || board_id FROM sla_target WHERE board_id = ?",
-        (to_board, from_board))
+        "INSERT INTO sla_target (board_id, priority, clock, target_minutes, calendar,"
+        " attainment_percent, enforced, note) SELECT ?, f.priority, f.clock, f.target_minutes, f.calendar,"
+        " f.attainment_percent, 0, 'copied from ' || f.board_id FROM sla_target f WHERE f.board_id = ?"
+        " AND NOT EXISTS (SELECT 1 FROM sla_target x WHERE x.board_id = ? AND x.priority = f.priority"
+        " AND x.clock = f.clock)",
+        (to_board, from_board, to_board))
     conn.execute("UPDATE board SET calendar_id = (SELECT calendar_id FROM board WHERE board_id = ?)"
                  " WHERE board_id = ? AND calendar_id IS NULL", (from_board, to_board))
 

@@ -8,6 +8,7 @@ Run: python3 tests/test_spine.py
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 import sys
 import tempfile
@@ -24,6 +25,26 @@ from psaspine import (board, clocks, db, intake, numbering, phi,  # noqa: E402
 import sqlite_to_tsql  # noqa: E402
 from sqlite_ddl import Unsupported  # noqa: E402
 
+# The same tests on SQL Server: PSA_TEST_DB is an ODBC connection string to a
+# database that carries (or may receive) the generated port; each test empties
+# it and reseeds. Unset, every test gets a fresh SQLite file, as before.
+TEST_DB = os.environ.get("PSA_TEST_DB")
+ON_SQLITE = not TEST_DB
+
+
+def _target(tmp):
+    """What a test hands to db.connect / make_app / the CLI."""
+    return TEST_DB if TEST_DB else Path(tmp.name) / "spine.db"
+
+
+def _fresh(tmp):
+    """A database with the schema and the seed rows and nothing else."""
+    if TEST_DB:
+        os.environ["PSA_ATTACHMENT_DIR"] = str(Path(tmp.name) / "files")
+        return db.init(TEST_DB, reset=True)
+    return db.init(Path(tmp.name) / "spine.db")
+
+
 FIXTURE = Path(__file__).parent / "fixtures" / "register-sample.csv"
 DESK = Path(__file__).parent / "fixtures" / "desk-export-sample.csv"
 AS_OF = date(2026, 9, 9)
@@ -32,7 +53,7 @@ AS_OF = date(2026, 9, 9)
 class SpineTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         # The catalogue is no longer seeded by default — one board is. These
         # tests exercise the importer and the reports, so they load the sample.
         db.seed_sample(self.conn)
@@ -218,7 +239,7 @@ class GateTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         # The catalogue is no longer seeded by default — one board is. These
         # tests exercise the importer and the reports, so they load the sample.
         db.seed_sample(self.conn)
@@ -264,7 +285,7 @@ class DeskImportTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         # The catalogue is no longer seeded by default — one board is. These
         # tests exercise the importer and the reports, so they load the sample.
         db.seed_sample(self.conn)
@@ -471,7 +492,7 @@ class UpliftEvidenceTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         # The catalogue is no longer seeded by default — one board is. These
         # tests exercise the importer and the reports, so they load the sample.
         db.seed_sample(self.conn)
@@ -611,7 +632,7 @@ class TheGateTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         # The catalogue is no longer seeded by default — one board is. These
         # tests exercise the importer and the reports, so they load the sample.
         db.seed_sample(self.conn)
@@ -704,7 +725,7 @@ class SchemaRulesTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
 
     def tearDown(self) -> None:
         self.conn.close()
@@ -789,7 +810,7 @@ class BoardConfigurationTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
 
     def tearDown(self) -> None:
         self.conn.close()
@@ -959,7 +980,7 @@ class ClockTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         self.conn.execute(
             "INSERT INTO holiday_list (holiday_list_id, name) VALUES ('PH','Philippines')")
         self.conn.execute(
@@ -1163,7 +1184,7 @@ class RulesTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         self.conn.execute(
             "INSERT INTO workflow (workflow_id, board_id, name, table_type, is_active)"
             " VALUES ('WF_UNROUTED','UNROUTED','Unrouted ages and pages IT','TICKET',1)")
@@ -1360,7 +1381,7 @@ class BoardEngineTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         self.conn.execute(
             "INSERT INTO calendar (calendar_id, name, monday_start, monday_end,"
             " tuesday_start, tuesday_end, wednesday_start, wednesday_end,"
@@ -1559,7 +1580,7 @@ class WalkthroughTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         self.text = "\n".join(walkthrough.run(self.conn))
 
     def tearDown(self) -> None:
@@ -1898,7 +1919,7 @@ class OnCallTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         self.conn.execute(
             "INSERT OR REPLACE INTO board (board_id, display_name, phase, fulfiller_group,"
             " owner, deputy, is_live) VALUES ('IT_HELP','IT Help','2','Dada','a','b',1)")
@@ -1950,7 +1971,7 @@ class ClosedLoopTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         self.conn.executescript(
             "INSERT OR REPLACE INTO board (board_id, display_name, phase, fulfiller_group, owner,"
             " deputy, is_live, closed_loop_required) VALUES"
@@ -2014,7 +2035,7 @@ class AuthTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         self.secret = _secrets.token_bytes(32)
 
     def tearDown(self) -> None:
@@ -2137,8 +2158,8 @@ class WebWSGITest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.db_path = str(Path(self.tmp.name) / "spine.db")
-        conn = db.init(self.db_path)
+        self.db_path = str(_target(self.tmp))
+        conn = _fresh(self.tmp)
         conn.executescript(
             "INSERT OR IGNORE INTO entity (entity_id,name,is_covered,note) VALUES ('PMC','PMC',1,'');"
             "INSERT OR REPLACE INTO board (board_id,display_name,phase,fulfiller_group,owner,deputy,"
@@ -2825,7 +2846,7 @@ class TicketNumberingTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         self.at = datetime(2026, 9, 22, 10, 0)
 
     def tearDown(self) -> None:
@@ -2904,7 +2925,7 @@ class TicketNumberingTest(unittest.TestCase):
     def test_the_desk_reference_is_not_replaced_by_renumbering(self):
         """Imported history keeps its own id — renumbering breaks every
         reference anybody wrote down. external_ref already carries the source."""
-        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(ticket)")]
+        cols = [d[0] for d in self.conn.execute("SELECT * FROM ticket WHERE 1 = 0").description]
         self.assertIn("external_ref", cols)
 
 
@@ -2978,7 +2999,7 @@ class PhiAtIntakeTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         export = Path(self.tmp.name) / "desk.csv"
         export.write_text(self.EXPORT, encoding="utf-8")
         self.summary = tickets.import_tickets(
@@ -3019,7 +3040,7 @@ class PatientReferenceTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         self.conn.executescript(
             "INSERT OR REPLACE INTO board (board_id,display_name,phase,fulfiller_group,"
             " owner,deputy,is_live,restricted) VALUES"
@@ -3082,7 +3103,7 @@ class EmailIntakeTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         self.drop = Path(self.tmp.name) / "drop"
         self.drop.mkdir()
         self.at = datetime(2026, 9, 22, 9, 0)
@@ -3248,8 +3269,8 @@ class PortalTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.db_path = str(Path(self.tmp.name) / "spine.db")
-        conn = db.init(self.db_path)
+        self.db_path = str(_target(self.tmp))
+        conn = _fresh(self.tmp)
         conn.executescript(
             "INSERT OR REPLACE INTO board_status (board_status_id, board_id, name,"
             " escalation_status, customer_description) VALUES"
@@ -3444,8 +3465,8 @@ class MachineApiTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.db_path = str(Path(self.tmp.name) / "spine.db")
-        conn = db.init(self.db_path)
+        self.db_path = str(_target(self.tmp))
+        conn = _fresh(self.tmp)
         conn.execute(
             "INSERT OR REPLACE INTO board_status (board_status_id, board_id, name,"
             " escalation_status, is_closed) VALUES"
@@ -3663,6 +3684,7 @@ class MachineApiTest(unittest.TestCase):
             self.assertNotIn("345678901", r["detail"])
 
 
+@unittest.skipUnless(ON_SQLITE, "SQLite's file settings; SQL Server has its own")
 class DatabaseSettingsTest(unittest.TestCase):
     """How the store behaves with more than one person on the desk."""
 
@@ -3763,7 +3785,7 @@ class BoardSetupTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         self.at = datetime(2026, 9, 23, 9, 0)
 
     def tearDown(self) -> None:
@@ -3904,7 +3926,7 @@ class ManyBoardsTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         self.at = datetime(2026, 9, 23, 9, 0)
 
     def tearDown(self) -> None:
@@ -4034,7 +4056,7 @@ class BoardKindAndTypeTest(unittest.TestCase):
         from psaspine import itil
         self.itil = itil
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         self.at = datetime(2026, 9, 23, 9, 0)
         setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
         setup.create_board(self.conn, display_name="IT Change", board_id="IT_CHANGE",
@@ -4194,7 +4216,7 @@ class MailPolicyTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         self.at = datetime(2026, 9, 23, 9, 0)
         setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
         self.drop = Path(self.tmp.name) / "drop"
@@ -4287,7 +4309,7 @@ class WorkflowRunnerTest(unittest.TestCase):
         from psaspine import workflow
         self.wf = workflow
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         self.at = datetime(2026, 9, 23, 9, 0)
         setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
         workflow.ensure_vocabulary(self.conn)
@@ -4404,7 +4426,7 @@ class OutboxTest(unittest.TestCase):
         from psaspine import outbox
         self.outbox = outbox
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         self.conn.execute(
             "INSERT INTO contact (contact_id, entity_id, display_name, email, sam_account, source,"
             " inactive, created_at) VALUES ('CT-1','PMC','Dada','dada@pmcne.ph','dada','MANUAL',0,'2026')")
@@ -4467,7 +4489,7 @@ class TasksTemplatesTest(unittest.TestCase):
         from psaspine import tasks
         self.tasks = tasks
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         self.at = datetime(2026, 9, 23, 9, 0)
         setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
         self.tpl = tasks.save_template(
@@ -4565,8 +4587,8 @@ class AttachmentsTest(unittest.TestCase):
         from psaspine import attachments
         self.att = attachments
         self.tmp = tempfile.TemporaryDirectory()
-        self.db_path = Path(self.tmp.name) / "spine.db"
-        self.conn = db.init(self.db_path)
+        self.db_path = _target(self.tmp)
+        self.conn = _fresh(self.tmp)
         self.at = datetime(2026, 9, 23, 9, 0)
         setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
         self.wid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="Printer",
@@ -4692,9 +4714,10 @@ class AttachmentRetentionTest(unittest.TestCase):
         from psaspine import attachments
         self.att = attachments
         self.tmp = tempfile.TemporaryDirectory()
-        self.db_path = Path(self.tmp.name) / "spine.db"
-        self.store = Path(str(self.db_path) + ".attachments")
-        self.conn = db.init(self.db_path)
+        self.db_path = _target(self.tmp)
+        self.conn = _fresh(self.tmp)
+        self.store = (Path(os.environ["PSA_ATTACHMENT_DIR"]) if TEST_DB
+                      else Path(str(self.db_path) + ".attachments"))
         self.at = datetime(2026, 9, 23, 9, 0)
         setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
 
@@ -4884,8 +4907,8 @@ class DeskSpeedTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.db_path = Path(self.tmp.name) / "spine.db"
-        self.conn = db.init(self.db_path)
+        self.db_path = _target(self.tmp)
+        self.conn = _fresh(self.tmp)
         self.at = datetime(2026, 9, 23, 9, 0)
         setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
         self.conn.execute("INSERT OR REPLACE INTO board_member (board_id, member, access)"
@@ -5071,8 +5094,8 @@ class ChildTicketsTest(unittest.TestCase):
         from psaspine import family
         self.family = family
         self.tmp = tempfile.TemporaryDirectory()
-        self.db_path = Path(self.tmp.name) / "spine.db"
-        self.conn = db.init(self.db_path)
+        self.db_path = _target(self.tmp)
+        self.conn = _fresh(self.tmp)
         self.at = datetime(2026, 9, 25, 9, 0)
         for b in ("IT_HELP", "UNROUTED"):
             setup.apply_starter(self.conn, b, actor="t", at=self.at)
@@ -5293,8 +5316,8 @@ class ReportsTest(unittest.TestCase):
         from psaspine import metrics
         self.metrics = metrics
         self.tmp = tempfile.TemporaryDirectory()
-        self.db_path = Path(self.tmp.name) / "spine.db"
-        self.conn = db.init(self.db_path)
+        self.db_path = _target(self.tmp)
+        self.conn = _fresh(self.tmp)
         setup.apply_starter(self.conn, "IT_HELP", actor="t", at=datetime(2026, 7, 1))
         self.conn.execute("INSERT OR REPLACE INTO board_member (board_id, member, access)"
                           " VALUES ('IT_HELP', 'alice', 'ADMIN')")
@@ -5373,8 +5396,8 @@ class MergeScheduleSurveyTest(unittest.TestCase):
         from psaspine import family, schedule, survey
         self.family, self.schedule, self.survey = family, schedule, survey
         self.tmp = tempfile.TemporaryDirectory()
-        self.db_path = Path(self.tmp.name) / "spine.db"
-        self.conn = db.init(self.db_path)
+        self.db_path = _target(self.tmp)
+        self.conn = _fresh(self.tmp)
         self.at = datetime(2026, 9, 25, 9, 0)
         setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
         self.conn.execute("UPDATE board SET notify_requester = 1 WHERE board_id = 'IT_HELP'")
@@ -5703,7 +5726,7 @@ class RequesterMailTest(unittest.TestCase):
         from psaspine import outbox
         self.outbox = outbox
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         self.at = datetime(2026, 9, 23, 9, 0)
         setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
         self.conn.execute("UPDATE board SET notify_requester = 1 WHERE board_id = 'IT_HELP'")
@@ -5784,7 +5807,7 @@ class ContactsTest(unittest.TestCase):
         from psaspine import contacts
         self.contacts = contacts
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         self.at = datetime(2026, 9, 23, 9, 0)
         setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
 
@@ -5932,7 +5955,7 @@ class ConfigurationsTest(unittest.TestCase):
         from psaspine import configurations
         self.cmdb = configurations
         self.tmp = tempfile.TemporaryDirectory()
-        self.conn = db.init(Path(self.tmp.name) / "spine.db")
+        self.conn = _fresh(self.tmp)
         self.at = datetime(2026, 9, 23, 9, 0)
         setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
 
@@ -6135,6 +6158,87 @@ class MarkdownRenderTest(unittest.TestCase):
         html = self._render("A paragraph with <script> in it.")
         self.assertNotIn("<script>", html)
         self.assertIn("&lt;script&gt;", html)
+
+
+class SqlServerDialectTest(unittest.TestCase):
+    """The translator in psaspine/mssql.py, on both stores: it needs no server
+    to be asserted, and every decision it makes is one the SQL Server run of
+    this suite then proves against a real one."""
+
+    def setUp(self) -> None:
+        from psaspine import mssql
+        self.m = mssql
+
+    def t(self, sql):
+        return self.m.translate(sql).sql
+
+    def test_a_path_is_sqlite_and_a_connection_string_is_sql_server(self):
+        self.assertEqual(db.backend_of("spine.db"), "sqlite")
+        self.assertEqual(db.backend_of(Path("/tmp/x/spine.db")), "sqlite")
+        self.assertEqual(db.backend_of("Driver={ODBC Driver 18 for SQL Server};Server=h;Database=PMC_PSA"), "mssql")
+        self.assertEqual(db.backend_of("DSN=psa"), "mssql")
+
+    def test_limit_becomes_offset_fetch_and_needs_an_order_by(self):
+        self.assertEqual(self.t("SELECT 1 FROM ticket WHERE parent_id = ? LIMIT 1"),
+                         "SELECT 1 FROM ticket WHERE parent_id = ?  ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 1 ROWS ONLY")
+        self.assertEqual(self.t("SELECT a FROM t ORDER BY a LIMIT 5"),
+                         "SELECT a FROM t ORDER BY a  OFFSET 0 ROWS FETCH NEXT 5 ROWS ONLY")
+        inner = self.t("SELECT * FROM t WHERE EXISTS (SELECT 1 FROM u WHERE u.x = t.x LIMIT 1) AND y = ?")
+        self.assertIn("(SELECT 1 FROM u WHERE u.x = t.x  ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 1 ROWS ONLY) AND y = ?", inner)
+
+    def test_a_moved_placeholder_moves_its_parameter(self):
+        plan = self.m.translate("SELECT a FROM t WHERE x = ? ORDER BY a LIMIT ? OFFSET ?")
+        self.assertEqual(plan.sql, "SELECT a FROM t WHERE x = ? ORDER BY a  OFFSET ? ROWS FETCH NEXT ? ROWS ONLY")
+        self.assertEqual(plan.param_map, [0, 2, 1])
+        self.assertIsNone(self.m.translate("SELECT a FROM t WHERE x = ? LIMIT ?").param_map)
+
+    def test_conflict_clauses_are_read_and_removed(self):
+        plan = self.m.translate("INSERT OR IGNORE INTO ticket_link (work_item_id, linked_id) VALUES (?,?)")
+        self.assertEqual((plan.verb, plan.conflict, plan.table), ("INSERT", "IGNORE", "ticket_link"))
+        self.assertEqual(plan.columns, ("work_item_id", "linked_id"))
+        self.assertNotIn("OR", plan.sql.split("INTO")[0])
+        plan = self.m.translate("INSERT OR REPLACE INTO entity (entity_id, name, is_covered, note) VALUES (?,?,1,?)")
+        self.assertEqual((plan.conflict, plan.values), ("REPLACE", ("?", "?", "1", "?")))
+        with self.assertRaises(self.m.Refused):
+            self.m.translate("INSERT OR IGNORE INTO t (a) SELECT a FROM u")
+
+    def test_functions_operators_and_predicates_in_aggregates(self):
+        self.assertEqual(self.t("SELECT substr(opened_at, 1, 7), length(x), ifnull(a, b) FROM t"),
+                         "SELECT SUBSTRING(opened_at, 1, 7), LEN(x), ISNULL(a, b) FROM t")
+        self.assertEqual(self.t("SELECT 'copied from ' || board_id FROM t"), "SELECT 'copied from ' + board_id FROM t")
+        self.assertEqual(self.t("SELECT SUM(a.purged_at IS NOT NULL) AS purged, SUM(a.size) FROM a"),
+                         "SELECT SUM(CASE WHEN a.purged_at IS NOT NULL THEN 1 ELSE 0 END) AS purged, SUM(a.size) FROM a")
+        self.assertEqual(self.t("SELECT w.name COLLATE NOCASE FROM w"), "SELECT w.name COLLATE Latin1_General_CI_AS FROM w")
+        self.assertEqual(self.t("SELECT CAST(x AS INTEGER), CAST(y AS REAL) FROM t"), "SELECT CAST(x AS INT), CAST(y AS FLOAT) FROM t")
+        # a string literal is never touched
+        self.assertEqual(self.t("SELECT 'substr(a || b) LIMIT 1' FROM t"), "SELECT 'substr(a || b) LIMIT 1' FROM t")
+
+    def test_what_has_no_decision_is_refused_by_name(self):
+        for sql in ("PRAGMA foreign_keys", "SELECT strftime('%Y', x) FROM t", "SELECT 1 FROM sqlite_master",
+                    "SELECT random()", "SELECT * FROM t WHERE a IS ?"):
+            with self.assertRaises(self.m.Refused, msg=sql):
+                self.m.translate(sql)
+
+    def test_a_row_answers_like_sqlite_row(self):
+        import decimal
+        cur = type("C", (), {"description": (("Name", str), ("n", int), ("hours", decimal.Decimal)), "fetchone": lambda s: None})()
+        c = self.m.Cursor(cur, -1, None)
+        row = c._wrap(("x", 3, decimal.Decimal("0.25")))
+        self.assertEqual((row["name"], row["NAME"], row[0], row["n"], row["hours"]), ("x", "x", "x", 3, 0.25))
+        self.assertIsInstance(row["hours"], float)
+        self.assertEqual(dict(row), {"name": "x", "n": 3, "hours": 0.25})
+        self.assertEqual(tuple(row), ("x", 3, 0.25))
+        with self.assertRaises(IndexError):
+            row["missing"]
+
+    def test_like_patterns_escape_the_bracket_sql_server_reads_as_a_class(self):
+        from psaspine.web.views import board as board_view, search as search_view
+        for like in (board_view._like, search_view._like):
+            self.assertEqual(like("a[b]%_\\"), "%a\\[b]\\%\\_\\\\%")
+
+    def test_backup_refuses_a_sql_server_target(self):
+        with self.assertRaises(ValueError):
+            db.backup("Driver={x};Server=h;Database=PMC_PSA", "/tmp/nowhere.bak")
 
 
 if __name__ == "__main__":

@@ -1,17 +1,21 @@
 """Open, create and seed the spine database.
 
-SQLite by design for Phase 1: no server, no provisioning, no procurement, and
-one database that can be escrowed to the client's own storage nightly -- through
-SQLite's backup API, not a file copy, because the database runs in WAL mode (see
-create()). The Azure SQL
-lift is a later gate; the schema is kept to constructs SQL Server also accepts
-but that path is NOT VERIFIED.
+Two stores, one code. SQLite is the pilot's: no server, no provisioning, one
+file escrowed nightly through SQLite's backup API (not a copy, because the
+database runs in WAL mode; see create()). SQL Server is D7's (25 Sep 2026): the
+desk on the instance PMC already runs, in a database of its own, opened with an
+ODBC connection string in place of a path. Which one is in use is decided by
+the shape of the target string and by nothing else; every module above this
+one speaks sqlite3's dialect and surface, and psaspine/mssql.py makes SQL Server
+answer to both.
 """
 from __future__ import annotations
 
 import csv
 import sqlite3
 from pathlib import Path
+
+from . import mssql
 
 ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_DIR = ROOT / "schema"
@@ -24,33 +28,54 @@ SEED_DIR = ROOT / "seed"
 BUSY_TIMEOUT_SECONDS = 5.0
 
 
-def connect(path: str | Path) -> sqlite3.Connection:
-    """One connection. Foreign keys are off by default in SQLite and the setting
-    is per connection, so it is set on every one; so is the busy timeout.
+def backend_of(target) -> str:
+    """'mssql' for an ODBC connection string, 'sqlite' for a path."""
+    return "mssql" if mssql.is_connection_string(target) else "sqlite"
+
+
+def connect(path: str | Path):
+    """One connection to whichever store the target names.
+
+    SQLite: foreign keys are off by default and the setting is per connection,
+    so it is set on every one; so is the busy timeout.
 
     `synchronous` is deliberately left at SQLite's default (FULL). NORMAL is
     faster and can lose the last committed transaction on a power cut -- a
     trade to make only once the host is known to be on a UPS, and not one to
     make quietly on a clinical desk. (sqlite.org/pragma.html#pragma_synchronous)
     """
+    if backend_of(path) == "mssql":
+        return mssql.connect(str(path))
     conn = sqlite3.connect(str(path), timeout=BUSY_TIMEOUT_SECONDS)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
-def close(conn: sqlite3.Connection) -> None:
+def backend(conn) -> str:
+    return getattr(conn, "backend", "sqlite")
+
+
+def close(conn) -> None:
     """Close, letting SQLite refresh its query-planner statistics first.
 
     sqlite.org recommends `PRAGMA optimize` when a short-lived connection
     closes, which is exactly how the web tier uses them (one per request). It
     is cheap when there is nothing to do.
     """
-    try:
-        conn.execute("PRAGMA optimize")
-    except sqlite3.Error:
-        pass
+    if backend(conn) == "sqlite":
+        try:
+            conn.execute("PRAGMA optimize")
+        except sqlite3.Error:
+            pass
     conn.close()
+
+
+def table_exists(conn, name: str) -> bool:
+    if backend(conn) == "mssql":
+        return mssql.table_exists(conn, name)
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                        (name,)).fetchone() is not None
 
 
 # The tables whose row counts must match between the live database and an escrow
@@ -78,6 +103,10 @@ def backup(src_path: str | Path, dest_path: str | Path) -> dict:
     """
     import hashlib
 
+    if backend_of(src_path) == "mssql":
+        raise ValueError("a SQL Server desk is backed up by SQL Server: BACKUP DATABASE on the "
+                         "instance, on the schedule the handoff sets; this command is for the "
+                         "SQLite file")
     src = Path(src_path)
     dest = Path(dest_path)
     if not src.is_file():
@@ -122,12 +151,15 @@ def create(conn: sqlite3.Connection) -> None:
     must use SQLite's backup API (`Connection.backup`) or checkpoint first -- a
     plain copy of the .db file alone can drop the latest commits.**
 
-    schema/*.sql is the one schema, and the SQL Server port is generated from it.
-    schema/local/ is applied here too but is NOT part of that port: it holds the
-    break-glass credential table, which belongs on the local pilot database and
-    nowhere near the commercial spine on DND-SQL01. The glob is non-recursive on
-    purpose so the translator and this loader see the same files.
+    schema/*.sql is the one schema, and the SQL Server port is generated from it;
+    schema/local/ (the credential tables) is in both since D7 put the desk on
+    SQL Server. On SQL Server this applies the generated port, every object of
+    which is guarded, so on a database that already has the schema it changes
+    nothing.
     """
+    if backend(conn) == "mssql":
+        mssql.apply_port(conn)
+        return
     conn.execute("PRAGMA journal_mode = WAL")
     for sql_file in sorted(SCHEMA_DIR.glob("*.sql")):
         conn.executescript(sql_file.read_text(encoding="utf-8"))
@@ -297,9 +329,20 @@ def seed_sample(conn: sqlite3.Connection) -> None:
         )
 
 
-def init(path: str | Path) -> sqlite3.Connection:
+def init(path: str | Path, *, reset: bool = False):
+    """Create the schema where it is missing and seed the reference rows.
+
+    `reset` empties a SQL Server database first so a test starts from nothing;
+    it is refused for SQLite, whose tests get a fresh file, and refused by the
+    CLI, which never passes it."""
     conn = connect(path)
-    create(conn)
+    if reset:
+        if backend(conn) != "mssql":
+            raise ValueError("reset is for a SQL Server test database only")
+        create(conn)
+        mssql.wipe(conn)
+    else:
+        create(conn)
     seed(conn)
     return conn
 

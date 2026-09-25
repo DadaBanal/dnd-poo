@@ -54,6 +54,10 @@
     "PATIENT_REF": {
       "sql": "NVARCHAR(64)",
       "why": "A record number pointing at the system that is actually the record of care, and nothing else -- no name, no date of birth, no diagnosis (013, and §6.1). Deliberately narrower than REF: the width is part of the control, because a column that cannot hold a paragraph cannot quietly become a second copy of the chart."
+    },
+    "DIGEST": {
+      "sql": "NVARCHAR(256)",
+      "why": "A salted scrypt digest in the shape 'scrypt$N$r$p$salt_hex$hash_hex': about 150 characters as psaspine writes it today. Never a password."
     }
   },
   "decimals": {
@@ -583,6 +587,18 @@
     "survey_response.work_item_id": "ID",
     "survey_response.comment": "FREE",
     "survey_response.answered_by": "PERSON",
-    "survey_response.answered_at": "TIMESTAMP_TEXT"
+    "survey_response.answered_at": "TIMESTAMP_TEXT",
+    "local_account.username": "PERSON",
+    "local_account.scrypt_hash": "DIGEST",
+    "local_account.created_at": "TIMESTAMP_TEXT",
+    "local_account.created_by": "PERSON",
+    "local_account.last_login_at": "TIMESTAMP_TEXT",
+    "api_token.token_id": "ID",
+    "api_token.token_sha256": "HASH",
+    "api_token.label": "NAME",
+    "api_token.board_id": "ID",
+    "api_token.created_at": "TIMESTAMP_TEXT",
+    "api_token.created_by": "PERSON",
+    "api_token.last_used_at": "TIMESTAMP_TEXT"
   }
 }

@@ -236,6 +236,9 @@ def store_dir(conn: sqlite3.Connection) -> Path:
     override = os.environ.get("PSA_ATTACHMENT_DIR")
     if override:
         return Path(override)
+    if getattr(conn, "backend", "sqlite") != "sqlite":
+        raise RuntimeError("a SQL Server desk keeps its files on a folder it is told about; "
+                           "set PSA_ATTACHMENT_DIR")
     main = next((r[2] for r in conn.execute("PRAGMA database_list") if r[1] == "main"), "")
     if not main:
         raise RuntimeError("an in-memory database has nowhere to keep files; "
@@ -357,7 +360,7 @@ def usage(conn: sqlite3.Connection) -> dict:
         "       SUM(a.review_status = 'PENDING' AND a.purged_at IS NULL) AS pending,"
         "       SUM(a.review_status = 'WITHHELD' AND a.purged_at IS NULL) AS withheld,"
         "       SUM(a.purged_at IS NOT NULL) AS purged"
-        "  FROM attachment a JOIN ticket t USING (work_item_id)"
+        "  FROM attachment a JOIN ticket t ON t.work_item_id = a.work_item_id"
         " GROUP BY month, t.board_id ORDER BY month, t.board_id")]
     totals = {k: sum(r[k] for r in rows) for k in ("files", "received", "stored", "pending",
                                                     "withheld", "purged")}
@@ -468,7 +471,7 @@ def purge(conn: sqlite3.Connection, *, at: datetime, withheld_days: int, closed_
         "SELECT a.attachment_id, a.work_item_id, a.sha256, a.filename, a.size_stored, t.board_id,"
         "       CASE WHEN a.review_status = 'WITHHELD' AND a.reviewed_at <= ? THEN 'WITHHELD'"
         "            ELSE 'CLOSED' END AS reason"
-        "  FROM attachment a JOIN ticket t USING (work_item_id)"
+        "  FROM attachment a JOIN ticket t ON t.work_item_id = a.work_item_id"
         " WHERE a.purged_at IS NULL"
         "   AND ((a.review_status = 'WITHHELD' AND a.reviewed_at <= ?)"
         "        OR (t.closed_at IS NOT NULL AND t.closed_at <= ?))"

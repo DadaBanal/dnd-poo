@@ -39,7 +39,20 @@ python3 tests/smoke.py               # end to end: imports, reports, intake, bac
 
 Python 3.11+, standard library only. No packages and no network; the Phase B
 desk adds an optional server, and it too is standard library (`wsgiref`) — see
-below.
+below. The one exception is deliberate and opt-in: a desk on **SQL Server**
+(D7, below) needs `pyodbc` and Microsoft's ODBC Driver for SQL Server, imported
+only when the database argument is a connection string instead of a path.
+
+Every command that takes a `database` takes either shape:
+
+```bash
+python3 -m psaspine serve spine.db                                   # SQLite, a file
+python3 -m psaspine serve "Driver={ODBC Driver 18 for SQL Server};Server=DND-SQL01\PMC_SS;Database=PMC_PSA;Trusted_Connection=yes;Encrypt=yes;TrustServerCertificate=yes"
+```
+
+A connection string with `Trusted_Connection=yes` holds no secret — the task
+account's Windows identity is the credential — so it may sit in a scheduled
+task's arguments. One with a password may not sit anywhere in this repository.
 
 `import-tickets` reads an **export file**. There is no API client in this
 repository and nowhere to put a key: the TeamsWork keys were exposed in a
@@ -478,10 +491,61 @@ exact-match filter on `variation` drops it, and that row is an entire covered
 entity. `normalise_basis()` exists to make that mistake impossible rather than
 something to be remembered, and a test asserts it.
 
+## On SQL Server (D7, 25 Sep 2026)
+
+The desk runs on the SQL Server instance PMC already has, `DND-SQL01\PMC_SS`, in
+a database of its own, **`PMC_PSA`**, schema `psa`. Not inside `PMC_SS`, the
+imaging index's database: a separate database has its own backup and restore, its
+own 10 GB Express cap, and a restore of one never rolls back the other. Same
+instance, same backup regime, same host: what the user asked for, with the two
+things that should never share a file kept apart. The decision and its
+reasoning are in `docs/WS36-decisions-d7-20260925.md`; the sitting that stands
+it up is `docs/handoffs/HANDOFF-cloud-sql01-WS36-20260925-sqlserver.md`.
+
+**One code, two stores.** Nothing above `psaspine/db.py` knows which store it is
+on. Every module writes the SQLite dialect the schema is written in and uses
+sqlite3's connection surface; `psaspine/mssql.py` opens a pyodbc connection that
+translates each statement on the way through and hands rows back in
+`sqlite3.Row`'s shape. The translator refuses what it has not decided, with the
+statement in the message. What it has decided:
+
+| SQLite | SQL Server | Note |
+|---|---|---|
+| `INSERT OR IGNORE … VALUES` | the INSERT; a duplicate-key error (2627/2601) is swallowed, `rowcount` 0 | `INSERT OR IGNORE … SELECT` is refused: write `WHERE NOT EXISTS`, which both run |
+| `INSERT OR REPLACE … VALUES` | `DELETE` on every unique key the new row collides with, then the INSERT | Keys read once from `sys.indexes` |
+| `LIMIT n [OFFSET m]` | `OFFSET m ROWS FETCH NEXT n ROWS ONLY`, with `ORDER BY (SELECT NULL)` when the query has no ORDER BY | Valid in a subquery too; a moved `?` moves its parameter |
+| `SUM(<predicate>)` | `SUM(CASE WHEN … THEN 1 ELSE 0 END)` | SQL Server has no boolean value to add |
+| `substr`, `length`, `ifnull`, `\|\|`, `COLLATE NOCASE`, `CAST(… AS INTEGER/REAL)` | `SUBSTRING`, `LEN`, `ISNULL`, `+`, `COLLATE Latin1_General_CI_AS`, `INT`/`FLOAT` | |
+| `lastrowid` | `SCOPE_IDENTITY()` fetched in the INSERT's own batch | |
+| `PRAGMA`, `sqlite_master`, `strftime` and the rest of SQLite's own functions | **refused** | `db.table_exists()` answers the one question the code asked `sqlite_master` |
+| `JOIN … USING (col)` | — | Rewritten as `ON` in the code: T-SQL has no USING |
+| `IntegrityError` | the same class: a unique key, CHECK, foreign key or gate trigger (`THROW 5000n`) raises `sqlite3.IntegrityError` from this backend too | No caller has to know which store it is on |
+
+Three things a SQL Server desk must be told, because a file told the SQLite one:
+`PSA_ATTACHMENT_DIR` (the attachment folder; there is no `<db>.attachments`
+beside a connection string), backups are SQL Server's own `BACKUP DATABASE`
+(`psaspine backup` refuses with that sentence), and the login's **default schema
+must be `psa`** (`connect` refuses otherwise, naming the ALTER USER that fixes
+it). `LIKE` patterns escape `[` as well as `%` and `_`, since SQL Server reads
+`[` as a character class.
+
+**How it is proven.** The whole suite runs against a real SQL Server:
+
+```bash
+PSA_TEST_DB="Driver={ODBC Driver 18 for SQL Server};Server=127.0.0.1,1433;Database=PMC_PSA;UID=…;PWD=…;TrustServerCertificate=yes" \
+    python3 tests/test_spine.py
+```
+
+Each test empties the database and reseeds it (`db.init(…, reset=True)`, a
+test-only path) and the same assertions run unchanged. MEASURED on SQL Server
+2022 Express (16.0) in a container on 25 Sep 2026: see the count at the foot of
+the D7 record. NOT VERIFIED on `DND-SQL01` itself, which no session here can
+reach; the handoff's step 6 is that run.
+
 ## The SQL Server port
 
-`schema/*.sql` is the one schema. The copy that runs on `DND-SQL01\PMC_SS` is
-**generated** from it:
+`schema/*.sql` (and `schema/local/`, since D7) is the one schema. The copy that
+runs on SQL Server is **generated** from it:
 
 ```bash
 python3 tools/sqlite_to_tsql.py --write     # regenerate sqlserver/
@@ -500,19 +564,28 @@ unknown function inside a CHECK, or a width narrower than the CHECK beside it.
 
 | Construct | Port | Why |
 |---|---|---|
-| `INTEGER PRIMARY KEY` | `INT IDENTITY(1,1)` | It is a rowid alias, not an integer column |
+| `INTEGER PRIMARY KEY` | `INT IDENTITY(1,1)` — unless a CHECK pins the key, when it is a plain `INT` | It is a rowid alias, not an integer column; `ticket_numbering.id = 1` is a chosen value |
 | `TEXT` | `NVARCHAR(n)`, `MAX` only for notes and details | The register's free-text cells run to thousands of characters; a name is not a note |
 | `REAL` | `DECIMAL` | These numbers reach an invoice |
 | dates | `NVARCHAR` **plus** a parsed computed column | `'20260904'` and `'2026-09-09'` both appear, and which shape the source used is itself evidence |
+| `(P) = (Q)` in a CHECK | `((P AND Q) OR (NOT P AND NOT Q))` | SQL Server has no boolean value to compare |
 | `RAISE(ABORT, …)` | `THROW` in an AFTER trigger that rolls back | SQL Server has no BEFORE trigger. The write is still refused; the blast radius is larger, and the generated file says so |
 
 `sqlserver/PMC_PSA_Spine_SqlServer.sql` previews by default (`@Apply = 0`),
-refuses to run twice over existing objects, verifies its own object counts inside
-the transaction before committing, and carries its rollback in the footer.
+refuses any database but `@Database` (`PMC_PSA`), refuses to run twice over
+existing objects unless `@AllowExisting = 1`, verifies its own object counts
+inside the transaction before committing, and carries its rollback in the
+footer. `psaspine init <connection string>` runs the same file with both
+switches on, so on a database that already has the schema it changes nothing.
 
-**NOT VERIFIED.** It has never been executed. No environment on this account has
-a network route to `DND-SQL01`, so it is written to be handed to somebody who
-has one. Run it with `@Apply = 0` first and read the plan.
+**VERIFIED on SQL Server 2022 Express (16.0) in a container, 25 Sep 2026**: it
+applies, its gate passes, both refusals refuse, and the four triggers fire. The
+first run found three things the generator had never been able to learn without
+a server, each fixed in the translator: T-SQL nests block comments (the header's
+own `schema/*.sql` left the file unterminated), a CHECK cannot compare two
+predicates, and an IDENTITY key refuses the one value a CHECK allows.
+**NOT VERIFIED on `DND-SQL01`**, which no environment on this account can reach;
+the handoff runs it with `@Apply = 0` first and reads the plan.
 
 ## Design notes
 

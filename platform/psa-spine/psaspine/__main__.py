@@ -20,21 +20,25 @@ def _mb(n: int) -> str:
     return f"{n / 1024:.0f} KB" if n >= 1024 else f"{n} B"
 
 
+DB_HELP = ("the SQLite file, or an ODBC connection string for the SQL Server desk "
+           "(Driver=…;Server=…;Database=PMC_PSA;Trusted_Connection=yes;…)")
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="psaspine", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pi = sub.add_parser("init", help="create and seed a spine database")
-    pi.add_argument("database")
+    pi.add_argument("database", help=DB_HELP)
 
     pm = sub.add_parser("import", help="import the workstream register CSV")
-    pm.add_argument("database")
+    pm.add_argument("database", help=DB_HELP)
     pm.add_argument("register_csv")
     pm.add_argument("--run-id", default="run-1")
     pm.add_argument("--as-of")
 
     pt = sub.add_parser("import-tickets", help="import a desk export CSV")
-    pt.add_argument("database")
+    pt.add_argument("database", help=DB_HELP)
     pt.add_argument("export_csv")
     pt.add_argument("--run-id", default="desk-1")
     pt.add_argument("--as-of")
@@ -42,7 +46,7 @@ def main(argv: list[str] | None = None) -> int:
     pmail = sub.add_parser("import-mail",
                            help="import a drop of RFC 822 files as tickets "
                                 "(idempotent; a re-run makes no second ticket)")
-    pmail.add_argument("database")
+    pmail.add_argument("database", help=DB_HELP)
     pmail.add_argument("drop_dir")
     pmail.add_argument("--run-id", default="mail-1")
     pmail.add_argument("--channel", default="helpdesk",
@@ -57,10 +61,10 @@ def main(argv: list[str] | None = None) -> int:
 
     pw = sub.add_parser("walkthrough",
                         help="run the board engine end to end and narrate it")
-    pw.add_argument("database")
+    pw.add_argument("database", help=DB_HELP)
 
     ps = sub.add_parser("serve", help="run the Phase B fulfiller desk (pilot, LAN only)")
-    ps.add_argument("database")
+    ps.add_argument("database", help=DB_HELP)
     ps.add_argument("--host", default="127.0.0.1",
                     help="interface to bind; refuses 0.0.0.0 (default 127.0.0.1)")
     ps.add_argument("--port", type=int, default=8080)
@@ -68,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     pc = sub.add_parser("create-local-account",
                         help="create a sealed break-glass account (password read from a "
                              "no-echo prompt, never an argument)")
-    pc.add_argument("database")
+    pc.add_argument("database", help=DB_HELP)
     pc.add_argument("--username", required=True)
     pc.add_argument("--sysadmin", action="store_true",
                     help="grant cross-board admin; off by default")
@@ -76,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
     pk = sub.add_parser("create-api-token",
                         help="mint a machine API token for one board; printed ONCE, "
                              "stored only as a sha256")
-    pk.add_argument("database")
+    pk.add_argument("database", help=DB_HELP)
     pk.add_argument("--label", required=True,
                     help="what it is for, in words: 'orthanc monitoring'")
     pk.add_argument("--board", required=True, dest="board_id",
@@ -85,13 +89,13 @@ def main(argv: list[str] | None = None) -> int:
     pb = sub.add_parser("backup",
                         help="escrow copy via SQLite's backup API (safe under WAL); "
                              "refuses to overwrite, proves the copy")
-    pb.add_argument("database")
+    pb.add_argument("database", help=DB_HELP)
     pb.add_argument("destination")
 
     pac = sub.add_parser("import-contacts",
                          help="upsert contacts under one company from an AD export "
                               "(scripts/Export-PmcAdContacts.ps1)")
-    pac.add_argument("database")
+    pac.add_argument("database", help=DB_HELP)
     pac.add_argument("export_csv")
     pac.add_argument("--company", required=True, dest="entity_id",
                      help="the company these people belong to, e.g. PMC")
@@ -99,19 +103,19 @@ def main(argv: list[str] | None = None) -> int:
     pcf = sub.add_parser("import-computers",
                          help="upsert configurations under one company from an AD "
                               "computers export (scripts/Export-PmcAdComputers.ps1)")
-    pcf.add_argument("database")
+    pcf.add_argument("database", help=DB_HELP)
     pcf.add_argument("export_csv")
     pcf.add_argument("--company", required=True, dest="entity_id")
 
     prr = sub.add_parser("run-rules",
                          help="run time-based workflow events (ON_SCHEDULE, ON_SLA_THRESHOLD) "
                               "over every open ticket; the server runs this every minute")
-    prr.add_argument("database")
+    prr.add_argument("database", help=DB_HELP)
 
     pob = sub.add_parser("outbox-pending",
                          help="print due notifications as JSON for the Graph sender; "
                               "unresolvable or out-of-domain recipients are marked NO_SENDER")
-    pob.add_argument("database")
+    pob.add_argument("database", help=DB_HELP)
     pob.add_argument("--allowed-domain", action="append", required=True,
                      help="only addresses in this domain are released (repeatable)")
     pob.add_argument("--dry-run", action="store_true", help="change nothing (the sender's preview)")
@@ -119,23 +123,23 @@ def main(argv: list[str] | None = None) -> int:
                      help="https:// address of the requester portal for the link in requester "
                           "emails (else PSA_PORTAL_URL; never committed)")
     pom = sub.add_parser("outbox-mark", help="record what the sender did with one notification")
-    pom.add_argument("database")
+    pom.add_argument("database", help=DB_HELP)
     pom.add_argument("--id", type=int, required=True)
     pom.add_argument("--status", choices=("SENT", "FAILED"), required=True)
 
     pau = sub.add_parser("attachments-usage",
                          help="what the attachment store holds, by month and board, and on disk")
-    pau.add_argument("database")
+    pau.add_argument("database", help=DB_HELP)
     pav = sub.add_parser("attachments-verify",
                          help="is the store whole: every live row has its file, every file a row")
-    pav.add_argument("database")
+    pav.add_argument("database", help=DB_HELP)
     pav.add_argument("--hashes", action="store_true",
                      help="also read every live file and check it against its name (slow)")
     pav.add_argument("--mark-missing", action="store_true",
                      help="record rows whose file is gone as removed (reason MISSING), audited")
     pap = sub.add_parser("attachments-purge",
                          help="remove files under the retention rule; PREVIEW unless --apply")
-    pap.add_argument("database")
+    pap.add_argument("database", help=DB_HELP)
     pap.add_argument("--withheld-days", type=int, required=True,
                      help="remove a withheld file this many days after its review")
     pap.add_argument("--closed-days", type=int, required=True,
@@ -146,11 +150,11 @@ def main(argv: list[str] | None = None) -> int:
     pu = sub.add_parser("setup-board",
                         help="give a board the starter statuses, calendar and SLA "
                              "targets (adds what is missing, never overwrites)")
-    pu.add_argument("database")
+    pu.add_argument("database", help=DB_HELP)
     pu.add_argument("--board", required=True, dest="board_id")
 
     pr = sub.add_parser("report", help="write Annex B, dependency notices and the exception report")
-    pr.add_argument("database")
+    pr.add_argument("database", help=DB_HELP)
     pr.add_argument("--out", required=True)
     pr.add_argument("--as-of")
     pr.add_argument("--run-id", default="run-1")
@@ -180,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if a.cmd == "init":
         db.init(a.database).close()
-        print(f"created {a.database}")
+        print(("ready: " if db.backend_of(a.database) == "mssql" else "created ") + a.database)
         return 0
 
     conn = db.connect(a.database)
