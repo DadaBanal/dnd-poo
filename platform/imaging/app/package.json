@@ -6,7 +6,8 @@
   "scripts": {
     "check": "tsc --noEmit",
     "build": "vite build",
-    "start": "node src/server/main.ts"
+    "start": "node src/server/main.ts",
+    "build:demo": "vite build --mode demo"
   },
   "dependencies": {
     "@hono/node-server": "2.1.1",

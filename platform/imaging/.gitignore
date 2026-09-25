@@ -4,3 +4,4 @@ secrets/
 .test-secrets/
 # Written by the test run (ci/run.sh).
 .results/
+dist-demo/

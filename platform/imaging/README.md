@@ -58,6 +58,9 @@ modality ─ DICOM 4242 ─────────────────▶  
   motion that explains (M5.3, see [The reading list](#the-reading-list));
   the reading room holds the list and the viewer together, with the next
   study already loaded (M5.4, see [The reading room](#the-reading-room)).
+- **The clickable sample:** see
+  [The clickable sample](#the-clickable-sample) below. The app as built,
+  on invented studies, in a folder of files anyone can open.
 - **M5.5, every machine PMC has:** see
   [Every machine PMC has](#every-machine-pmc-has) below. One filter for each
   kind of study PMC's machines make, a synthetic study of each kind sent by
@@ -137,6 +140,38 @@ What M5.5 changed for these:
   (ICT, with each vendor where a licence or a capture box is needed), and
   the feed watch's groups extended from the five the tests use to every
   machine (M4).
+
+## The clickable sample
+
+Dada asked for samples. The screenshots are on the preview page; this is the
+page itself. `npm run build:demo` in `app/` builds the front door app as it
+is, on invented studies, into `app/dist-demo/`: a folder of files that runs
+from anywhere a browser can open it and reaches no server. It is published
+as an artifact (https://claude.ai/artifact/GDC33NJpDmZ9gUMh2t2g7m) and linked from the preview page.
+
+- **What is real:** the app's own code, unchanged (`src/web/app.tsx`, which
+  `main.tsx` mounts on the platform and `demo.tsx` mounts here): the list,
+  every filter, the search, the keyboard, the preview with its series and
+  the patient's earlier studies, claims and read marks with the server's
+  rules (a study someone else holds cannot be taken), the live feed (a new
+  study arrives every 45 seconds, first with a few images, then whole),
+  light and dark, the phone layout, and the reading room with its two
+  frames and `J`/`K`.
+- **What stands in:** the front door and the engine. `demo/mock.ts` answers
+  the app's API in the page, from `demo/data.ts` (110 invented studies over
+  the last thirty days, on every kind of machine PMC has, forty invented
+  patients named SAMPLE, Patient NN; a seeded generator, so the same every
+  visit), with the same rules the server applies. In place of the sign-in, a
+  page asks which role you are. The pictures on the rows and in the preview
+  are the engine's own renders of the tests' synthetic studies
+  (`sample/`), and the viewer is a picture of the real viewer on a synthetic
+  study of the same kind (`demo-viewer.html`), because the real one needs
+  the engine.
+- **How it is kept honest:** the app is built once for both; the image
+  build runs the sample's build too, so a change that breaks it fails the
+  build. The sample says what it is on every page (the pill at the bottom
+  left, the note under each viewer picture), and its patients cannot be
+  mistaken for people.
 
 ## Sign-in
 

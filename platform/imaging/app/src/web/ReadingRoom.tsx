@@ -5,12 +5,13 @@
 //
 // The viewer is OHIF in an iframe of this same origin, so the front door's
 // session and rules apply unchanged, and this page can hear its keys.
-import { useNavigate, useSearch } from '@tanstack/react-router';
+import { Link as RouteLink, useNavigate, useSearch } from '@tanstack/react-router';
 import { ArrowLeft, ChevronDown, ChevronUp, Search, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Input, Link, SearchField, ToggleButton, type Key, type Selection } from 'react-aria-components';
-import type { RoomSearch, Study } from '../shared/api.ts';
+import type { RoomSearch, Study, WorklistSearch } from '../shared/api.ts';
 import { SignedOut, markOpened } from './api.ts';
+import { viewerFrameUrl } from './links.ts';
 import { personName, studyMoment, when } from './format.ts';
 import { listParams, useMe, useReadingActions, useStudies } from './reading.ts';
 import { readingState } from './StudyPane.tsx';
@@ -19,7 +20,6 @@ import { Notice, ROW, StudyTable, chip, stepRow } from './StudyTable.tsx';
 type Slot = 'a' | 'b';
 interface Stage { a: string | null; b: string | null; front: Slot }
 const other = (s: Slot): Slot => (s === 'a' ? 'b' : 'a');
-const viewerSrc = (uid: string) => `/viewer?StudyInstanceUIDs=${encodeURIComponent(uid)}`;
 
 export function ReadingRoom() {
   const search = useSearch({ from: '/read' });
@@ -157,16 +157,18 @@ export function ReadingRoom() {
   const moment = current ? studyMoment(current.studyDate, current.studyTime) : undefined;
   const filterClass = 'rounded-full border border-line-2 bg-surface px-2.5 py-[3px] font-display text-[12px] font-bold text-ink-2 outline-none data-[focus-visible]:outline-2 data-[focus-visible]:outline-offset-2 data-[focus-visible]:outline-[var(--focus)] data-[selected]:border-accent data-[selected]:bg-accent data-[selected]:text-on-accent';
   const tool = 'inline-flex items-center gap-1 rounded-lg border border-line-2 bg-surface px-2.5 py-1 text-[13px] font-semibold text-ink outline-none hover:bg-surface-2 data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)] data-[disabled]:opacity-40';
-  const listHref = `/pmc/?${new URLSearchParams(Object.fromEntries(Object.entries(search).filter(([k, v]) => k !== 'study' && v !== undefined).map(([k, v]) => [k, String(v)])))}`;
+  // Back to the list with the same filters (a router link: no page load).
+  const { study: _study, ...listSearch } = search;
+  void _study;
 
   return (
     <section aria-label="Reading room" className="room flex min-h-0 flex-1">
       <aside className="rail enter flex min-h-0 w-[340px] shrink-0 flex-col border-r border-line bg-surface">
         <div className="flex flex-col gap-2 border-b border-line px-3 py-2.5">
           <div className="flex items-center gap-2">
-            <Link href={listHref} className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[13px] font-semibold text-accent-ink no-underline outline-none hover:bg-accent-soft data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)]">
+            <RouteLink to="/" search={listSearch as WorklistSearch} className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[13px] font-semibold text-accent-ink no-underline outline-none hover:bg-accent-soft focus-visible:outline-2 focus-visible:outline-[var(--focus)]">
               <ArrowLeft aria-hidden size={14} /> List
-            </Link>
+            </RouteLink>
             <span className="eyebrow ml-auto">Reading room</span>
           </div>
           <SearchField
@@ -270,7 +272,7 @@ export function ReadingRoom() {
                   title={front ? 'The images' : 'The next study, loading'}
                   data-front={front}
                   data-study={uid ?? ''}
-                  src={uid ? viewerSrc(uid) : 'about:blank'}
+                  src={uid ? viewerFrameUrl(uid) : 'about:blank'}
                   onLoad={() => onFrameLoad(slot)}
                   className={`stage-frame absolute inset-0 h-full w-full border-0 ${front ? '' : 'stage-back'}`}
                   aria-hidden={!front}

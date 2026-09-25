@@ -18,7 +18,9 @@ RUN --mount=type=secret,id=build-ca \
     npm ci --ignore-scripts --no-audit --no-fund
 COPY tsconfig.json vite.config.ts ./
 COPY src ./src
-RUN npx tsc --noEmit && npx vite build && npm prune --omit=dev --ignore-scripts
+# The clickable sample (dist-demo/) is built too, so it is proven to build;
+# it is not part of the image that runs.
+RUN npx tsc --noEmit && npx vite build && npx vite build --mode demo && npm prune --omit=dev --ignore-scripts
 
 # ---- run: the server, its three runtime packages and the built page ---------------
 FROM ${PMC_LIBRARY}/node:24.21.0-trixie-slim@sha256:8ec5d7557396cfe32d21c3f9c13072355ceab22b584578ca4bb28af31120cffe

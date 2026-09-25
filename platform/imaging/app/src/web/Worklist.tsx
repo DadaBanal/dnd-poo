@@ -3,13 +3,13 @@
 // viewer, in one named window that stays on the second screen. A selected
 // study is previewed beside the list; the reading room (ReadingRoom.tsx)
 // holds the list and the viewer together on one screen.
-import { useNavigate, useSearch } from '@tanstack/react-router';
+import { Link as RouteLink, useNavigate, useSearch } from '@tanstack/react-router';
 import { BookOpen, RotateCcw, Rows3, Rows4, Search, X } from 'lucide-react';
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Button, Input, Link, SearchField, ToggleButton, ToggleButtonGroup, type Key, type Selection, type SortDescriptor,
+  Button, Input, SearchField, ToggleButton, ToggleButtonGroup, type Key, type Selection, type SortDescriptor,
 } from 'react-aria-components';
-import { GROUP_KEYS, MODALITY_GROUPS, modalityGroups, type ModalityGroup, type WorklistSearch } from '../shared/api.ts';
+import { GROUP_KEYS, MODALITY_GROUPS, modalityGroups, type ModalityGroup, type RoomSearch, type WorklistSearch } from '../shared/api.ts';
 import { SignedOut } from './api.ts';
 import { openViewer } from './links.ts';
 import { listParams, useMe, useReadingActions, useStudies } from './reading.ts';
@@ -28,14 +28,6 @@ function useSettled<T>(value: T, ms: number): T {
     return () => clearTimeout(t);
   }, [value, ms]);
   return settled;
-}
-
-// The room's address for these filters and this study.
-export function roomSearch(search: WorklistSearch, studyUid?: string) {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(search)) if (v !== undefined && v !== '') out[k] = String(v);
-  if (studyUid) out.study = studyUid;
-  return out;
 }
 
 export function Worklist() {
@@ -129,7 +121,9 @@ export function Worklist() {
   const signedOut = studies.error instanceof SignedOut || me.error instanceof SignedOut;
   const chipClass = 'rounded-full border border-line-2 bg-surface px-2.5 py-[3px] font-display text-[12px] font-bold text-ink-2 outline-none data-[focus-visible]:outline-2 data-[focus-visible]:outline-offset-2 data-[focus-visible]:outline-[var(--focus)] data-[selected]:border-ink data-[selected]:bg-ink data-[selected]:text-bg';
   const filterClass = 'rounded-full border border-line-2 bg-surface px-2.5 py-[3px] font-display text-[12px] font-bold text-ink-2 outline-none data-[focus-visible]:outline-2 data-[focus-visible]:outline-offset-2 data-[focus-visible]:outline-[var(--focus)] data-[selected]:border-accent data-[selected]:bg-accent data-[selected]:text-on-accent';
-  const roomHref = `/pmc/read?${new URLSearchParams(roomSearch(search, selectedStudy?.studyUid))}`;
+  // The room's address: the same filters, and the selected study (a router
+  // link: the room opens without a page load).
+  const roomSearch: RoomSearch = { ...search, study: selectedStudy?.studyUid };
 
   return (
     <section aria-labelledby="wl-title" className="flex min-h-0 flex-1 flex-col gap-4 px-4 py-5 md:px-6">
@@ -217,13 +211,14 @@ export function Worklist() {
 
         <div className="ml-auto flex items-center gap-2">
           {virtual && (
-            <Link
-              href={roomHref}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-line-2 bg-surface px-2.5 py-1.5 text-[13px] font-semibold text-ink no-underline outline-none hover:bg-surface-2 data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)]"
+            <RouteLink
+              to="/read"
+              search={roomSearch}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-line-2 bg-surface px-2.5 py-1.5 text-[13px] font-semibold text-ink no-underline outline-none hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
             >
               <BookOpen aria-hidden size={15} />
               Reading room
-            </Link>
+            </RouteLink>
           )}
           <Button
             onPress={toggleDensity}
