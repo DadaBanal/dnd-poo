@@ -101,6 +101,14 @@ def fmt_minutes(m: int) -> str:
     return f"{m // 1440}d"
 
 
+def clock_states_many(conn, work_item_ids, *, now: datetime) -> dict[str, list[dict]]:
+    """clock_states for many tickets in three queries, however many tickets.
+    The board and dispatch use this; one ticket's screen uses the wrapper."""
+    raw = clocks.states_many(conn, work_item_ids, as_of=now)
+    return {wid: [_present(st) for st in sorted(sts, key=lambda s: CLOCK_ORDER.get(s["clock"], 9))]
+            for wid, sts in raw.items()}
+
+
 def clock_states(conn, work_item_id: str, *, now: datetime) -> list[dict]:
     """Every clock on a ticket, each with its own state, computed now.
 
@@ -108,11 +116,12 @@ def clock_states(conn, work_item_id: str, *, now: datetime) -> list[dict]:
     for a running one, PAUSED while a waiting status holds it. Never read from a
     stored flag: a flag goes stale the moment a target or a calendar is fixed.
     """
-    out = []
-    rows = conn.execute("SELECT clock_id, clock FROM ticket_clock WHERE work_item_id = ?",
-                        (work_item_id,)).fetchall()
-    for row in sorted(rows, key=lambda r: CLOCK_ORDER.get(r["clock"], 9)):
-        st = clocks.state_of(conn, row["clock_id"], as_of=now)
+    return clock_states_many(conn, [work_item_id], now=now)[work_item_id]
+
+
+def _present(st: dict) -> dict:
+    if True:
+        row = st
         target = st["target_minutes"] or 1
         used = st["elapsed_minutes"]
         left = st["remaining_minutes"]
@@ -132,11 +141,10 @@ def clock_states(conn, work_item_id: str, *, now: datetime) -> list[dict]:
             state = "WARN" if used >= WARN_FRACTION * target else "OK"
             short, text = fmt_minutes(left), f"{fmt_minutes(left)} left"
         name = CLOCK_NAME.get(row["clock"], row["clock"])
-        out.append({"clock": row["clock"], "name": name, "state": state, "short": short,
-                    "text": text, "target": st["target_minutes"], "used": used,
-                    "fraction": min(1.0, used / target),
-                    "title": f"{name}: {text} (target {fmt_minutes(st['target_minutes'])})"})
-    return out
+        return {"clock": row["clock"], "name": name, "state": state, "short": short,
+                "text": text, "target": st["target_minutes"], "used": used,
+                "fraction": min(1.0, used / target),
+                "title": f"{name}: {text} (target {fmt_minutes(st['target_minutes'])})"}
 
 
 WORST = {"MET": 0, "PAUSED": 1, "OK": 2, "WARN": 3, "MISSED": 4, "BAD": 5}

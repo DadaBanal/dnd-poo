@@ -170,12 +170,16 @@ BEGIN
     PRINT N'    psa.ix_notification_status';
     PRINT N'    psa.ix_ticket_task_ticket';
     PRINT N'    psa.ix_attachment_ticket';
+    PRINT N'    psa.ix_ticket_event_ticket';
+    PRINT N'    psa.ix_ticket_clock_ticket';
+    PRINT N'    psa.ix_ticket_clock_pause_clock';
+    PRINT N'    psa.ix_ticket_board_state';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  67 tables, 14 indexes, 4 triggers.';
+    PRINT N'  67 tables, 18 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -2112,6 +2116,18 @@ CREATE INDEX [ix_ticket_task_ticket] ON psa.[ticket_task] ([work_item_id]);
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_attachment_ticket' AND object_id = OBJECT_ID(N'psa.[attachment]'))
 CREATE INDEX [ix_attachment_ticket] ON psa.[attachment] ([work_item_id]);
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ticket_event_ticket' AND object_id = OBJECT_ID(N'psa.[ticket_event]'))
+CREATE INDEX [ix_ticket_event_ticket] ON psa.[ticket_event] ([work_item_id], [ticket_event_id]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ticket_clock_ticket' AND object_id = OBJECT_ID(N'psa.[ticket_clock]'))
+CREATE INDEX [ix_ticket_clock_ticket] ON psa.[ticket_clock] ([work_item_id]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ticket_clock_pause_clock' AND object_id = OBJECT_ID(N'psa.[ticket_clock_pause]'))
+CREATE INDEX [ix_ticket_clock_pause_clock] ON psa.[ticket_clock_pause] ([clock_id], [paused_at]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ticket_board_state' AND object_id = OBJECT_ID(N'psa.[ticket]'))
+CREATE INDEX [ix_ticket_board_state] ON psa.[ticket] ([board_id], [state]);
+
 -- ==========================================================================
 -- THE GATE
 --
@@ -2242,10 +2258,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 67 OR @Triggers <> 4 OR @Indexes < 14
+IF @Tables <> 67 OR @Triggers <> 4 OR @Indexes < 18
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 67), %d triggers (expected 4), %d indexes (expected at least 14). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 67), %d triggers (expected 4), %d indexes (expected at least 18). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;

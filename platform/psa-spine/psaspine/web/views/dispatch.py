@@ -47,8 +47,10 @@ def index(ctx):
 
     if unrouted_rows:
         lines = []
+        all_states = common.clock_states_many(
+            ctx.conn, [r["work_item_id"] for r in unrouted_rows], now=ctx.now)
         for r in sorted(unrouted_rows, key=lambda x: (x["priority"] or "P9", x["opened_at"] or "")):
-            states = common.clock_states(ctx.conn, r["work_item_id"], now=ctx.now)
+            states = all_states[r["work_item_id"]]
             assign = ""
             if target_opts:
                 assign = (

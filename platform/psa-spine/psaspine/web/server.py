@@ -15,7 +15,8 @@ about.
 from __future__ import annotations
 
 import sys
-from wsgiref.simple_server import make_server
+from socketserver import ThreadingMixIn
+from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 from . import Config, make_app
 
@@ -23,6 +24,22 @@ from . import Config, make_app
 # host is on; the pilot belongs on the loopback or a named LAN address a person
 # typed on purpose.
 PUBLIC_BINDS = {"0.0.0.0", "::", ""}
+
+
+class ThreadedServer(ThreadingMixIn, WSGIServer):
+    """One thread per request. wsgiref's default serves one request at a time,
+    so a technician opening a big board made everyone else's click wait for it.
+    Each request opens its own SQLite connection (WAL: readers never block), and
+    the one piece of cross-request state, the workflow re-entrancy guard, is
+    thread-local. Daemon threads: a stop is a stop."""
+    daemon_threads = True
+
+
+class QuietHandler(WSGIRequestHandler):
+    """No line on stderr per request: a desk with forty people on it would
+    otherwise write a log nobody reads, and that write is on the request path."""
+    def log_message(self, format, *args):        # noqa: A002
+        pass
 
 
 def serve(db_path: str, *, host: str = "127.0.0.1", port: int = 8080,
@@ -44,7 +61,8 @@ def serve(db_path: str, *, host: str = "127.0.0.1", port: int = 8080,
     print("  wsgiref.simple_server is not a production server. Phase C puts the "
           "same app behind a real one.", file=sys.stderr)
 
-    with make_server(host, port, app) as httpd:
+    with make_server(host, port, app, server_class=ThreadedServer,
+                     handler_class=QuietHandler) as httpd:
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:

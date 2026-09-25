@@ -4869,6 +4869,167 @@ class AttachmentRetentionScriptTest(unittest.TestCase):
         self.assertNotIn("filename", lowered)
 
 
+class DeskSpeedTest(unittest.TestCase):
+    """The board over thousands of tickets: the batched clock path gives the
+    same answer as the one-clock path, the calendar's arithmetic gives the same
+    answer as walking every day, the table pages, and the server threads."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tmp.name) / "spine.db"
+        self.conn = db.init(self.db_path)
+        self.at = datetime(2026, 9, 23, 9, 0)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        self.conn.execute("INSERT OR REPLACE INTO board_member (board_id, member, access)"
+                          " VALUES ('IT_HELP', 'alice', 'ADMIN')")
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def test_calendar_arithmetic_matches_walking_every_day(self):
+        import random
+        rnd = random.Random(7)
+        cal = clocks.Calendar({0: (480, 1020), 1: (480, 1020), 2: (480, 1020), 3: (480, 1020),
+                               4: (480, 720), 5: (540, 780)},
+                              {date(2026, 9, 28), date(2026, 10, 3), date(2026, 12, 25)}, "biz")
+
+        def walked(start, end):
+            total, day = 0, start.date()
+            while day <= end.date():
+                total += cal._day_overlap(day, start, end)
+                day += timedelta(days=1)
+            return total
+        for _ in range(300):
+            start = datetime(2026, 9, 1) + timedelta(minutes=rnd.randint(0, 60 * 24 * 60))
+            end = start + timedelta(minutes=rnd.randint(-100, 60 * 24 * 200))
+            self.assertEqual(cal.working_minutes(start, end), max(walked(start, end), 0)
+                             if end > start else 0, (start, end))
+        always = clocks.Calendar({d: (0, 1440) for d in range(7)}, set(), "all")
+        self.assertTrue(always.round_the_clock)
+        self.assertEqual(always.working_minutes(datetime(2026, 1, 1), datetime(2026, 1, 3, 0, 30)),
+                         48 * 60 + 30)
+
+    def test_states_many_says_what_state_of_says(self):
+        from psaspine.web.views import common
+        wids = []
+        for i in range(12):
+            wid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary=f"t{i}", impact="I2",
+                                      urgency="U2", requested_by=None,
+                                      at=self.at - timedelta(hours=i * 7))
+            if i % 3 == 0:
+                board.change_status(self.conn, wid, "IT_HELP.WAITING_ON_REQUESTER",
+                                    at=self.at - timedelta(hours=i * 7, minutes=-30), actor="a")
+            if i % 4 == 0:
+                board.change_status(self.conn, wid, "IT_HELP.CLOSED",
+                                    at=self.at + timedelta(hours=3), actor="a")
+            wids.append(wid)
+        now = datetime(2026, 9, 24, 15, 0)
+        many = clocks.states_many(self.conn, wids, as_of=now)
+        for wid in wids:
+            singles = [clocks.state_of(self.conn, r["clock_id"], as_of=now) for r in
+                       self.conn.execute("SELECT clock_id FROM ticket_clock WHERE work_item_id = ?"
+                                         " ORDER BY clock_id", (wid,))]
+            self.assertEqual(many[wid], singles, wid)
+        self.assertEqual(common.clock_states_many(self.conn, wids, now=now)[wids[1]],
+                         common.clock_states(self.conn, wids[1], now=now))
+        self.assertEqual(clocks.states_many(self.conn, [], as_of=now), {})
+
+    def test_the_board_pages_at_a_hundred_and_filters_in_sql(self):
+        from psaspine.web import Config, make_app, auth as webauth
+        from psaspine.web.views.board import PAGE
+        for i in range(PAGE + 30):
+            tickets.open_ticket(self.conn, board_id="IT_HELP", summary=f"Load {i} widget",
+                                impact="I3", urgency="U3", requested_by=f"u{i}@pmcne.ph",
+                                owner="alice" if i % 2 else None,
+                                at=self.at - timedelta(minutes=i))
+        self.conn.commit()
+        self.conn.close()
+        cfg = Config(session_secret=_secrets.token_bytes(32))
+        app = make_app(str(self.db_path), config=cfg, clock=lambda: datetime(2026, 9, 24, 9))
+        cookie = "psa_session=" + webauth.open_session(webauth.User(id="alice", name="alice"),
+                                                       cfg.session_secret)
+
+        def get(query):
+            env = {"REQUEST_METHOD": "GET", "PATH_INFO": "/", "SCRIPT_NAME": "", "QUERY_STRING": query,
+                   "SERVER_NAME": "t", "SERVER_PORT": "80", "SERVER_PROTOCOL": "HTTP/1.1",
+                   "wsgi.version": (1, 0), "wsgi.url_scheme": "http", "wsgi.input": _io.BytesIO(b""),
+                   "wsgi.errors": _io.StringIO(), "wsgi.multithread": False,
+                   "wsgi.multiprocess": False, "wsgi.run_once": False, "HTTP_COOKIE": cookie}
+            return b"".join(app(env, lambda s, h, e=None: None)).decode()
+        first = get("")
+        self.assertIn(f"Showing 1–{PAGE} of {PAGE + 30}", first)
+        self.assertEqual(first.count("<tr class="), PAGE)
+        second = get("page=2")
+        self.assertIn(f"Showing {PAGE + 1}–{PAGE + 30} of {PAGE + 30}", second)
+        self.assertIn("Previous", second)
+        self.assertNotIn("Next ›", second)
+        mine = get("owner=me&sort=id&dir=asc")
+        self.assertIn("65 ticket(s).", mine)                    # one page: no pager
+        self.assertEqual(get("q=Load 7 w").count("<tr class="), 1)
+        self.assertIn("No tickets match", get("q=100%"))          # a LIKE wildcard is a character
+        self.conn = db.connect(self.db_path)
+
+    def test_the_server_threads_and_the_rule_guard_is_per_thread(self):
+        import threading
+        from socketserver import ThreadingMixIn
+        from psaspine import workflow
+        from psaspine.web import server
+        self.assertTrue(issubclass(server.ThreadedServer, ThreadingMixIn))
+        self.assertTrue(server.ThreadedServer.daemon_threads)
+        seen = {}
+        workflow._guard.running = True
+
+        def other():
+            seen["other"] = workflow._is_running()
+        th = threading.Thread(target=other)
+        th.start()
+        th.join()
+        workflow._guard.running = False
+        self.assertFalse(seen["other"])
+
+
+class DeskLookTest(unittest.TestCase):
+    """The desk's shell: self-contained by fence (no CDN, no font, no external
+    request), one script that only adds, a palette only for the signed-in, and
+    the board's select-all without an inline handler."""
+
+    setUp = WebWSGITest.setUp
+    tearDown = WebWSGITest.tearDown
+    _call = WebWSGITest._call
+    _environ = WebWSGITest._environ
+    _cookie_for = WebWSGITest._cookie_for
+
+    def test_every_page_is_self_contained(self):
+        cookie = self._cookie_for("alice")
+        for path in ("/", "/ticket/ITO-1", "/ticket/new", "/admin", "/my", "/login"):
+            _, _, body = self._call("GET", path, cookie=None if path == "/login" else cookie)
+            for shape in ("<link rel=\"stylesheet\"", "<link rel=stylesheet", "<script src",
+                          "@import", "url(http", "fonts.googleapis", "cdn."):
+                self.assertNotIn(shape, body, f"{path}: {shape}")
+            self.assertNotRegex(body, r"(src|href)=['\"]https?://", path)
+
+    def test_the_shell_carries_the_design_system_and_the_palette_only_when_signed_in(self):
+        _, _, signed = self._call("GET", "/", cookie=self._cookie_for("alice"))
+        for needle in ("@view-transition", "prefers-reduced-motion", "prefers-color-scheme:dark",
+                       "id=\"pal\"", "id=\"theme\"", "data-all", "data-count", "psa-theme",
+                       "aria-current=page"):
+            self.assertIn(needle, signed, needle)
+        self.assertNotIn("onclick", signed)
+        _, _, login = self._call("GET", "/login")
+        self.assertNotIn("id=\"pal\"", login)
+        self.assertIn("@view-transition", login)
+
+    def test_the_script_is_plain_and_escapes_what_it_shows(self):
+        from psaspine.web import templates
+        # innerHTML only ever takes a constant; anything from a ticket goes through textContent.
+        import re as _re
+        self.assertEqual(_re.findall(r'innerHTML=(?!"")(?!"<span></span><small></small>")\S{0,20}', templates.SCRIPT), [])
+        self.assertIn("textContent", templates.SCRIPT)
+        self.assertIn("prefetch", templates.SCRIPT)
+        self.assertIn("aria-busy", templates.SCRIPT)
+
+
 class AttachmentsWebTest(unittest.TestCase):
     """The desk and the portal: upload, download, review, and who may see what."""
 

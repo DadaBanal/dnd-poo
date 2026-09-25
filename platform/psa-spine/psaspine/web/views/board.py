@@ -40,30 +40,158 @@ def _is_mine(ctx, owner) -> bool:
                                              (ctx.user.name or "").lower()}
 
 
-def _load(ctx, boards):
+PAGE = 100
+CLOSED_STATES_SQL = "('RESOLVED','CLOSED','CANCELLED')"
+# Sort keys SQL can order by; "sla" needs the clocks and is sorted in Python.
+ORDER_SQL = {
+    "id": "t.work_item_id", "summary": "w.name COLLATE NOCASE",
+    "company": "e.name COLLATE NOCASE", "contact": "requested_by COLLATE NOCASE",
+    "board": "b.display_name COLLATE NOCASE", "status": "COALESCE(s.name, t.state)",
+    "pri": "t.priority", "owner": "COALESCE(t.owner, '~') COLLATE NOCASE",
+    "age": "t.opened_at", "updated": "COALESCE(t.updated_at, t.opened_at)",
+}
+SELECT = (
+    "SELECT t.work_item_id, t.board_id, b.display_name AS board_name, t.priority,"
+    "       t.state, t.owner, t.opened_at, t.updated_at,"
+    "       COALESCE((SELECT ct.display_name FROM contact ct"
+    "                  WHERE ct.contact_id = t.contact_id), t.requested_by) AS requested_by,"
+    "       t.source_ref, t.intake_source, w.name AS summary, e.name AS entity,"
+    "       e.entity_id, s.name AS status_name,"
+    "       t.record_type, t.customer_updated,"
+    "       (SELECT c.display_name || ' › ' || a.display_name FROM catalogue_item i"
+    "          JOIN service_component c ON c.component_id = i.component_id"
+    "          JOIN service_action a ON a.action_id = i.action_id"
+    "         WHERE i.catalogue_item_id = t.catalogue_item_id) AS klass,"
+    "       (SELECT CASE e2.note_flag WHEN 'INTERNAL' THEN 'Internal: ' ELSE '' END"
+    "               || e2.detail FROM ticket_event e2"
+    "         WHERE e2.work_item_id = t.work_item_id AND e2.note_flag IS NOT NULL"
+    "         ORDER BY e2.ticket_event_id DESC LIMIT 1) AS last_note")
+FROM = (
+    "  FROM ticket t"
+    "  JOIN work_item w ON w.work_item_id = t.work_item_id"
+    "  JOIN board b ON b.board_id = t.board_id"
+    "  LEFT JOIN entity e ON e.entity_id = w.entity_id"
+    "  LEFT JOIN board_status s ON s.board_status_id = t.board_status_id")
+
+
+def _like(needle: str) -> str:
+    return "%" + needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+
+def _where(ctx, boards, f, tile_ids: dict[str, set]) -> tuple[str, list]:
+    """The filter bar as SQL. Only what SQL can decide; the two clock tiles
+    (breached, due) arrive as the ids the tile counts found."""
+    where = ["t.board_id IN (%s)" % ",".join("?" * len(boards))]
+    params: list = list(boards)
+    if f["view"] == "open":
+        where.append(f"t.state NOT IN {CLOSED_STATES_SQL}")
+    elif f["view"] == "closed":
+        where.append(f"t.state IN {CLOSED_STATES_SQL}")
+    if f["board"] in boards:
+        where.append("t.board_id = ?")
+        params.append(f["board"])
+    if f["owner"] == "me" or f["tile"] == "mine":
+        where.append("LOWER(t.owner) IN (?, ?)")
+        params += [(ctx.user.id or "").lower(), (ctx.user.name or "").lower()]
+    elif f["owner"] == "none" or f["tile"] == "unassigned":
+        where.append("(t.owner IS NULL OR t.owner = '')")
+    if f["tile"] in ("breached", "due"):
+        ids = sorted(tile_ids[f["tile"]])
+        where.append("t.work_item_id IN (%s)" % (",".join("?" * len(ids)) or "NULL"))
+        params += ids
+    if f["pri"] in PRIORITY_ORDER:
+        where.append("t.priority = ?")
+        params.append(f["pri"])
+    if f["type"] in itil.RECORD_TYPES:
+        where.append("t.record_type = ?")
+        params.append(f["type"])
+    elif f["type"] == "none":
+        where.append("t.record_type IS NULL")
+    if f["src"] in SOURCES:
+        where.append("t.intake_source = ?")
+        params.append(f["src"])
+    needle = f["q"].strip()
+    if needle:
+        like = _like(needle.lower())
+        where.append("(LOWER(t.work_item_id) LIKE ? ESCAPE '\\' OR LOWER(w.name) LIKE ? ESCAPE '\\'"
+                     " OR LOWER(t.requested_by) LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM contact ct"
+                     " WHERE ct.contact_id = t.contact_id AND LOWER(ct.display_name) LIKE ? ESCAPE '\\'))")
+        params += [like, like, like, like]
+    return " WHERE " + " AND ".join(where), params
+
+
+def _tile_counts(ctx, boards) -> tuple[dict, dict[str, set]]:
+    """The five counters over every open ticket on the user's boards, and the
+    ids behind the two that need the clocks. One query for the tickets, three
+    for their clocks, however many there are."""
     marks = ",".join("?" * len(boards))
-    return ctx.conn.execute(
-        "SELECT t.work_item_id, t.board_id, b.display_name AS board_name, t.priority,"
-        "       t.state, t.owner, t.opened_at, t.updated_at,"
-        "       COALESCE((SELECT ct.display_name FROM contact ct"
-        "                  WHERE ct.contact_id = t.contact_id), t.requested_by) AS requested_by,"
-        "       t.source_ref, t.intake_source, w.name AS summary, e.name AS entity,"
-        "       e.entity_id, s.name AS status_name,"
-        "       t.record_type, t.customer_updated,"
-        "       (SELECT c.display_name || ' › ' || a.display_name FROM catalogue_item i"
-        "          JOIN service_component c ON c.component_id = i.component_id"
-        "          JOIN service_action a ON a.action_id = i.action_id"
-        "         WHERE i.catalogue_item_id = t.catalogue_item_id) AS klass,"
-        "       (SELECT CASE e2.note_flag WHEN 'INTERNAL' THEN 'Internal: ' ELSE '' END"
-        "               || e2.detail FROM ticket_event e2"
-        "         WHERE e2.work_item_id = t.work_item_id AND e2.note_flag IS NOT NULL"
-        "         ORDER BY e2.ticket_event_id DESC LIMIT 1) AS last_note"
-        "  FROM ticket t"
-        "  JOIN work_item w ON w.work_item_id = t.work_item_id"
-        "  JOIN board b ON b.board_id = t.board_id"
-        "  LEFT JOIN entity e ON e.entity_id = w.entity_id"
-        "  LEFT JOIN board_status s ON s.board_status_id = t.board_status_id"
-        f" WHERE t.board_id IN ({marks})", tuple(boards)).fetchall()
+    rows = ctx.conn.execute(
+        f"SELECT work_item_id, owner FROM ticket WHERE board_id IN ({marks})"
+        f" AND state NOT IN {CLOSED_STATES_SQL}", tuple(boards)).fetchall()
+    states = common.clock_states_many(ctx.conn, [r["work_item_id"] for r in rows], now=ctx.now)
+    breached, due = set(), set()
+    for r in rows:
+        running = [s for s in states[r["work_item_id"]] if s["state"] not in ("MET", "MISSED")]
+        if any(s["state"] == "BAD" for s in running):
+            breached.add(r["work_item_id"])
+        if any(s["state"] in ("OK", "WARN") and s["target"] - s["used"] <= 60 for s in running):
+            due.add(r["work_item_id"])
+    counts = {"": len(rows), "breached": len(breached), "due": len(due),
+              "unassigned": sum(not r["owner"] for r in rows),
+              "mine": sum(_is_mine(ctx, r["owner"]) for r in rows)}
+    return counts, {"breached": breached, "due": due}
+
+
+def _page_of(ctx, boards, f, tile_ids) -> tuple[list, int]:
+    """The rows of one page, sorted, with the clocks of those rows only, and the
+    total that matched. Two steps on purpose: the ids of the page first, sorted
+    and limited on plain columns, then the full row (last note, contact,
+    classification) for those ids alone. SQL sorts every column but SLA; an SLA
+    sort of open tickets sorts on the clocks of what matched (hundreds), while
+    an SLA sort of closed history reads as newest first."""
+    where, params = _where(ctx, boards, f, tile_ids)
+    page = max(int(f["page"]), 1) if f["page"].isdigit() else 1
+    offset = (page - 1) * PAGE
+    total = ctx.conn.execute("SELECT COUNT(*)" + FROM + where, params).fetchone()[0]
+    key, direction = f["sort"], f["dir"]
+    if key == "sla" and f["view"] == "open":
+        ids = [r[0] for r in ctx.conn.execute(
+            "SELECT t.work_item_id, t.priority, t.opened_at" + FROM + where, params)]
+        states = common.clock_states_many(ctx.conn, ids, now=ctx.now)
+        meta = {r[0]: r for r in ctx.conn.execute(
+            "SELECT t.work_item_id, t.priority, t.opened_at" + FROM + where, params)}
+        ranked = sorted(ids, key=lambda wid: (
+            -common.WORST.get(max((s["state"] for s in states[wid]),
+                                  key=lambda v: common.WORST[v], default="MET"), 0),
+            PRIORITY_ORDER.get(meta[wid][1], 9), meta[wid][2] or ""),
+            reverse=(direction == "desc"))
+        page_ids = ranked[offset:offset + PAGE]
+    else:
+        if key not in ORDER_SQL:
+            key, direction = "updated", direction or "desc"
+        desc = (direction == "desc") != (key == "age") if key != "updated" else direction != "asc"
+        order = (f" ORDER BY {ORDER_SQL[key]} {'DESC' if desc else 'ASC'}, t.work_item_id"
+                 " LIMIT ? OFFSET ?")
+        page_ids = [r[0] for r in ctx.conn.execute(
+            "SELECT t.work_item_id, COALESCE((SELECT ct.display_name FROM contact ct"
+            " WHERE ct.contact_id = t.contact_id), t.requested_by) AS requested_by"
+            + FROM + where + order, params + [PAGE, offset])]
+        states = common.clock_states_many(ctx.conn, page_ids, now=ctx.now)
+    if not page_ids:
+        return [], total
+    by_id = {r["work_item_id"]: r for r in ctx.conn.execute(
+        SELECT + FROM + " WHERE t.work_item_id IN (%s)" % ",".join("?" * len(page_ids)),
+        page_ids)}
+    return [_item(by_id[wid], states[wid]) for wid in page_ids], total
+
+
+def _item(r, states) -> dict:
+    running = [s for s in states if s["state"] not in ("MET", "MISSED")]
+    return {"r": r, "states": states, "worst": common.worst_state(states),
+            "running_bad": any(s["state"] == "BAD" for s in running),
+            "due": any(s["state"] in ("OK", "WARN") and s["target"] - s["used"] <= 60
+                       for s in running),
+            "open": r["state"] not in OPEN_STATES}
 
 
 def index(ctx):
@@ -74,56 +202,12 @@ def index(ctx):
                               "on the Setup page.</div></div>")
     q = ctx.request.query
     f = {k: q.get(k, "") for k in ("board", "view", "owner", "pri", "src", "type", "q",
-                                   "tile", "sort", "dir", "msg")}
+                                   "tile", "sort", "dir", "msg", "page")}
     f["view"] = f["view"] or "open"
     f["sort"] = f["sort"] or "sla"
 
-    rows = []
-    for r in _load(ctx, boards):
-        states = common.clock_states(ctx.conn, r["work_item_id"], now=ctx.now)
-        running = [s for s in states if s["state"] not in ("MET", "MISSED")]
-        rows.append({"r": r, "states": states, "worst": common.worst_state(states),
-                     "running_bad": any(s["state"] == "BAD" for s in running),
-                     "due": any(s["state"] in ("OK", "WARN") and
-                                s["target"] - s["used"] <= 60 for s in running),
-                     "open": r["state"] not in OPEN_STATES})
-
-    open_rows = [x for x in rows if x["open"]]
-    counts = {"": len(open_rows),
-              "breached": sum(x["running_bad"] for x in open_rows),
-              "due": sum(x["due"] for x in open_rows),
-              "unassigned": sum(not x["r"]["owner"] for x in open_rows),
-              "mine": sum(_is_mine(ctx, x["r"]["owner"]) for x in open_rows)}
-
-    shown = rows
-    if f["view"] == "open":
-        shown = [x for x in shown if x["open"]]
-    elif f["view"] == "closed":
-        shown = [x for x in shown if not x["open"]]
-    if f["board"] in boards:
-        shown = [x for x in shown if x["r"]["board_id"] == f["board"]]
-    if f["owner"] == "me" or f["tile"] == "mine":
-        shown = [x for x in shown if _is_mine(ctx, x["r"]["owner"])]
-    elif f["owner"] == "none" or f["tile"] == "unassigned":
-        shown = [x for x in shown if not x["r"]["owner"]]
-    if f["tile"] == "breached":
-        shown = [x for x in shown if x["running_bad"]]
-    elif f["tile"] == "due":
-        shown = [x for x in shown if x["due"]]
-    if f["pri"] in PRIORITY_ORDER:
-        shown = [x for x in shown if x["r"]["priority"] == f["pri"]]
-    if f["type"] in itil.RECORD_TYPES:
-        shown = [x for x in shown if x["r"]["record_type"] == f["type"]]
-    elif f["type"] == "none":
-        shown = [x for x in shown if not x["r"]["record_type"]]
-    if f["src"] in SOURCES:
-        shown = [x for x in shown if x["r"]["intake_source"] == f["src"]]
-    if f["q"].strip():
-        needle = f["q"].strip().lower()
-        shown = [x for x in shown if any(needle in (v or "").lower() for v in (
-            x["r"]["work_item_id"], x["r"]["summary"], x["r"]["requested_by"]))]
-
-    shown = _sort(shown, f["sort"], f["dir"])
+    counts, tile_ids = _tile_counts(ctx, boards)
+    shown, total = _page_of(ctx, boards, f, tile_ids)
 
     # A list of a restricted board's tickets is a read of restricted data, so it
     # is audited too — once per board with the count (§6.1 requirement 4).
@@ -140,7 +224,7 @@ def index(ctx):
     if not shown:
         body += "<div class='card'><div class='empty'>No tickets match.</div></div>"
         return _response(ctx, body)
-    body += _table(ctx, boards, shown, f)
+    body += _table(ctx, boards, shown, f, total)
     return _response(ctx, body)
 
 
@@ -169,7 +253,7 @@ def _sort(rows, key, direction):
 
 
 def _link(f, **over) -> str:
-    params = {k: v for k, v in f.items() if v and k != "msg"}
+    params = {k: v for k, v in f.items() if v and k not in ("msg", "page")}
     params.update({k: v for k, v in over.items()})
     params = {k: v for k, v in params.items() if v}
     return "/?" + urllib.parse.urlencode(params) if params else "/"
@@ -217,7 +301,20 @@ def _filters(ctx, boards, f) -> str:
         "<div style='min-width:0'><button type=submit>Filter</button></div></form></div>")
 
 
-def _table(ctx, boards, shown, f) -> str:
+def _pager(f, shown: int, total: int) -> str:
+    page = max(int(f["page"]), 1) if f["page"].isdigit() else 1
+    first = (page - 1) * PAGE + 1
+    last = first + shown - 1
+    if total <= PAGE:
+        return f"{total} ticket(s)."
+    prev_ = (f"<a class='btn ghost' href='{t.esc(_link(f, page=str(page - 1)))}'>‹ Previous</a> "
+             if page > 1 else "")
+    next_ = (f" <a class='btn ghost' href='{t.esc(_link(f, page=str(page + 1)))}'>Next ›</a>"
+             if last < total else "")
+    return f"{prev_}Showing {first}–{last} of {total}{next_}"
+
+
+def _table(ctx, boards, shown, f, total: int) -> str:
     head = []
     for key, label in COLUMNS:
         on = f["sort"] == key
@@ -237,7 +334,7 @@ def _table(ctx, boards, shown, f) -> str:
         last = (last[:90] + "…") if len(last) > 90 else last
         lines.append(
             f"<tr class='{cls}'>"
-            f"<td><input type=checkbox name=ids value='{t.esc(wid)}' form=bulk style='width:auto'></td>"
+            f"<td><input type=checkbox name=ids value='{t.esc(wid)}' form=bulk aria-label='Tick {t.esc(wid)}'></td>"
             f"<td><a href='/ticket/{t.esc(wid)}'>{t.esc(wid)}</a></td>"
             f"<td class=sum><a href='/ticket/{t.esc(wid)}' style='color:inherit'><b>{t.esc(r['summary'])}</b></a>"
             + (" <span class='chip sla-warn' title='The requester has written since the desk last did'>"
@@ -247,8 +344,8 @@ def _table(ctx, boards, shown, f) -> str:
             + "</span></div>"
             + (f"<div class=last>{t.esc(last)}</div>" if last else "") + "</td>"
             f"<td title='{t.esc(r['entity'] or '')}'>{t.esc(r['entity_id'] or '—')}</td>"
-            f"<td class=muted>{t.esc(r['requested_by'] or '—')}</td>"
-            f"<td>{t.esc(r['board_name'])}</td>"
+            f"<td class='muted wrap'>{t.esc(r['requested_by'] or '—')}</td>"
+            f"<td class=wrap>{t.esc(r['board_name'])}</td>"
             f"<td>{t.esc(r['status_name'] or r['state'].replace('_', ' ').title())}</td>"
             f"<td>{t.badge(r['priority'])}</td>"
             f"<td>{t.esc(r['owner'] or '—')}</td>"
@@ -259,12 +356,11 @@ def _table(ctx, boards, shown, f) -> str:
     return (
         "<div class=card style='padding:10px'>" + _bulk_bar(ctx, boards, f) +
         "<div class=tablewrap><table class=grid><thead><tr>"
-        "<th><input type=checkbox style='width:auto' "
-        "onclick=\"document.querySelectorAll('input[name=ids]').forEach(c=>c.checked=this.checked)\"></th>"
+        "<th><input type=checkbox data-all aria-label='Select every ticket on this page'></th>"
         + "".join(head) + "</tr></thead><tbody>" + "".join(lines) + "</tbody></table></div>"
-        f"<p class=sub style='margin:10px 0 0'>{len(shown)} ticket(s). "
-        "R · P · S = Respond · Resolution plan · Resolve. Green on track or met, amber "
-        "inside 20% of target, red breached, grey paused.</p></div>")
+        f"<div class=pager>{_pager(f, len(shown), total)}</div>"
+        "<p class=sub style='margin:10px 0 0'>R · P · S = Respond · Resolution plan · Resolve. "
+        "Green on track or met, amber inside 20% of target, red breached, grey paused.</p></div>")
 
 
 def _bulk_bar(ctx, boards, f) -> str:
@@ -288,7 +384,7 @@ def _bulk_bar(ctx, boards, f) -> str:
     return (
         "<form id=bulk method=post action='/bulk' class=bulk>"
         f"<input type=hidden name=back value='{t.esc(back)}'>"
-        "<b>With ticked:</b> Status <select name=status>" + "".join(status_opts) + "</select>"
+        "<b><span data-count>0</span> ticked:</b> Status <select name=status>" + "".join(status_opts) + "</select>"
         " Assign <input name=owner placeholder='owner' style='width:130px;padding:4px 8px'>"
         f" Move to <select name=to_board>{move_opts}</select>"
         " <button type=submit>Apply</button></form>")

@@ -89,6 +89,12 @@ class Calendar:
         self.windows = windows          # weekday 0..6 -> (start_min, end_min)
         self.holidays = holidays
         self.name = name
+        # Minutes a whole working day of each weekday is worth, and a whole week:
+        # the fast path below counts full days arithmetically instead of walking
+        # them one by one, which a clock that has run for a year would otherwise do.
+        self.day_minutes = {d: end - start for d, (start, end) in windows.items()}
+        self.week_minutes = sum(self.day_minutes.values())
+        self.round_the_clock = all(windows.get(d) == (0, 1440) for d in range(7))
 
     @classmethod
     def load(cls, conn: sqlite3.Connection, calendar_id: str) -> "Calendar":
@@ -116,24 +122,45 @@ class Calendar:
     def is_working_day(self, day: date) -> bool:
         return day.weekday() in self.windows and day not in self.holidays
 
+    def _day_overlap(self, day: date, start: datetime, end: datetime) -> int:
+        if not self.is_working_day(day):
+            return 0
+        open_min, close_min = self.windows[day.weekday()]
+        midnight = datetime(day.year, day.month, day.day)
+        overlap_start = max(midnight + timedelta(minutes=open_min), start)
+        overlap_end = min(midnight + timedelta(minutes=close_min), end)
+        if overlap_end <= overlap_start:
+            return 0
+        return int((overlap_end - overlap_start).total_seconds() // 60)
+
     def working_minutes(self, start: datetime, end: datetime) -> int:
-        """Working minutes between two instants. Never negative."""
+        """Working minutes between two instants. Never negative.
+
+        The first and last days are measured against their windows; the whole
+        days between are counted by weekday arithmetic, less any holiday that
+        falls in the span. Same answer as walking every day, in constant time
+        for a clock that has run for months."""
         if end <= start:
             return 0
-        total = 0
-        day = start.date()
-        last = end.date()
-        while day <= last:
-            if self.is_working_day(day):
-                open_min, close_min = self.windows[day.weekday()]
-                midnight = datetime(day.year, day.month, day.day)
-                window_open = midnight + timedelta(minutes=open_min)
-                window_close = midnight + timedelta(minutes=close_min)
-                overlap_start = max(window_open, start)
-                overlap_end = min(window_close, end)
-                if overlap_end > overlap_start:
-                    total += int((overlap_end - overlap_start).total_seconds() // 60)
+        if self.round_the_clock and not self.holidays:
+            return int((end - start).total_seconds() // 60)
+        first, last = start.date(), end.date()
+        if first == last:
+            return self._day_overlap(first, start, end)
+        total = self._day_overlap(first, start, end) + self._day_overlap(last, start, end)
+        inner_first = first + timedelta(days=1)
+        inner_days = (last - inner_first).days
+        if inner_days <= 0:
+            return total
+        weeks, rest = divmod(inner_days, 7)
+        total += weeks * self.week_minutes
+        day = inner_first
+        for _ in range(rest):
+            total += self.day_minutes.get(day.weekday(), 0)
             day += timedelta(days=1)
+        for holiday in self.holidays:
+            if inner_first <= holiday < last:
+                total -= self.day_minutes.get(holiday.weekday(), 0)
         return total
 
 
@@ -177,6 +204,76 @@ def elapsed_minutes(conn: sqlite3.Connection, clock_id: int, *,
     return max(total, 0)
 
 
+def _state(row, pause_rows, calendar: Calendar, as_of: datetime) -> dict:
+    """One clock's state from rows already in hand. state_of and states_many
+    both end here, so a board of a thousand tickets and one ticket's screen
+    cannot disagree."""
+    start = parse_instant(row["started_at"])
+    end = parse_instant(row["stopped_at"]) if row["stopped_at"] else as_of
+    used = 0
+    open_pauses = 0
+    if end >= start:
+        used = calendar.working_minutes(start, end)
+        for p in pause_rows:
+            paused_at = parse_instant(p["paused_at"])
+            resumed_at = parse_instant(p["resumed_at"]) if p["resumed_at"] else None
+            if resumed_at is None:
+                open_pauses += 1
+            pause_start = max(paused_at, start)
+            pause_end = min(resumed_at or end, end)
+            if pause_end > pause_start:
+                used -= calendar.working_minutes(pause_start, pause_end)
+        used = max(used, 0)
+    else:
+        open_pauses = sum(1 for p in pause_rows if not p["resumed_at"])
+    return {
+        "clock": row["clock"],
+        "work_item_id": row["work_item_id"],
+        "calendar_id": row["calendar_id"],
+        "target_minutes": row["target_minutes"],
+        "elapsed_minutes": used,
+        "remaining_minutes": row["target_minutes"] - used,
+        "breached": used > row["target_minutes"],
+        "running": row["stopped_at"] is None and not open_pauses,
+        "paused": bool(open_pauses),
+        "stopped_at": row["stopped_at"],
+    }
+
+
+def states_many(conn: sqlite3.Connection, work_item_ids, *,
+                as_of: datetime | None = None) -> dict[str, list[dict]]:
+    """Every clock of every ticket named, in three queries however many tickets:
+    the clocks, their pauses, and each calendar once. What a board does per row
+    is what made a 3,000-ticket board take seconds."""
+    ids = list(dict.fromkeys(work_item_ids))
+    out: dict[str, list[dict]] = {wid: [] for wid in ids}
+    if not ids:
+        return out
+    as_of = as_of or datetime.now()
+    calendars: dict[str, Calendar] = {}
+    clock_rows: list = []
+    for i in range(0, len(ids), 500):                      # under SQLite's parameter limit
+        chunk = ids[i:i + 500]
+        clock_rows += conn.execute(
+            "SELECT * FROM ticket_clock WHERE work_item_id IN (%s) ORDER BY clock_id"
+            % ",".join("?" * len(chunk)), chunk).fetchall()
+    pauses_by_clock: dict[int, list] = {}
+    clock_ids = [r["clock_id"] for r in clock_rows]
+    for i in range(0, len(clock_ids), 500):
+        chunk = clock_ids[i:i + 500]
+        for p in conn.execute(
+                "SELECT clock_id, paused_at, resumed_at FROM ticket_clock_pause"
+                " WHERE clock_id IN (%s) ORDER BY paused_at" % ",".join("?" * len(chunk)), chunk):
+            pauses_by_clock.setdefault(p["clock_id"], []).append(p)
+    for row in clock_rows:
+        cal = calendars.get(row["calendar_id"])
+        if cal is None:
+            cal = calendars[row["calendar_id"]] = Calendar.load(conn, row["calendar_id"])
+        out[row["work_item_id"]].append(
+            _state(row, pauses_by_clock.get(row["clock_id"], []), cal, as_of))
+    return out
+
+
 def breached(conn: sqlite3.Connection, clock_id: int, *,
              as_of: datetime | None = None) -> bool:
     """Derived, every time. Never a column."""
@@ -207,17 +304,8 @@ def state_of(conn: sqlite3.Connection, clock_id: int, *,
                        (clock_id,)).fetchone()
     if row is None:
         raise LookupError(f"no clock {clock_id}")
-    used = elapsed_minutes(conn, clock_id, as_of=as_of)
-    open_pauses = [p for p in pauses(conn, clock_id) if p[1] is None]
-    return {
-        "clock": row["clock"],
-        "work_item_id": row["work_item_id"],
-        "calendar_id": row["calendar_id"],
-        "target_minutes": row["target_minutes"],
-        "elapsed_minutes": used,
-        "remaining_minutes": row["target_minutes"] - used,
-        "breached": used > row["target_minutes"],
-        "running": row["stopped_at"] is None and not open_pauses,
-        "paused": bool(open_pauses),
-        "stopped_at": row["stopped_at"],
-    }
+    pause_rows = conn.execute(
+        "SELECT clock_id, paused_at, resumed_at FROM ticket_clock_pause"
+        " WHERE clock_id = ? ORDER BY paused_at", (clock_id,)).fetchall()
+    return _state(row, pause_rows, Calendar.load(conn, row["calendar_id"]),
+                  as_of or datetime.now())

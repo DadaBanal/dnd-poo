@@ -28,6 +28,7 @@ trigger ON_STATUS_CHANGE again: that is how two rules page each other for ever.
 from __future__ import annotations
 
 import sqlite3
+import threading
 from datetime import datetime
 
 from . import clocks, rules
@@ -52,7 +53,14 @@ TICKET_FIELDS = (
 SEAMS = ("ON_CREATE", "ON_STATUS_CHANGE", "ON_OWNER_CHANGE", "ON_NOTE_ADDED", "ON_HANDOVER")
 TIMED = ("ON_SCHEDULE", "ON_SLA_THRESHOLD")
 
-_running = False          # a rule's own actions never fire further rules
+# A rule's own actions never fire further rules. Thread-local, because the desk
+# serves each request on its own thread and one request's rule run must not
+# silence another's.
+_guard = threading.local()
+
+
+def _is_running() -> bool:
+    return getattr(_guard, "running", False)
 
 
 def ensure_vocabulary(conn: sqlite3.Connection) -> None:
@@ -109,31 +117,29 @@ def fire(conn: sqlite3.Connection, work_item_id: str, fires_on: str, *,
          at: datetime) -> list[dict]:
     """Run every active event for this seam on this ticket. Never raises into the
     caller: a broken rule is recorded as ERROR, and the ticket change stands."""
-    global _running
-    if _running or not conn.execute("SELECT 1 FROM workflow WHERE is_active = 1"
+    if _is_running() or not conn.execute("SELECT 1 FROM workflow WHERE is_active = 1"
                                     " AND table_type = 'TICKET' LIMIT 1").fetchone():
         return []
     row = ticket_row(conn, work_item_id, now=at)
     if row is None:
         return []
     out = []
-    _running = True
+    _guard.running = True
     try:
         for event in _events(conn, row["board_id"], (fires_on,)):
             out.append(_run(conn, event, row, at=at))
     finally:
-        _running = False
+        _guard.running = False
     return out
 
 
 def sweep(conn: sqlite3.Connection, *, at: datetime) -> dict:
     """Time-based events over every open ticket. Run every minute by the server."""
-    global _running
     counts = {"tickets": 0, "acted": 0, "errors": 0}
     ids = [r[0] for r in conn.execute(
         "SELECT work_item_id FROM ticket WHERE state NOT IN ('CLOSED','CANCELLED')"
         " AND closed_at IS NULL")]
-    _running = True
+    _guard.running = True
     try:
         for wid in ids:
             row = ticket_row(conn, wid, now=at)
@@ -146,7 +152,7 @@ def sweep(conn: sqlite3.Connection, *, at: datetime) -> dict:
                 counts["acted"] += bool(r.get("fired"))
                 counts["errors"] += bool(r.get("error"))
     finally:
-        _running = False
+        _guard.running = False
     conn.commit()
     return counts
 
