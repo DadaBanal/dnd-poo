@@ -28,9 +28,24 @@ export async function signIn(page, who, path = '/') {
 }
 
 // Wait for the page's entrances to finish before judging it (axe reads the
-// colours as they are); the endless ones (the live dot, a shimmer) are left alone.
+// colours as they are, and a row still fading in reads too light); the
+// endless ones (the live dot, a shimmer) are left alone. A row that mounts
+// while the page settles (the table lays itself out again when the preview
+// opens beside it) starts its own entrance, so this waits until two frames
+// in a row have nothing finite running.
 export async function settled(page) {
-  await page.evaluate(() => Promise.all(document.getAnimations()
-    .filter((a) => a.effect?.getTiming().iterations !== Infinity)
-    .map((a) => a.finished.catch(() => {}))));
+  await page.evaluate(async () => {
+    const running = () => document.getAnimations()
+      .filter((a) => a.effect?.getTiming().iterations !== Infinity && a.playState !== 'finished');
+    const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    for (let i = 0; i < 40; i++) {
+      const now = running();
+      if (now.length) {
+        await Promise.all(now.map((a) => a.finished.catch(() => {})));
+        continue;
+      }
+      await frame();
+      if (!running().length) return;
+    }
+  });
 }

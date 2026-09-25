@@ -203,6 +203,9 @@ test('R marks the study read; "Unread" hides it; the reader can unmark it', asyn
   const row = rowOf(page, 'ct');
   await expect(row.locator('.pill', { hasText: /^Unread$/ })).toBeVisible();
   await expect(page.getByTestId('total')).toContainText(/^\d+ studies$/);
+  // Once the page's entrances are over: a row still rising is not where a
+  // click aimed at it lands.
+  await settled(page);
   await row.getByRole('rowheader').click();
   await page.keyboard.press('r');
   await expect(row.locator('.pill', { hasText: /^Read$/ })).toBeVisible();
@@ -212,8 +215,15 @@ test('R marks the study read; "Unread" hides it; the reader can unmark it', asyn
   await expect(page).toHaveURL(/[?&]unread=1(&|$)/);
   await expect(row).toHaveCount(0);
   await expect(rowOf(page, 'xa')).toBeVisible();
+  // The preview closes with its study and comes back with it when the filter
+  // comes off; the table then lays itself out again beside it, and the row's
+  // buttons move. Act on the row once that has happened, as a person would
+  // (a click aimed before the move lands beside the button).
+  await expect(pane(page)).toBeHidden();
   await page.getByRole('button', { name: 'Unread', exact: true }).click();
   await expect(row).toBeVisible();
+  await expect(pane(page)).toBeVisible();
+  await settled(page);
   await row.getByRole('button', { name: /unread$/ }).click();
   await expect(row.locator('.pill', { hasText: /^Unread$/ })).toBeVisible();
 });

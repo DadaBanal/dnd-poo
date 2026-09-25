@@ -264,7 +264,9 @@
      layout is told so), and each cell fills its row's height. The layout
      sizes and places a wrapper around every row and cell; the row and cell
      elements fill their wrappers, so a row paints (and a test sees it). */
-  .wl-virtual { flex: 1 1 0%; min-height: 0; overflow: auto; outline: none; }
+  /* The header is sticky over the first 36 px, so a row scrolled into view
+     (the keyboard's, or one a script asks for) must land below it. */
+  .wl-virtual { flex: 1 1 0%; min-height: 0; overflow: auto; outline: none; scroll-padding-top: 36px; }
   .wl-virtual [role="rowgroup"], .wl-virtual [role="row"] { display: block; height: 100%; position: relative; }
   .wl-virtual [role="columnheader"] {
     box-sizing: border-box; height: 36px; display: flex; align-items: center; overflow: hidden;
@@ -296,6 +298,15 @@
     font-size: 13px; font-weight: 600; color: var(--accent-ink); text-decoration: none; white-space: nowrap;
   }
   .rowlink:hover { background: var(--accent-soft); }
+  /* The reading room: the rail's rows are cards; the two viewers stack, the
+     back one hidden but live (visibility keeps its size, so the viewer lays
+     itself out for the screen it will be shown on). */
+  .wl-rail { scroll-padding-top: 30px; }
+  .wl-rail [role="columnheader"] { height: 30px; padding-block: 0; }
+  .wl-rail [role="rowheader"] { padding: 8px 10px; }
+  .stage-back { visibility: hidden; pointer-events: none; }
+  .stage-frame { background: #000; }
+  .toolbar { min-height: 42px; }
   .pane { animation: pane-in var(--t-gentle) var(--ease-enter) both; }
   .pane-body { animation: fade-in var(--t-normal) var(--ease-enter) both; }
   /* A phone: taken, patient and study only; a tap opens the study. */

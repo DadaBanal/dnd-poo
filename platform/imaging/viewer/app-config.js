@@ -81,6 +81,9 @@ window.config = {
         'a',
         {
           href: '/pmc/',
+          // In the reading room the viewer is framed: the link leaves the
+          // room, never loads the list inside the frame.
+          target: '_top',
           title: 'Back to the PMC Imaging reading list',
           style: {
             display: 'flex',

@@ -60,6 +60,12 @@ export const WorklistSearch = z.object({
 });
 export type WorklistSearch = z.infer<typeof WorklistSearch>;
 
+// The reading room's address: the same filters, and the study on screen.
+export const RoomSearch = WorklistSearch.extend({
+  study: z.string().regex(/^[0-9.]{1,64}$/).optional().catch(undefined),
+});
+export type RoomSearch = z.infer<typeof RoomSearch>;
+
 // What the server accepts: the same filters, flattened for a query string,
 // plus paging.
 export const StudiesQuery = z.object({

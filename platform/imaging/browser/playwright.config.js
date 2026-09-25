@@ -47,5 +47,11 @@ export default defineConfig({
       dependencies: ['sign-in'],
       use: { storageState: `${RESULTS}/.auth/radiologist.json` },
     },
+    {
+      name: 'room',
+      testMatch: /room\.spec\.js/,
+      dependencies: ['sign-in'],
+      use: { storageState: `${RESULTS}/.auth/radiologist.json` },
+    },
   ],
 });

@@ -151,6 +151,6 @@ RUN_PHASE=after_disaster "${compose[@]}" --profile test run --rm "${as_me[@]}" t
 RUN_PHASE=after_disaster "${compose[@]}" --profile test run --rm "${as_me[@]}" browser -g "cathlab run opens playing"
 
 step "measured on synthetic data, on this host"
-cat .results/measurements-first.json .results/measurements-browser-first.json .results/measurements-home.json .results/measurements-open.json .results/measurements-access.json .results/measurements-drill.json
+cat .results/measurements-first.json .results/measurements-browser-first.json .results/measurements-home.json .results/measurements-room.json .results/measurements-open.json .results/measurements-access.json .results/measurements-drill.json
 echo
 step "PASS"

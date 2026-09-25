@@ -55,7 +55,9 @@ modality ─ DICOM 4242 ─────────────────▶  
   [The viewer's tools](#the-viewers-tools)); the reading list carries each
   study's first image, a preview with its series and the patient's earlier
   studies, read and unread, totals, and never lags, in PMC's look with
-  motion that explains (M5.3, see [The reading list](#the-reading-list)).
+  motion that explains (M5.3, see [The reading list](#the-reading-list));
+  the reading room holds the list and the viewer together, with the next
+  study already loaded (M5.4, see [The reading room](#the-reading-room)).
 - **PMC's identity:** see [Branding](#branding) below. The sign-in page, the
   app, the viewer, the signed-out page and the alert email wear the 2026
   identity as the portal proposal applied it: PMC Blue, the four-segment
@@ -270,7 +272,10 @@ What a person gets. Each point is MEASURED by the tests unless marked:
   and release, is recorded with who and when. ICT can read it; nobody can
   change it (the app's database role may only add to it).
 - **The keyboard:** `/` finds, `J` and `K` move, `Enter` opens, `A` claims,
-  `R` marks read, `Esc` closes the preview.
+  `R` marks read, `Esc` closes the preview. A row the keyboard reaches at the
+  top of the list lands below the column headings, not under them (M5.4:
+  `scroll-padding-top` on the list, which the browser and React Aria both
+  honour when they scroll a row into view).
 - **Since M5.3:** each row's first image, a preview pane, read and unread,
   totals, compact rows, and a list that does not lag: see
   [The reading list](#the-reading-list).
@@ -707,6 +712,47 @@ Choices:
   interactive components a row across fifty rows was most of the render
   cost (MEASURED: the render of 31 rows fell with them).
 
+## The reading room
+
+M5.4 (25 Sep 2026): one screen for reading through a list. Each point is
+MEASURED by `browser/tests/room.spec.js` unless marked.
+
+- **The list and the viewer together.** *Reading room* on the list page (or
+  `/pmc/read`, with the same filters in the address) opens a rail of studies
+  on the left and the viewer on the right. The rail is the same virtualized
+  table as the list, one column, each study a card: its image, the patient
+  and hospital number, when, what, and its state.
+- **The next study is already loaded.** Two viewers sit on the stage: the
+  one in front shows the current study; the one behind, unseen, has already
+  opened the study after it. `J` swaps them, so the next study is on screen
+  at once, and the viewer that was in front turns to the study after that.
+  `K` goes back (that study loads again). The viewer is OHIF in a frame of
+  this same origin, so the front door's session and rules apply unchanged,
+  and every opening goes into the audit trail as before.
+- **The keyboard, end to end.** On the rail: `J`/`K` next and previous,
+  `Enter` (or a double-click) into the images, `A` claim, `R` mark read and
+  move on, `/` find. In the images, the viewer's own keys apply, and `Esc`
+  returns to the rail; `J` and `K` work from there too (OHIF does not use
+  them: MEASURED from its hotkeys). The buttons above the images do the same
+  by mouse.
+- **A phone gets no room:** the button is not offered below 721 px.
+
+Choices:
+
+- **The viewer is framed, not rebuilt.** OHIF stays exactly the stock image
+  the standalone window uses; the room is 300 lines of the front door app.
+  Its header's PMC mark leaves the room (a top-level link) rather than
+  loading the list inside the frame.
+- **Two viewers, not more.** One study ahead is what a reader's next
+  keystroke needs; each viewer is its own OHIF, so memory doubles (NOT
+  VERIFIED on PMC's PCs; see Open).
+
+Decisions for Dada (not built):
+
+- Whether opening a study in the room should claim it for the reader.
+- Whether `R` should always move on to the next study (it does), and whether
+  the room should skip studies someone else has claimed.
+
 ## The viewer's tools
 
 The viewer is OHIF 3.13 as shipped, configured (`viewer/app-config.js`),
@@ -846,10 +892,10 @@ was pulled on 23 or 24 Sep 2026 (MEASURED). The official images (`postgres`,
 
 ## What the tests prove
 
-`ci/run.sh` runs 113 tests. All passed on 25 Sep 2026 (MEASURED, cloud build,
-15 minutes). It starts from empty volumes, checks the platform database's
+`ci/run.sh` runs 119 tests. All passed on 25 Sep 2026 (MEASURED, cloud build,
+16 minutes). It starts from empty volumes, checks the platform database's
 schema and grants and that the logo files have one source, and runs 61
-engine, API, sign-in, watch, orders and brand tests and 35 browser tests. It then removes the containers, starts new ones
+engine, API, sign-in, watch, orders and brand tests and 41 browser tests. It then removes the containers, starts new ones
 from the same volumes, and runs 6 engine tests and 2 browser tests again: the
 radiologist signs in afresh, and a cathlab run still opens playing. Then it
 takes the nightly backup, proves the primary cannot delete from the R740xd's
@@ -897,6 +943,7 @@ on site).
 | The viewer's tools on the stored images: window presets by key, the CT in three planes (MPR), a length measured and listed in millimetres, the patient's earlier study offered in the study browser | `browser/tests/viewer.spec.js` |
 | The reading list is counted for readers and never for referrers; a reader marks a study read, which drops the claim, leaves the unread list and can be unmarked only by them; a study someone else holds cannot be marked read; only readers mark; the trail shows claim, read and unread. A study's preview lists its series and the patient's earlier studies; its first image comes through the front door as a JPEG, never cached, and a browser's own image request gets one too; a referrer gets neither for a study not shared | `tests/test_app.py` |
 | A row carries its first image; selecting it previews the series and the earlier study, and `Esc` closes the preview; *Compare* opens the earlier study beside the current one and both draw; `R` marks a study read, *Unread* hides it, and the reader can unmark it; compact rows drop the images and are remembered; the list does not lag (compressed parts, cached second visit, no flash on a filter, no long task); the page moves with purpose (transforms and opacities only), the theme switches, and nothing moves with reduced motion; the accessibility check covers the open preview | `browser/tests/home.spec.js` |
+| The reading room shows the study beside the list with the next one already loading behind; `J` shows the next study within a second and `K` goes back; `Enter` takes the keyboard to the images and `Esc` (pressed in the viewer) brings it back to the rail; `R` marks the study read and moves on; the room passes WCAG 2.2 AA in light and dark (the viewer's own page excluded) | `browser/tests/room.spec.js` |
 | PMC's identity: the logo files need no session, are only read, and nothing else under `/brand/` is served. The sign-in page carries PMC's theme, the lock-up and tagline on PMC Blue and PMC's words, keeps Keycloak's own form, says when Caps Lock is on, and passes axe's contrast check in light and dark. The app's header, the viewer's header and the signed-out page show the lock-up or mark. The alert email is PMC's, in HTML and plain text | `tests/test_brand.py`, `browser/tests/access.spec.js`, `home.spec.js`, `viewer.spec.js`, `tests/test_watch.py` |
 
 All test data is synthetic (`tests/synth.py`). Pixels are drawn from formulas,
@@ -954,6 +1001,15 @@ The AE titles the tests play are PMC's own, as MEASURED in the record.
   evaluation, the first rows, the filtered rows; 71 ms on the second), and
   nothing moved the layout. One run; the assertion allows one task over
   100 ms and none over 300 ms, seen once at 106 ms in a dev-loop run.
+- **The reading room** (`room.spec.js`, software rendering, 25 Sep 2026):
+  `J` put the next study's image on screen 17 ms after the key (the
+  viewers swapped in 17 ms; that study had been opened behind the
+  current one), timed inside the page. `K` went back in 5,289 ms: the cost
+  of opening a study that is no longer held, on this host's software
+  rendering. Timed from the test runner instead, the same `J` reads about
+  3 s: each of the runner's own actions snapshots the page for its trace,
+  and two viewer documents make that cost more than what is being timed
+  (MEASURED both ways), so the room's numbers are taken inside the page.
 - **The reading list's API** (`test_app.py`): a study's preview (three
   questions to the engine) answered in 18 ms; a first image
   rendered by the engine and passed through the front door in
@@ -1252,6 +1308,14 @@ These are INFERRED, not decided by anyone but this build. Argue with them.
   viewer's configuration, once the readers have seen this one.
 - **A phone gets the plain table**, not the virtualized one: fine for the
   few rows a phone shows, not measured with hundreds.
+- **Two viewers in the reading room** double the viewer's memory on the PC
+  (each is its own OHIF). NOT VERIFIED on PMC's reading-room PCs; the
+  standalone window remains for a PC that struggles.
+- **Going back in the room loads the study again** (`K`: 5.3 s on the cloud
+  host, while the study after the new current one loads behind at the same
+  time). Keeping the previous study too would mean a third viewer; loading
+  the two in turn rather than at once is the cheaper first step. Measured on
+  4 CPUs with software rendering; a reading-room PC is faster.
 - **The page's chunks are cached for a year by name;** a library update
   changes the library's file only. Not measured on a phone.
 - **Node 24 leaves active support in October 2026**, when Node 26 becomes the
@@ -1311,8 +1375,6 @@ uv pip compile --generate-hashes --python-version 3.14 \
 - **M2.3, the rest:** assigning a reader; sharing with referrers from the
   page, once Dada decides who may share and for how long; ICT's admin
   screens. See [The front door app](#the-front-door-app).
-- **M5.4, the reading room:** the list and the viewer together, the next
-  study instant, the keyboard from list to images and back.
 - **M2.4:** the cine fix for the live WS23 portal, prepared and tested in
   `apps/imaging-portal`. It is deployed only on Dada's go.
 - **M4:** migration tooling, the runbook, and the on-prem package for the

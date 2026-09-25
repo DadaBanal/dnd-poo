@@ -6,8 +6,9 @@ import { StrictMode, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { Button } from 'react-aria-components';
-import { WorklistSearch } from '../shared/api.ts';
+import { RoomSearch, WorklistSearch } from '../shared/api.ts';
 import { fetchMe, useLiveStudies } from './api.ts';
+import { ReadingRoom } from './ReadingRoom.tsx';
 import { Worklist } from './Worklist.tsx';
 import './styles.css';
 
@@ -165,12 +166,19 @@ const worklistRoute = createRoute({
   validateSearch: WorklistSearch,
   component: Worklist,
 });
+// The reading room: the list and the viewer together (ReadingRoom.tsx).
+const roomRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/read',
+  validateSearch: RoomSearch,
+  component: ReadingRoom,
+});
 
 // Filters stay plain text in the URL ("?mod=ct,xa&range=today"), so a view
 // can be read, typed and shared. Read as text only: the router's own parser
 // turns "?q=12345" into a number, and a numeric patient ID would be lost.
 const router = createRouter({
-  routeTree: rootRoute.addChildren([worklistRoute]),
+  routeTree: rootRoute.addChildren([worklistRoute, roomRoute]),
   basepath: '/pmc',
   parseSearch: (search) => Object.fromEntries(new URLSearchParams(search)),
   stringifySearch: (search) => {
