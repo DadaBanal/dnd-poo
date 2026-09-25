@@ -665,7 +665,7 @@ def _links_card(ctx, tk, *, can_work: bool) -> str:
                "<div style='flex:0 0 auto'><button class=ghost type=submit>Link</button></div></form>")
     body = (f"<ul class=plain>{''.join(items)}</ul>" if items else "<div class=muted>No links.</div>")
     if hidden:
-        body += f"<p class=why>{hidden} more on boards you cannot see.</p>"
+        body += f"<p class=why>{hidden} more not listed here: on a restricted board, or one you are not on. Open them from that board.</p>"
     return f"<div class=card data-pod=links><h3><svg class=ic aria-hidden=true><use href=#i-link></use></svg>Links</h3>{body}{add}</div>"
 
 
@@ -684,7 +684,7 @@ def _family_card(ctx, tk, *, can_work: bool) -> str:
     if parent is not None:
         who = (f"<a href='/ticket/{t.esc(parent['work_item_id'])}'>{t.esc(parent['work_item_id'])}</a>"
                f" <span class=muted>{t.esc(parent['summary'])}</span>" if visible(parent["board_id"])
-               else f"{t.esc(parent['work_item_id'])} <span class=muted>on a board you cannot see</span>")
+               else f"{t.esc(parent['work_item_id'])} <span class=muted>on a restricted board, or one you are not on</span>")
         body = (f"<div>Child of {who}</div><p class=why>Closes when its parent closes.</p>")
         if can_work:
             forms = (f"<form method=post action='/ticket/{wid}/parent/remove'>"
@@ -709,7 +709,7 @@ def _family_card(ctx, tk, *, can_work: bool) -> str:
     elif not kids:
         body = "<div class=muted>No children.</div>"
     if hidden:
-        body += f"<p class=why>{hidden} more on boards you cannot see.</p>"
+        body += f"<p class=why>{hidden} more not listed here: on a restricted board, or one you are not on. Open them from that board.</p>"
     if can_work and not tk["closed_at"]:
         forms = (f"<form method=post action='/ticket/{wid}/child/add' class=row style='margin-top:8px'>"
                  "<div><input name=child_id placeholder='Attach a child: PMC-000123' required></div>"
