@@ -2685,6 +2685,14 @@ class WebWSGITest(unittest.TestCase):
         self.assertIn("https://x.screenconnect.com/Host#Access/All%20Machines//"
                       "0f9c3a0e-aaaa-4c2a-9a55-2b8f3c1d00ff/Join", body)
         self.assertIn("rel='noopener noreferrer'", body)
+        # by name, as the card's search box posts it; an unknown name says so
+        self._call("POST", "/ticket/ITO-1/config/remove", cookie=alice, form={"configuration_id": "CF-1"})
+        status, headers, _ = self._call("POST", "/ticket/ITO-1/config/add", cookie=alice,
+                                        form={"name": "ward3-pc01"})
+        self.assertIn("msg=", dict(headers).get("Location", ""))
+        status, headers, _ = self._call("POST", "/ticket/ITO-1/config/add", cookie=alice,
+                                        form={"name": "no-such-machine"})
+        self.assertIn("err=", dict(headers).get("Location", ""))
         # carol only reads IT_HELP, so she cannot attach
         status, _, _ = self._call("POST", "/ticket/ITO-1/config/remove",
                                   cookie=self._cookie_for("carol"),
@@ -5034,12 +5042,22 @@ class DeskLookTest(unittest.TestCase):
         for name in set(__import__("re").findall(r'#i-([a-z]+)', board + ticket)):
             self.assertIn(name, templates.ICONS, name)
 
+    def test_the_ticket_side_cards_are_pods_with_a_shipped_order(self):
+        import re as _re
+        from psaspine.web import templates
+        _, _, ticket = self._call("GET", "/ticket/ITO-1", cookie=self._cookie_for("alice"))
+        pods = _re.findall(r"data-pod=([a-z]+)", ticket)
+        order = _re.search(r"data-order='([a-z,]+)'", ticket).group(1).split(",")
+        self.assertTrue(set(pods) <= set(order), set(pods) - set(order))
+        self.assertIn("ticket", pods)
+        self.assertIn("psa-pods", templates.SCRIPT)
+        self.assertIn("Reset layout", templates.SCRIPT)
+
     def test_the_script_is_plain_and_escapes_what_it_shows(self):
         from psaspine.web import templates
-        # innerHTML only ever takes a constant; anything from a ticket goes through textContent.
+        # innerHTML only ever takes a string literal; anything from a ticket goes through textContent.
         import re as _re
-        self.assertEqual(_re.findall(r'innerHTML=(?!"")(?!"<span></span><small></small>")(?!\'<svg class=ic aria-hidden=true><use href=#i-x></use></svg>\')\S{0,20}',
-                                     templates.SCRIPT), [])
+        self.assertEqual(_re.findall(r"innerHTML=(?![\"'])\S{0,20}", templates.SCRIPT), [])
         self.assertIn("textContent", templates.SCRIPT)
         self.assertIn("prefetch", templates.SCRIPT)
         self.assertIn("aria-busy", templates.SCRIPT)

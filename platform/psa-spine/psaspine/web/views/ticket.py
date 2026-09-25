@@ -321,7 +321,7 @@ def detail(ctx, work_item_id):
     else:
         person_line = ""
     fields = (
-        "<div class='card fields'><h3><svg class=ic aria-hidden=true><use href=#i-ticket></use></svg>Ticket</h3>"
+        "<div class='card fields' data-pod=ticket><h3><svg class=ic aria-hidden=true><use href=#i-ticket></use></svg>Ticket</h3>"
         f"<form method=post action='/ticket/{wid}/update'>"
         f"<label>Board</label><select name=board_id{dis}>{_options(board_pairs, tk['board_id'])}</select>"
         f"<label>Status</label><select name=to_status{dis}>"
@@ -345,16 +345,16 @@ def detail(ctx, work_item_id):
     time_list = "".join(
         f"<dt>{t.esc(r['worked_on'])}</dt><dd>{t.esc(r['performed_by'])} · {r['band_hours']:g} h · "
         f"{t.esc(CHARGE_LABEL.get(r['charge_method'], r['charge_method']))}</dd>" for r in time_rows)
-    time_card = (f"<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-clock></use></svg>Time · {total:g} h</h3>"
+    time_card = (f"<div class=card data-pod=time><h3><svg class=ic aria-hidden=true><use href=#i-clock></use></svg>Time · {total:g} h</h3>"
                  + (f"<dl class=kv>{time_list}</dl>" if time_list else "<div class=muted>None booked.</div>")
                  + (f"<p class=why>{t.esc(why_not)}</p>" if not may else "") + "</div>")
     commercial = (
-        "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-briefcase></use></svg>Commercial basis</h3><dl class=kv>"
+        "<div class=card data-pod=commercial><h3><svg class=ic aria-hidden=true><use href=#i-briefcase></use></svg>Commercial basis</h3><dl class=kv>"
         f"<dt>Contract basis</dt><dd>{t.esc(tk['contract_basis'])}</dd>"
         f"<dt>Commercial path</dt><dd>{t.esc(tk['path'])}</dd>"
         f"<dt>Variation</dt><dd>{t.esc(tk['variation_id'] or '—')}</dd></dl></div>")
     details = (
-        "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-info></use></svg>Details</h3><dl class=kv>"
+        "<div class=card data-pod=details><h3><svg class=ic aria-hidden=true><use href=#i-info></use></svg>Details</h3><dl class=kv>"
         f"<dt>Opened</dt><dd>{t.esc(tk['opened_at'])}</dd>"
         f"<dt>Updated</dt><dd>{t.esc(_ago(common.human_age(tk['updated_at'] or tk['opened_at'], now=ctx.now)))}</dd>"
         f"<dt>Source</dt><dd>{t.esc((tk['intake_source'] or '—').replace('_', '-').title())}</dd>"
@@ -366,7 +366,10 @@ def detail(ctx, work_item_id):
     from . import files as file_views
     configs = (_change_card(ctx, tk, can_work=can_work) + _tasks_card(ctx, tk, can_work=can_work)
                + file_views.ticket_card(ctx, tk, can_work=can_work) + _links_card(ctx, tk, can_work=can_work) + configs)
-    body = header + strip + (f"<div class=rail>{left}<div>{fields}{configs}{time_card}"
+    # The side cards are pods: each user drags or folds them and the browser
+    # remembers; data-order is the shipped layout that "Reset layout" restores.
+    body = header + strip + (f"<div class=rail>{left}<div class=pods data-order='ticket,change,tasks,"
+                             f"files,links,configurations,time,commercial,details'>{fields}{configs}{time_card}"
                              f"{commercial}{details}</div></div>")
     return Response(body=t.page(work_item_id, body, user=ctx.user, active="board"))
 
@@ -609,7 +612,7 @@ def _change_card(ctx, tk, *, can_work: bool) -> str:
         decide = ("<p class=why>A change is authorised by the board's administrator or "
                   "Service Manager, never by its owner.</p>")
     return (
-        "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-flag></use></svg>Change</h3>"
+        "<div class=card data-pod=change><h3><svg class=ic aria-hidden=true><use href=#i-flag></use></svg>Change</h3>"
         f"<p><span class=pill>{t.esc(state)}</span></p>"
         f"<form method=post action='/ticket/{wid}/update' class=fields>"
         f"<input type=hidden name=board_id value='{t.esc(tk['board_id'])}'>"
@@ -662,7 +665,7 @@ def _links_card(ctx, tk, *, can_work: bool) -> str:
     body = (f"<ul class=plain>{''.join(items)}</ul>" if items else "<div class=muted>No links.</div>")
     if hidden:
         body += f"<p class=why>{hidden} more on boards you cannot see.</p>"
-    return f"<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-link></use></svg>Links</h3>{body}{add}</div>"
+    return f"<div class=card data-pod=links><h3><svg class=ic aria-hidden=true><use href=#i-link></use></svg>Links</h3>{body}{add}</div>"
 
 
 def change_fields_from(f) -> dict:
@@ -748,7 +751,7 @@ def _tasks_card(ctx, tk, *, can_work: bool) -> str:
                     "</select></div><div style='flex:0 0 auto'><button class=ghost type=submit>"
                     "Apply template</button></div></form>")
     head = f"Tasks · {done} of {total}" if total else "Tasks"
-    return (f"<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-checks></use></svg>{head}</h3>"
+    return (f"<div class=card data-pod=tasks><h3><svg class=ic aria-hidden=true><use href=#i-checks></use></svg>{head}</h3>"
             + (f"<ul class=plain>{items}</ul>" if items else "<div class=muted>No tasks.</div>")
             + add + "</div>")
 

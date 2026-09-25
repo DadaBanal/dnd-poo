@@ -199,22 +199,40 @@ def ticket_card(ctx, tk, *, can_work: bool) -> str:
     add = ""
     if can_work:
         linked = {r["configuration_id"] for r in rows}
-        # The contact's own machines first, then the rest of the company's.
+        # The company's own machines, the contact's first; if the company has
+        # none on record (or the ticket has no company yet), every active
+        # machine, named with its company, because the technician on site
+        # knows the machine name and should not be stopped by a missing field.
         options = ctx.conn.execute(
-            "SELECT configuration_id, name, contact_id FROM configuration"
+            "SELECT configuration_id, name, contact_id, entity_id FROM configuration"
             " WHERE entity_id = ? AND status = 'ACTIVE'"
             " ORDER BY contact_id IS NOT ? , name LIMIT 1000",
             (tk["entity_id"] or "", tk["contact_id"])).fetchall()
+        scope = "company"
+        if not options:
+            options = ctx.conn.execute(
+                "SELECT configuration_id, name, contact_id, entity_id FROM configuration"
+                " WHERE status = 'ACTIVE' ORDER BY name LIMIT 2000").fetchall()
+            scope = "all"
         opts = "".join(
-            f"<option value='{t.esc(o['configuration_id'])}'>{t.esc(o['name'])}"
-            + (" (contact's)" if tk["contact_id"] and o["contact_id"] == tk["contact_id"] else "")
+            f"<option value='{t.esc(o['name'])}' data-id='{t.esc(o['configuration_id'])}'>"
+            + t.esc((" · contact's" if tk["contact_id"] and o["contact_id"] == tk["contact_id"] else "")
+                    if scope == "company" else f" · {o['entity_id']}")
             + "</option>" for o in options if o["configuration_id"] not in linked)
         if opts:
+            listid = f"cfg-{wid}"
             add = (f"<form method=post action='/ticket/{wid}/config/add' class=row "
-                   "style='margin-top:8px'><div><select name=configuration_id>"
-                   f"{opts}</select></div><div style='flex:0 0 auto'>"
-                   "<button type=submit class=ghost>Attach</button></div></form>")
-    return ("<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-monitor></use></svg>Configurations</h3>"
+                   f"style='margin-top:8px'><div><input name=name list='{listid}' required "
+                   f"placeholder='Type a machine name' autocomplete=off><datalist id='{listid}'>{opts}"
+                   "</datalist></div><div style='flex:0 0 auto'>"
+                   "<button type=submit class=ghost>" + t.icon("plus") + " Attach</button></div></form>"
+                   + ("" if scope == "company" else
+                      "<p class=why style='margin:6px 0 0'>This ticket's company has no machines on "
+                      "record, so every active machine is offered, with its company.</p>"))
+        else:
+            add = ("<p class=why style='margin:6px 0 0'>No machines on record to attach. Import them "
+                   "from Active Directory (Setup › Integrations, <code>import-computers</code>).</p>")
+    return ("<div class=card data-pod=configurations><h3><svg class=ic aria-hidden=true><use href=#i-monitor></use></svg>Configurations</h3>"
             + (f"<ul class=plain>{items}</ul>" if items else
                "<div class=muted>None attached.</div>") + add + "</div>")
 
@@ -226,13 +244,27 @@ def attach(ctx, work_item_id: str):
     if tk is None:
         raise HttpError("404 Not Found", "No such ticket.")
     common.require_board(ctx, tk["board_id"], need="WORK")
-    cid = ctx.request.form().get("configuration_id", "")
+    f = ctx.request.form()
+    cid = f.get("configuration_id", "").strip()
+    if not cid:
+        # The card's search box posts the machine's name (a datalist cannot post
+        # the id). Exact name first, then a single case-insensitive match.
+        name = f.get("name", "").strip()
+        rows = ctx.conn.execute(
+            "SELECT configuration_id FROM configuration WHERE status = 'ACTIVE' AND"
+            " (name = ? OR LOWER(name) = LOWER(?)) ORDER BY name = ? DESC LIMIT 2",
+            (name, name, name)).fetchall()
+        if not rows:
+            return redirect(f"/ticket/{urllib.parse.quote(work_item_id)}?err="
+                            + urllib.parse.quote(f"No machine named {name!r} on record"))
+        cid = rows[0]["configuration_id"]
     try:
         cmdb.attach(ctx.conn, work_item_id, cid, at=ctx.now, actor=ctx.user.id)
     except LookupError:
         raise HttpError("404 Not Found", "No such configuration.")
     ctx.conn.commit()
-    return redirect(f"/ticket/{urllib.parse.quote(work_item_id)}")
+    return redirect(f"/ticket/{urllib.parse.quote(work_item_id)}?msg="
+                    + urllib.parse.quote("Machine attached"))
 
 
 def detach(ctx, work_item_id: str):

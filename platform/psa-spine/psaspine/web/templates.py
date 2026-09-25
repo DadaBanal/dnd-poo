@@ -132,6 +132,19 @@ dialog#pal::backdrop{background:rgb(10 12 18/.35);-webkit-backdrop-filter:blur(3
 [popover]#keys::backdrop{background:transparent}
 [popover]#keys dl{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;margin:8px 0 0}
 [popover]#keys dt{white-space:nowrap} [popover]#keys dd{margin:0;color:var(--ink-2)}
+.pods .card[data-pod]{position:relative}
+.pods .card[data-pod] h3{display:flex;align-items:center;gap:0;padding-right:56px;cursor:grab;user-select:none}
+.pods .card[data-pod] h3:active{cursor:grabbing}
+.pods .card[data-pod] .podctl{position:absolute;right:8px;top:10px;display:inline-flex;gap:2px;opacity:0;transition:opacity var(--fast) var(--ease)}
+.pods .card[data-pod]:hover .podctl,.pods .card[data-pod]:focus-within .podctl{opacity:1}
+.pods .card[data-pod] .podctl .iconbtn{width:26px;height:26px}
+.pods .card[data-pod] .podctl .ic{width:14px;height:14px}
+.pods .card.collapsed>*:not(h3):not(.podctl){display:none}
+.pods .card.collapsed{padding-bottom:12px} .pods .card.collapsed h3{margin-bottom:0}
+.pods .card.collapsed .podctl .fold .ic{transform:rotate(-90deg)}
+.pods .card.dragging{opacity:.5} .pods .card.over{box-shadow:0 -2px 0 0 var(--accent)}
+.pods .podreset{font-size:12px;color:var(--ink-3);text-align:right;margin:-6px 0 12px}
+.pods .podreset button{padding:2px 8px;font-size:12px}
 .kbd{font:11px/1 var(--mono);padding:2px 5px;border:1px solid var(--line-2);border-bottom-width:2px;border-radius:5px;color:var(--ink-2);background:var(--surface)}
 
 /* ---- surfaces ---------------------------------------------------------- */
@@ -391,6 +404,38 @@ d.addEventListener("click",function(e){var a=e.target.closest&&e.target.closest(
   np.className="go"});
 d.addEventListener("submit",function(){if(np)np.className="go"});
 addEventListener("pageshow",function(){if(np)np.className=""});
+/* pods: the ticket's side cards reorder by drag (or the arrows) and fold, remembered here */
+(function(){var rail=$(".pods");if(!rail)return;var KEY="psa-pods";
+  function state(){try{return JSON.parse(localStorage.getItem(KEY)||"{}")}catch(e){return {}}}
+  function save(st){try{localStorage.setItem(KEY,JSON.stringify(st))}catch(e){}}
+  function pods(){return $$(".card[data-pod]",rail)}
+  function ic(n){return '<svg class=ic aria-hidden=true><use href=#i-'+n+'></use></svg>'}
+  function apply(){var st=state(),order=st.order||[];pods().sort(function(a,b){var i=order.indexOf(a.dataset.pod),j=order.indexOf(b.dataset.pod);
+      return (i<0?99:i)-(j<0?99:j)}).forEach(function(c){rail.appendChild(c)});
+    pods().forEach(function(c){c.classList.toggle("collapsed",!!(st.folded||{})[c.dataset.pod])});
+    var r=$(".podreset",rail);if(r)r.style.display=(order.length||Object.keys(st.folded||{}).length)?"":"none"}
+  function remember(){var st=state();st.order=pods().map(function(c){return c.dataset.pod});
+    st.folded={};pods().forEach(function(c){if(c.classList.contains("collapsed"))st.folded[c.dataset.pod]=1});save(st);apply()}
+  pods().forEach(function(c){c.draggable=true;var h=$("h3",c);if(!h)return;
+    var ctl=d.createElement("span");ctl.className="podctl";
+    ctl.innerHTML='<button type=button class="iconbtn mv" data-dir=-1 title="Move up" aria-label="Move up">'+ic("up")+'</button>'
+      +'<button type=button class="iconbtn mv" data-dir=1 title="Move down" aria-label="Move down">'+ic("down")+'</button>'
+      +'<button type=button class="iconbtn fold" title="Fold" aria-label="Fold or unfold" aria-expanded=true>'+ic("chevron")+'</button>';
+    c.appendChild(ctl);
+    $(".fold",ctl).addEventListener("click",function(){c.classList.toggle("collapsed");this.setAttribute("aria-expanded",String(!c.classList.contains("collapsed")));remember()});
+    $$(".mv",ctl).forEach(function(b){b.addEventListener("click",function(){var dir=+b.dataset.dir,list=pods(),i=list.indexOf(c),j=i+dir;
+      if(j<0||j>=list.length)return;rail.insertBefore(c,dir<0?list[j]:list[j].nextSibling);remember()})});
+    c.addEventListener("dragstart",function(e){c.classList.add("dragging");e.dataTransfer.effectAllowed="move";e.dataTransfer.setData("text/plain",c.dataset.pod)});
+    c.addEventListener("dragend",function(){c.classList.remove("dragging");pods().forEach(function(x){x.classList.remove("over")})});
+    c.addEventListener("dragover",function(e){e.preventDefault();e.dataTransfer.dropEffect="move";c.classList.add("over")});
+    c.addEventListener("dragleave",function(){c.classList.remove("over")});
+    c.addEventListener("drop",function(e){e.preventDefault();var from=$(".card[data-pod='"+e.dataTransfer.getData("text/plain")+"']",rail);
+      if(from&&from!==c)rail.insertBefore(from,c);remember()})});
+  var reset=d.createElement("div");reset.className="podreset";reset.innerHTML='<button type=button class=ghost>Reset layout</button>';
+  reset.style.display="none";rail.insertBefore(reset,rail.firstChild);
+  $("button",reset).addEventListener("click",function(){save({});pods().forEach(function(c){c.classList.remove("collapsed")});
+    var order=rail.dataset.order?rail.dataset.order.split(","):[];order.forEach(function(k){var c=$(".card[data-pod='"+k+"']",rail);if(c)rail.appendChild(c)});apply()});
+  apply()})();
 /* density: compact rows for the power user, remembered here */
 function setDensity(v){try{v?localStorage.setItem("psa-density",v):localStorage.removeItem("psa-density")}catch(e){}
   if(v)root.dataset.density=v;else delete root.dataset.density;$$(".densi button").forEach(function(b){b.setAttribute("aria-pressed",String((b.dataset.density||"")===(v||"")))})}
@@ -453,6 +498,10 @@ ICONS = {
     "building": "M3 21h18M5 21V4h14v17M9 8h2M13 8h2M9 12h2M13 12h2M9 16h2M13 16h2",
     "shield": "M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z",
     "rows": "M3 6h18M3 12h18M3 18h18",
+    "chevron": "m6 9 6 6 6-6",
+    "grip": "M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01",
+    "up": "M12 19V5M5 12l7-7 7 7",
+    "down": "M12 5v14M5 12l7 7 7-7",
     "sparkle": "M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6",
 }
 

@@ -77,7 +77,7 @@ def ticket_card(ctx, tk, *, can_work: bool) -> str:
                   "review.</p>")
     pending = sum(1 for r in rows if r["review_status"] == "PENDING" and not r["purged_at"])
     head = f"Files · {len(rows)}" + (f" · {pending} to review" if pending else "")
-    return (f"<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-paperclip></use></svg>{head if rows else 'Files'}</h3>"
+    return (f"<div class=card data-pod=files><h3><svg class=ic aria-hidden=true><use href=#i-paperclip></use></svg>{head if rows else 'Files'}</h3>"
             + (f"<ul class=plain>{''.join(items)}</ul>" if items
                else "<div class=muted>No files.</div>")
             + upload + "</div>")
