@@ -41,6 +41,16 @@ def main() -> None:
             "frames": int(getattr(first, "NumberOfFrames", 1)),
             "patient_id": study.patient_id,
         }
+    # The chest plate's patient has an older chest plate too (a prior), so the
+    # viewer's study browser and the reading list can show priors.
+    prior = synth.Study("cr", run_id + "P", SENDER["cr"], patient_id=seeded["cr"]["patient_id"])
+    for ds in prior.datasets:
+        ds.StudyDate = ds.SeriesDate = ds.ContentDate = ds.AcquisitionDate = "20250106"
+        ds.StudyDescription = "SYNTHETIC CR chest plate, a year earlier"
+    statuses = engine.store(SENDER["cr"], prior.datasets)
+    if statuses == REJECTED or any(s != 0x0000 for s in statuses):
+        raise SystemExit(f"seeding the prior failed: {statuses}")
+    seeded["cr"]["prior"] = {"study": prior.study_uid, "study_date": "20250106"}
     # Share the chest plate with referrers (a label), so the browser tests can
     # show a referrer opening it and not the others.
     shared = engine.study_id(seeded["cr"]["study"])

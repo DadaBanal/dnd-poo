@@ -50,6 +50,9 @@ modality ─ DICOM 4242 ─────────────────▶  
   [Feed watch and alerts](#feed-watch-and-alerts) below. ICT hears by email
   or Teams when a modality goes quiet, the engine or sign-in is down, space
   runs low, a certificate is about to expire, or a backup is late.
+- **M5, the reading experience:** the viewer opens fast and stays cached
+  (M5.1, see Measured); its reading tools are configured for PMC (M5.2, see
+  [The viewer's tools](#the-viewers-tools)).
 - **PMC's identity:** see [Branding](#branding) below. The sign-in page, the
   app, the viewer, the signed-out page and the alert email wear the 2026
   identity as the portal proposal applied it: PMC Blue, the four-segment
@@ -561,6 +564,55 @@ the watch showed both clusters' backups and the snapshot within seconds.
 - **One firewall rule** (M4): Alertmanager may reach the relay, and Teams if
   it is used, and nothing else.
 
+## The viewer's tools
+
+The viewer is OHIF 3.13 as shipped, configured (`viewer/app-config.js`),
+never forked, so every release of it is a digest change and a test run. What a
+reader has (each MEASURED by `browser/tests/viewer.spec.js` where marked):
+
+- **Window and level**, by dragging, by menu, and by number key for CT:
+  1 soft tissue, 2 lung, 3 bone, 4 brain, 5 liver, 6 mediastinum, 7 stroke
+  (tested: 2 then 1). MR and X-ray windows are relative to the image, so
+  they have no fixed presets.
+- **Zoom, pan, magnify, invert, rotate, flip, reset, reference lines,
+  crosshairs**, from the toolbar and its More menu.
+- **Cine** for cath lab, fluoroscopy and ultrasound runs, on by itself at the
+  run's own frame rate (tested: 12–15 frames a second on the cloud host).
+- **Layouts:** 1×1, 1×2, 2×2, 3×1, and the volume layouts MPR, 3D four up,
+  3D main, axial primary, 3D only and 3D primary (tested: the CT stack in
+  three planes).
+- **Measurements:** length, bidirectional, angle, Cobb angle, arrow, ellipse,
+  rectangle, circle, freehand and spline regions with statistics, probe,
+  calibration (tested: a length, listed in millimetres). They live in the
+  page and can be exported; saving them into the archive as DICOM SR is a
+  decision (below).
+- **Priors:** the study browser lists the patient's other studies, newest
+  first, so an earlier study is a drag away and the compare layouts can hold
+  both (tested: a year-older chest plate offered beside the current one).
+- **Capture** a viewport as an image; the **tag browser** for any instance;
+  **segmentation** panel for SEG objects; **the patient's name, ID, sex and
+  age** stay in the header while reading.
+- **Keyboard:** arrows scroll images and viewports, Page Up/Down change
+  series, Home/End first and last image, Space resets, Esc cancels, 1–7
+  window presets, and OHIF's other defaults, listed in its user preferences.
+- **Decoders** run in web workers, one fewer than the PC's cores (2 to 7).
+
+Choices:
+
+- **No first-visit tour.** A ward PC is shared; every new Windows profile
+  would have started it again. The reading list's help carries the keys.
+- **Measurements are tracked without questions** (OHIF's simplified tracking
+  mode): no "start tracking?" prompts between a reader and the image.
+
+Decisions for Dada:
+
+- **Saving measurements and annotations into the archive** as DICOM
+  structured reports. Modern reading keeps them with the study; it means the
+  first write to the archive by a reader, through the front door, for SR
+  objects only. Not built until decided.
+- **OHIF's investigational-use notice**, once a session, stays until the
+  regulatory answer the record asks for (§10 of the redesign) is in.
+
 ## Branding
 
 The platform wears PMC's 2026 identity as the portal proposal applied it to
@@ -699,6 +751,7 @@ on site).
 | A referrer opens a study shared with referrers. A search finds only shared studies, and an unshared study is refused even by its UID | `browser/tests/access.spec.js` |
 | A cardiologist opens a cathlab run and it plays | `browser/tests/access.spec.js` |
 | Without a session, DICOMweb answers 401: never data, never a sign-in page. Keycloak's admin console and master realm are not reachable. Signing out ends the session | `browser/tests/access.spec.js` |
+| The viewer's tools on the stored images: window presets by key, the CT in three planes (MPR), a length measured and listed in millimetres, the patient's earlier study offered in the study browser | `browser/tests/viewer.spec.js` |
 | PMC's identity: the logo files need no session, are only read, and nothing else under `/brand/` is served. The sign-in page carries PMC's theme, the lock-up and tagline on PMC Blue and PMC's words, keeps Keycloak's own form, says when Caps Lock is on, and passes axe's contrast check in light and dark. The app's header, the viewer's header and the signed-out page show the lock-up or mark. The alert email is PMC's, in HTML and plain text | `tests/test_brand.py`, `browser/tests/access.spec.js`, `home.spec.js`, `viewer.spec.js`, `tests/test_watch.py` |
 
 All test data is synthetic (`tests/synth.py`). Pixels are drawn from formulas,

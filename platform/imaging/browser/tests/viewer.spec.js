@@ -123,6 +123,68 @@ test('an ultrasound run that arrived as JPEG plays as sent', async ({ page }) =>
   expect(seen.errors).toEqual([]);
 });
 
+// The reading tools (M5.2), on the images as stored (JPEG-LS): window
+// presets by key, the CT reformatted in three planes, a length measured, and
+// the patient's earlier study offered beside the current one.
+async function overlayWindow(page) {
+  const text = await page.locator('[data-cy="viewport-overlay-bottom-left"]').first().innerText().catch(() => '');
+  const m = text.replace(/\s+/g, ' ').match(/W:\s*(-?\d+)\s*L:\s*(-?\d+)/);
+  return m ? { w: Number(m[1]), l: Number(m[2]) } : null;
+}
+
+test('window presets by key: 2 is lung, 1 is soft tissue', async ({ page }) => {
+  const started = await open(page, seed.ct.study);
+  await firstImage(page, started);
+  await dismissOhifNotices(page);
+  await page.locator('[data-cy="viewport-pane"]').first().click({ position: { x: 40, y: 40 } });
+  await page.keyboard.press('2');
+  await expect.poll(() => overlayWindow(page), { timeout: 15_000 }).toEqual({ w: 1500, l: -600 });
+  await page.keyboard.press('1');
+  await expect.poll(() => overlayWindow(page), { timeout: 15_000 }).toEqual({ w: 400, l: 40 });
+});
+
+test('the CT reformats in three planes (MPR)', async ({ page }) => {
+  const seen = watch(page);
+  const started = await open(page, seed.ct.study);
+  await firstImage(page, started);
+  await dismissOhifNotices(page);
+  await page.locator('[data-cy="layout-button"]').click();
+  await page.getByText('MPR', { exact: true }).click();
+  await expect(page.locator('[data-cy="viewport-pane"]')).toHaveCount(3, { timeout: 60_000 });
+  // Each plane draws: three overlays with a window.
+  await expect.poll(async () => {
+    const texts = await page.locator('[data-cy="viewport-overlay-bottom-left"]').allInnerTexts();
+    return texts.filter((t) => /W:\s*-?\d/.test(t.replace(/\s+/g, ' '))).length;
+  }, { timeout: 60_000 }).toBe(3);
+  expect(seen.errors).toEqual([]);
+});
+
+test('a length is measured and listed', async ({ page }) => {
+  const started = await open(page, seed.cr.study);
+  await firstImage(page, started);
+  await dismissOhifNotices(page);
+  await page.locator('[data-cy="Length-btn"]').click();
+  const pane = page.locator('[data-cy="viewport-pane"]').first();
+  const box = await pane.boundingBox();
+  const x = box.x + box.width / 2, y = box.y + box.height / 2;
+  await page.mouse.move(x - 60, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 60, y, { steps: 8 });
+  await page.mouse.up();
+  await page.locator('[data-cy="trackedMeasurements-btn"]').click();
+  await expect(page.getByText(/\d+(\.\d+)?\s*mm/).first()).toBeVisible({ timeout: 30_000 });
+});
+
+test("the patient's earlier study is offered beside the current one", async ({ page }) => {
+  const started = await open(page, seed.cr.study);
+  await firstImage(page, started);
+  await dismissOhifNotices(page);
+  // The study browser lists both of this patient's studies, the prior by its date.
+  const browser = page.locator('[data-cy="studyBrowser-panel"]');
+  await expect(browser).toContainText('06-Jan-2025', { timeout: 30_000 });
+  await expect(browser).toContainText('a year earlier');
+});
+
 test('every request stays on the front door, and images are never cached', async ({ page }) => {
   const seen = watch(page);
   await open(page, seed.cr.study);

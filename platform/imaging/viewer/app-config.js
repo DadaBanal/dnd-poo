@@ -23,8 +23,49 @@ window.config = {
   //   autoPlayCine        with the player on, start playing at once.
   customizationService: {
     autoCineModalities: { $set: ['XA', 'RF', 'US', 'OT'] },
+
+    // ---- the reading tools (M5.2), as configuration ------------------------
+    // OHIF 3.13 ships the tools a reading room needs: window/level with
+    // presets, zoom, pan, cine, length, bidirectional, angle, Cobb angle,
+    // ellipse, rectangle and freehand regions with statistics, probe,
+    // calibration, magnify, invert, rotate and flip, reference lines,
+    // crosshairs, MPR and 3D layouts, capture, the tag browser, and a
+    // study browser that lists the patient's other studies for comparison.
+    // The keys below are the ones the 3.13.10 bundle reads (MEASURED,
+    // 24 Sep 2026); what is not named keeps OHIF's default.
+
+    // Window presets for CT, by number key (1-7; OHIF's own five plus two
+    // that PMC's CT reading uses). MR and X-ray have no fixed presets: their
+    // values are relative to the image.
+    'cornerstone.windowLevelPresets': {
+      $merge: {
+        CT: [
+          { id: 'ct-soft-tissue', description: 'Soft tissue', window: '400', level: '40' },
+          { id: 'ct-lung', description: 'Lung', window: '1500', level: '-600' },
+          { id: 'ct-bone', description: 'Bone', window: '2500', level: '480' },
+          { id: 'ct-brain', description: 'Brain', window: '80', level: '40' },
+          { id: 'ct-liver', description: 'Liver', window: '150', level: '90' },
+          { id: 'ct-mediastinum', description: 'Mediastinum', window: '350', level: '50' },
+          { id: 'ct-stroke', description: 'Stroke', window: '40', level: '40' },
+        ],
+      },
+    },
+
+    // Every study of the patient the viewer knows of, newest first, so a
+    // prior is one drag away. (OHIF's default; said here so it stays.)
+    'studyBrowser.studyMode': { $set: 'all' },
+
+    // No first-visit tour. A ward PC is shared, and every new Windows profile
+    // would start it again; the reading list's help page carries the keys.
+    'ohif.tours': { $set: [] },
   },
   autoPlayCine: true,
+
+  // The patient's name, ID, sex and age stay in the header while reading:
+  // 'visible' shows them; the person can collapse them for a screenshot.
+  showPatientInfo: 'visible',
+  // Measurements are tracked without the "start tracking?" questions.
+  measurementTrackingMode: 'simplified',
 
   // The worklist is the PMC front door app (/pmc/, M2.3); OHIF is the viewer
   // only. Its home link lands on / and the front door sends that to /pmc/.
@@ -77,7 +118,10 @@ window.config = {
   // (its default). Whether PMC keeps it is a governance decision for Dada.
   investigationalUseDialog: { option: 'always' },
 
-  maxNumberOfWebWorkers: 3,
+  // Decoders run in web workers: one fewer than the PC's cores, 2 to 7.
+  // OHIF's fixed 3 suited neither a 2-core ward PC nor an 8-core reading
+  // room PC (INFERRED; the cloud build host has 4, so it measures 3 either way).
+  maxNumberOfWebWorkers: Math.max(2, Math.min(7, (navigator.hardwareConcurrency || 4) - 1)),
   showWarningMessageForCrossOrigin: false,
   showCPUFallbackMessage: true,
   showLoadingIndicator: true,

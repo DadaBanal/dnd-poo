@@ -133,6 +133,11 @@
 
       // The REST API, as the front door's backend and the platform's tools read it.
       ["post", "^/tools/(find|lookup)$", "api-view"],
+      // How many studies match, for the reading list's totals. The
+      // authorization plugin cuts /tools/find to a role's labels but not this
+      // count (INFERRED from its 0.12.0 source), so the front door app asks it
+      // only for roles that see every study, never for a referrer.
+      ["post", "^/tools/count-resources$", "api-view"],
       ["get", "^/changes$", "api-view"],
       ["get", "^/system$", "view"],
       ["get", "^/(patients|studies|series|instances)/[a-f0-9-]+(/(patient|study|series|instances|shared-tags|tags|simplified-tags|header|statistics|metadata(/[^/]+)?|labels(/[^/]+)?|preview|rendered|numpy|content(/.*)?|frames(/[0-9]+(/(preview|rendered|numpy|raw|image-uint8|image-uint16|image-int16))?)?))?$", "view"],
