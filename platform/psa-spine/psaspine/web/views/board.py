@@ -30,9 +30,9 @@ COLUMNS = (("id", "Ticket #"), ("summary", "Summary"), ("company", "Company"),
            ("contact", "Contact"), ("board", "Board"), ("status", "Status"),
            ("pri", "Pri"), ("owner", "Owner"), ("age", "Age"), ("updated", "Updated"),
            ("sla", "SLA"))
-TILES = (("", "Open on my boards", ""), ("breached", "SLA breached", "bad"),
-         ("due", "Due within 1 hour", "warn"), ("unassigned", "Unassigned", ""),
-         ("mine", "Mine", ""))
+TILES = (("", "Open on my boards", "", "inbox"), ("breached", "SLA breached", "bad", "alert"),
+         ("due", "Due within 1 hour", "warn", "clock"), ("unassigned", "Unassigned", "", "users"),
+         ("mine", "Mine", "", "my"))
 
 
 def _is_mine(ctx, owner) -> bool:
@@ -219,7 +219,7 @@ def index(ctx):
 
     body = ""
     if f["msg"]:
-        body += f"<div class='banner ok'>{t.esc(f['msg'])}</div>"
+        body += f"<div class='banner ok toast'>{t.icon('check')} {t.esc(f['msg'])}</div>"
     body += _tiles(f, counts) + _filters(ctx, boards, f)
     if not shown:
         body += "<div class='card'><div class='empty'>No tickets match.</div></div>"
@@ -261,10 +261,10 @@ def _link(f, **over) -> str:
 
 def _tiles(f, counts) -> str:
     out = []
-    for key, label, cls in TILES:
+    for key, label, cls, ic in TILES:
         on = " on" if f["tile"] == key and (key or not any(
             f[k] for k in ("tile", "owner", "pri", "src", "type", "q"))) else ""
-        out.append(f"<a class='tile {cls}{on}' href='{t.esc(_link(f, tile=key, view='open'))}'>"
+        out.append(f"<a class='tile {cls}{on}' href='{t.esc(_link(f, tile=key, view='open'))}'>{t.icon(ic)}"
                    f"<div class=n>{counts[key]}</div><div class=l>{t.esc(label)}</div></a>")
     return "<div class=tiles>" + "".join(out) + "</div>"
 
@@ -298,20 +298,22 @@ def _filters(ctx, boards, f) -> str:
         "</select></div>"
         f"<div style='flex:1'><label>Search</label><input name=q value='{t.esc(f['q'])}' "
         "placeholder='ticket #, summary, contact'></div>"
-        "<div style='min-width:0'><button type=submit>Filter</button></div></form></div>")
+        f"<div style='min-width:0'><button type=submit>{t.icon('filter')} Filter</button></div></form></div>")
 
 
 def _pager(f, shown: int, total: int) -> str:
     page = max(int(f["page"]), 1) if f["page"].isdigit() else 1
     first = (page - 1) * PAGE + 1
     last = first + shown - 1
+    dens = ("<span class=densi><button type=button class=ghost data-density='' aria-pressed=true>Comfortable</button>"
+            "<button type=button class=ghost data-density=compact aria-pressed=false>Compact</button></span>")
     if total <= PAGE:
-        return f"{total} ticket(s)."
+        return f"{dens}{total} ticket(s)."
     prev_ = (f"<a class='btn ghost' href='{t.esc(_link(f, page=str(page - 1)))}'>‹ Previous</a> "
              if page > 1 else "")
     next_ = (f" <a class='btn ghost' href='{t.esc(_link(f, page=str(page + 1)))}'>Next ›</a>"
              if last < total else "")
-    return f"{prev_}Showing {first}–{last} of {total}{next_}"
+    return f"{dens}{prev_}Showing {first}–{last} of {total}{next_}"
 
 
 def _table(ctx, boards, shown, f, total: int) -> str:

@@ -71,13 +71,13 @@ def ticket_card(ctx, tk, *, can_work: bool) -> str:
         upload = (f"<form method=post action='/ticket/{wid}/attach' enctype='multipart/form-data'"
                   " class=row style='margin-top:8px'>"
                   "<div><input type=file name=file required></div>"
-                  "<div style='flex:0 0 auto'><button class=ghost type=submit>Attach</button></div>"
+                  "<div style='flex:0 0 auto'><button class=ghost type=submit><svg class=ic aria-hidden=true><use href=#i-paperclip></use></svg> Attach</button></div>"
                   "</form><p class=why style='margin:6px 0 0'>Up to 10 MB. Screenshots, photos, "
                   "PDFs, logs and Office documents. Every file waits for a patient-information "
                   "review.</p>")
     pending = sum(1 for r in rows if r["review_status"] == "PENDING" and not r["purged_at"])
     head = f"Files · {len(rows)}" + (f" · {pending} to review" if pending else "")
-    return (f"<div class=card><h3>{head if rows else 'Files'}</h3>"
+    return (f"<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-paperclip></use></svg>{head if rows else 'Files'}</h3>"
             + (f"<ul class=plain>{''.join(items)}</ul>" if items
                else "<div class=muted>No files.</div>")
             + upload + "</div>")

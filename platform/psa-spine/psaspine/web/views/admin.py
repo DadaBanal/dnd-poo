@@ -62,7 +62,7 @@ def index(ctx):
     if ctx.user.is_sysadmin:
         n_items = ctx.conn.execute("SELECT COUNT(*) FROM catalogue_item").fetchone()[0]
         cards.append(
-            "<div class=card><h3>Boards and the service catalogue</h3>"
+            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-layers></use></svg>Boards and the service catalogue</h3>"
             "<p class=sub>Boards are split by who does the work and how it flows, as ConnectWise "
             "advises, never by incident versus request. A <b>service</b> board's Types are "
             "Incident, Request, Problem and Event (ITIL's service desk takes both incidents and "
@@ -83,17 +83,17 @@ def index(ctx):
     if rows or ctx.user.is_sysadmin:
         n_rules = ctx.conn.execute("SELECT COUNT(*) FROM workflow WHERE is_active = 1").fetchone()[0]
         cards.append(
-            "<div class=card><h3>Workflow rules</h3><p class=sub>Escalations, notifications and "
+            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-sparkle></use></svg>Workflow rules</h3><p class=sub>Escalations, notifications and "
             "routing as rules: an event, conditions, actions. Test, then switch on.</p>"
             f"<a class='btn ghost' href='/admin/rules'>Workflow rules ({n_rules} on)</a></div>")
     if rows:
-        cards.append("<div class=card><h3>Your boards</h3><div class=tablewrap><table>"
+        cards.append("<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-layers></use></svg>Your boards</h3><div class=tablewrap><table>"
                      "<thead><tr><th>Board</th><th>Setup</th><th>Tickets</th><th></th></tr></thead>"
                      "<tbody>" + "".join(rows) + "</tbody></table></div></div>")
     if ctx.user.is_sysadmin:
         n_links = ctx.conn.execute("SELECT COUNT(*) FROM integration_link WHERE inactive = 0").fetchone()[0]
         cards.append(
-            "<div class=card><h3>Integrations</h3><p class=sub>Links out from configurations and "
+            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-link></use></svg>Integrations</h3><p class=sub>Links out from configurations and "
             "contacts to the tools the desk does not replace: ScreenConnect first.</p>"
             f"<a class='btn ghost' href='/admin/integrations'>Integrations ({n_links} on)</a></div>")
         cards.append(_local_accounts_card(ctx))
@@ -154,7 +154,7 @@ def board_setup(ctx, board_id):
                     f"<input type=checkbox name={name} value=1 style='width:auto'"
                     f"{' checked' if v else ''}> {label}</label>")
         content = (
-            "<div class=card><h3>Board</h3>"
+            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-board></use></svg>Board</h3>"
             f"<form method=post action='/admin/board/{bid}/settings'><div class=grid2>"
             f"<div><label>Name</label><input name=display_name value='{t.esc(b['display_name'])}' required></div>"
             f"<div><label>Fulfiller group</label><input name=fulfiller_group value='{t.esc(b['fulfiller_group'])}'></div>"
@@ -197,13 +197,13 @@ def board_setup(ctx, board_id):
         items = [(c["catalogue_item_id"], c["label"]) for c in _setup.catalogue_choices(ctx.conn, board_id)]
         opt = lambda pairs: "".join(f"<option value='{t.esc(k)}'>{t.esc(v)}</option>" for k, v in pairs)  # noqa: E731
         content = (
-            "<div class=card><h3>Ticket templates</h3><p class=sub>Recipes for repeatable work on this "
+            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-checks></use></svg>Ticket templates</h3><p class=sub>Recipes for repeatable work on this "
             "board, as ConnectWise's service templates: a summary, a Type, a Subtype › Item, a description "
             "and a checklist. Start a ticket from one (New ticket › Use template), apply one to an open "
             "ticket, or have a workflow rule apply one.</p><div class=tablewrap><table><thead><tr>"
             "<th>Template</th><th>Type</th><th>Tasks</th><th></th></tr></thead>"
             f"<tbody>{trs}</tbody></table></div></div>"
-            f"<div class=card><h3>New template</h3><form method=post action='/admin/board/{bid}/template'>"
+            f"<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-plus></use></svg>New template</h3><form method=post action='/admin/board/{bid}/template'>"
             "<div class=grid2><div><label>Name</label><input name=name required placeholder='e.g. New starter'></div>"
             "<div><label>Ticket summary</label><input name=summary placeholder='e.g. New starter: account and badge'></div>"
             f"<div><label>Type</label><select name=record_type><option value=''>(board default)</option>{opt(types)}</select></div>"
@@ -225,7 +225,7 @@ def board_setup(ctx, board_id):
             f"{' checked' if k == default else ''} aria-label='default {t.esc(itil.LABEL[k])}'></td>"
             f"<td class=muted>{t.esc(TYPE_HELP[k])}</td></tr>" for k in itil.RECORD_TYPES)
         content = (
-            f"<div class=card><h3>Types</h3><p class=sub>This is a <b>{t.esc(kind.lower())}</b> "
+            f"<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-tag></use></svg>Types</h3><p class=sub>This is a <b>{t.esc(kind.lower())}</b> "
             "board. Its Types are ConnectWise's Types tab: a ticket here reads Type › Subtype › "
             "Item. None ticked means the board takes every Type. The default is what a ticket "
             "gets when nothing else says (an email, say).</p>"
@@ -242,7 +242,7 @@ def board_setup(ctx, board_id):
                 "style='width:100px'> min</td>" for c in setup.CLOCKS) + "</tr>"
             for p in ("P1", "P2", "P3", "P4"))
         content = (
-            "<div class=card><h3>SLA targets</h3><div class=note-ph>Measured and reported, "
+            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-clock></use></svg>SLA targets</h3><div class=note-ph>Measured and reported, "
             "<b>not enforced or promised</b> (every target is enforced = 0). A blank cell means "
             "that clock does not start for that priority. Changes apply to tickets opened after "
             "saving; a ticket's priority change re-targets its running clocks.</div>"
@@ -270,7 +270,7 @@ def board_setup(ctx, board_id):
             f"<input name='{r}' value='{t.esc(named.get(r, ''))}' placeholder='a named person'></div>"
             for r in ROLES)
         content = (
-            "<div class=card><h3>Members</h3><p class=sub>A person can belong to any number of "
+            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-users></use></svg>Members</h3><p class=sub>A person can belong to any number of "
             "boards. READ sees the board; WORK works its tickets; ADMIN sets it up.</p>"
             "<div class=tablewrap><table><thead><tr><th>Member</th>"
             f"<th>Access</th><th>Team</th></tr></thead><tbody>{member_rows}</tbody></table></div>"
@@ -281,7 +281,7 @@ def board_setup(ctx, board_id):
             "</option><option>ADMIN</option></select></div>"
             f"<div><label>Team</label><select name=team_id>{team_opts}</select></div>"
             "<div style='flex:0 0 auto'><button type=submit>Add or change</button></div></form></div>"
-            "<div class=card><h3>Teams</h3><p class=sub>Teams inside a board — who a queue "
+            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-users></use></svg>Teams</h3><p class=sub>Teams inside a board — who a queue "
             "falls to when nobody owns a ticket.</p><div class=tablewrap><table><thead><tr>"
             f"<th>Team</th><th>Leader</th><th></th></tr></thead><tbody>{team_rows or '<tr><td colspan=3 class=muted>No teams yet.</td></tr>'}"
             "</tbody></table></div>"
@@ -291,7 +291,7 @@ def board_setup(ctx, board_id):
             "<div style='flex:0 0 auto'><label>Default</label><select name=is_default><option value=0>no"
             "</option><option value=1>yes</option></select></div>"
             "<div style='flex:0 0 auto'><button type=submit>Add team</button></div></form></div>"
-            "<div class=card><h3>The four board roles</h3><p class=sub>ConnectWise's own: Service "
+            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-users></use></svg>The four board roles</h3><p class=sub>ConnectWise's own: Service "
             "Manager, Dispatch, On-Call and Duty Manager (who is told when On-Call does not "
             "answer). The rota on the On-call page overrides the named On-Call.</p>"
             f"<form method=post action='/admin/board/{bid}/roles'><div class=grid2>{role_rows}</div>"
@@ -324,7 +324,7 @@ def board_setup(ctx, board_id):
                 + f"<td><button form='s_{sid}' class=ghost type=submit style='padding:4px 10px'>Save</button></td></tr>")
         esc_opts = "".join(f"<option value='{k}'>{t.esc(v)}</option>" for k, v in ESC_LABEL.items())
         content = (
-            "<div class=card><h3>Statuses</h3><div class=tablewrap><table class=edit><thead><tr>"
+            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-rows></use></svg>Statuses</h3><div class=tablewrap><table class=edit><thead><tr>"
             "<th>Order</th><th>Name (desk)</th><th>Requester sees</th><th>SLA milestone</th>"
             "<th>Default</th><th>Closes</th><th>Time allowed</th><th>On board</th><th>Retired</th>"
             "<th></th></tr></thead><tbody>" + ("".join(rows) or
@@ -769,7 +769,7 @@ def _local_accounts_card(ctx) -> str:
             f"<td class='muted'>{t.esc(r['last_login_at'] or 'never')}</td>"
             f"<td>{disable}</td></tr>")
     body = "".join(trs) or "<tr><td colspan=5 class='muted'>No break-glass accounts.</td></tr>"
-    return ("<div class='card'><h3>Break-glass accounts</h3>"
+    return ("<div class='card'><h3><svg class=ic aria-hidden=true><use href=#i-shield></use></svg>Break-glass accounts</h3>"
             "<p class='sub'>Created only by <code>psaspine create-local-account</code>. "
             "Disable here; the web never creates one.</p>"
             "<div class='tablewrap'><table><thead><tr><th>Username</th><th>Role</th>"
@@ -783,7 +783,7 @@ def _config_overview_card(ctx) -> str:
                          ("Catalogue items", "catalogue_item"), ("SLA targets", "sla_target")):
         counts[label] = ctx.conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
     rows = "".join(f"<dt>{t.esc(k)}</dt><dd>{v}</dd>" for k, v in counts.items())
-    return ("<div class='card'><h3>Cross-board configuration</h3>"
+    return ("<div class='card'><h3><svg class=ic aria-hidden=true><use href=#i-monitor></use></svg>Cross-board configuration</h3>"
             "<p class='sub'>Calendars, floors and the catalogue are cross-board and "
             "still edited by the CLI and seed today; the counts are here so the fence "
             "is visible. Full editing of these is the next slice.</p>"

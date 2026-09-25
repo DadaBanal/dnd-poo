@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 425 tests
+python3 tests/test_spine.py          # 426 tests
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -145,6 +145,18 @@ keyboard-first rows) and checked against current UI-trend and CSS references
   103 KB (029 indexes, one query for every row's clocks, filters and paging
   in SQL). A button marks itself busy on submit and refuses a second click;
   hovering a ticket link prefetches it.
+- **Icons, not an icon font:** three dozen 24-grid stroke icons drawn in
+  `templates.ICONS`, emitted once per page as an SVG sprite and used by id on
+  the nav, the counters, every card heading, the action buttons and empty
+  states; a favicon as an inline SVG. A test proves every icon a page asks
+  for exists.
+- **Platform features, used where they degrade cleanly:** the palette is a
+  `<dialog>` with `showModal()`; the shortcut list is a `popover`; the header
+  gains a shadow through a scroll-driven animation; textareas grow with
+  `field-sizing: content`; headings use `text-wrap: balance`; cards are
+  container-query roots; action results are toasts that dismiss themselves
+  (an error stays until closed); a 2 px progress bar runs while the next
+  page loads; rows have a *Comfortable / Compact* density, remembered here.
 - **Every page works with the script off.** It only adds.
 
 - **Companies and contacts** (`/companies`, `/company/<id>`, `/contacts`,

@@ -120,7 +120,7 @@ def _raise_form(error: str = "", notice: str = "") -> str:
     err = f"<div class='banner err'>{t.esc(error)}</div>" if error else ""
     note = f"<div class='banner ok'>{t.esc(notice)}</div>" if notice else ""
     return (err + note +
-            "<div class='card'><h3>Raise a request</h3>"
+            "<div class='card'><h3><svg class=ic aria-hidden=true><use href=#i-plus></use></svg>Raise a request</h3>"
             "<form class='stack' method='post' action='/my/new' style='max-width:none'"
             " enctype='multipart/form-data'>"
             "<label>What do you need? "
@@ -232,7 +232,7 @@ def detail(ctx, work_item_id):
     shared = _visible_files(ctx, work_item_id)
     files_card = ""
     if shared:
-        files_card = ("<div class='card'><h3>Files</h3><ul class='plain'>" + "".join(
+        files_card = ("<div class='card'><h3><svg class=ic aria-hidden=true><use href=#i-paperclip></use></svg>Files</h3><ul class='plain'>" + "".join(
             f"<li><a href='/my/{t.esc(work_item_id)}/file/{f['attachment_id']}'>"
             f"{t.esc(f['filename'])}</a></li>" for f in shared) + "</ul></div>")
 
@@ -240,9 +240,9 @@ def detail(ctx, work_item_id):
         f"<h1>{t.esc(row['summary'])}</h1>"
         f"<p class='sub'>{t.esc(work_item_id)} &middot; "
         f"{t.chip(_status_words(row))} &middot; raised {t.esc(row['opened_at'])}</p>"
-        f"<div class='card'><h3>What has happened</h3>"
+        f"<div class='card'><h3><svg class=ic aria-hidden=true><use href=#i-clock></use></svg>What has happened</h3>"
         f"<ul class='stream'>{stream}</ul></div>" + files_card +
-        "<div class='card'><h3>Add something</h3>"
+        "<div class='card'><h3><svg class=ic aria-hidden=true><use href=#i-note></use></svg>Add something</h3>"
         f"<form class='stack' method='post' action='/my/{t.esc(work_item_id)}/reply' "
         "style='max-width:none' enctype='multipart/form-data'>"
         "<textarea name='body' placeholder='No patient names or case "

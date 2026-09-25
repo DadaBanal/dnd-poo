@@ -127,7 +127,7 @@ def detail(ctx, configuration_id: str):
             return "".join(f"<option value='{t.esc(k)}'{' selected' if k == sel else ''}>"
                            f"{t.esc(v)}</option>" for k, v in pairs)
         edit = (
-            f"<div class=card><h3>Change</h3><form method=post action='/configuration/"
+            f"<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-flag></use></svg>Change</h3><form method=post action='/configuration/"
             f"{t.esc(configuration_id)}/update' class=fields>"
             f"<label>Type</label><select name=config_type>"
             f"{opts([(x, x.title()) for x in cmdb.TYPES], c['config_type'])}</select>"
@@ -149,9 +149,9 @@ def detail(ctx, configuration_id: str):
         + (f" · <a href='/contact/{t.esc(c['contact_id'])}'>{t.esc(c['contact_name'])}</a>"
            if c["contact_id"] else "") + "</p>"
         + f"<p>{links_html(ctx, 'CONFIGURATION', c)}</p>"
-        f"<div class=rail><div><div class=card><h3>Open tickets</h3>{tickets_html}"
+        f"<div class=rail><div><div class=card><h3><svg class=ic aria-hidden=true><use href=#i-ticket></use></svg>Open tickets</h3>{tickets_html}"
         f"{_hidden_note(hidden)}</div></div>"
-        f"<div><div class=card><h3>Configuration</h3><dl class=kv>{kv}</dl></div>{edit}</div></div>")
+        f"<div><div class=card><h3><svg class=ic aria-hidden=true><use href=#i-monitor></use></svg>Configuration</h3><dl class=kv>{kv}</dl></div>{edit}</div></div>")
     return Response(body=t.page(c["name"], body, user=ctx.user, active="companies"))
 
 
@@ -214,7 +214,7 @@ def ticket_card(ctx, tk, *, can_work: bool) -> str:
                    "style='margin-top:8px'><div><select name=configuration_id>"
                    f"{opts}</select></div><div style='flex:0 0 auto'>"
                    "<button type=submit class=ghost>Attach</button></div></form>")
-    return ("<div class=card><h3>Configurations</h3>"
+    return ("<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-monitor></use></svg>Configurations</h3>"
             + (f"<ul class=plain>{items}</ul>" if items else
                "<div class=muted>None attached.</div>") + add + "</div>")
 
@@ -276,7 +276,7 @@ def integrations(ctx):
         "<div class=card><div class=tablewrap><table><thead><tr><th>Label</th><th>On</th>"
         "<th>Template</th><th>State</th><th></th></tr></thead>"
         f"<tbody>{body_rows}</tbody></table></div></div>"
-        "<div class=card><h3>Add a link</h3><form method=post action='/admin/integrations/add' "
+        "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-link></use></svg>Add a link</h3><form method=post action='/admin/integrations/add' "
         "class=fields><label>Label</label><input name=label required placeholder='ScreenConnect'>"
         "<label>Shown on</label><select name=applies_to><option value=CONFIGURATION>"
         "Configurations</option><option value=CONTACT>Contacts</option></select>"

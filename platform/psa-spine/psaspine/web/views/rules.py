@@ -154,7 +154,7 @@ def index(ctx):
         "<div class=card><div class=tablewrap><table><thead><tr><th>Rule</th><th>Board</th>"
         "<th>State</th><th>Events</th><th>Actions taken</th><th>Errors</th></tr></thead>"
         f"<tbody>{trs}</tbody></table></div></div>"
-        "<div class=card><h3>New rule</h3><form method=post action='/admin/rules/new' class=row>"
+        "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-plus></use></svg>New rule</h3><form method=post action='/admin/rules/new' class=row>"
         "<div><label>Name</label><input name=name required placeholder='e.g. Unowned P1'></div>"
         f"<div><label>Board</label><select name=board_id>{_opts(boards)}</select></div>"
         "<div style='flex:0 0 auto'><button type=submit>Create</button></div></form></div>")
@@ -251,8 +251,8 @@ def detail(ctx, workflow_id):
         + ("<span class='chip sla-ok'>on</span>" if w["is_active"] else "<span class=chip>off</span>")
         + f"</h1><p class=sub><a href='/admin/rules'>All rules</a> · {switch}</p>"
         + "".join(cards)
-        + f"<div class=card><h3>Add an event</h3>{_event_form(ctx, f'/admin/rules/{workflow_id}/event', w['board_id'])}</div>"
-        "<div class=card><h3>What it has done</h3><div class=tablewrap><table><thead><tr>"
+        + f"<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-plus></use></svg>Add an event</h3>{_event_form(ctx, f'/admin/rules/{workflow_id}/event', w['board_id'])}</div>"
+        "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-clock></use></svg>What it has done</h3><div class=tablewrap><table><thead><tr>"
         "<th>When</th><th>Event</th><th>Ticket</th><th>Outcome</th><th>Detail</th></tr></thead>"
         f"<tbody>{log}</tbody></table></div></div>")
     return Response(body=t.page(w["name"], body, user=ctx.user, active="admin"))

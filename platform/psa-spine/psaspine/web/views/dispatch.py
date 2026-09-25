@@ -69,12 +69,12 @@ def index(ctx):
                 f"<td>{t.esc(r['summary'])}</td>"
                 f"<td class='muted'>{t.esc(r['entity'] or '—')}</td>"
                 f"<td>{assign}</td></tr>")
-        queue = ("<div class='card'><h3>Unrouted queue</h3><div class='tablewrap'><table>"
+        queue = ("<div class='card'><h3><svg class=ic aria-hidden=true><use href=#i-inbox></use></svg>Unrouted queue</h3><div class='tablewrap'><table>"
                  "<thead><tr><th>ID</th><th>Pri</th><th>Age</th><th>SLA</th>"
                  "<th>Summary</th><th>Entity</th><th>Route to</th></tr></thead><tbody>"
                  + "".join(lines) + "</tbody></table></div></div>")
     else:
-        queue = ("<div class='card'><h3>Unrouted queue</h3>"
+        queue = ("<div class='card'><h3><svg class=ic aria-hidden=true><use href=#i-inbox></use></svg>Unrouted queue</h3>"
                  "<div class='empty'>Nothing waiting to be routed.</div></div>")
 
     # Roles + live on-call, per board the user can see.

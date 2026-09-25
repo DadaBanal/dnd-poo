@@ -188,8 +188,8 @@ def detail(ctx, work_item_id):
     if can_work and tk["closed_loop_required"]:
         buttons = f"<a class=btn href='/ticket/{wid}/loop'>Close the loop</a>"
     header = (
-        (f"<div class='banner ok'>{t.esc(msg)}</div>" if msg else "") +
-        (f"<div class='banner err'>{t.esc(err)}</div>" if err else "") +
+        (f"<div class='banner ok toast'>{t.icon('check')} {t.esc(msg)}</div>" if msg else "") +
+        (f"<div class='banner err toast'>{t.icon('alert')} {t.esc(err)}</div>" if err else "") +
         "<div class=hdr><div class=grow>"
         f"<h1>{wid} · {t.esc(tk['summary'])}</h1>"
         f"<p class=sub>{t.esc(tk['board_name'])} · "
@@ -277,7 +277,7 @@ def detail(ctx, work_item_id):
             f"<div><label>Charged as</label><select name=charge>{charge_opts}</select></div>"
             if may else f"<div><label>Time</label><div class=ro>{t.esc(why_not)}</div></div>")
         composer = (
-            "<div class=card><h3>Add a note</h3>"
+            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-note></use></svg>Add a note</h3>"
             f"<form method=post action='/ticket/{wid}/note'>"
             "<textarea name=body required placeholder='No patient names or case numbers (§6.1).'></textarea>"
             "<div class=row style='margin-top:10px'>"
@@ -289,7 +289,7 @@ def detail(ctx, work_item_id):
             "</label></div>" + time_block +
             "<div><label>And set status</label><select name=to_status>"
             + _options([("", "(no change)")] + status_pairs, "") +
-            "</select></div><div style='flex:0 0 auto'><button type=submit>Save note</button></div>"
+            "</select></div><div style='flex:0 0 auto'><button type=submit><svg class=ic aria-hidden=true><use href=#i-note></use></svg> Save note</button></div>"
             "</div><p class=why style='margin:8px 0 0'>Discussion notes, and the resolution when it "
             "is a Discussion note, are shown to the requester on their portal. Internal notes never "
             "leave the desk, even when they are the resolution.</p></form></div>")
@@ -321,7 +321,7 @@ def detail(ctx, work_item_id):
     else:
         person_line = ""
     fields = (
-        "<div class='card fields'><h3>Ticket</h3>"
+        "<div class='card fields'><h3><svg class=ic aria-hidden=true><use href=#i-ticket></use></svg>Ticket</h3>"
         f"<form method=post action='/ticket/{wid}/update'>"
         f"<label>Board</label><select name=board_id{dis}>{_options(board_pairs, tk['board_id'])}</select>"
         f"<label>Status</label><select name=to_status{dis}>"
@@ -338,23 +338,23 @@ def detail(ctx, work_item_id):
         f"<label>Who is affected</label><select name=impact{dis}>{_options(WHO_IS_AFFECTED, tk['impact'])}</select>"
         f"<label>Is a patient waiting</label><select name=urgency{dis}>{_options(PATIENT_WAITING, tk['urgency'])}</select>"
         f"<label>Priority</label><div class=ro>{t.badge(tk['priority'])} from the matrix — never typed</div>"
-        + ("<div style='margin-top:12px'><button type=submit>Save changes</button></div>" if can_work else "")
+        + ("<div style='margin-top:12px'><button type=submit><svg class=ic aria-hidden=true><use href=#i-check></use></svg> Save changes</button></div>" if can_work else "")
         + "</form></div>")
 
     total = sum(r["band_hours"] for r in time_rows)
     time_list = "".join(
         f"<dt>{t.esc(r['worked_on'])}</dt><dd>{t.esc(r['performed_by'])} · {r['band_hours']:g} h · "
         f"{t.esc(CHARGE_LABEL.get(r['charge_method'], r['charge_method']))}</dd>" for r in time_rows)
-    time_card = (f"<div class=card><h3>Time · {total:g} h</h3>"
+    time_card = (f"<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-clock></use></svg>Time · {total:g} h</h3>"
                  + (f"<dl class=kv>{time_list}</dl>" if time_list else "<div class=muted>None booked.</div>")
                  + (f"<p class=why>{t.esc(why_not)}</p>" if not may else "") + "</div>")
     commercial = (
-        "<div class=card><h3>Commercial basis</h3><dl class=kv>"
+        "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-briefcase></use></svg>Commercial basis</h3><dl class=kv>"
         f"<dt>Contract basis</dt><dd>{t.esc(tk['contract_basis'])}</dd>"
         f"<dt>Commercial path</dt><dd>{t.esc(tk['path'])}</dd>"
         f"<dt>Variation</dt><dd>{t.esc(tk['variation_id'] or '—')}</dd></dl></div>")
     details = (
-        "<div class=card><h3>Details</h3><dl class=kv>"
+        "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-info></use></svg>Details</h3><dl class=kv>"
         f"<dt>Opened</dt><dd>{t.esc(tk['opened_at'])}</dd>"
         f"<dt>Updated</dt><dd>{t.esc(_ago(common.human_age(tk['updated_at'] or tk['opened_at'], now=ctx.now)))}</dd>"
         f"<dt>Source</dt><dd>{t.esc((tk['intake_source'] or '—').replace('_', '-').title())}</dd>"
@@ -609,7 +609,7 @@ def _change_card(ctx, tk, *, can_work: bool) -> str:
         decide = ("<p class=why>A change is authorised by the board's administrator or "
                   "Service Manager, never by its owner.</p>")
     return (
-        "<div class=card><h3>Change</h3>"
+        "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-flag></use></svg>Change</h3>"
         f"<p><span class=pill>{t.esc(state)}</span></p>"
         f"<form method=post action='/ticket/{wid}/update' class=fields>"
         f"<input type=hidden name=board_id value='{t.esc(tk['board_id'])}'>"
@@ -662,7 +662,7 @@ def _links_card(ctx, tk, *, can_work: bool) -> str:
     body = (f"<ul class=plain>{''.join(items)}</ul>" if items else "<div class=muted>No links.</div>")
     if hidden:
         body += f"<p class=why>{hidden} more on boards you cannot see.</p>"
-    return f"<div class=card><h3>Links</h3>{body}{add}</div>"
+    return f"<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-link></use></svg>Links</h3>{body}{add}</div>"
 
 
 def change_fields_from(f) -> dict:
@@ -740,7 +740,7 @@ def _tasks_card(ctx, tk, *, can_work: bool) -> str:
                                 " AND inactive = 0 ORDER BY name", (tk["board_id"],)).fetchall()
         add = (f"<form method=post action='/ticket/{wid}/task/add' class=row style='margin-top:8px'>"
                "<div><input name=text required placeholder='Add a task'></div>"
-               "<div style='flex:0 0 auto'><button class=ghost type=submit>Add</button></div></form>")
+               "<div style='flex:0 0 auto'><button class=ghost type=submit><svg class=ic aria-hidden=true><use href=#i-plus></use></svg> Add</button></div></form>")
         if tpls:
             add += (f"<form method=post action='/ticket/{wid}/template' class=row style='margin-top:6px'>"
                     "<div><select name=template_id>"
@@ -748,7 +748,7 @@ def _tasks_card(ctx, tk, *, can_work: bool) -> str:
                     "</select></div><div style='flex:0 0 auto'><button class=ghost type=submit>"
                     "Apply template</button></div></form>")
     head = f"Tasks · {done} of {total}" if total else "Tasks"
-    return (f"<div class=card><h3>{head}</h3>"
+    return (f"<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-checks></use></svg>{head}</h3>"
             + (f"<ul class=plain>{items}</ul>" if items else "<div class=muted>No tasks.</div>")
             + add + "</div>")
 

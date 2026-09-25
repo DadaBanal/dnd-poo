@@ -88,6 +88,50 @@ header.top .who .glass{color:var(--warn);font-weight:600}
   transition:background var(--fast) var(--ease),color var(--fast) var(--ease)}
 .iconbtn:hover{background:var(--surface-3);color:var(--ink)}
 .iconbtn svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;
+  vertical-align:-3px;flex:0 0 auto}
+h3 .ic{width:15px;height:15px;margin-right:7px;color:var(--ink-3);vertical-align:-2px}
+header.top nav a .ic{width:15px;height:15px;margin-right:6px;vertical-align:-3px;opacity:.8}
+button .ic,.btn .ic{width:15px;height:15px;margin:0 -2px}
+.tile .ic{position:absolute;right:12px;top:12px;width:18px;height:18px;color:var(--ink-3);opacity:.7}
+.tile{position:relative}
+h1{text-wrap:balance} p,.sub,.why{text-wrap:pretty}
+textarea{field-sizing:content;min-height:90px;max-height:50vh}
+.card{container-type:inline-size}
+@container (max-width:380px){.kv{grid-template-columns:1fr;gap:2px 0}.kv dt{margin-top:6px}}
+.empty::before{content:"";display:block;width:36px;height:36px;margin:0 auto 8px;opacity:.45;
+  background:currentColor;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 13h5l2 3h4l2-3h5M3 13l2.5-8h13L21 13v6H3z'/%3E%3C/svg%3E") center/contain no-repeat;
+  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 13h5l2 3h4l2-3h5M3 13l2.5-8h13L21 13v6H3z'/%3E%3C/svg%3E") center/contain no-repeat}
+#nprog{position:fixed;left:0;top:0;height:2px;width:0;background:var(--accent);z-index:60;opacity:0;transition:width .4s var(--ease),opacity .2s}
+#nprog.go{opacity:1;width:70%} #nprog.done{width:100%;opacity:0}
+body>svg[hidden]{display:none}
+.banner.toast{position:fixed;right:20px;bottom:20px;z-index:40;max-width:min(420px,calc(100vw - 40px));box-shadow:var(--shadow);
+  background:var(--surface);border:1px solid var(--line-2);margin:0;padding:10px 40px 10px 14px;align-items:center}
+.banner.toast::before{display:none}
+.toast.ok{color:var(--ok)} .toast.err{color:var(--bad)}
+.toast .x{position:absolute;right:6px;top:6px}
+@starting-style{.toast{opacity:0;translate:0 8px}}
+.toast{transition:opacity var(--slow) var(--ease),translate var(--slow) var(--ease)}
+.toast.ok{animation:toast-out .35s var(--ease) 7s forwards}
+@keyframes toast-out{to{opacity:0;translate:0 8px;visibility:hidden}}
+[data-density=compact] table.grid td{padding:4px 10px}
+[data-density=compact] table.grid td.sum .last{display:none}
+[data-density=compact] .card{padding:12px 14px}
+.densi{display:inline-flex;gap:2px;margin-right:auto}
+.densi button{padding:3px 8px;font-size:12px}
+.densi button[aria-pressed=true]{background:var(--surface-3);color:var(--ink);border-color:var(--line-2)}
+@supports (animation-timeline:scroll()){
+  header.top{animation:hdr-shadow linear both;animation-timeline:scroll();animation-range:0 80px}
+  @keyframes hdr-shadow{to{box-shadow:0 8px 24px -16px rgb(20 24 34/.45)}}}
+dialog#pal{position:fixed;inset:0;margin:0;padding:12vh 16px 0;width:100%;max-width:none;height:100%;max-height:none;
+  border:none;background:transparent;display:flex;align-items:flex-start;justify-content:center;color:inherit}
+dialog#pal:not([open]){display:none}
+dialog#pal::backdrop{background:rgb(10 12 18/.35);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+[popover]#keys{position:fixed;inset:auto 16px 16px auto;margin:0;padding:12px 14px;border:1px solid var(--line-2);border-radius:var(--r-lg);
+  background:var(--surface);color:var(--ink);box-shadow:var(--shadow);font-size:12px;max-width:340px}
+[popover]#keys::backdrop{background:transparent}
+[popover]#keys dl{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;margin:8px 0 0}
+[popover]#keys dt{white-space:nowrap} [popover]#keys dd{margin:0;color:var(--ink-2)}
 .kbd{font:11px/1 var(--mono);padding:2px 5px;border:1px solid var(--line-2);border-bottom-width:2px;border-radius:5px;color:var(--ink-2);background:var(--surface)}
 
 /* ---- surfaces ---------------------------------------------------------- */
@@ -243,9 +287,6 @@ ul.plain{list-style:none;padding:0;margin:0} ul.plain li{padding:7px 0;border-bo
 em{font-style:italic}
 
 /* ---- command palette --------------------------------------------------- */
-#pal{position:fixed;inset:0;z-index:50;background:rgb(10 12 18/.35);display:flex;align-items:flex-start;justify-content:center;padding:12vh 16px 0;
-  -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
-#pal[hidden]{display:none}
 .pal-box{width:min(640px,100%);background:var(--surface);border:1px solid var(--line-2);border-radius:14px;box-shadow:var(--shadow);overflow:hidden;
   transition:opacity var(--fast) var(--ease),transform var(--fast) var(--ease)}
 @starting-style{.pal-box{opacity:0;transform:translateY(-8px) scale(.98)}}
@@ -325,27 +366,45 @@ function build(q){var ql=q.trim().toLowerCase(),out=[];var tk=ticketFrom(q);if(t
   pages.forEach(function(p){if(!ql||p[0].toLowerCase().indexOf(ql)>=0)out.push({t:p[0],s:p[2],h:p[1]})});
   if(ql.length>=2)rows.forEach(function(r){var a=$("a[href^='/ticket/']",r);if(!a)return;var txt=r.textContent.replace(/\s+/g," ").trim();
     if(txt.toLowerCase().indexOf(ql)>=0&&out.length<12)out.push({t:a.textContent+" · "+($("td.sum b",r)||{textContent:""}).textContent.slice(0,70),s:"on this board",h:a.getAttribute("href")})});
-  out.push({t:"Toggle light / dark",s:"t",h:"#theme"});return out.slice(0,12)}
+  [["Toggle light / dark","t","#theme"],["Compact rows","density","#compact"],["Comfortable rows","density","#comfortable"]].forEach(function(c){
+    if(!ql||c[0].toLowerCase().indexOf(ql)>=0)out.push({t:c[0],s:c[1],h:c[2]})});return out.slice(0,14)}
 function render(){pl.innerHTML="";items.forEach(function(it,i){var li=d.createElement("li");if(i===sel)li.className="on";
   li.innerHTML="<span></span><small></small>";li.firstChild.textContent=it.t;li.lastChild.textContent=it.s;
   li.addEventListener("mousedown",function(e){e.preventDefault();choose(it)});pl.appendChild(li)})}
-function choose(it){if(!it)return;if(it.h==="#theme"){toggleTheme();close();return}location.href=it.h}
-function open(q){if(!pal)return;pal.hidden=false;pq.value=q||"";items=build(pq.value);sel=0;render();pq.focus()}
-function close(){if(!pal)return;pal.hidden=true;pq.blur()}
+function choose(it){if(!it)return;if(it.h==="#theme"){toggleTheme();close();return}
+  if(it.h==="#compact"||it.h==="#comfortable"){setDensity(it.h==="#compact"?"compact":"");close();return}location.href=it.h}
+function open(q){if(!pal)return;if(!pal.open)pal.showModal();pq.value=q||"";items=build(pq.value);sel=0;render();pq.focus()}
+function close(){if(!pal)return;if(pal.open)pal.close();pq.blur()}
 if(pal){pq.addEventListener("input",function(){items=build(pq.value);sel=0;render()});
   pq.addEventListener("keydown",function(e){if(e.key==="ArrowDown"){sel=(sel+1)%items.length;render();e.preventDefault()}
     else if(e.key==="ArrowUp"){sel=(sel-1+items.length)%items.length;render();e.preventDefault()}
     else if(e.key==="Enter"){choose(items[sel]);e.preventDefault()}else if(e.key==="Escape"){close()}});
-  pal.addEventListener("mousedown",function(e){if(e.target===pal)close()})}
+  pal.addEventListener("mousedown",function(e){if(e.target===pal)close()});
+  pal.addEventListener("cancel",function(e){e.preventDefault();close()})}
+/* toasts: a close button; the good news fades by itself (CSS) */
+$$(".toast").forEach(function(t){var b=d.createElement("button");b.type="button";b.className="iconbtn x";b.setAttribute("aria-label","Dismiss");
+  b.innerHTML='<svg class=ic aria-hidden=true><use href=#i-x></use></svg>';b.addEventListener("click",function(){t.remove()});t.appendChild(b)});
+/* a thin progress bar while the next page is on its way */
+var np=$("#nprog");
+d.addEventListener("click",function(e){var a=e.target.closest&&e.target.closest("a[href]");if(!a||!np)return;
+  if(a.target||a.hasAttribute("download")||e.metaKey||e.ctrlKey||a.host!==location.host||a.getAttribute("href").charAt(0)==="#")return;
+  np.className="go"});
+d.addEventListener("submit",function(){if(np)np.className="go"});
+addEventListener("pageshow",function(){if(np)np.className=""});
+/* density: compact rows for the power user, remembered here */
+function setDensity(v){try{v?localStorage.setItem("psa-density",v):localStorage.removeItem("psa-density")}catch(e){}
+  if(v)root.dataset.density=v;else delete root.dataset.density;$$(".densi button").forEach(function(b){b.setAttribute("aria-pressed",String((b.dataset.density||"")===(v||"")))})}
+try{setDensity(localStorage.getItem("psa-density")||"")}catch(e){}
+$$(".densi button").forEach(function(b){b.addEventListener("click",function(){setDensity(b.dataset.density||"")})});
 /* shortcuts */
 var pend=null;
 d.addEventListener("keydown",function(e){
-  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="k"){e.preventDefault();pal&&pal.hidden?open(""):close();return}
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="k"){e.preventDefault();pal&&!pal.open?open(""):close();return}
   if(e.key==="Escape"){close();if(cur>=0){rows[cur].classList.remove("cur");cur=-1}return}
   if(inField(e)||e.ctrlKey||e.metaKey||e.altKey)return;
   if(pend){var k=pend;pend=null;var m={b:"/",d:"/dispatch",c:"/companies",s:"/admin"}[e.key];if(k==="g"&&m){location.href=m;e.preventDefault()}return}
   switch(e.key){case "/":{var q=$("input[name=q]");if(q){q.focus();q.select()}else open("");e.preventDefault();break}
-    case "?":open("");break;case "n":location.href="/ticket/new";break;case "t":toggleTheme();break;
+    case "?":{var kk=$("#keys");if(kk&&kk.togglePopover)kk.togglePopover();else open("");break}case "n":location.href="/ticket/new";break;case "t":toggleTheme();break;
     case "g":pend="g";setTimeout(function(){pend=null},900);break;
     case "j":go(cur+1);e.preventDefault();break;case "k":go(cur-1);e.preventDefault();break;
     case "x":if(cur>=0){var c=$("input[name=ids]",rows[cur]);if(c){c.checked=!c.checked;count()}}break;
@@ -354,11 +413,77 @@ d.addEventListener("keydown",function(e){
 })();
 """
 
+# The icon set: two dozen 24-grid stroke icons drawn here (no icon font, no
+# CDN), emitted once per page as <symbol>s and used by id. Same weight and
+# corner as the rest of the type, so an icon reads as a word, not a sticker.
+ICONS = {
+    "board": "M4 5h16M4 12h16M4 19h10",
+    "dispatch": "M4 12h13M13 6l6 6-6 6",
+    "companies": "M4 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16M14 9h5a1 1 0 0 1 1 1v11M8 8h2M8 12h2M8 16h2M4 21h16",
+    "oncall": "M5 4h3l2 5-2.5 1.5a11 11 0 0 0 6 6L15 14l5 2v3a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2",
+    "uplift": "M3 17l6-6 4 4 8-8M15 7h6v6",
+    "setup": "M4 7h10M18 7h2M4 17h4M12 17h8M14 4v6M8 14v6",
+    "my": "M20 21a8 8 0 0 0-16 0M12 13a4 4 0 1 0 0-8 4 4 0 0 0 0 8",
+    "plus": "M12 5v14M5 12h14",
+    "search": "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14M20 20l-4-4",
+    "sun": "M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8",
+    "ticket": "M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4zM13 6v12",
+    "note": "M21 12a8 8 0 0 1-11.6 7.2L4 20l1.1-4.4A8 8 0 1 1 21 12",
+    "lock": "M6 11V8a6 6 0 0 1 12 0v3M5 11h14v10H5z",
+    "check": "M20 7 10 17l-5-5",
+    "checks": "M3 12l5 5L18 7M8 17l1.5 1.5L21 7",
+    "clock": "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18M12 7v5l3 2",
+    "paperclip": "M20 12l-8.5 8.5a5 5 0 0 1-7-7L13 5a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7",
+    "link": "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7L11.5 6.8M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5",
+    "monitor": "M3 5h18v11H3zM8 20h8M12 16v4",
+    "briefcase": "M3 8h18v12H3zM8 8V5h8v3M3 13h18",
+    "info": "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18M12 11v5M12 8h.01",
+    "inbox": "M3 13h5l2 3h4l2-3h5M3 13l2.5-8h13L21 13v6H3z",
+    "users": "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8",
+    "tag": "M3 12V4h8l9 9-8 8zM7.5 8h.01",
+    "alert": "M12 3 2 20h20zM12 10v4M12 17h.01",
+    "flag": "M5 21V4M5 4h13l-2 4 2 4H5",
+    "x": "M6 6l12 12M18 6 6 18",
+    "filter": "M3 5h18l-7 8v6l-4-2v-4z",
+    "arrow": "M5 12h14M13 6l6 6-6 6",
+    "keyboard": "M3 6h18v12H3zM7 10h.01M11 10h.01M15 10h.01M7 14h10",
+    "mail": "M3 6h18v12H3zM3 7l9 6 9-6",
+    "bell": "M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 21h4",
+    "layers": "M12 3 2 8l10 5 10-5zM2 13l10 5 10-5M2 18l10 5 10-5",
+    "building": "M3 21h18M5 21V4h14v17M9 8h2M13 8h2M9 12h2M13 12h2M9 16h2M13 16h2",
+    "shield": "M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z",
+    "rows": "M3 6h18M3 12h18M3 18h18",
+    "sparkle": "M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6",
+}
+
+
+def icon(name: str, cls: str = "") -> str:
+    """One icon by id from the page's sprite. Decorative: the word beside it
+    carries the meaning, so it is hidden from assistive technology."""
+    return (f'<svg class="ic {cls}" aria-hidden=true>' if cls else "<svg class=ic aria-hidden=true>") + \
+        f"<use href=#i-{name}></use></svg>"
+
+
+def h3(text: str, icon_name: str | None = None) -> str:
+    return f"<h3>{icon(icon_name) if icon_name else ''}{esc(text)}</h3>"
+
+
+def _sprite() -> str:
+    return ('<svg hidden xmlns="http://www.w3.org/2000/svg">' + "".join(
+        f'<symbol id="i-{k}" viewBox="0 0 24 24"><path d="{v}"/></symbol>' for k, v in ICONS.items())
+        + "</svg>")
+
+
+SPRITE = _sprite()
+FAVICON = ("data:image/svg+xml," + "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E"
+           "%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%233d63dd'/%3E"
+           "%3Cstop offset='1' stop-color='%239ad0ff'/%3E%3C/linearGradient%3E%3C/defs%3E"
+           "%3Crect width='32' height='32' rx='9' fill='url(%23g)'/%3E"
+           "%3Cpath d='M9 11h14M9 16h14M9 21h8' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E")
+
 THEME_BOOT = ("<script>try{var t=localStorage.getItem('psa-theme');if(t)document.documentElement"
               ".dataset.theme=t}catch(e){}</script>")
 
-SUN_MOON = ('<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4'
-            'M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/><circle cx="12" cy="12" r="4"/></svg>')
 
 
 def esc(value) -> str:
@@ -506,9 +631,10 @@ def page(title: str, body: str, *, user=None, active: str = "") -> str:
         ("my", "/my", "My requests"),
     ]
     nav = "".join(
-        f'<a href="{esc(href)}"{" class=on aria-current=page" if key == active else ""}>{esc(label)}</a>'
+        f'<a href="{esc(href)}"{" class=on aria-current=page" if key == active else ""}>'
+        f'{icon("setup" if key == "admin" else key)}{esc(label)}</a>'
         for key, href, label in nav_items)
-    nav += ('<a class="newbtn" href="/ticket/new" title="New ticket (n)">+ New ticket</a>'
+    nav += (f'<a class="newbtn" href="/ticket/new" title="New ticket (n)">{icon("plus")} New ticket</a>'
             if user is not None else "")
     who = ""
     if user is not None:
@@ -517,22 +643,36 @@ def page(title: str, body: str, *, user=None, active: str = "") -> str:
                f' · <a href="/logout">sign out</a>'
                '<button class="iconbtn" id="pal-open" type="button" title="Search and commands (Ctrl+K)"'
                ' aria-label="Search and commands"><span class=kbd>⌘K</span></button>'
+               '<button class="iconbtn" type="button" popovertarget="keys" title="Keyboard shortcuts (?)"'
+               f' aria-label="Keyboard shortcuts">{icon("keyboard")}</button>'
                f'<button class="iconbtn" id="theme" type="button" title="Light / dark (t)"'
-               f' aria-label="Toggle light or dark">{SUN_MOON}</button></div>')
+               f' aria-label="Toggle light or dark">{icon("sun")}</button></div>')
     palette = ""
     if user is not None:
         palette = (
-            '<div id="pal" hidden role="dialog" aria-label="Commands"><div class="pal-box">'
+            '<dialog id="pal" aria-label="Commands"><div class="pal-box">'
             '<input id="pal-q" autocomplete="off" spellcheck="false" placeholder="Go to a page, open PMC-000123, or search this board…">'
             '<ul id="pal-list"></ul><div class=hint><span><span class=kbd>↑↓</span> move</span>'
-            '<span><span class=kbd>↵</span> open</span><span><span class=kbd>esc</span> close</span>'
-            '<span><span class=kbd>/</span> search · <span class=kbd>n</span> new · <span class=kbd>g</span>'
-            ' <span class=kbd>b</span> board · <span class=kbd>j</span><span class=kbd>k</span> rows</span></div></div></div>')
+            '<span><span class=kbd>↵</span> open</span><span><span class=kbd>esc</span> close</span></div></div></dialog>'
+            '<div id="keys" popover><b>Keyboard</b><dl>'
+            '<dt><span class=kbd>⌘</span> <span class=kbd>K</span></dt><dd>commands and search</dd>'
+            '<dt><span class=kbd>/</span></dt><dd>search the board</dd>'
+            '<dt><span class=kbd>n</span></dt><dd>new ticket</dd>'
+            '<dt><span class=kbd>g</span> then <span class=kbd>b</span> <span class=kbd>d</span> <span class=kbd>c</span> <span class=kbd>s</span></dt>'
+            '<dd>board, dispatch, companies, setup</dd>'
+            '<dt><span class=kbd>j</span> <span class=kbd>k</span> <span class=kbd>x</span> <span class=kbd>↵</span></dt>'
+            '<dd>down, up, tick, open a row</dd>'
+            '<dt><span class=kbd>t</span></dt><dd>light / dark</dd>'
+            '<dt><span class=kbd>esc</span></dt><dd>close</dd></dl></div>')
     return (
         "<!doctype html><html lang=en><head><meta charset=utf-8>"
         '<meta name=viewport content="width=device-width,initial-scale=1">'
         '<meta name=color-scheme content="light dark">'
+        '<meta name=theme-color media="(prefers-color-scheme: light)" content="#f4f5f8">'
+        '<meta name=theme-color media="(prefers-color-scheme: dark)" content="#0f1115">'
+        f'<link rel=icon href="{FAVICON}">'
         f"<title>{esc(title)} · PSA desk</title>{THEME_BOOT}<style>{STYLE}</style></head><body>"
+        f'<div id="nprog" aria-hidden="true"></div>{SPRITE}'
         f'<header class="top"><a class="brand" href="/"><i></i>PSA desk</a>'
         f"<nav>{nav}</nav>{who}</header>"
         f"<main>{body}</main>"

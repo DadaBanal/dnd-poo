@@ -147,12 +147,12 @@ def detail(ctx, entity_id: str):
         f"<h1>{t.esc(company['name'])} <span class=muted>· {t.esc(company['entity_id'])}</span></h1>"
         f"<p class=sub>{'Covered by an executed instrument.' if company['is_covered'] else 'Not covered by an executed instrument.'}"
         f" <a href='{t.esc(new_link)}'>+ New ticket for this company</a></p>"
-        "<div class=card><h3>Open tickets</h3>" + table + _hidden_note(hidden) + "</div>"
-        "<div class=card><h3>Contacts</h3>"
+        "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-ticket></use></svg>Open tickets</h3>" + table + _hidden_note(hidden) + "</div>"
+        "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-users></use></svg>Contacts</h3>"
         f"<form method=get class=row style='margin-bottom:10px'><div><input name=q value='{t.esc(q)}' "
         "placeholder='name, email or department'></div><div style='flex:0 0 auto'>"
         "<button type=submit>Search</button></div></form>" + _contact_table(people) + "</div>"
-        "<div class=card><h3>Configurations</h3>"
+        "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-monitor></use></svg>Configurations</h3>"
         + cmdb_views.table(ctx, cmdb_views.search(ctx, entity_id=entity_id), with_company=False)
         + "</div>")
     return Response(body=t.page(company["name"], body, user=ctx.user, active="companies"))
@@ -200,9 +200,9 @@ def contact_detail(ctx, contact_id: str):
         + ("" if c["inactive"] else f" · <a href='{t.esc(new_link)}'>+ New ticket for this contact</a>")
         + "</p>"
         f"<p>{cmdb_views.links_html(ctx, 'CONTACT', c)}</p>"
-        f"<div class=rail><div><div class=card><h3>Open tickets</h3>{table}{_hidden_note(hidden)}</div>"
-        "<div class=card><h3>Configurations</h3>"
+        f"<div class=rail><div><div class=card><h3><svg class=ic aria-hidden=true><use href=#i-ticket></use></svg>Open tickets</h3>{table}{_hidden_note(hidden)}</div>"
+        "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-monitor></use></svg>Configurations</h3>"
         + cmdb_views.table(ctx, cmdb_views.search(ctx, contact_id=contact_id), with_company=False)
         + "</div></div>"
-        f"<div><div class=card><h3>Contact</h3><dl class=kv>{kv}</dl></div></div></div>")
+        f"<div><div class=card><h3><svg class=ic aria-hidden=true><use href=#i-my></use></svg>Contact</h3><dl class=kv>{kv}</dl></div></div></div>")
     return Response(body=t.page(c["display_name"], body, user=ctx.user, active="companies"))
