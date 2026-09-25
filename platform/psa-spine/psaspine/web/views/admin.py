@@ -52,7 +52,7 @@ def index(ctx):
         flags = (" <span class=pill>restricted</span>" if b["restricted"] else "") + \
                 (" <span class=pill>unrouted queue</span>" if b["is_unrouted"] else "") + \
                 (" <span class=pill>retired</span>" if b["inactive"] else "") + \
-                (" <span class='pill' style='background:#e6f4ea;color:#137333'>live</span>"
+                (" <span class='pill live'>live</span>"
                  if b["is_live"] else "")
         rows.append(f"<tr><td><a href='/admin/board/{t.esc(b['board_id'])}'><b>"
                     f"{t.esc(b['display_name'])}</b></a>{flags}</td><td>{state}</td>"

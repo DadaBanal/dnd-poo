@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 418 tests
+python3 tests/test_spine.py          # 425 tests
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -57,9 +57,10 @@ python3 -m psaspine serve spine.db --host 127.0.0.1 --port 8080
 ```
 
 A standard-library WSGI app (`psaspine/web/`), run for the pilot by
-`wsgiref.simple_server`. Zero packages, so the same WSGI callable drops behind a
-production server in Phase C with no code change; a test wraps it in
-`wsgiref.validate.validator()` to prove PEP 3333 conformance. It is **LAN only,
+`wsgiref.simple_server` with one thread per request, so a technician opening a
+big board never makes everyone else's click wait. Zero packages, so the same
+WSGI callable drops behind a production server in Phase C with no code change;
+a test wraps it in `wsgiref.validate.validator()` to prove PEP 3333 conformance. It is **LAN only,
 Dada IT only** and refuses to bind to a public interface. Seven surfaces: the
 board, one ticket, dispatch/triage, the closed loop, the on-call rota, an admin
 surface, and the uplift evidence screen (§7 — a first-class screen, not an
@@ -113,6 +114,38 @@ checked against Zammad and HaloPSA:
   tabs, as ConnectWise's Service Board setup table. The starter setup
   (`psaspine setup-board`) adds what is missing and never overwrites. Every
   change is audited.
+
+### How it looks and feels (25 Sep 2026)
+
+One design system, self-contained by fence: no CDN, no web font, no external
+request, and a test that reads every page to prove it. Modelled on the dense,
+calm desks of 2025-26 (Linear's surface ladder and hairlines, a ⌘K palette,
+keyboard-first rows) and checked against current UI-trend and CSS references
+(sources in the commit).
+
+- **Light and dark** follow the OS; the toggle in the header (or `t`)
+  remembers a choice in this browser only. One accent colour carries "this is
+  the action"; green, amber and red carry an SLA clock's state and nothing
+  else.
+- **Motion that stays out of the way:** 140–220 ms ease-outs on hover and
+  focus, a cross-document view transition between pages with the header held
+  still (Chromium and Safari 18.2+; other engines simply navigate), enter
+  transitions via `@starting-style`, and all of it off under
+  `prefers-reduced-motion`.
+- **The board:** a sticky column heading, 40 px rows with tabular numerals and
+  a monospace ticket number, the bulk bar only when something is ticked, a
+  selected row tinted, 100 rows a page with an explicit total.
+- **Keyboard:** `Ctrl/⌘ K` opens the palette (pages, *New ticket*, a ticket
+  number such as `pmc 123`, and the rows of the board you are on); `/`
+  searches; `n` new ticket; `g` then `b` `d` `c` `s` goes to board, dispatch,
+  companies, setup; `j` `k` move down the board, `x` ticks, `Enter` opens;
+  `?` shows the list; `Esc` closes.
+- **No lag, measured:** over a 3,000-ticket database the board went from
+  1,683 ms to 50 ms and `view=all` from 1,690 ms and 2.6 MB to 37 ms and
+  103 KB (029 indexes, one query for every row's clocks, filters and paging
+  in SQL). A button marks itself busy on submit and refuses a second click;
+  hovering a ticket link prefetches it.
+- **Every page works with the script off.** It only adds.
 
 - **Companies and contacts** (`/companies`, `/company/<id>`, `/contacts`,
   `/contact/<id>`): ConnectWise's Company › Contacts. Contacts come from Active

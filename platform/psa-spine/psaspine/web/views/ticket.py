@@ -205,12 +205,11 @@ def detail(ctx, work_item_id):
         for st in states:
             cls = {"MET": "done", "MISSED": "bad", "BAD": "bad", "WARN": "warn",
                    "PAUSED": "done"}.get(st["state"], "ok")
-            colour = {"bad": "#b3261e", "warn": "#e0a000", "done": "#9aa4b1"}.get(cls, "#34a853")
             boxes.append(
                 f"<div class='slabox {cls}'><div class=t>{t.esc(st['name'])} · target "
                 f"{t.esc(common.fmt_minutes(st['target']))}</div>"
-                f"<div class=v{' style=color:#b3261e' if cls == 'bad' else ''}>{t.esc(st['text'])}</div>"
-                f"<div class=bar><i style='width:{int(st['fraction'] * 100)}%;background:{colour}'></i>"
+                f"<div class=v>{t.esc(st['text'])}</div>"
+                f"<div class=bar><i style='width:{int(st['fraction'] * 100)}%'></i>"
                 "</div></div>")
         strip = "<div class=slastrip>" + "".join(boxes) + "</div>"
     else:
