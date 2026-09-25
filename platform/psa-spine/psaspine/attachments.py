@@ -361,7 +361,7 @@ def usage(conn: sqlite3.Connection) -> dict:
         "       SUM(a.review_status = 'WITHHELD' AND a.purged_at IS NULL) AS withheld,"
         "       SUM(a.purged_at IS NOT NULL) AS purged"
         "  FROM attachment a JOIN ticket t ON t.work_item_id = a.work_item_id"
-        " GROUP BY month, t.board_id ORDER BY month, t.board_id")]
+        " GROUP BY substr(a.uploaded_at, 1, 7), t.board_id ORDER BY substr(a.uploaded_at, 1, 7), t.board_id")]
     totals = {k: sum(r[k] for r in rows) for k in ("files", "received", "stored", "pending",
                                                     "withheld", "purged")}
     totals["live"] = totals["files"] - totals["purged"]

@@ -141,7 +141,7 @@ def backup(src_path: str | Path, dest_path: str | Path) -> dict:
             "bytes": dest.stat().st_size, "sha256": digest, "path": str(dest)}
 
 
-def create(conn: sqlite3.Connection) -> None:
+def create(conn, *, any_database: bool = False) -> None:
     """Apply every migration in name order, in write-ahead-log mode.
 
     WAL lets readers carry on while one writer commits, which is what a desk
@@ -158,7 +158,7 @@ def create(conn: sqlite3.Connection) -> None:
     nothing.
     """
     if backend(conn) == "mssql":
-        mssql.apply_port(conn)
+        mssql.apply_port(conn, any_database=any_database)
         return
     conn.execute("PRAGMA journal_mode = WAL")
     for sql_file in sorted(SCHEMA_DIR.glob("*.sql")):
@@ -339,7 +339,7 @@ def init(path: str | Path, *, reset: bool = False):
     if reset:
         if backend(conn) != "mssql":
             raise ValueError("reset is for a SQL Server test database only")
-        create(conn)
+        create(conn, any_database=True)
         mssql.wipe(conn)
     else:
         create(conn)

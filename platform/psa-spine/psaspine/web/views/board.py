@@ -174,7 +174,8 @@ def _page_of(ctx, boards, f, tile_ids) -> tuple[list, int]:
         if key not in ORDER_SQL:
             key, direction = "updated", direction or "desc"
         desc = (direction == "desc") != (key == "age") if key != "updated" else direction != "asc"
-        order = (f" ORDER BY {ORDER_SQL[key]} {'DESC' if desc else 'ASC'}, t.work_item_id"
+        tiebreak = "" if ORDER_SQL[key] == "t.work_item_id" else ", t.work_item_id"
+        order = (f" ORDER BY {ORDER_SQL[key]} {'DESC' if desc else 'ASC'}{tiebreak}"
                  " LIMIT ? OFFSET ?")
         page_ids = [r[0] for r in ctx.conn.execute(
             "SELECT t.work_item_id, COALESCE((SELECT ct.display_name FROM contact ct"
@@ -425,8 +426,8 @@ def _table(ctx, boards, shown, f, total: int) -> str:
 def _bulk_bar(ctx, boards, f) -> str:
     marks = ",".join("?" * len(boards))
     names = [r["name"] for r in ctx.conn.execute(
-        f"SELECT DISTINCT name FROM board_status WHERE board_id IN ({marks})"
-        " AND inactive = 0 ORDER BY sort_order, name", tuple(boards))]
+        f"SELECT name, MIN(sort_order) AS first_order FROM board_status WHERE board_id IN ({marks})"
+        " AND inactive = 0 GROUP BY name ORDER BY first_order, name", tuple(boards))]
     seen, status_opts = set(), ["<option value=''>(status)</option>"]
     for n in names:
         if n not in seen:

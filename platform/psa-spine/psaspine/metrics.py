@@ -59,12 +59,12 @@ def desk(conn: sqlite3.Connection, boards, *, now: datetime, months: int = 6,
 
     for k, n in conn.execute(
             f"SELECT substr(opened_at, 1, 7) AS m, COUNT(*) FROM ticket WHERE board_id IN ({marks})"
-            " AND opened_at >= ? GROUP BY m", (*boards, since)):
+            " AND opened_at >= ? GROUP BY substr(opened_at, 1, 7)", (*boards, since)):
         if k in out["opened"]:
             out["opened"][k] = n
     for k, n in conn.execute(
             f"SELECT substr(closed_at, 1, 7) AS m, COUNT(*) FROM ticket WHERE board_id IN ({marks})"
-            " AND closed_at >= ? GROUP BY m", (*boards, since)):
+            " AND closed_at >= ? GROUP BY substr(closed_at, 1, 7)", (*boards, since)):
         if k in out["closed"]:
             out["closed"][k] = n
     out["opened_total"] = sum(out["opened"].values())
@@ -101,7 +101,7 @@ def desk(conn: sqlite3.Connection, boards, *, now: datetime, months: int = 6,
     def mix(expr: str, joins: str = "") -> list[tuple[str, int]]:
         return [(r[0] or "—", r[1]) for r in conn.execute(
             f"SELECT {expr} AS k, COUNT(*) AS n FROM ticket t {joins}"
-            f" WHERE t.board_id IN ({marks}) AND t.opened_at >= ? GROUP BY k ORDER BY n DESC, k",
+            f" WHERE t.board_id IN ({marks}) AND t.opened_at >= ? GROUP BY {expr} ORDER BY COUNT(*) DESC, {expr}",
             (*boards, since))]
     out["by_board"] = mix("b.display_name", "JOIN board b ON b.board_id = t.board_id")
     out["by_type"] = mix("t.record_type")

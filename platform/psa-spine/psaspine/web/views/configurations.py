@@ -206,7 +206,7 @@ def ticket_card(ctx, tk, *, can_work: bool) -> str:
         options = ctx.conn.execute(
             "SELECT configuration_id, name, contact_id, entity_id FROM configuration"
             " WHERE entity_id = ? AND status = 'ACTIVE'"
-            " ORDER BY contact_id IS NOT ? , name LIMIT 1000",
+            " ORDER BY CASE WHEN contact_id = ? THEN 0 ELSE 1 END, name LIMIT 1000",
             (tk["entity_id"] or "", tk["contact_id"])).fetchall()
         scope = "company"
         if not options:
@@ -252,7 +252,7 @@ def attach(ctx, work_item_id: str):
         name = f.get("name", "").strip()
         rows = ctx.conn.execute(
             "SELECT configuration_id FROM configuration WHERE status = 'ACTIVE' AND"
-            " (name = ? OR LOWER(name) = LOWER(?)) ORDER BY name = ? DESC LIMIT 2",
+            " (name = ? OR LOWER(name) = LOWER(?)) ORDER BY CASE WHEN name = ? THEN 0 ELSE 1 END LIMIT 2",
             (name, name, name)).fetchall()
         if not rows:
             return redirect(f"/ticket/{urllib.parse.quote(work_item_id)}?err="

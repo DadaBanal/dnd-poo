@@ -457,10 +457,11 @@ BANDS = (0.5, 2, 4, 8, 20)
 
 
 def _event(conn, work_item_id, stamp, kind, actor, detail, flag=None):
-    conn.execute(
+    """One row of the ticket's history. Returns its id."""
+    return conn.execute(
         "INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail,"
         " note_flag) VALUES (?,?,?,?,?,?)",
-        (work_item_id, stamp, kind, actor, detail, flag))
+        (work_item_id, stamp, kind, actor, detail, flag)).lastrowid
 
 
 def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: str,
@@ -497,12 +498,12 @@ def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: st
             raise EffortRefused("set the ticket's company before booking time against it")
 
     stamp = at.isoformat(sep=" ", timespec="minutes")
-    _event(conn, work_item_id, stamp, "NOTE", actor, body, flag)
+    event_id = _event(conn, work_item_id, stamp, "NOTE", actor, body, flag)
     if resolution and flag != "RESOLUTION":
         # ConnectWise's second flag on one note (025): who reads it is still
         # the note's own flag; an Internal resolution stays internal.
-        conn.execute("UPDATE ticket_event SET is_resolution = 1 WHERE ticket_event_id ="
-                     " last_insert_rowid()")
+        conn.execute("UPDATE ticket_event SET is_resolution = 1 WHERE ticket_event_id = ?",
+                     (event_id,))
     # A fulfiller has written: the requester's reply has been seen.
     conn.execute("UPDATE ticket SET customer_updated = 0 WHERE work_item_id = ?",
                  (work_item_id,))

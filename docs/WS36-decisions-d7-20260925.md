@@ -98,5 +98,18 @@ container here and nowhere else.
 
 ### Result of the run against SQL Server
 
-*(filled in at the foot of this file once the suite is green on both stores;
-see the last commit touching it.)*
+**MEASURED, 25 Sep 2026**, SQL Server 2022 Express 16.0.4295 (Linux container),
+ODBC Driver 18.7, pyodbc 5.3, Python 3.11:
+
+| Store | Tests | Result |
+|---|---|---|
+| SQLite | 451 | OK |
+| SQL Server (`PSA_TEST_DB`) | 451 | OK, 8 skipped (SQLite's own file settings) |
+
+Forty-odd statements changed shape on the way, every one in one of the two
+places the README names (the translator, or the code, where a portable spelling
+existed: `JOIN … ON` for `USING`, `WHERE NOT EXISTS` for `INSERT OR IGNORE …
+SELECT`, `CASE WHEN` for a predicate used as a value, the expression for an
+alias in `GROUP BY`). No test's assertion changed; three fixtures did (a commit
+before a trigger is walked into, a store path read from the module, a dump read
+from the table rather than SQLite's `iterdump`).

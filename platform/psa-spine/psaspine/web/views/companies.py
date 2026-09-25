@@ -114,7 +114,8 @@ def index(ctx):
         " (SELECT COUNT(*) FROM ticket t JOIN work_item w ON w.work_item_id = t.work_item_id"
         f"   WHERE w.entity_id = e.entity_id AND t.board_id IN ({marks})"
         "   AND t.state NOT IN ('RESOLVED','CLOSED','CANCELLED')) AS open_tickets"
-        " FROM entity e ORDER BY e.entity_id = 'UNCLASSIFIED', e.name", shown).fetchall()
+        " FROM entity e ORDER BY CASE WHEN e.entity_id = 'UNCLASSIFIED' THEN 1 ELSE 0 END, e.name",
+        shown).fetchall()
     body_rows = "".join(
         f"<tr><td><a href='/company/{t.esc(r['entity_id'])}'>{t.esc(r['entity_id'])}</a></td>"
         f"<td>{t.esc(r['name'])}</td>"

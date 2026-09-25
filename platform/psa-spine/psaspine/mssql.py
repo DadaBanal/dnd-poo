@@ -27,6 +27,7 @@ import functools
 import re
 import sqlite3
 import threading
+import weakref
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -152,6 +153,9 @@ def _rewrite_sum(toks: list[str]) -> list[str]:
                     depth += 1
                 elif u == ")":
                     depth -= 1
+                elif depth == 0 and _is_word(u) and u.upper() == "CASE":
+                    predicate = False          # already a value; leave it
+                    break
                 elif depth == 0 and (u.upper() in _PREDICATE):
                     predicate = True
             if predicate:
@@ -273,6 +277,15 @@ def translate(sql: str) -> Plan:
         raise Refused("empty statement")
     if words[0] == "PRAGMA":
         raise Refused(f"PRAGMA has no meaning on SQL Server: {sql.strip()[:80]}")
+    # Savepoints: SQL Server's are SAVE / ROLLBACK TRANSACTION <name>, and a
+    # RELEASE has no counterpart (the savepoint simply stops mattering).
+    if words[0] == "SAVEPOINT" and len(words) == 2:
+        return Plan(f"IF @@TRANCOUNT = 0 BEGIN TRANSACTION; SAVE TRANSACTION {words[1]}",
+                    "SAVEPOINT", None, None, None, None, None, 0)
+    if words[0] == "RELEASE" and len(words) in (2, 3):
+        return Plan("", "RELEASE", None, None, None, None, None, 0)
+    if words[:2] == ["ROLLBACK", "TO"] and len(words) in (3, 4):
+        return Plan(f"ROLLBACK TRANSACTION {words[-1]}", "ROLLBACK", None, None, None, None, None, 0)
     verb, conflict, table, columns, values = words[0], None, None, None, None
 
     if verb == "INSERT" and len(words) > 2 and words[1] == "OR":
@@ -403,7 +416,7 @@ def _sqlite_error(exc) -> Exception:
 def _message(text: str) -> str:
     # "[42000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]Foo. (102) (SQLExecDirectW)"
     text = re.sub(r"^\('[^']*', [\"']?|[\"']?\)$", "", text)
-    text = re.sub(r"\[[^\]]*\]", "", text)
+    text = re.sub(r"^(\s*\[[^\]]*\])+", "", text)          # [42000] [Microsoft][ODBC ...][SQL Server]
     text = re.sub(r"\s*\(\d+\)\s*\(SQL\w+\)\s*$", "", text)
     return text.strip()
 
@@ -462,10 +475,10 @@ class Cursor:
     __slots__ = ("_cur", "_index", "rowcount", "lastrowid", "description", "_rows")
 
     def __init__(self, cur, rowcount, lastrowid, rows=None):
-        self._cur = cur
+        self._cur = None
         self.rowcount = rowcount
         self.lastrowid = lastrowid
-        self._rows = rows
+        self._rows = list(rows) if rows else []
         desc = cur.description if cur is not None else None
         self.description = desc
         self._index = {}
@@ -477,19 +490,19 @@ class Cursor:
         return None if raw is None else Row(tuple(_plain(v) for v in raw), self._index)
 
     def fetchone(self):
-        if self._cur is None or self.description is None:
+        if not self._rows:
             return None
-        return self._wrap(self._cur.fetchone())
+        return self._wrap(self._rows.pop(0))
 
     def fetchall(self):
-        if self._cur is None or self.description is None:
-            return []
-        return [self._wrap(r) for r in self._cur.fetchall()]
+        rows, self._rows = self._rows or [], []
+        return [self._wrap(r) for r in rows]
 
     def fetchmany(self, n=1):
-        if self._cur is None or self.description is None:
-            return []
-        return [self._wrap(r) for r in self._cur.fetchmany(n)]
+        out = []
+        while self._rows and len(out) < n:
+            out.append(self._wrap(self._rows.pop(0)))
+        return out
 
     def __iter__(self):
         while True:
@@ -499,13 +512,14 @@ class Cursor:
             yield r
 
     def close(self):
-        if self._cur is not None:
-            self._cur.close()
+        self._rows = []
 
 
 # ------------------------------------------------------------ connection
 
+_live: "weakref.WeakSet[Connection]" = weakref.WeakSet()
 _unique_keys: dict[str, list[tuple[str, ...]]] = {}
+_columns: dict[str, tuple[list[str], list[str]]] = {}
 _unique_lock = threading.Lock()
 
 
@@ -525,6 +539,7 @@ class Connection:
         self._raw = raw
         self.target = target
         self.row_factory = None       # read by nobody; kept for shape
+        _live.add(self)
 
     # -- statements
     def execute(self, sql: str, params=()) -> Cursor:
@@ -536,11 +551,14 @@ class Connection:
                 f"{plan.n_params}, and there are {len(params)} supplied.")
         if plan.param_map:
             params = tuple(params[i] for i in plan.param_map)
+        if plan.verb == "RELEASE":
+            return Cursor(None, -1, None)
         cur = self._raw.cursor()
         try:
             if plan.verb == "INSERT":
-                if plan.conflict == "REPLACE":
-                    self._delete_conflicts(cur, plan, params)
+                if plan.conflict == "REPLACE" and self._replace_in_place(cur, plan, params):
+                    cur.close()
+                    return Cursor(None, 1, None)
                 try:
                     cur.execute(plan.sql + "; SELECT @@ROWCOUNT, SCOPE_IDENTITY()", params)
                 except Exception as exc:                       # pyodbc.Error
@@ -550,12 +568,25 @@ class Connection:
                 n, ident = cur.fetchone()
                 cur.close()
                 return Cursor(None, int(n), None if ident is None else int(ident))
+            if plan.verb in ("UPDATE", "DELETE"):
+                # NOCOUNT is on for the session (so an INSERT's batch yields its
+                # SELECT first), which also blanks pyodbc's rowcount; ask for it.
+                cur.execute(plan.sql + "; SELECT @@ROWCOUNT", params)
+                n = int(cur.fetchone()[0])
+                cur.close()
+                return Cursor(None, n, None)
             cur.execute(plan.sql, params)
             if cur.description is None:
                 n = cur.rowcount
                 cur.close()
                 return Cursor(None, n, None)
-            return Cursor(cur, -1, None)
+            # Read the whole result now. Without MARS the connection is busy
+            # until a result set is drained, and the engine reads one query
+            # while writing rows from it (SQLite allowed that; the pages the
+            # desk reads are small by construction).
+            result = Cursor(cur, -1, None, rows=cur.fetchall())
+            cur.close()
+            return result
         except sqlite3.Error:
             raise
         except Exception as exc:
@@ -576,30 +607,73 @@ class Connection:
         for stmt in _statements(script):
             self.execute(stmt)
 
-    def _delete_conflicts(self, cur, plan: Plan, params: tuple) -> None:
-        """INSERT OR REPLACE: SQLite deletes every row the new one collides
-        with on any unique key, then inserts. Done here in the same order."""
+    def _replace_in_place(self, cur, plan: Plan, params: tuple) -> bool:
+        """INSERT OR REPLACE. SQLite deletes the row the new one collides with
+        and inserts, checking foreign keys only at the end of the statement,
+        so a parent row other rows point at can be replaced. SQL Server checks
+        the delete at once, so the same outcome is written as an UPDATE: every
+        listed column set, every unlisted one back to its DEFAULT (which is
+        what the delete-and-insert would have left). Returns True when a row
+        with that key existed and was updated; False when the INSERT that
+        follows is the right thing. A collision on some other unique key is
+        rare here and is left to the INSERT to report."""
         keys = self._keys_of(plan.table)
-        by_col = {}
-        pi = 0
+        by_col, pi = {}, 0
         for col, val in zip(plan.columns, plan.values):
             if val == "?":
                 by_col[col] = ("?", params[pi])
                 pi += 1
             else:
                 by_col[col] = ("literal", val)
-        for key in keys:
-            if not all(c in by_col for c in key):
+        primary = next((k for k in keys if all(c in by_col for c in k)), None)
+        if primary is None:
+            return False
+        where, args = [], []
+        for c in primary:
+            kind, v = by_col[c]
+            if kind == "?":
+                where.append(f"[{c}] = ?")
+                args.append(v)
+            else:
+                where.append(f"[{c}] = {v}")
+        cur.execute(f"SELECT 1 FROM [{plan.table}] WHERE " + " AND ".join(where), tuple(args))
+        if cur.fetchone() is None:
+            return False
+        settable, generated = self._columns_of(plan.table)
+        sets, set_args = [], []
+        for c in settable:
+            if c in primary:
                 continue
-            where, args = [], []
-            for c in key:
+            if c in by_col:
                 kind, v = by_col[c]
                 if kind == "?":
-                    where.append(f"[{c}] = ?")
-                    args.append(v)
+                    sets.append(f"[{c}] = ?")
+                    set_args.append(v)
                 else:
-                    where.append(f"[{c}] = {v}")
-            cur.execute(f"DELETE FROM [{plan.table}] WHERE " + " AND ".join(where), tuple(args))
+                    sets.append(f"[{c}] = {v}")
+            else:
+                sets.append(f"[{c}] = DEFAULT")
+        if sets:
+            cur.execute(f"UPDATE [{plan.table}] SET " + ", ".join(sets) + " WHERE " + " AND ".join(where),
+                        tuple(set_args) + tuple(args))
+        return True
+
+    def _columns_of(self, table: str) -> tuple[list[str], list[str]]:
+        """(columns an UPDATE may set, columns the server generates)."""
+        with _unique_lock:
+            if table in _columns:
+                return _columns[table]
+        cur = self._raw.cursor()
+        cur.execute(
+            "SELECT c.name, c.is_identity, c.is_computed FROM sys.columns c"
+            " WHERE c.object_id = OBJECT_ID(?) ORDER BY c.column_id", (f"{SCHEMA}.{table}",))
+        settable, generated = [], []
+        for name, ident, computed in cur.fetchall():
+            (generated if (ident or computed) else settable).append(name)
+        cur.close()
+        with _unique_lock:
+            _columns[table] = (settable, generated)
+        return settable, generated
 
     def _keys_of(self, table: str) -> list[tuple[str, ...]]:
         with _unique_lock:
@@ -629,11 +703,17 @@ class Connection:
         self._raw.rollback()
 
     def close(self) -> None:
+        _live.discard(self)
+        if self._raw is None:
+            return
         try:
             self._raw.rollback()
         except Exception:
             pass
-        self._raw.close()
+        try:
+            self._raw.close()
+        finally:
+            self._raw = None
 
     # -- context manager, as sqlite3
     def __enter__(self):
@@ -688,21 +768,33 @@ def connect(target: str) -> Connection:
 
 # --------------------------------------------------------------- schema
 
-def apply_port(conn: Connection) -> None:
+def apply_port(conn: Connection, *, any_database: bool = False) -> None:
     """Create what is missing from the generated schema. The script previews
     by default and refuses a second run; init wants neither, so it is run
     with @Apply = 1 and @AllowExisting = 1: every object is guarded, so on a
-    database that already has the schema this changes nothing."""
+    database that already has the schema this changes nothing.
+
+    The script also refuses any database but D7's by name. `any_database`
+    lets a TEST database of another name take the schema; the desk never
+    passes it."""
     text = PORT.read_text(encoding="utf-8")
     text, n1 = re.subn(r"DECLARE @Apply\s+BIT = 0;", "DECLARE @Apply BIT = 1;", text, count=1)
     text, n2 = re.subn(r"DECLARE @AllowExisting\s+BIT = 0;", "DECLARE @AllowExisting BIT = 1;", text, count=1)
-    if n1 != 1 or n2 != 1:
-        raise RuntimeError(f"{PORT.name} does not carry the @Apply/@AllowExisting switches this expects")
+    n3 = 1
+    if any_database:
+        text, n3 = re.subn(r"DECLARE @Database\s+SYSNAME = N'[^']*';", "DECLARE @Database SYSNAME = DB_NAME();", text, count=1)
+    if n1 != 1 or n2 != 1 or n3 != 1:
+        raise RuntimeError(f"{PORT.name} does not carry the switches this expects")
     cur = conn._raw.cursor()
     try:
         cur.execute(text)
         while cur.nextset():
             pass
+        # The script turns XACT_ABORT on for its own transaction and the
+        # setting outlives it on this session. The desk needs it off: with it
+        # on, a duplicate key that INSERT OR IGNORE means to swallow takes the
+        # whole transaction down with it (found by the tests, 25 Sep 2026).
+        cur.execute("SET XACT_ABORT OFF")
     except Exception as exc:
         if exc.__class__.__module__ == "pyodbc":
             raise RuntimeError(_message(str(exc))) from None
@@ -723,7 +815,17 @@ def table_exists(conn: Connection, name: str) -> bool:
 
 def wipe(conn: Connection) -> None:
     """Every row out of every table in the schema, identities reseeded. For a
-    test to start from nothing; never called by the desk."""
+    test to start from nothing; never called by the desk.
+
+    Any other connection this process still holds is rolled back and closed
+    first: a test that left one open with a write in it would otherwise hold
+    the lock this waits on for ever (SQLite would have let both proceed)."""
+    for other in list(_live):
+        if other is not conn:
+            try:
+                other.close()
+            except Exception:
+                pass
     cur = conn._raw.cursor()
     tables = [r[0] for r in cur.execute(
         "SELECT t.name FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id"

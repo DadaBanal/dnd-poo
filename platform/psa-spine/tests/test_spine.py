@@ -334,7 +334,7 @@ class DeskImportTest(unittest.TestCase):
         """
         row = self.conn.execute(
             "SELECT t.board_id, t.catalogue_item_id, w.contract_basis FROM ticket t"
-            " JOIN work_item w USING(work_item_id) WHERE t.work_item_id='ITO-1806'"
+            " JOIN work_item w ON w.work_item_id = t.work_item_id WHERE t.work_item_id='ITO-1806'"
         ).fetchone()
         self.assertEqual(row["board_id"], "FACILITIES")
         self.assertIsNone(row["catalogue_item_id"])
@@ -644,6 +644,10 @@ class TheGateTest(unittest.TestCase):
             " priority_source, requested_at, opened_at, state)"
             " VALUES ('ITO-1723','IT_HELP','VARIATION','I1','U1','P1','MATRIX',"
             "'2026-09-09','2026-09-09','IN_PROGRESS')")
+        # Committed, as a real ticket is by the time anyone tries to close it:
+        # on SQL Server a gate trigger's refusal rolls the transaction back
+        # (the port says so), and an uncommitted fixture would go with it.
+        self.conn.commit()
 
     def tearDown(self) -> None:
         self.conn.close()
@@ -2552,7 +2556,7 @@ class WebWSGITest(unittest.TestCase):
         board.update_fields(conn, "ITO-1", at=datetime(2026, 9, 17, 10, 0), actor="alice",
                             requested_by="Ward 3 <ward3@pmcne.ph>", entity_id="UNCLASSIFIED")
         row = conn.execute("SELECT t.contact_id, w.entity_id FROM ticket t JOIN work_item w"
-                           " USING (work_item_id) WHERE work_item_id = 'ITO-1'").fetchone()
+                           " ON w.work_item_id = t.work_item_id WHERE t.work_item_id = 'ITO-1'").fetchone()
         self.assertEqual((row["contact_id"], row["entity_id"]), ("CT-1", "PMC"))
         board.update_fields(conn, "ITO-1", at=datetime(2026, 9, 17, 10, 5), actor="alice",
                             requested_by="someone at the front desk")
@@ -2724,7 +2728,8 @@ class WebWSGITest(unittest.TestCase):
         self._add_configuration()
         conn = db.connect(self.db_path)
         for wid in ("ITO-1", "ITO-9"):
-            conn.execute("INSERT INTO ticket_configuration VALUES (?, 'CF-1', '2026-09-17', 'a')",
+            conn.execute("INSERT INTO ticket_configuration (work_item_id, configuration_id, linked_at,"
+                         " linked_by) VALUES (?, 'CF-1', '2026-09-17', 'a')",
                          (wid,))
         conn.commit()
         conn.close()
@@ -3134,7 +3139,7 @@ class EmailIntakeTest(unittest.TestCase):
 
     def _rows(self):
         return self.conn.execute(
-            "SELECT * FROM intake_message ORDER BY rowid").fetchall()
+            "SELECT * FROM intake_message ORDER BY received_at, message_id").fetchall()
 
     # ------------------------------------------------------------ opening one
 
@@ -3378,7 +3383,7 @@ class PortalTest(unittest.TestCase):
             conn = self._conn()
             row = conn.execute(
                 "SELECT t.priority, t.priority_source FROM ticket t"
-                " JOIN work_item w USING (work_item_id) WHERE w.name = ?",
+                " JOIN work_item w ON w.work_item_id = t.work_item_id WHERE w.name = ?",
                 (f"{impact}{urgency}",)).fetchone()
             conn.close()
             self.assertEqual(row["priority"], expected, (impact, urgency))
@@ -3391,7 +3396,7 @@ class PortalTest(unittest.TestCase):
                          "priority": "P1"})
         conn = self._conn()
         row = conn.execute("SELECT t.priority FROM ticket t JOIN work_item w"
-                           " USING (work_item_id) WHERE w.name='smuggle'").fetchone()
+                           " ON w.work_item_id = t.work_item_id WHERE w.name='smuggle'").fetchone()
         conn.close()
         self.assertEqual(row["priority"], "P4")
 
@@ -3546,7 +3551,8 @@ class MachineApiTest(unittest.TestCase):
 
     def test_the_token_is_stored_only_as_a_hash(self):
         conn = self._conn()
-        dump = "\n".join(conn.iterdump())
+        # every value the token table holds, on either store
+        dump = "\n".join(str(v) for r in conn.execute("SELECT * FROM api_token").fetchall() for v in r)
         conn.close()
         self.assertNotIn(self.token, dump)
         self.assertIn(_hashlib.sha256(self.token.encode()).hexdigest(), dump)
@@ -3833,7 +3839,7 @@ class BoardSetupTest(unittest.TestCase):
         tid = self._open()
         row = self.conn.execute(
             "SELECT t.board_status_id, t.priority, w.entity_id FROM ticket t"
-            " JOIN work_item w USING (work_item_id) WHERE work_item_id = ?", (tid,)).fetchone()
+            " JOIN work_item w ON w.work_item_id = t.work_item_id WHERE t.work_item_id = ?", (tid,)).fetchone()
         self.assertEqual(row["board_status_id"], "IT_HELP.NEW")
         self.assertEqual(row["priority"], "P1")
         clocks_ = {r["clock"]: r["target_minutes"] for r in self.conn.execute(
@@ -4505,7 +4511,7 @@ class TasksTemplatesTest(unittest.TestCase):
         wid = self.tasks.open_from_template(self.conn, self.tpl, impact="I3", urgency="U3",
                                             requested_by=None, at=self.at, actor="t")
         row = self.conn.execute("SELECT t.record_type, w.name FROM ticket t JOIN work_item w"
-                                " USING (work_item_id) WHERE work_item_id = ?", (wid,)).fetchone()
+                                " ON w.work_item_id = t.work_item_id WHERE t.work_item_id = ?", (wid,)).fetchone()
         self.assertEqual(tuple(row), ("SERVICE_REQUEST", "New starter: account and badge"))
         self.assertEqual([r["text"] for r in self.tasks.tasks_of(self.conn, wid)],
                          ["Create the AD account", "Add to HIS roles", "Issue the badge"])
@@ -4658,7 +4664,7 @@ class AttachmentsTest(unittest.TestCase):
         a = self.att.add(self.conn, self.wid, _png(), "shot.png", actor="a", at=self.at)
         b = self.att.add(self.conn, self.wid, _png(), "shot again.png", actor="b", at=self.at)
         self.assertEqual(a["sha256"], b["sha256"])
-        stored = [p for p in Path(str(self.db_path) + ".attachments").rglob("*") if p.is_file()]
+        stored = [p for p in self.att.store_dir(self.conn).rglob("*") if p.is_file()]
         self.assertEqual(len(stored), 1)
         stored[0].write_bytes(b"not the file")
         with self.assertRaises(IOError):
