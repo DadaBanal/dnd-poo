@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 432 tests
+python3 tests/test_spine.py          # 435 tests
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -229,6 +229,18 @@ workbook column A. (Sources are in `schema/022_record_type.sql`.)
   template*), apply one to an open ticket, or have a workflow rule apply one
   (*Apply a ticket template*). Applying the same template twice adds nothing
   twice.
+
+### Search, saved views, standard notes (031)
+
+- **Search** (`Ctrl/⌘ K`): the palette asks `/search.json` as you type and
+  answers with tickets, contacts and machines from the boards you are on;
+  a hit on a restricted board is audited like the board view's list.
+- **My views:** save the board's current filter under a name (the field
+  above the counters); your views sit as chips, yours alone; one click
+  forgets one.
+- **Standard notes** (Setup › *Standard notes*): a board's canned replies,
+  each flagged Discussion or Internal. In the note box, pick one and it
+  fills in with its flag set; the words stay editable.
 
 ### Child tickets (030)
 

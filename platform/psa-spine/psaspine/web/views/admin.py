@@ -109,7 +109,7 @@ def index(ctx):
 
 
 TABS = (("board", "Board"), ("types", "Types"), ("statuses", "Statuses"), ("sla", "SLA"),
-        ("templates", "Templates"), ("members", "Members & roles"))
+        ("templates", "Templates"), ("notes", "Standard notes"), ("members", "Members & roles"))
 ROLES = ("SERVICE_MANAGER", "DISPATCH", "ON_CALL", "DUTY_MANAGER")
 TYPE_HELP = {
     "INCIDENT": "Something is broken: restore the service.",
@@ -213,6 +213,33 @@ def board_setup(ctx, board_id):
             "<div style='grid-column:1/-1'><label>Tasks, one per line</label><textarea name=tasks "
             "placeholder='Create the AD account&#10;Add to HIS roles&#10;Issue the badge'></textarea></div>"
             "</div><div style='margin-top:12px'><button type=submit>Save template</button></div></form></div>")
+    elif tab == "notes":
+        from ... import canned
+        notes = canned.notes_for(ctx.conn, board_id, include_inactive=True)
+        trs = "".join(
+            f"<tr><td><b>{t.esc(n['name'])}</b>" + (" <span class=chip>retired</span>" if n["inactive"] else "")
+            + f"</td><td><span class='flag {n['flag']}'>{t.esc(n['flag'].title())}</span></td>"
+            f"<td style='white-space:pre-wrap;max-width:520px'>{t.esc(n['body'])}</td>"
+            f"<td><form method=post action='/admin/board/{bid}/standard-note/toggle' class=inline>"
+            f"<input type=hidden name=note_id value='{n['note_id']}'>"
+            f"<button class=ghost type=submit style='padding:3px 10px'>{'Use' if n['inactive'] else 'Retire'}"
+            "</button></form></td></tr>" for n in notes) or \
+            "<tr><td colspan=4 class=muted>No standard notes yet.</td></tr>"
+        content = (
+            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-note></use></svg>Standard notes</h3>"
+            "<p class=sub>Canned replies for this board, as ConnectWise's standard notes: a technician picks "
+            "one in the note box and it fills in, flagged the way it was written. Written before any ticket "
+            "exists, so never with a patient's details.</p><div class=tablewrap><table><thead><tr>"
+            "<th>Name</th><th>Flag</th><th>Text</th><th></th></tr></thead>"
+            f"<tbody>{trs}</tbody></table></div></div>"
+            f"<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-plus></use></svg>New standard note</h3>"
+            f"<form method=post action='/admin/board/{bid}/standard-note'>"
+            "<div class=grid2><div><label>Name</label><input name=name required placeholder='e.g. Received, looking now'></div>"
+            "<div><label>Flag</label><select name=flag><option value=DISCUSSION>Discussion (the requester reads it)</option>"
+            "<option value=INTERNAL>Internal (desk only)</option></select></div>"
+            "<div style='grid-column:1/-1'><label>Text</label><textarea name=body required "
+            "placeholder='Thank you, we have your request and are looking at it now.'></textarea></div>"
+            "</div><div style='margin-top:12px'><button type=submit>Save standard note</button></div></form></div>")
     elif tab == "types":
         kind = itil.profile_of(ctx.conn, board_id) or "SERVICE"
         rows = {r["record_type"]: r["is_default"] for r in itil.boards_types(ctx.conn, board_id)}
@@ -425,6 +452,32 @@ def save_template(ctx, board_id):
         return _done(board_id, "templates", f"Not saved: {exc}")
     ctx.conn.commit()
     return _done(board_id, "templates", "Template saved")
+
+
+def save_standard_note(ctx, board_id):
+    from ... import canned
+    common.require_board(ctx, board_id, need="ADMIN")
+    f = ctx.request.form()
+    try:
+        canned.add_note(ctx.conn, board_id=board_id, name=f.get("name", ""), body=f.get("body", ""),
+                        flag=f.get("flag", ""), actor=ctx.user.id, at=ctx.now)
+        ctx.conn.commit()
+    except ValueError as exc:
+        return _done(board_id, "notes", f"Not saved: {exc}")
+    return _done(board_id, "notes", "Standard note saved")
+
+
+def toggle_standard_note(ctx, board_id):
+    from ... import canned
+    common.require_board(ctx, board_id, need="ADMIN")
+    nid = ctx.request.form().get("note_id", "")
+    row = ctx.conn.execute("SELECT inactive FROM standard_note WHERE note_id = ? AND board_id = ?",
+                           (nid, board_id)).fetchone() if nid.isdigit() else None
+    if row is None:
+        return _done(board_id, "notes", "No such standard note on this board")
+    canned.set_note_inactive(ctx.conn, int(nid), not row["inactive"], actor=ctx.user.id, at=ctx.now)
+    ctx.conn.commit()
+    return _done(board_id, "notes", "Standard note restored" if row["inactive"] else "Standard note retired")
 
 
 def toggle_template(ctx, board_id):

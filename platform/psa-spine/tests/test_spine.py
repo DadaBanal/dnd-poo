@@ -5206,6 +5206,85 @@ class ChildTicketsWebTest(unittest.TestCase):
         conn.close()
 
 
+class SearchViewsNotesTest(unittest.TestCase):
+    """031: the palette's server search, a person's saved views, a board's
+    standard notes."""
+
+    setUp = WebWSGITest.setUp
+    tearDown = WebWSGITest.tearDown
+    _call = WebWSGITest._call
+    _environ = WebWSGITest._environ
+    _cookie_for = WebWSGITest._cookie_for
+
+    def test_search_answers_only_from_my_boards_and_audits_a_restricted_hit(self):
+        alice, carol = self._cookie_for("alice"), self._cookie_for("carol")
+        status, headers, body = self._call("GET", "/search.json", cookie=alice, query="q=sensitive")
+        self.assertTrue(status.startswith("200"))
+        self.assertEqual(dict(headers)["Content-Type"], "application/json; charset=utf-8")
+        j = _json.loads(body)
+        self.assertEqual([x["id"] for x in j["tickets"]], ["ITO-9"])
+        conn = db.connect(self.db_path)
+        self.assertTrue(conn.execute("SELECT 1 FROM audit_event WHERE action = 'RESTRICTED_READ' AND"
+                                     " detail LIKE 'search listed 1%'").fetchone())
+        conn.close()
+        j = _json.loads(self._call("GET", "/search.json", cookie=carol, query="q=sensitive")[2])
+        self.assertEqual(j["tickets"], [])                      # carol is not on the PHI board
+        j = _json.loads(self._call("GET", "/search.json", cookie=carol, query="q=printer")[2])
+        self.assertEqual([x["id"] for x in j["tickets"]], ["ITO-1"])
+        j = _json.loads(self._call("GET", "/search.json", cookie=carol, query="q=p")[2])
+        self.assertEqual(j["tickets"], [])                      # one letter asks nothing
+        status, _, _ = self._call("GET", "/search.json", query="q=printer")
+        self.assertTrue(status.startswith("401"))
+
+    def test_a_saved_view_is_mine_named_and_cleaned(self):
+        alice = self._cookie_for("alice")
+        status, headers, _ = self._call("POST", "/views/save", cookie=alice,
+                                        form={"name": "P1 on IT Help", "query": "board=IT_HELP&pri=P1&evil=1&msg=x"})
+        self.assertIn("View+saved", dict(headers)["Location"])
+        _, _, page = self._call("GET", "/", cookie=alice, query="board=IT_HELP&pri=P1")
+        self.assertIn("P1 on IT Help", page)
+        self.assertIn("class='stab on'", page)
+        self.assertNotIn("evil", page)
+        _, _, other = self._call("GET", "/", cookie=self._cookie_for("carol"))
+        self.assertNotIn("P1 on IT Help", other)
+        conn = db.connect(self.db_path)
+        vid, q = conn.execute("SELECT view_id, query FROM user_view").fetchone()
+        conn.close()
+        self.assertEqual(q, "board=IT_HELP&pri=P1")
+        self._call("POST", "/views/delete", cookie=self._cookie_for("carol"), form={"view_id": str(vid)})
+        conn = db.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM user_view").fetchone()[0], 1)   # not hers to forget
+        conn.close()
+        self._call("POST", "/views/delete", cookie=alice, form={"view_id": str(vid)})
+        conn = db.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM user_view").fetchone()[0], 0)
+        conn.close()
+
+    def test_a_standard_note_is_set_up_by_an_admin_and_offered_in_the_composer(self):
+        alice = self._cookie_for("alice")
+        status, headers, _ = self._call("POST", "/admin/board/IT_HELP/standard-note", cookie=alice,
+                                        form={"name": "Received", "flag": "DISCUSSION",
+                                              "body": "Thank you, we have your request."})
+        self.assertIn("saved", dict(headers)["Location"])
+        _, _, setup_page = self._call("GET", "/admin/board/IT_HELP", cookie=alice, query="tab=notes")
+        self.assertIn("Received", setup_page)
+        _, _, ticket_page = self._call("GET", "/ticket/ITO-1", cookie=alice)
+        self.assertIn("id=stdnote", ticket_page)
+        self.assertIn("data-body='Thank you, we have your request.'", ticket_page)
+        status, headers, _ = self._call("POST", "/admin/board/IT_HELP/standard-note", cookie=alice,
+                                        form={"name": "", "flag": "DISCUSSION", "body": "x"})
+        self.assertIn("Not+saved", dict(headers)["Location"])
+        conn = db.connect(self.db_path)
+        nid = conn.execute("SELECT note_id FROM standard_note").fetchone()[0]
+        conn.close()
+        self._call("POST", "/admin/board/IT_HELP/standard-note/toggle", cookie=alice, form={"note_id": str(nid)})
+        _, _, ticket_page = self._call("GET", "/ticket/ITO-1", cookie=alice)
+        self.assertNotIn("id=stdnote", ticket_page)               # retired: not offered
+        status, _, _ = self._call("POST", "/admin/board/IT_HELP/standard-note", cookie=self._cookie_for("carol"),
+                                  form={"name": "x", "flag": "INTERNAL", "body": "y"})
+        self.assertFalse(status.startswith("303"))
+
+
 class AttachmentsWebTest(unittest.TestCase):
     """The desk and the portal: upload, download, review, and who may see what."""
 

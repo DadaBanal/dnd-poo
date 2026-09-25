@@ -561,6 +561,16 @@
     "attachment.reviewed_at": "TIMESTAMP_TEXT",
     "attachment.purged_at": "TIMESTAMP_TEXT",
     "attachment.purge_reason": "CODE",
-    "ticket.parent_id": "ID"
+    "ticket.parent_id": "ID",
+    "user_view.member": "PERSON",
+    "user_view.name": "NAME",
+    "user_view.query": "FREE",
+    "user_view.created_at": "TIMESTAMP_TEXT",
+    "standard_note.board_id": "ID",
+    "standard_note.name": "NAME",
+    "standard_note.body": "FREE",
+    "standard_note.flag": "CODE",
+    "standard_note.created_at": "TIMESTAMP_TEXT",
+    "standard_note.created_by": "PERSON"
   }
 }

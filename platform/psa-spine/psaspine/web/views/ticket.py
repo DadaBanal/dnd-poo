@@ -276,9 +276,17 @@ def detail(ctx, work_item_id):
             f"<div><label>Time</label><select name=hours>{band_opts}</select></div>"
             f"<div><label>Charged as</label><select name=charge>{charge_opts}</select></div>"
             if may else f"<div><label>Time</label><div class=ro>{t.esc(why_not)}</div></div>")
+        from ... import canned
+        std = canned.notes_for(ctx.conn, tk["board_id"])
+        picker = ""
+        if std:
+            picker = ("<div class=row style='margin-bottom:8px'><div><label>Standard note</label>"
+                      "<select id=stdnote><option value=''>(type your own)</option>" + "".join(
+                          f"<option value='{n['note_id']}' data-flag='{n['flag']}' data-body='{t.esc(n['body'])}'>"
+                          f"{t.esc(n['name'])}</option>" for n in std) + "</select></div></div>")
         composer = (
             "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-note></use></svg>Add a note</h3>"
-            f"<form method=post action='/ticket/{wid}/note'>"
+            f"<form method=post action='/ticket/{wid}/note'>" + picker +
             "<textarea name=body required placeholder='No patient names or case numbers (§6.1).'></textarea>"
             "<div class=row style='margin-top:10px'>"
             "<div style='flex:0 0 auto'><label>Who can read it</label><div class=seg>"

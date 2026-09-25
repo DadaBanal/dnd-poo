@@ -9,13 +9,16 @@ context, and return a Response.
 from __future__ import annotations
 
 from .views import (admin, board, companies, configurations, dispatch, files, loop, oncall,
-                    portal, rules, ticket, uplift)
+                    portal, rules, search, ticket, uplift)
 
 # (method, pattern, handler). The first pattern that matches the path wins,
 # so a literal segment must be listed before a <capture> in the same place.
 ROUTES = [
     ("GET", "/", board.index),
     ("POST", "/bulk", board.bulk),
+    ("GET", "/search.json", search.search),
+    ("POST", "/views/save", board.view_save),
+    ("POST", "/views/delete", board.view_delete),
     # /ticket/new first: the first matching pattern wins, and <work_item_id>
     # would otherwise capture the word "new".
     ("GET", "/ticket/new", ticket.new_form),
@@ -85,6 +88,8 @@ ROUTES = [
     ("POST", "/admin/board/<board_id>/types", admin.save_types),
     ("POST", "/admin/board/<board_id>/template", admin.save_template),
     ("POST", "/admin/board/<board_id>/template/toggle", admin.toggle_template),
+    ("POST", "/admin/board/<board_id>/standard-note", admin.save_standard_note),
+    ("POST", "/admin/board/<board_id>/standard-note/toggle", admin.toggle_standard_note),
     ("POST", "/admin/board/<board_id>/reply-policy", admin.save_reply_policy),
     ("POST", "/admin/board/<board_id>/calendar", admin.save_calendar),
     ("POST", "/admin/board/<board_id>/status/save", admin.save_status),

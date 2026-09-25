@@ -145,6 +145,13 @@ dialog#pal::backdrop{background:rgb(10 12 18/.35);-webkit-backdrop-filter:blur(3
 .pods .card.dragging{opacity:.5} .pods .card.over{box-shadow:0 -2px 0 0 var(--accent)}
 .pods .podreset{font-size:12px;color:var(--ink-3);text-align:right;margin:-6px 0 12px}
 .pods .podreset button{padding:2px 8px;font-size:12px}
+.views{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.viewchip{display:inline-flex;align-items:center;gap:2px}
+.viewchip .stab{padding:5px 12px;border-radius:999px;background:var(--surface);border:1px solid var(--line);color:var(--ink-2);font-weight:600}
+.viewchip .stab:hover{border-color:var(--line-2);color:var(--ink);text-decoration:none}
+.viewchip .stab.on{background:var(--ink);color:var(--canvas);border-color:var(--ink)}
+.viewchip .iconbtn{width:22px;height:22px;opacity:0} .viewchip:hover .iconbtn,.viewchip:focus-within .iconbtn{opacity:1}
+.pal-box li .st{font-size:11px;font-weight:700;border-radius:5px;padding:0 6px;margin-right:6px;background:var(--chip);color:var(--ink-3)}
 .kbd{font:11px/1 var(--mono);padding:2px 5px;border:1px solid var(--line-2);border-bottom-width:2px;border-radius:5px;color:var(--ink-2);background:var(--surface)}
 
 /* ---- surfaces ---------------------------------------------------------- */
@@ -375,20 +382,30 @@ var pal=$("#pal"),pq=$("#pal-q"),pl=$("#pal-list"),items=[],sel=0;
 var pages=[["Service Board","/","g b"],["Dispatch","/dispatch","g d"],["Companies","/companies","g c"],["On-call","/oncall",""],["Setup","/admin","g s"],["My requests","/my",""],["New ticket","/ticket/new","n"]];
 function ticketFrom(q){var m=q.trim().match(/^(pmc|ito|pcsd)[- ]?0*(\d{1,6})$/i);if(!m)return null;var pre=m[1].toUpperCase();
   return pre==="PMC"?"PMC-"+("000000"+m[2]).slice(-6):pre+"-"+m[2]}
+var remote={q:"",tickets:[],contacts:[],configurations:[]},rtimer=null;
+function fetchRemote(q){if(q.trim().length<2){remote={q:q,tickets:[],contacts:[],configurations:[]};return}
+  clearTimeout(rtimer);rtimer=setTimeout(function(){fetch("/search.json?q="+encodeURIComponent(q.trim()),{credentials:"same-origin"})
+    .then(function(r){return r.ok?r.json():null}).then(function(j){if(!j||j.q!==q.trim()||!pal||!pal.open)return;remote=j;items=build(pq.value);render()})
+    .catch(function(){})},120)}
 function build(q){var ql=q.trim().toLowerCase(),out=[];var tk=ticketFrom(q);if(tk)out.push({t:"Open "+tk,s:"ticket",h:"/ticket/"+tk});
   pages.forEach(function(p){if(!ql||p[0].toLowerCase().indexOf(ql)>=0)out.push({t:p[0],s:p[2],h:p[1]})});
   if(ql.length>=2)rows.forEach(function(r){var a=$("a[href^='/ticket/']",r);if(!a)return;var txt=r.textContent.replace(/\s+/g," ").trim();
     if(txt.toLowerCase().indexOf(ql)>=0&&out.length<12)out.push({t:a.textContent+" · "+($("td.sum b",r)||{textContent:""}).textContent.slice(0,70),s:"on this board",h:a.getAttribute("href")})});
+  if(remote.q===q.trim()&&ql.length>=2){var have={};out.forEach(function(o){have[o.h]=1});
+    remote.tickets.forEach(function(x){if(!have["/ticket/"+x.id])out.push({t:x.id+" · "+(x.summary||"").slice(0,70),s:(x.who||"")+" · "+(x.state||"").toLowerCase(),h:"/ticket/"+x.id,st:x.priority})});
+    remote.contacts.forEach(function(x){out.push({t:x.name,s:(x.department||"")+" · contact",h:"/contact/"+x.id})});
+    remote.configurations.forEach(function(x){out.push({t:x.name,s:(x.type||"")+" · machine",h:"/configuration/"+x.id})})}
   [["Toggle light / dark","t","#theme"],["Compact rows","density","#compact"],["Comfortable rows","density","#comfortable"]].forEach(function(c){
-    if(!ql||c[0].toLowerCase().indexOf(ql)>=0)out.push({t:c[0],s:c[1],h:c[2]})});return out.slice(0,14)}
+    if(!ql||c[0].toLowerCase().indexOf(ql)>=0)out.push({t:c[0],s:c[1],h:c[2]})});return out.slice(0,16)}
 function render(){pl.innerHTML="";items.forEach(function(it,i){var li=d.createElement("li");if(i===sel)li.className="on";
   li.innerHTML="<span></span><small></small>";li.firstChild.textContent=it.t;li.lastChild.textContent=it.s;
+  if(it.st){var b=d.createElement("b");b.className="st";b.textContent=it.st;li.firstChild.insertBefore(b,li.firstChild.firstChild)}
   li.addEventListener("mousedown",function(e){e.preventDefault();choose(it)});pl.appendChild(li)})}
 function choose(it){if(!it)return;if(it.h==="#theme"){toggleTheme();close();return}
   if(it.h==="#compact"||it.h==="#comfortable"){setDensity(it.h==="#compact"?"compact":"");close();return}location.href=it.h}
 function open(q){if(!pal)return;if(!pal.open)pal.showModal();pq.value=q||"";items=build(pq.value);sel=0;render();pq.focus()}
 function close(){if(!pal)return;if(pal.open)pal.close();pq.blur()}
-if(pal){pq.addEventListener("input",function(){items=build(pq.value);sel=0;render()});
+if(pal){pq.addEventListener("input",function(){items=build(pq.value);sel=0;render();fetchRemote(pq.value)});
   pq.addEventListener("keydown",function(e){if(e.key==="ArrowDown"){sel=(sel+1)%items.length;render();e.preventDefault()}
     else if(e.key==="ArrowUp"){sel=(sel-1+items.length)%items.length;render();e.preventDefault()}
     else if(e.key==="Enter"){choose(items[sel]);e.preventDefault()}else if(e.key==="Escape"){close()}});
@@ -436,6 +453,10 @@ addEventListener("pageshow",function(){if(np)np.className=""});
   $("button",reset).addEventListener("click",function(){save({});pods().forEach(function(c){c.classList.remove("collapsed")});
     var order=rail.dataset.order?rail.dataset.order.split(","):[];order.forEach(function(k){var c=$(".card[data-pod='"+k+"']",rail);if(c)rail.appendChild(c)});apply()});
   apply()})();
+/* a standard note fills the note box and sets its flag; the words stay editable */
+var sn=$("#stdnote");if(sn)sn.addEventListener("change",function(){var o=sn.options[sn.selectedIndex];if(!o||!o.value)return;
+  var f=sn.closest("form"),ta=$("textarea[name=body]",f),fl=$("input[name=flag][value='"+o.dataset.flag+"']",f);
+  if(ta){ta.value=o.dataset.body||"";ta.focus()}if(fl)fl.checked=true});
 /* density: compact rows for the power user, remembered here */
 function setDensity(v){try{v?localStorage.setItem("psa-density",v):localStorage.removeItem("psa-density")}catch(e){}
   if(v)root.dataset.density=v;else delete root.dataset.density;$$(".densi button").forEach(function(b){b.setAttribute("aria-pressed",String((b.dataset.density||"")===(v||"")))})}

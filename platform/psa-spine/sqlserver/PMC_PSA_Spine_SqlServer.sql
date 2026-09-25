@@ -156,6 +156,8 @@ BEGIN
     PRINT N'    psa.ticket_template_task';
     PRINT N'    psa.ticket_task';
     PRINT N'    psa.attachment';
+    PRINT N'    psa.user_view';
+    PRINT N'    psa.standard_note';
     PRINT N'    psa.ix_fee_line_effective';
     PRINT N'    psa.ix_time_entry_period';
     PRINT N'    psa.ix_workflow_run_event';
@@ -175,12 +177,14 @@ BEGIN
     PRINT N'    psa.ix_ticket_clock_pause_clock';
     PRINT N'    psa.ix_ticket_board_state';
     PRINT N'    psa.ix_ticket_parent';
+    PRINT N'    psa.ix_user_view_member';
+    PRINT N'    psa.ix_standard_note_board';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  67 tables, 19 indexes, 4 triggers.';
+    PRINT N'  69 tables, 21 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -1918,6 +1922,52 @@ CREATE TABLE psa.[attachment] (
 );
 END;
 
+-- --------------------------------------------------------------------------
+-- user_view   (from schema/031_views_and_standard_notes.sql)
+IF OBJECT_ID(N'psa.[user_view]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[user_view] (
+    [view_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_user_view] PRIMARY KEY,
+
+    -- the person, as board_member.member
+    [member] NVARCHAR(200) NOT NULL,
+    [name] NVARCHAR(400) NOT NULL,
+
+    -- the board's query string, e.g. board=IT_HELP&pri=P1
+    [query] NVARCHAR(MAX) NOT NULL,
+    [sort_order] INT NOT NULL CONSTRAINT [DF_user_view_sort_order] DEFAULT (0),
+    [created_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- standard_note   (from schema/031_views_and_standard_notes.sql)
+IF OBJECT_ID(N'psa.[standard_note]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[standard_note] (
+    [note_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_standard_note] PRIMARY KEY,
+    [board_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_standard_note_board_id] REFERENCES psa.[board]([board_id]),
+
+    -- what the picker shows
+    [name] NVARCHAR(400) NOT NULL,
+
+    -- what lands in the note box
+    [body] NVARCHAR(MAX) NOT NULL,
+    [flag] NVARCHAR(32) NOT NULL CONSTRAINT [CK_standard_note_01] CHECK (flag IN ('DISCUSSION', 'INTERNAL')),
+    [inactive] INT NOT NULL CONSTRAINT [DF_standard_note_inactive] DEFAULT (0) CONSTRAINT [CK_standard_note_02] CHECK (inactive IN (0, 1)),
+    [created_at] NVARCHAR(64) NOT NULL,
+    [created_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END))
+);
+END;
+
 -- ==========================================================================
 -- COLUMNS ADDED TO TABLES THAT ALREADY EXIST
 --
@@ -2135,6 +2185,12 @@ CREATE INDEX [ix_ticket_board_state] ON psa.[ticket] ([board_id], [state]);
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ticket_parent' AND object_id = OBJECT_ID(N'psa.[ticket]'))
 CREATE INDEX [ix_ticket_parent] ON psa.[ticket] ([parent_id]);
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_user_view_member' AND object_id = OBJECT_ID(N'psa.[user_view]'))
+CREATE INDEX [ix_user_view_member] ON psa.[user_view] ([member], [sort_order]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_standard_note_board' AND object_id = OBJECT_ID(N'psa.[standard_note]'))
+CREATE INDEX [ix_standard_note_board] ON psa.[standard_note] ([board_id], [inactive], [name]);
+
 -- ==========================================================================
 -- THE GATE
 --
@@ -2265,10 +2321,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 67 OR @Triggers <> 4 OR @Indexes < 19
+IF @Tables <> 69 OR @Triggers <> 4 OR @Indexes < 21
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 67), %d triggers (expected 4), %d indexes (expected at least 19). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 69), %d triggers (expected 4), %d indexes (expected at least 21). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -2303,6 +2359,8 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[board] DROP CONSTRAINT IF EXISTS [FK_board_calendar_id];
     ALTER TABLE psa.[time_entry] DROP CONSTRAINT IF EXISTS [FK_time_entry_loop_reply_id];
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
+    DROP TABLE IF EXISTS psa.[standard_note];
+    DROP TABLE IF EXISTS psa.[user_view];
     DROP TABLE IF EXISTS psa.[attachment];
     DROP TABLE IF EXISTS psa.[ticket_task];
     DROP TABLE IF EXISTS psa.[ticket_template_task];

@@ -221,7 +221,7 @@ def index(ctx):
     body = ""
     if f["msg"]:
         body += f"<div class='banner ok toast'>{t.icon('check')} {t.esc(f['msg'])}</div>"
-    body += _tiles(f, counts) + _filters(ctx, boards, f)
+    body += _views(ctx, f) + _tiles(f, counts) + _filters(ctx, boards, f)
     if not shown:
         body += "<div class='card'><div class='empty'>No tickets match.</div></div>"
         return _response(ctx, body)
@@ -258,6 +258,54 @@ def _link(f, **over) -> str:
     params.update({k: v for k, v in over.items()})
     params = {k: v for k, v in params.items() if v}
     return "/?" + urllib.parse.urlencode(params) if params else "/"
+
+
+def _views(ctx, f) -> str:
+    """ConnectWise's My views: the person's own named filters, as chips above
+    the counters, with the current filter savable in one field."""
+    from ... import canned
+    # The query as typed or clicked, not the board's defaults, so a view saved
+    # from this URL matches this URL.
+    current = canned.clean_query(urllib.parse.urlencode(ctx.request.query))
+    chips = []
+    for v in canned.views_for(ctx.conn, ctx.user.id):
+        on = " on" if v["query"] == current else ""
+        chips.append(f"<span class=viewchip><a class='stab{on}' href='/?{t.esc(v['query'])}'>{t.esc(v['name'])}</a>"
+                     f"<form method=post action='/views/delete' class=inline><input type=hidden name=view_id "
+                     f"value='{v['view_id']}'><button class='iconbtn x' type=submit title='Forget this view' "
+                     "aria-label='Forget this view'>" + t.icon("x") + "</button></form></span>")
+    save = ("<form method=post action='/views/save' class=inline style='margin-left:auto'>"
+            f"<input type=hidden name=query value='{t.esc(current)}'>"
+            "<input name=name placeholder='Save this view as…' maxlength=60 required "
+            "style='width:180px;padding:4px 8px;display:inline-block'> "
+            "<button class='ghost small' type=submit>Save</button></form>") if current else ""
+    if not chips and not save:
+        return ""
+    return "<div class=views>" + "".join(chips) + save + "</div>"
+
+
+def view_save(ctx):
+    from .. import redirect
+    from ... import canned
+    f = ctx.request.form()
+    try:
+        canned.save_view(ctx.conn, member=ctx.user.id, name=f.get("name", ""),
+                         query=f.get("query", ""), at=ctx.now)
+        ctx.conn.commit()
+    except ValueError as exc:
+        return redirect("/?" + urllib.parse.urlencode({"msg": f"Not saved: {exc}"}))
+    q = canned.clean_query(f.get("query", ""))
+    return redirect("/?" + q + ("&" if q else "") + urllib.parse.urlencode({"msg": "View saved"}))
+
+
+def view_delete(ctx):
+    from .. import redirect
+    from ... import canned
+    vid = ctx.request.form().get("view_id", "")
+    if vid.isdigit():
+        canned.delete_view(ctx.conn, member=ctx.user.id, view_id=int(vid))
+        ctx.conn.commit()
+    return redirect("/?" + urllib.parse.urlencode({"msg": "View forgotten"}))
 
 
 def _tiles(f, counts) -> str:
