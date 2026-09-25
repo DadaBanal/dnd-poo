@@ -5063,6 +5063,149 @@ class DeskLookTest(unittest.TestCase):
         self.assertIn("aria-busy", templates.SCRIPT)
 
 
+class ChildTicketsTest(unittest.TestCase):
+    """030 and psaspine.family: one parent, many children, one level, and the
+    children close with the parent, each on its own board."""
+
+    def setUp(self) -> None:
+        from psaspine import family
+        self.family = family
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tmp.name) / "spine.db"
+        self.conn = db.init(self.db_path)
+        self.at = datetime(2026, 9, 25, 9, 0)
+        for b in ("IT_HELP", "UNROUTED"):
+            setup.apply_starter(self.conn, b, actor="t", at=self.at)
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _open(self, board="IT_HELP", who="a@pmcne.ph", **kw):
+        return tickets.open_ticket(self.conn, board_id=board, summary="Printer", impact="I3",
+                                   urgency="U3", requested_by=who, at=self.at, **kw)
+
+    def test_the_rules_each_refuse_with_a_sentence(self):
+        p, c, g = self._open(), self._open(), self._open()
+        with self.assertRaises(self.family.Refused):
+            self.family.attach(self.conn, p, p, actor="a", at=self.at)
+        self.assertTrue(self.family.attach(self.conn, p, c, actor="a", at=self.at))
+        self.assertFalse(self.family.attach(self.conn, p, c, actor="a", at=self.at))   # already
+        with self.assertRaises(self.family.Refused):                                  # one level
+            self.family.attach(self.conn, c, g, actor="a", at=self.at)
+        with self.assertRaises(self.family.Refused):                                  # a parent as a child
+            self.family.attach(self.conn, g, p, actor="a", at=self.at)
+        with self.assertRaises(self.family.Refused):                                  # a loop, the long way
+            self.family.attach(self.conn, c, p, actor="a", at=self.at)
+        board.change_status(self.conn, g, "IT_HELP.CLOSED", at=self.at, actor="a")
+        with self.assertRaises(self.family.Refused):                                  # closed
+            self.family.attach(self.conn, p, g, actor="a", at=self.at)
+        self.assertEqual([k["work_item_id"] for k in self.family.children_of(self.conn, p)], [c])
+        self.assertEqual(self.family.parent_of(self.conn, c)["work_item_id"], p)
+        self.assertTrue(self.family.detach(self.conn, c, actor="a", at=self.at))
+        self.assertFalse(self.family.detach(self.conn, c, actor="a", at=self.at))
+        kinds = [r[0] for r in self.conn.execute("SELECT detail FROM ticket_event WHERE kind = 'CHILD'"
+                                                 " AND work_item_id = ? ORDER BY ticket_event_id", (c,))]
+        self.assertEqual(kinds, [f"made a child of {p}: closes when it closes", f"detached from parent {p}"])
+
+    def test_closing_the_parent_closes_the_children_each_on_its_own_board(self):
+        p = self._open()
+        c1, c2 = self._open(who="b@pmcne.ph"), self._open(board="UNROUTED", who="c@pmcne.ph")
+        for c in (c1, c2):
+            self.family.attach(self.conn, p, c, actor="a", at=self.at)
+        # a child that needs approval to close is left open, and says why
+        ch = self._open(record_type=None)
+        self.family.attach(self.conn, p, ch, actor="a", at=self.at)
+        board.change_status(self.conn, ch, "IT_HELP.RESOLVED", at=self.at, actor="a")   # already resolved: skipped
+        later = datetime(2026, 9, 25, 12, 0)
+        board.change_status(self.conn, p, "IT_HELP.CLOSED", at=later, actor="alice")
+        rows = {r[0]: (r[1], r[2]) for r in self.conn.execute(
+            "SELECT work_item_id, state, closed_at FROM ticket WHERE work_item_id IN (?,?,?)", (c1, c2, ch))}
+        self.assertEqual(rows[c1][0], "CLOSED")
+        self.assertEqual(rows[c2][0], "CLOSED")
+        self.assertEqual(rows[c1][1], "2026-09-25 12:00")
+        self.assertEqual(self.conn.execute("SELECT board_status_id FROM ticket WHERE work_item_id = ?",
+                                           (c2,)).fetchone()[0], "UNROUTED.CLOSED")
+        self.assertIn(f"closed with parent {p}", [r[0] for r in self.conn.execute(
+            "SELECT detail FROM ticket_event WHERE work_item_id = ? AND kind = 'CHILD'", (c1,))])
+        summary = self.conn.execute("SELECT detail FROM ticket_event WHERE work_item_id = ? AND kind = 'CHILD'"
+                                    " ORDER BY ticket_event_id DESC LIMIT 1", (p,)).fetchone()[0]
+        self.assertTrue(summary.startswith("closed with 2 child(ren)"), summary)
+
+    def test_a_child_that_cannot_close_is_left_open_and_the_parent_still_closes(self):
+        self.conn.execute("UPDATE board_status SET inactive = 1 WHERE board_status_id = 'UNROUTED.CLOSED'")
+        p, c = self._open(), self._open(board="UNROUTED")
+        self.family.attach(self.conn, p, c, actor="a", at=self.at)
+        board.change_status(self.conn, p, "IT_HELP.CLOSED", at=self.at, actor="a")
+        self.assertEqual(self.conn.execute("SELECT state FROM ticket WHERE work_item_id = ?", (p,)).fetchone()[0], "CLOSED")
+        self.assertNotEqual(self.conn.execute("SELECT state FROM ticket WHERE work_item_id = ?", (c,)).fetchone()[0], "CLOSED")
+        self.assertIn("no closed status; left open", self.conn.execute(
+            "SELECT detail FROM ticket_event WHERE work_item_id = ? ORDER BY ticket_event_id DESC LIMIT 1",
+            (c,)).fetchone()[0])
+
+
+class ChildTicketsWebTest(unittest.TestCase):
+    """The Children pod, the routes, the board's chips and bulk attach."""
+
+    setUp = WebWSGITest.setUp
+    tearDown = WebWSGITest.tearDown
+    _call = WebWSGITest._call
+    _environ = WebWSGITest._environ
+    _cookie_for = WebWSGITest._cookie_for
+
+    def _second(self):
+        conn = db.connect(self.db_path)
+        conn.executescript(
+            "INSERT INTO work_item (work_item_id,source,name,entity_id,contract_basis)"
+            " VALUES ('ITO-2','desk','Printer down too','PMC','BASELINE');"
+            "INSERT INTO ticket (work_item_id,board_id,path,impact,urgency,priority,priority_source,"
+            " requested_at,opened_at,state,board_status_id) VALUES ('ITO-2','IT_HELP','INCIDENT','I3',"
+            "'U3','P4','MATRIX','2026-09-17 08:00','2026-09-17 08:00','NEW','IT_HELP.NEW');")
+        conn.commit()
+        conn.close()
+
+    def test_attach_detach_and_the_board_says_so(self):
+        self._second()
+        alice = self._cookie_for("alice")
+        status, headers, _ = self._call("POST", "/ticket/ITO-1/child/add", cookie=alice,
+                                        form={"child_id": "ito-2"})
+        self.assertIn("msg=", dict(headers)["Location"])
+        _, _, parent = self._call("GET", "/ticket/ITO-1", cookie=alice)
+        self.assertIn("Children · 1", parent)
+        self.assertIn("href='/ticket/ITO-2'", parent)
+        _, _, child = self._call("GET", "/ticket/ITO-2", cookie=alice)
+        self.assertIn("Child of", child)
+        self.assertIn("Detach from parent", child)
+        _, _, boardpage = self._call("GET", "/", cookie=alice)
+        self.assertIn("child of ITO-1", boardpage)
+        self.assertIn("1 child<", boardpage)
+        status, headers, _ = self._call("POST", "/ticket/ITO-1/child/add", cookie=alice,
+                                        form={"child_id": "ITO-1"})
+        self.assertIn("err=", dict(headers)["Location"])
+        status, headers, _ = self._call("POST", "/ticket/ITO-2/parent/remove", cookie=alice, form={"x": "1"})
+        self.assertIn("msg=", dict(headers)["Location"])
+        # a reader cannot attach; a stranger's ticket cannot be reached
+        status, _, _ = self._call("POST", "/ticket/ITO-1/child/add", cookie=self._cookie_for("carol"),
+                                  form={"child_id": "ITO-2"})
+        self.assertFalse(status.startswith("303"))
+        status, headers, _ = self._call("POST", "/ticket/ITO-1/child/add", cookie=alice,
+                                        form={"child_id": "ITO-9"})           # PHI board: alice works it, so allowed
+        self.assertIn("msg=", dict(headers)["Location"])
+        status, headers, _ = self._call("POST", "/ticket/ITO-1/child/add",
+                                        cookie=self._cookie_for("bob"), form={"child_id": "ITO-2"})
+        self.assertFalse(status.startswith("303"))
+
+    def test_bulk_attach_to_parent_from_the_board(self):
+        self._second()
+        alice = self._cookie_for("alice")
+        status, headers, _ = self._call("POST", "/bulk", cookie=alice,
+                                        form=[("ids", "ITO-2"), ("parent", "ito-1"), ("back", "/")])
+        self.assertIn("Updated+1", dict(headers)["Location"])
+        conn = db.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT parent_id FROM ticket WHERE work_item_id = 'ITO-2'").fetchone()[0], "ITO-1")
+        conn.close()
+
+
 class AttachmentsWebTest(unittest.TestCase):
     """The desk and the portal: upload, download, review, and who may see what."""
 

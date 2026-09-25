@@ -174,12 +174,13 @@ BEGIN
     PRINT N'    psa.ix_ticket_clock_ticket';
     PRINT N'    psa.ix_ticket_clock_pause_clock';
     PRINT N'    psa.ix_ticket_board_state';
+    PRINT N'    psa.ix_ticket_parent';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  67 tables, 18 indexes, 4 triggers.';
+    PRINT N'  67 tables, 19 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -2064,6 +2065,9 @@ ALTER TABLE psa.[attachment] ADD [purged_at] NVARCHAR(64) NULL;
 IF COL_LENGTH(N'psa.[attachment]', N'purge_reason') IS NULL
 ALTER TABLE psa.[attachment] ADD [purge_reason] NVARCHAR(32) NULL CONSTRAINT [CK_attachment_purge_reason_01] CHECK (purge_reason IN ('WITHHELD', 'CLOSED', 'MISSING'));
 
+IF COL_LENGTH(N'psa.[ticket]', N'parent_id') IS NULL
+ALTER TABLE psa.[ticket] ADD [parent_id] NVARCHAR(64) NULL CONSTRAINT [FK_ticket_parent_id] REFERENCES psa.[ticket]([work_item_id]);
+
 -- --------------------------------------------------------------------------
 -- indexes
 
@@ -2127,6 +2131,9 @@ CREATE INDEX [ix_ticket_clock_pause_clock] ON psa.[ticket_clock_pause] ([clock_i
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ticket_board_state' AND object_id = OBJECT_ID(N'psa.[ticket]'))
 CREATE INDEX [ix_ticket_board_state] ON psa.[ticket] ([board_id], [state]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ticket_parent' AND object_id = OBJECT_ID(N'psa.[ticket]'))
+CREATE INDEX [ix_ticket_parent] ON psa.[ticket] ([parent_id]);
 
 -- ==========================================================================
 -- THE GATE
@@ -2258,10 +2265,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 67 OR @Triggers <> 4 OR @Indexes < 18
+IF @Tables <> 67 OR @Triggers <> 4 OR @Indexes < 19
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 67), %d triggers (expected 4), %d indexes (expected at least 18). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 67), %d triggers (expected 4), %d indexes (expected at least 19). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -2289,6 +2296,7 @@ PRINT N'target is enforced until somebody with the authority says so.';
     DROP TRIGGER IF EXISTS psa.[ticket_close_requires_a_variation];
     DROP TRIGGER IF EXISTS psa.[patient_reference_needs_a_restricted_board];
     DROP TRIGGER IF EXISTS psa.[patient_reference_stays_on_a_restricted_board];
+    ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_parent_id];
     ALTER TABLE psa.[workflow_action] DROP CONSTRAINT IF EXISTS [FK_workflow_action_target_template_id];
     ALTER TABLE psa.[board] DROP CONSTRAINT IF EXISTS [FK_board_reopen_status_id];
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_contact_id];

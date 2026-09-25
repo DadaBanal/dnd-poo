@@ -57,7 +57,8 @@ SELECT = (
     "                  WHERE ct.contact_id = t.contact_id), t.requested_by) AS requested_by,"
     "       t.source_ref, t.intake_source, w.name AS summary, e.name AS entity,"
     "       e.entity_id, s.name AS status_name,"
-    "       t.record_type, t.customer_updated,"
+    "       t.record_type, t.customer_updated, t.parent_id,"
+    "       (SELECT COUNT(*) FROM ticket ch WHERE ch.parent_id = t.work_item_id) AS children,"
     "       (SELECT c.display_name || ' › ' || a.display_name FROM catalogue_item i"
     "          JOIN service_component c ON c.component_id = i.component_id"
     "          JOIN service_action a ON a.action_id = i.action_id"
@@ -343,7 +344,12 @@ def _table(ctx, boards, shown, f, total: int) -> str:
                "customer updated</span>" if r["customer_updated"] else "")
             + "<div class=last><span class=pill>" + t.esc(" › ".join(
                 [itil.LABEL.get(r["record_type"], "Type not set")] + ([r["klass"]] if r["klass"] else [])))
-            + "</span></div>"
+            + "</span>"
+            + (f" <span class=pill title='Closes when its parent closes'>child of {t.esc(r['parent_id'])}</span>"
+               if r["parent_id"] else "")
+            + (f" <span class=pill>{r['children']} child{'ren' if r['children'] != 1 else ''}</span>"
+               if r["children"] else "")
+            + "</div>"
             + (f"<div class=last>{t.esc(last)}</div>" if last else "") + "</td>"
             f"<td title='{t.esc(r['entity'] or '')}'>{t.esc(r['entity_id'] or '—')}</td>"
             f"<td class='muted wrap'>{t.esc(r['requested_by'] or '—')}</td>"
@@ -389,6 +395,7 @@ def _bulk_bar(ctx, boards, f) -> str:
         "<b><span data-count>0</span> ticked:</b> Status <select name=status>" + "".join(status_opts) + "</select>"
         " Assign <input name=owner placeholder='owner' style='width:130px;padding:4px 8px'>"
         f" Move to <select name=to_board>{move_opts}</select>"
+        " Attach to parent <input name=parent placeholder='PMC-000123' style='width:130px;padding:4px 8px'>"
         " <button type=submit>Apply</button></form>")
 
 
@@ -401,6 +408,7 @@ def bulk(ctx):
     status_name = form.get("status", "").strip()
     owner = form.get("owner", "").strip()
     to_board = form.get("to_board", "").strip()
+    parent = form.get("parent", "").strip().upper()
     back = form.get("back", "/")
     if not back.startswith("/") or back.startswith("//"):
         back = "/"
@@ -420,6 +428,13 @@ def bulk(ctx):
                                 reason="bulk move from the board")
             if owner:
                 engine.update_fields(ctx.conn, wid, at=ctx.now, actor=ctx.user.id, owner=owner)
+            if parent and parent != wid:
+                from ... import family
+                prow = ctx.conn.execute("SELECT board_id FROM ticket WHERE work_item_id = ?",
+                                        (parent,)).fetchone()
+                if prow is None or not common.may_access_board(ctx, prow["board_id"], need="WORK"):
+                    raise PermissionError
+                family.attach(ctx.conn, parent, wid, at=ctx.now, actor=ctx.user.id)
             if status_name:
                 board_id = ctx.conn.execute("SELECT board_id FROM ticket WHERE work_item_id = ?",
                                             (wid,)).fetchone()["board_id"]

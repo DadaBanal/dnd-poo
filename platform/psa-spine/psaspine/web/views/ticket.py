@@ -364,11 +364,12 @@ def detail(ctx, work_item_id):
     from . import configurations as cmdb_views
     configs = cmdb_views.ticket_card(ctx, tk, can_work=can_work)
     from . import files as file_views
-    configs = (_change_card(ctx, tk, can_work=can_work) + _tasks_card(ctx, tk, can_work=can_work)
+    configs = (_change_card(ctx, tk, can_work=can_work) + _family_card(ctx, tk, can_work=can_work)
+               + _tasks_card(ctx, tk, can_work=can_work)
                + file_views.ticket_card(ctx, tk, can_work=can_work) + _links_card(ctx, tk, can_work=can_work) + configs)
     # The side cards are pods: each user drags or folds them and the browser
     # remembers; data-order is the shipped layout that "Reset layout" restores.
-    body = header + strip + (f"<div class=rail>{left}<div class=pods data-order='ticket,change,tasks,"
+    body = header + strip + (f"<div class=rail>{left}<div class=pods data-order='ticket,change,family,tasks,"
                              f"files,links,configurations,time,commercial,details'>{fields}{configs}{time_card}"
                              f"{commercial}{details}</div></div>")
     return Response(body=t.page(work_item_id, body, user=ctx.user, active="board"))
@@ -666,6 +667,128 @@ def _links_card(ctx, tk, *, can_work: bool) -> str:
     if hidden:
         body += f"<p class=why>{hidden} more on boards you cannot see.</p>"
     return f"<div class=card data-pod=links><h3><svg class=ic aria-hidden=true><use href=#i-link></use></svg>Links</h3>{body}{add}</div>"
+
+
+def _family_card(ctx, tk, *, can_work: bool) -> str:
+    """ConnectWise's parent/child. A child shows its parent; a parent lists its
+    children with their status. Tickets on boards this user cannot see are
+    counted, never named."""
+    from ... import family
+    wid = t.esc(tk["work_item_id"])
+    mine = common.board_ids_for(ctx)
+
+    def visible(board_id):
+        return board_id in mine and not common.is_restricted(ctx, board_id)
+    body, forms = "", ""
+    parent = family.parent_of(ctx.conn, tk["work_item_id"])
+    if parent is not None:
+        who = (f"<a href='/ticket/{t.esc(parent['work_item_id'])}'>{t.esc(parent['work_item_id'])}</a>"
+               f" <span class=muted>{t.esc(parent['summary'])}</span>" if visible(parent["board_id"])
+               else f"{t.esc(parent['work_item_id'])} <span class=muted>on a board you cannot see</span>")
+        body = (f"<div>Child of {who}</div><p class=why>Closes when its parent closes.</p>")
+        if can_work:
+            forms = (f"<form method=post action='/ticket/{wid}/parent/remove'>"
+                     "<button class=ghost type=submit>" + t.icon("x") + " Detach from parent</button></form>")
+        return (f"<div class=card data-pod=family><h3>{t.icon('layers')}Parent</h3>{body}{forms}</div>")
+    kids = family.children_of(ctx.conn, tk["work_item_id"])
+    items, hidden = [], 0
+    for k in kids:
+        if not visible(k["board_id"]):
+            hidden += 1
+            continue
+        remove = ""
+        if can_work:
+            remove = (f"<form method=post action='/ticket/{wid}/child/remove' style='display:inline'>"
+                      f"<input type=hidden name=child_id value='{t.esc(k['work_item_id'])}'>"
+                      "<button class='ghost small' type=submit title='Detach'>×</button></form>")
+        items.append(f"<li><a href='/ticket/{t.esc(k['work_item_id'])}'>{t.esc(k['work_item_id'])}</a> "
+                     f"{t.chip(k['status_name'] or k['state'].replace('_', ' ').title())} "
+                     f"<span class=muted>{t.esc(k['summary'])}</span> {remove}</li>")
+    if items:
+        body = f"<ul class=plain>{''.join(items)}</ul><p class=why>Closing this ticket closes them.</p>"
+    elif not kids:
+        body = "<div class=muted>No children.</div>"
+    if hidden:
+        body += f"<p class=why>{hidden} more on boards you cannot see.</p>"
+    if can_work and not tk["closed_at"]:
+        forms = (f"<form method=post action='/ticket/{wid}/child/add' class=row style='margin-top:8px'>"
+                 "<div><input name=child_id placeholder='Attach a child: PMC-000123' required></div>"
+                 "<div style='flex:0 0 auto'><button class=ghost type=submit>" + t.icon("plus")
+                 + " Attach</button></div></form>")
+        if not kids:
+            forms += (f"<form method=post action='/ticket/{wid}/parent/set' class=row style='margin-top:6px'>"
+                      "<div><input name=parent_id placeholder='Make this a child of: PMC-000123' required></div>"
+                      "<div style='flex:0 0 auto'><button class=ghost type=submit>" + t.icon("arrow")
+                      + " Attach</button></div></form>")
+    head = f"Children · {len(kids)}" if kids else "Children"
+    return f"<div class=card data-pod=family><h3>{t.icon('layers')}{t.esc(head)}</h3>{body}{forms}</div>"
+
+
+def _family_change(ctx, work_item_id, fn):
+    """Run one parent/child change through the engine; both tickets must be on
+    boards this user works."""
+    from ... import family
+    tk = _load(ctx, work_item_id)
+    common.require_board(ctx, tk["board_id"], need="WORK")
+    try:
+        msg = fn()
+    except (family.Refused, ValueError, LookupError, PermissionError) as exc:
+        return _back(work_item_id, err=f"Not changed: {exc}")
+    ctx.conn.commit()
+    return _back(work_item_id, msg=msg)
+
+
+def _other_workable(ctx, other_id: str):
+    row = ctx.conn.execute("SELECT board_id FROM ticket WHERE work_item_id = ?", (other_id,)).fetchone()
+    if row is None:
+        raise LookupError(f"no ticket {other_id!r}")
+    if not common.may_access_board(ctx, row["board_id"], need="WORK"):
+        raise PermissionError(f"{other_id} is on a board you do not work")
+
+
+def child_add(ctx, work_item_id):
+    from ... import family
+    child = ctx.request.form().get("child_id", "").strip().upper()
+
+    def go():
+        _other_workable(ctx, child)
+        family.attach(ctx.conn, work_item_id, child, actor=ctx.user.id, at=ctx.now)
+        return f"{child} is now a child of this ticket"
+    return _family_change(ctx, work_item_id, go)
+
+
+def child_remove(ctx, work_item_id):
+    from ... import family
+    child = ctx.request.form().get("child_id", "").strip().upper()
+
+    def go():
+        row = ctx.conn.execute("SELECT parent_id FROM ticket WHERE work_item_id = ?", (child,)).fetchone()
+        if row is None or row["parent_id"] != work_item_id:
+            raise LookupError(f"{child} is not a child of this ticket")
+        family.detach(ctx.conn, child, actor=ctx.user.id, at=ctx.now)
+        return f"{child} detached"
+    return _family_change(ctx, work_item_id, go)
+
+
+def parent_set(ctx, work_item_id):
+    from ... import family
+    parent = ctx.request.form().get("parent_id", "").strip().upper()
+
+    def go():
+        _other_workable(ctx, parent)
+        family.attach(ctx.conn, parent, work_item_id, actor=ctx.user.id, at=ctx.now)
+        return f"Now a child of {parent}"
+    return _family_change(ctx, work_item_id, go)
+
+
+def parent_remove(ctx, work_item_id):
+    from ... import family
+
+    def go():
+        if not family.detach(ctx.conn, work_item_id, actor=ctx.user.id, at=ctx.now):
+            raise LookupError("this ticket has no parent")
+        return "Detached from its parent"
+    return _family_change(ctx, work_item_id, go)
 
 
 def change_fields_from(f) -> dict:

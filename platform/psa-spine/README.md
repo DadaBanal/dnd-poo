@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 426 tests
+python3 tests/test_spine.py          # 432 tests
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -229,6 +229,25 @@ workbook column A. (Sources are in `schema/022_record_type.sql`.)
   template*), apply one to an open ticket, or have a workflow rule apply one
   (*Apply a ticket template*). Applying the same template twice adds nothing
   twice.
+
+### Child tickets (030)
+
+- **What:** ConnectWise's parent/child. Five people report the same
+  printer; the first ticket is the parent and the rest are attached as
+  children (on the ticket's *Children* pod, or tick rows on the board and
+  *Attach to parent*). One person works one ticket; every requester keeps
+  their own.
+- **Rules, each refused with a sentence:** a ticket is not its own parent;
+  one level only (a child has no children, a parent has no parent, so
+  nothing loops); only open tickets attach; both tickets must be on boards
+  the person works.
+- **Closing the parent closes the children,** each on its own board's
+  closed status, with an event on both. A child that cannot close (a change
+  awaiting approval, a board with no closed status) is left open and its
+  ticket says why; the parent's close stands. Detaching gives a child its
+  own life back.
+- **Not a handover** (005: one ticket changes board) and **not a link**
+  (022: a link says why and each ticket keeps its own life).
 
 ### Files on a ticket (027)
 

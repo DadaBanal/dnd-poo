@@ -156,6 +156,11 @@ def change_status(conn: sqlite3.Connection, work_item_id: str, to_status_id: str
     touch(conn, work_item_id, at)
     from . import workflow
     workflow.fire(conn, work_item_id, "ON_STATUS_CHANGE", at=at)
+    if new["is_closed"]:
+        # Children close with their parent (030). A child has no children, so
+        # this goes one level and stops.
+        from . import family
+        family.close_with_parent(conn, work_item_id, at=at, actor=actor)
     return {"work_item_id": work_item_id, "board_status_id": to_status_id,
             "state": state, "escalation_status": escalation,
             "stopped": stopped, "paused": paused, "resumed": resumed,
