@@ -571,6 +571,18 @@
     "standard_note.body": "FREE",
     "standard_note.flag": "CODE",
     "standard_note.created_at": "TIMESTAMP_TEXT",
-    "standard_note.created_by": "PERSON"
+    "standard_note.created_by": "PERSON",
+    "ticket.merged_into": "ID",
+    "ticket_schedule.work_item_id": "ID",
+    "ticket_schedule.member": "PERSON",
+    "ticket_schedule.starts_at": "TIMESTAMP_TEXT",
+    "ticket_schedule.ends_at": "TIMESTAMP_TEXT",
+    "ticket_schedule.note": "FREE",
+    "ticket_schedule.created_at": "TIMESTAMP_TEXT",
+    "ticket_schedule.created_by": "PERSON",
+    "survey_response.work_item_id": "ID",
+    "survey_response.comment": "FREE",
+    "survey_response.answered_by": "PERSON",
+    "survey_response.answered_at": "TIMESTAMP_TEXT"
   }
 }

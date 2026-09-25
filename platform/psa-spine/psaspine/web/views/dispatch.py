@@ -97,10 +97,38 @@ def index(ctx):
             role_cards.append(f"<div class='card'><h3>{t.esc(board['display_name'])}</h3>"
                               f"<dl class='kv'>{''.join(rows)}</dl></div>")
 
+    # The day: every scheduled visit on the boards this user sees, by person.
+    from ... import schedule
+    day = ctx.request.query.get("day", "") or ctx.now.date().isoformat()
+    try:
+        from datetime import date as _date, timedelta as _td
+        d0 = _date.fromisoformat(day)
+    except ValueError:
+        d0 = ctx.now.date()
+        day = d0.isoformat()
+    entries = schedule.day(ctx.conn, boards, day)
+    by_member: dict[str, list] = {}
+    for e in entries:
+        by_member.setdefault(e["member"], []).append(e)
+    rows_html = "".join(
+        f"<div class=dayrow><div class=who>{t.esc(m)}</div><div>" + "".join(
+            f"<a class=slot href='/ticket/{t.esc(e['work_item_id'])}' title='{t.esc(e['note'] or '')}'>"
+            f"{t.esc(e['starts_at'][11:])}–{t.esc(e['ends_at'][11:])} · {t.esc(e['work_item_id'])} "
+            f"{t.esc((e['summary'] or '')[:40])}</a>" for e in by_member[m]) + "</div></div>"
+        for m in sorted(by_member)) or "<div class=muted>No visits booked for this day.</div>"
+    prev_, next_ = (d0 - _td(days=1)).isoformat(), (d0 + _td(days=1)).isoformat()
+    day_card = (
+        "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-calendar></use></svg>The day</h3>"
+        "<form method=get action='/dispatch' class=row style='margin-bottom:10px'>"
+        f"<div style='flex:0 0 auto'><a class='btn ghost' href='/dispatch?day={prev_}'>‹</a></div>"
+        f"<div style='flex:0 0 170px'><input type=date name=day value='{t.esc(day)}'></div>"
+        f"<div style='flex:0 0 auto'><a class='btn ghost' href='/dispatch?day={next_}'>›</a></div>"
+        "<div style='flex:0 0 auto'><button class=ghost type=submit>Show</button></div></form>"
+        + rows_html + "</div>")
     body = (
         "<h1>Dispatch</h1><p class='sub'>The unrouted queue, ageing in plain sight, "
-        "and who answers each board — the rota over the org chart.</p>"
-        + queue + "".join(role_cards))
+        "the day's visits, and who answers each board — the rota over the org chart.</p>"
+        + queue + day_card + "".join(role_cards))
     return Response(body=t.page("Dispatch", body, user=ctx.user, active="dispatch"))
 
 

@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 435 tests
+python3 tests/test_spine.py          # 442 tests
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -229,6 +229,27 @@ workbook column A. (Sources are in `schema/022_record_type.sql`.)
   template*), apply one to an open ticket, or have a workflow rule apply one
   (*Apply a ticket template*). Applying the same template twice adds nothing
   twice.
+
+### Reports, merge, visits, survey (032)
+
+- **Reports** (`/reports`): the Service Manager's month, computed now from
+  the tickets and their clocks: opened and closed by month, resolve clock
+  met %, median working time to respond and to resolve, backlog, and the mix
+  by board, Type, source and priority; satisfaction once the survey has
+  answers. Charts are inline SVG on a validated two-hue palette (light and
+  dark), each mark with its value on hover, and the table sits under them.
+  `/reports.csv` for the spreadsheet.
+- **Merge** (on the ticket's *Children* pod, or *Merge into* on the board's
+  bulk bar): the duplicate closes on its own board with `merged_into` set;
+  its notes are copied onto the ticket that stays, its files, links and
+  children move. A Discussion note arrives as Internal unless both tickets
+  have the same requester (§6.1). The merged ticket's requester sees "combined
+  with a related one" on the portal and is not asked to rate it.
+- **Visits** (the *Schedule* pod): who, from, to, a note; one person is not
+  booked twice at once. Dispatch shows the day by person.
+- **Survey:** when a ticket closes (and the board sends requester emails) the
+  requester is told and, on the portal, asked once: one to five and a
+  sentence, scanned for patient details like every other requester text.
 
 ### Search, saved views, standard notes (031)
 

@@ -5285,6 +5285,236 @@ class SearchViewsNotesTest(unittest.TestCase):
         self.assertFalse(status.startswith("303"))
 
 
+class ReportsTest(unittest.TestCase):
+    """metrics.desk and the Reports screen: counts by month, SLA met, medians,
+    and a page of charts that is still self-contained."""
+
+    def setUp(self) -> None:
+        from psaspine import metrics
+        self.metrics = metrics
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tmp.name) / "spine.db"
+        self.conn = db.init(self.db_path)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=datetime(2026, 7, 1))
+        self.conn.execute("INSERT OR REPLACE INTO board_member (board_id, member, access)"
+                          " VALUES ('IT_HELP', 'alice', 'ADMIN')")
+        # July: two tickets, one closed fast (met) and one closed late (missed);
+        # August: one opened, still open. All hours calendar: minutes are minutes.
+        a = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="fast", impact="I3", urgency="U3",
+                                requested_by=None, at=datetime(2026, 7, 3, 9, 0), source="PHONE")
+        board.change_status(self.conn, a, "IT_HELP.CLOSED", at=datetime(2026, 7, 3, 9, 30), actor="x")
+        b = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="slow", impact="I3", urgency="U3",
+                                requested_by=None, at=datetime(2026, 7, 10, 9, 0), source="EMAIL")
+        board.change_status(self.conn, b, "IT_HELP.CLOSED", at=datetime(2026, 7, 30, 9, 0), actor="x")
+        tickets.open_ticket(self.conn, board_id="IT_HELP", summary="open", impact="I3", urgency="U3",
+                            requested_by=None, at=datetime(2026, 8, 2, 9, 0), source="PORTAL")
+        self.conn.commit()
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def test_counts_met_share_and_medians(self):
+        m = self.metrics.desk(self.conn, {"IT_HELP"}, now=datetime(2026, 8, 20), months=3)
+        self.assertEqual(m["months"], ["2026-06", "2026-07", "2026-08"])
+        self.assertEqual((m["opened"]["2026-07"], m["opened"]["2026-08"], m["closed"]["2026-07"]), (2, 1, 2))
+        self.assertEqual((m["opened_total"], m["closed_total"], m["backlog"]), (3, 2, 1))
+        self.assertEqual(m["resolve_met"]["2026-07"], 50)
+        self.assertIsNone(m["resolve_met"]["2026-06"])
+        self.assertEqual(m["resolve_met_total"], 50)
+        self.assertEqual(m["median_resolve"], (30 + 20 * 24 * 60) // 2)
+        self.assertEqual(dict(m["by_source"]), {"PHONE": 1, "EMAIL": 1, "PORTAL": 1})
+        self.assertEqual(m["by_board"], [("IT Help", 3)])
+        self.assertEqual(self.metrics.desk(self.conn, set(), now=datetime(2026, 8, 20))["opened_total"], 0)
+        rows = self.metrics.csv_rows(m)
+        self.assertEqual(rows[0][0], "month")
+        self.assertEqual(rows[2][:3], ["2026-07", 2, 2])
+
+    def test_the_page_draws_charts_and_the_csv_downloads(self):
+        from psaspine.web import Config, make_app, auth as webauth
+        self.conn.close()
+        cfg = Config(session_secret=_secrets.token_bytes(32))
+        app = make_app(str(self.db_path), config=cfg, clock=lambda: datetime(2026, 8, 20, 9))
+        cookie = "psa_session=" + webauth.open_session(webauth.User(id="alice", name="alice"), cfg.session_secret)
+
+        def get(path, query=""):
+            env = {"REQUEST_METHOD": "GET", "PATH_INFO": path, "SCRIPT_NAME": "", "QUERY_STRING": query,
+                   "SERVER_NAME": "t", "SERVER_PORT": "80", "SERVER_PROTOCOL": "HTTP/1.1",
+                   "wsgi.version": (1, 0), "wsgi.url_scheme": "http", "wsgi.input": _io.BytesIO(b""),
+                   "wsgi.errors": _io.StringIO(), "wsgi.multithread": False,
+                   "wsgi.multiprocess": False, "wsgi.run_once": False, "HTTP_COOKIE": cookie}
+            st = {}
+            body = b"".join(app(env, lambda s, h, e=None: st.update(status=s, headers=dict(h)))).decode()
+            return st, body
+        st, page = get("/reports", "months=3")
+        self.assertTrue(st["status"].startswith("200"))
+        self.assertGreaterEqual(page.count('<svg class="viz"'), 5)
+        self.assertIn("Opened and closed, by month", page)
+        self.assertIn("<title>Jul 2026: 2 opened</title>", page)
+        self.assertIn("50%", page)
+        self.assertNotRegex(page, r"(src|href)=['\"]https?://")
+        # Every chart is well-formed XML on its own: an unquoted attribute that
+        # ate a "/" once swallowed a whole chart into its first <line>.
+        import re as _re
+        import xml.etree.ElementTree as _ET
+        for frag in _re.findall(r'<svg class="viz".*?</svg>', page, _re.S):
+            root = _ET.fromstring(frag)
+            self.assertGreaterEqual(len(list(root)), 2)
+        st, body = get("/reports.csv", "months=3")
+        self.assertEqual(st["headers"]["Content-Type"], "text/csv; charset=utf-8")
+        self.assertIn("2026-07,2,2,", body)
+        self.conn = db.connect(self.db_path)
+
+
+class MergeScheduleSurveyTest(unittest.TestCase):
+    """032: merge a duplicate, book a visit, answer the survey."""
+
+    def setUp(self) -> None:
+        from psaspine import family, schedule, survey
+        self.family, self.schedule, self.survey = family, schedule, survey
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tmp.name) / "spine.db"
+        self.conn = db.init(self.db_path)
+        self.at = datetime(2026, 9, 25, 9, 0)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        self.conn.execute("UPDATE board SET notify_requester = 1 WHERE board_id = 'IT_HELP'")
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _open(self, who="a@pmcne.ph", **kw):
+        return tickets.open_ticket(self.conn, board_id="IT_HELP", summary="Printer", impact="I3",
+                                   urgency="U3", requested_by=who, at=self.at, description="mine", **kw)
+
+    def test_merge_copies_notes_moves_files_and_closes_the_duplicate_quietly(self):
+        from psaspine import attachments
+        keep, dup = self._open(), self._open(who="b@pmcne.ph")
+        board.add_note(self.conn, dup, body="the dup's words", flag="DISCUSSION", actor="alice", at=self.at)
+        attachments.add(self.conn, dup, b"log\n" * 50, "d.log", actor="alice", at=self.at)
+        kid = self._open(who="c@pmcne.ph")
+        self.family.attach(self.conn, dup, kid, actor="alice", at=self.at)
+        self.conn.execute("DELETE FROM notification")
+        r = self.family.merge(self.conn, dup, keep, actor="alice", at=self.at)
+        self.assertEqual((r["notes"], r["files"], r["children"], r["same_requester"]), (2, 1, 1, False))
+        row = self.conn.execute("SELECT state, merged_into FROM ticket WHERE work_item_id = ?", (dup,)).fetchone()
+        self.assertEqual(tuple(row), ("CLOSED", keep))
+        self.assertEqual(self.conn.execute("SELECT parent_id FROM ticket WHERE work_item_id = ?", (kid,)).fetchone()[0], keep)
+        self.assertEqual(self.conn.execute("SELECT work_item_id FROM attachment").fetchone()[0], keep)
+        copied = self.conn.execute("SELECT detail, note_flag FROM ticket_event WHERE work_item_id = ?"
+                                   " AND kind = 'MERGED_NOTE' ORDER BY ticket_event_id", (keep,)).fetchall()
+        self.assertEqual([tuple(c) for c in copied], [(f"(from {dup}) mine", "INTERNAL"),
+                                                      (f"(from {dup}) the dup's words", "INTERNAL")])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM notification WHERE work_item_id = ?"
+                                           " AND recipient_role = 'REQUESTER'", (dup,)).fetchone()[0], 0)
+        with self.assertRaises(self.family.Refused):
+            self.family.merge(self.conn, keep, dup, actor="alice", at=self.at)        # dup is closed
+        with self.assertRaises(self.family.Refused):
+            self.family.merge(self.conn, keep, keep, actor="alice", at=self.at)
+        same_a, same_b = self._open(), self._open()
+        board.add_note(self.conn, same_b, body="same person", flag="DISCUSSION", actor="alice", at=self.at)
+        r = self.family.merge(self.conn, same_b, same_a, actor="alice", at=self.at)
+        self.assertTrue(r["same_requester"])
+        self.assertEqual(self.conn.execute("SELECT note_flag FROM ticket_event WHERE work_item_id = ? AND"
+                                           " kind = 'MERGED_NOTE' AND detail LIKE '%same person'",
+                                           (same_a,)).fetchone()[0], "DISCUSSION")
+
+    def test_a_visit_is_booked_once_per_person_per_hour_and_shows_on_the_day(self):
+        wid, other = self._open(), self._open()
+        s = self.schedule
+        s.add(self.conn, wid, member="Bob", starts_at=datetime(2026, 9, 26, 10), ends_at=datetime(2026, 9, 26, 11),
+              note="Ward 3", actor="alice", at=self.at)
+        with self.assertRaises(s.Refused):                                             # Bob is busy
+            s.add(self.conn, other, member="bob", starts_at=datetime(2026, 9, 26, 10, 30),
+                  ends_at=datetime(2026, 9, 26, 12), note=None, actor="alice", at=self.at)
+        with self.assertRaises(s.Refused):
+            s.add(self.conn, other, member="Bob", starts_at=datetime(2026, 9, 26, 12), ends_at=datetime(2026, 9, 26, 12),
+                  note=None, actor="alice", at=self.at)
+        s.add(self.conn, other, member="Bob", starts_at=datetime(2026, 9, 26, 11), ends_at=datetime(2026, 9, 26, 12),
+              note=None, actor="alice", at=self.at)
+        day = s.day(self.conn, {"IT_HELP"}, "2026-09-26")
+        self.assertEqual([(e["work_item_id"], e["starts_at"][11:]) for e in day], [(wid, "10:00"), (other, "11:00")])
+        self.assertEqual(s.day(self.conn, {"IT_HELP"}, "2026-09-27"), [])
+        self.assertEqual(s.parse_local("2026-09-26T10:30"), datetime(2026, 9, 26, 10, 30))
+        with self.assertRaises(s.Refused):
+            s.parse_local("tomorrow")
+        self.assertEqual(s.remove(self.conn, day[0]["schedule_id"], actor="alice", at=self.at), wid)
+        self.assertIn("visit cancelled", self.conn.execute(
+            "SELECT detail FROM ticket_event WHERE work_item_id = ? ORDER BY ticket_event_id DESC LIMIT 1",
+            (wid,)).fetchone()[0])
+
+    def test_closing_asks_the_requester_and_the_answer_is_one_per_ticket(self):
+        wid = self._open()
+        self.assertFalse(self.survey.pending(self.conn, wid))
+        board.change_status(self.conn, wid, "IT_HELP.CLOSED", at=self.at, actor="alice")
+        mail = self.conn.execute("SELECT subject FROM notification WHERE work_item_id = ? ORDER BY notification_id DESC"
+                                 " LIMIT 1", (wid,)).fetchone()[0]
+        self.assertIn("Your request is closed", mail)
+        self.assertTrue(self.survey.pending(self.conn, wid))
+        findings = self.survey.answer(self.conn, wid, score=4, comment="Quick, thanks", by="a@pmcne.ph", at=self.at)
+        self.assertEqual(findings, [])
+        self.assertFalse(self.survey.pending(self.conn, wid))
+        with self.assertRaises(ValueError):
+            self.survey.answer(self.conn, wid, score=5, comment=None, by="a@pmcne.ph", at=self.at)
+        with self.assertRaises(ValueError):
+            self.survey.answer(self.conn, self._open(), score=9, comment=None, by="a", at=self.at)
+        from psaspine import metrics
+        m = metrics.desk(self.conn, {"IT_HELP"}, now=self.at, months=1)
+        self.assertEqual((m["satisfaction"], m["satisfaction_n"]), (4.0, 1))
+
+
+class MergeScheduleSurveyWebTest(unittest.TestCase):
+    setUp = WebWSGITest.setUp
+    tearDown = WebWSGITest.tearDown
+    _call = WebWSGITest._call
+    _environ = WebWSGITest._environ
+    _cookie_for = WebWSGITest._cookie_for
+
+    def test_the_ticket_books_a_visit_dispatch_shows_the_day_and_a_merge_closes(self):
+        alice = self._cookie_for("alice")
+        status, headers, _ = self._call("POST", "/ticket/ITO-1/schedule/add", cookie=alice, form={
+            "member": "bob", "starts_at": "2026-09-18T10:00", "ends_at": "2026-09-18T11:00", "note": "Ward 3"})
+        self.assertIn("scheduled", dict(headers)["Location"])
+        _, _, page = self._call("GET", "/dispatch", cookie=alice, query="day=2026-09-18")
+        self.assertIn("10:00–11:00 · ITO-1", page)
+        _, _, ticket = self._call("GET", "/ticket/ITO-1", cookie=alice)
+        self.assertIn("Schedule · 1", ticket)
+        conn = db.connect(self.db_path)
+        conn.executescript(
+            "INSERT INTO work_item (work_item_id,source,name,entity_id,contract_basis)"
+            " VALUES ('ITO-2','desk','Printer down too','PMC','BASELINE');"
+            "INSERT INTO ticket (work_item_id,board_id,path,impact,urgency,priority,priority_source,"
+            " requested_at,opened_at,state,board_status_id) VALUES ('ITO-2','IT_HELP','INCIDENT','I3',"
+            "'U3','P4','MATRIX','2026-09-17 08:00','2026-09-17 08:00','NEW','IT_HELP.NEW');")
+        conn.commit()
+        conn.close()
+        status, headers, _ = self._call("POST", "/ticket/ITO-2/merge", cookie=alice, form={"into": "ito-1"})
+        self.assertIn("Merged+into+ITO-1", dict(headers)["Location"])
+        _, _, page = self._call("GET", "/ticket/ITO-2", cookie=alice)
+        self.assertIn("Merged into <a href='/ticket/ITO-1'>", page)
+        self.assertNotIn("Duplicate? Merge into", page)
+
+    def test_the_portal_asks_once_after_close_and_flags_patient_details(self):
+        conn = db.connect(self.db_path)
+        conn.execute("UPDATE ticket SET requested_by = 'bob@pmcne.ph', state = 'CLOSED',"
+                     " closed_at = '2026-09-17 09:00' WHERE work_item_id = 'ITO-1'")
+        conn.commit()
+        conn.close()
+        bob = self._cookie_for("bob", email="bob@pmcne.ph")
+        _, _, page = self._call("GET", "/my/ITO-1", cookie=bob)
+        self.assertIn("How did we do?", page)
+        status, _, page = self._call("POST", "/my/ITO-1/survey", cookie=bob,
+                                     form={"score": "5", "comment": "Sorted, case no. 4471 done quickly"})
+        self.assertTrue(status.startswith("200"))
+        self.assertIn("flagged", page)
+        _, _, page = self._call("GET", "/my/ITO-1", cookie=bob)
+        self.assertNotIn("How did we do?", page)
+        self.assertIn("5 out of 5", page)
+        status, _, _ = self._call("POST", "/my/ITO-1/survey", cookie=self._cookie_for("eve", email="eve@x"),
+                                  form={"score": "1"})
+        self.assertTrue(status.startswith("404"))
+
+
 class AttachmentsWebTest(unittest.TestCase):
     """The desk and the portal: upload, download, review, and who may see what."""
 

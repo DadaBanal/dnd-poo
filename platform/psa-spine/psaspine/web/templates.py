@@ -44,6 +44,7 @@ STYLE = """
   --accent-bg:#e9eefc; --accent-bg:color-mix(in srgb,var(--accent) 11%,transparent);
   --ring:rgb(61 99 221/.45); --ring:color-mix(in srgb,var(--accent) 45%,transparent);
   --r-sm:6px; --r:8px; --r-lg:12px; --hdr:52px;
+  --s1:#2a78d6; --s2:#eb6834;
   --fast:140ms; --slow:220ms; --ease:cubic-bezier(.2,.7,.2,1);
   --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
@@ -152,6 +153,23 @@ dialog#pal::backdrop{background:rgb(10 12 18/.35);-webkit-backdrop-filter:blur(3
 .viewchip .stab.on{background:var(--ink);color:var(--canvas);border-color:var(--ink)}
 .viewchip .iconbtn{width:22px;height:22px;opacity:0} .viewchip:hover .iconbtn,.viewchip:focus-within .iconbtn{opacity:1}
 .pal-box li .st{font-size:11px;font-weight:700;border-radius:5px;padding:0 6px;margin-right:6px;background:var(--chip);color:var(--ink-3)}
+.viz{width:100%;height:auto;display:block;font:11px var(--font)}
+.viz .grid{stroke:var(--line);stroke-width:1} .viz .lbl{fill:var(--ink-3);font-size:11px} .viz .lbl.r{text-anchor:end} .viz .lbl.c{text-anchor:middle}
+.viz .lbl.onbar{fill:#fff;font-weight:600} .viz .s1{fill:var(--s1)} .viz .s2{fill:var(--s2)}
+.viz .line{fill:none;stroke:var(--s1);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.viz .dot{stroke:var(--surface);stroke-width:2} .viz .hit{fill:transparent} .viz .pt:hover .dot{r:6}
+.viz path.s1:hover,.viz path.s2:hover,.viz .hbar:hover{opacity:.85}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--ink-2);margin-bottom:6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+.legend .s1{background:var(--s1)} .legend .s2{background:var(--s2)}
+.tiles.six{grid-template-columns:repeat(6,1fr)} @media (max-width:1100px){.tiles.six{grid-template-columns:repeat(3,1fr)}} @media (max-width:640px){.tiles.six{grid-template-columns:repeat(2,1fr)}}
+.stars{display:inline-flex;gap:4px} .stars label{cursor:pointer;color:var(--ink-3)} .stars label .ic{width:26px;height:26px}
+.stars input{position:absolute;opacity:0;width:1px;height:1px} .stars label:hover .ic,.stars label:has(input:checked) .ic,.stars label:has(input:checked)~label .ic{color:var(--ink-3)}
+.stars label:has(input:checked) .ic{fill:var(--warn);color:var(--warn)} .stars label:has(~ label input:checked) .ic{fill:var(--warn);color:var(--warn)}
+.stars input:focus-visible+.ic{outline:2px solid var(--ring);border-radius:4px}
+.dayrow{display:grid;grid-template-columns:160px 1fr;gap:8px 12px;align-items:start;padding:8px 0;border-bottom:1px solid var(--line)}
+.dayrow:last-child{border-bottom:none} .dayrow .who{font-weight:600}
+.slot{display:inline-block;margin:2px 6px 2px 0;padding:3px 10px;border-radius:999px;background:var(--accent-bg);font-size:12px}
 .kbd{font:11px/1 var(--mono);padding:2px 5px;border:1px solid var(--line-2);border-bottom-width:2px;border-radius:5px;color:var(--ink-2);background:var(--surface)}
 
 /* ---- surfaces ---------------------------------------------------------- */
@@ -339,6 +357,7 @@ em{font-style:italic}
   --accent:#7b93ff; --accent-2:#94a7ff; --on-accent:#0b1020;
   --ok:#3fb950; --warn:#e3b341; --bad:#ff6b6b; --chip:#232833;
   --shadow:0 14px 40px -14px rgb(0 0 0/.7); --glass:rgb(22 25 32/.78);
+  --s1:#3987e5; --s2:#d95926;
 """)
 
 # The one script. Progressive enhancement only: every page works with it off.
@@ -520,6 +539,9 @@ ICONS = {
     "shield": "M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z",
     "rows": "M3 6h18M3 12h18M3 18h18",
     "chevron": "m6 9 6 6 6-6",
+    "reports": "M4 20V10M10 20V4M16 20v-7M22 20H2",
+    "calendar": "M3 5h18v16H3zM3 10h18M8 3v4M16 3v4",
+    "star": "m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9z",
     "grip": "M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01",
     "up": "M12 19V5M5 12l7-7 7 7",
     "down": "M12 5v14M5 12l7 7 7-7",
@@ -696,6 +718,7 @@ def page(title: str, body: str, *, user=None, active: str = "") -> str:
         ("dispatch", "/dispatch", "Dispatch"),
         ("companies", "/companies", "Companies"),
         ("oncall", "/oncall", "On-call"),
+        ("reports", "/reports", "Reports"),
         ("uplift", "/uplift", "Uplift"),
         ("admin", "/admin", "Setup"),
         ("my", "/my", "My requests"),

@@ -31,7 +31,7 @@ from .. import templates as t
 # What a requester is allowed to see about their own ticket. Deliberately not
 # the whole row: no internal status name, no owner, no commercial basis.
 MINE = (
-    "SELECT t.work_item_id, t.priority, t.state, t.opened_at, t.closed_at,"
+    "SELECT t.work_item_id, t.priority, t.state, t.opened_at, t.closed_at, t.merged_into,"
     "       w.name AS summary, s.customer_description, s.name AS status_name"
     "  FROM ticket t"
     "  JOIN work_item w ON w.work_item_id = t.work_item_id"
@@ -249,6 +249,27 @@ def detail(ctx, work_item_id):
         "numbers, please.'></textarea>" + _FILE_FIELD +
         "<div><button type='submit'>Send</button></div></form></div>"
         "<p><a href='/my'>All your requests</a></p>")
+    from ... import survey as _survey
+    extra = ""
+    if row["merged_into"]:
+        extra = ("<div class='banner ok'>This request was combined with a related one and closed here; "
+                 "the work continues on the other request.</div>")
+    elif _survey.pending(ctx.conn, work_item_id):
+        stars = "".join(
+            f"<label><input type=radio name=score value={n} required aria-label='{n} out of 5'>"
+            f"{t.icon('star')}</label>" for n in range(1, 6))
+        extra = ("<div class='card'><h3>" + t.icon("star") + "How did we do?</h3>"
+                 f"<form class='stack' method='post' action='/my/{t.esc(work_item_id)}/survey' style='max-width:none'>"
+                 f"<div class=stars>{stars}</div>"
+                 "<textarea name='comment' placeholder='A sentence if you like. No patient names or case "
+                 "numbers, please.'></textarea><div><button type='submit'>Send</button></div></form></div>")
+    elif row["closed_at"] or row["state"] in ("RESOLVED", "CLOSED", "CANCELLED"):
+        ans = ctx.conn.execute("SELECT score FROM survey_response WHERE work_item_id = ?",
+                               (work_item_id,)).fetchone()
+        if ans:
+            extra = f"<p class=why>Thank you for rating this request {ans[0]} out of 5.</p>"
+    body = body.replace("<p><a href='/my'>All your requests</a></p>",
+                        extra + "<p><a href='/my'>All your requests</a></p>")
     return Response(body=t.page(work_item_id, body, user=ctx.user))
 
 
@@ -356,4 +377,31 @@ def reply(ctx, work_item_id):
             + t.esc(" ".join(refused)) + "</div>"
             f"<p><a href='/my/{t.esc(work_item_id)}'>Back to your request</a></p>"),
             user=ctx.user))
+    return redirect(f"/my/{work_item_id}")
+
+
+def survey_answer(ctx, work_item_id):
+    from .. import HttpError, Response, redirect
+    from ... import survey as _survey
+    clause, params = _mine_clause(ctx)
+    row = ctx.conn.execute("SELECT t.work_item_id FROM ticket t" + clause + " AND t.work_item_id = ?",
+                           params + [work_item_id]).fetchone()
+    if row is None:
+        raise HttpError("404 Not Found", "No such request.")
+    f = ctx.request.form()
+    score = int(f["score"]) if f.get("score", "").isdigit() else 0
+    requester = (ctx.user.email or ctx.user.id or "").lower()
+    try:
+        findings = _survey.answer(ctx.conn, work_item_id, score=score, comment=f.get("comment"),
+                                  by=requester, at=ctx.now)
+        ctx.conn.commit()
+    except ValueError as exc:
+        return Response("400 Bad Request", t.page(work_item_id, (
+            f"<h1>Not sent</h1><div class='banner err'>{t.esc(str(exc))}</div>"
+            f"<p><a href='/my/{t.esc(work_item_id)}'>Back to your request</a></p>"), user=ctx.user))
+    if findings:
+        return Response(body=t.page(work_item_id, (
+            "<h1>Thank you</h1><div class='banner ok'>Your answer is recorded. It looks like your "
+            "sentence may contain patient details; we have flagged it so it can be removed.</div>"
+            f"<p><a href='/my/{t.esc(work_item_id)}'>Back to your request</a></p>"), user=ctx.user))
     return redirect(f"/my/{work_item_id}")

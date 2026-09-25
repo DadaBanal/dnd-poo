@@ -184,10 +184,15 @@ def detail(ctx, work_item_id):
         parts += [r["st"], r["it"]] if r else [tk["catalogue_item_id"]]
     klass = " › ".join(parts)
     can_work = common.may_access_board(ctx, tk["board_id"], need="WORK")
+    if tk["merged_into"]:
+        msg = msg or ""
+        err = err or ""
     buttons = ""
     if can_work and tk["closed_loop_required"]:
         buttons = f"<a class=btn href='/ticket/{wid}/loop'>Close the loop</a>"
     header = (
+        (f"<div class='banner ok'>{t.icon('layers')} Merged into <a href='/ticket/{t.esc(tk['merged_into'])}'>"
+         f"{t.esc(tk['merged_into'])}</a>; the work continues there.</div>" if tk["merged_into"] else "") +
         (f"<div class='banner ok toast'>{t.icon('check')} {t.esc(msg)}</div>" if msg else "") +
         (f"<div class='banner err toast'>{t.icon('alert')} {t.esc(err)}</div>" if err else "") +
         "<div class=hdr><div class=grow>"
@@ -373,11 +378,11 @@ def detail(ctx, work_item_id):
     configs = cmdb_views.ticket_card(ctx, tk, can_work=can_work)
     from . import files as file_views
     configs = (_change_card(ctx, tk, can_work=can_work) + _family_card(ctx, tk, can_work=can_work)
-               + _tasks_card(ctx, tk, can_work=can_work)
+               + _schedule_card(ctx, tk, can_work=can_work) + _tasks_card(ctx, tk, can_work=can_work)
                + file_views.ticket_card(ctx, tk, can_work=can_work) + _links_card(ctx, tk, can_work=can_work) + configs)
     # The side cards are pods: each user drags or folds them and the browser
     # remembers; data-order is the shipped layout that "Reset layout" restores.
-    body = header + strip + (f"<div class=rail>{left}<div class=pods data-order='ticket,change,family,tasks,"
+    body = header + strip + (f"<div class=rail>{left}<div class=pods data-order='ticket,change,family,schedule,tasks,"
                              f"files,links,configurations,time,commercial,details'>{fields}{configs}{time_card}"
                              f"{commercial}{details}</div></div>")
     return Response(body=t.page(work_item_id, body, user=ctx.user, active="board"))
@@ -728,8 +733,86 @@ def _family_card(ctx, tk, *, can_work: bool) -> str:
                       "<div><input name=parent_id placeholder='Make this a child of: PMC-000123' required></div>"
                       "<div style='flex:0 0 auto'><button class=ghost type=submit>" + t.icon("arrow")
                       + " Attach</button></div></form>")
+    if can_work and not tk["closed_at"] and not tk["merged_into"]:
+        forms += (f"<form method=post action='/ticket/{wid}/merge' class=row style='margin-top:10px;"
+                  "padding-top:10px;border-top:1px solid var(--line)'>"
+                  "<div><input name=into placeholder='Duplicate? Merge into: PMC-000123' required></div>"
+                  "<div style='flex:0 0 auto'><button class=ghost type=submit>" + t.icon("layers")
+                  + " Merge</button></div>"
+                  "<p class=why style='flex-basis:100%;margin:0'>This ticket closes; its notes, files and "
+                  "links go to the other one. A Discussion note arrives as Internal unless both have the "
+                  "same requester.</p></form>")
     head = f"Children · {len(kids)}" if kids else "Children"
     return f"<div class=card data-pod=family><h3>{t.icon('layers')}{t.esc(head)}</h3>{body}{forms}</div>"
+
+
+def _schedule_card(ctx, tk, *, can_work: bool) -> str:
+    from ... import schedule
+    wid = t.esc(tk["work_item_id"])
+    rows = schedule.entries_for(ctx.conn, tk["work_item_id"])
+    items = "".join(
+        f"<li><b>{t.esc(r['member'])}</b> · {t.esc(r['starts_at'])} → {t.esc(r['ends_at'][11:])}"
+        + (f" <span class=muted>{t.esc(r['note'])}</span>" if r["note"] else "")
+        + ((f" <form method=post action='/ticket/{wid}/schedule/remove' style='display:inline'>"
+            f"<input type=hidden name=schedule_id value='{r['schedule_id']}'>"
+            "<button class='ghost small' type=submit title='Cancel this visit'>×</button></form>")
+           if can_work else "") + "</li>" for r in rows)
+    add = ""
+    if can_work and not tk["closed_at"]:
+        start = ctx.now.replace(minute=0, second=0, microsecond=0)
+        add = (f"<form method=post action='/ticket/{wid}/schedule/add' class=grid2 style='margin-top:8px'>"
+               f"<div><label>Who</label><input name=member value='{t.esc(tk['owner'] or '')}' required></div>"
+               "<div><label>Note</label><input name=note placeholder='Ward 3, bring toner'></div>"
+               f"<div><label>From</label><input type=datetime-local name=starts_at value='{start.strftime('%Y-%m-%dT%H:%M')}' required></div>"
+               f"<div><label>To</label><input type=datetime-local name=ends_at required></div>"
+               "<div style='grid-column:1/-1'><button class=ghost type=submit>" + t.icon("calendar")
+               + " Schedule the visit</button></div></form>")
+    head = f"Schedule · {len(rows)}" if rows else "Schedule"
+    return (f"<div class=card data-pod=schedule><h3>{t.icon('calendar')}{t.esc(head)}</h3>"
+            + (f"<ul class=plain>{items}</ul>" if items else "<div class=muted>No visits booked.</div>")
+            + add + "</div>")
+
+
+def schedule_add(ctx, work_item_id):
+    from ... import schedule
+    tk = _load(ctx, work_item_id)
+    common.require_board(ctx, tk["board_id"], need="WORK")
+    f = ctx.request.form()
+    try:
+        schedule.add(ctx.conn, work_item_id, member=f.get("member", ""),
+                     starts_at=schedule.parse_local(f.get("starts_at", "")),
+                     ends_at=schedule.parse_local(f.get("ends_at", "")), note=f.get("note"),
+                     actor=ctx.user.id, at=ctx.now)
+        ctx.conn.commit()
+    except (schedule.Refused, LookupError) as exc:
+        return _back(work_item_id, err=f"Not scheduled: {exc}")
+    return _back(work_item_id, msg="Visit scheduled")
+
+
+def schedule_remove(ctx, work_item_id):
+    from ... import schedule
+    tk = _load(ctx, work_item_id)
+    common.require_board(ctx, tk["board_id"], need="WORK")
+    sid = ctx.request.form().get("schedule_id", "")
+    row = ctx.conn.execute("SELECT work_item_id FROM ticket_schedule WHERE schedule_id = ?",
+                           (sid,)).fetchone() if sid.isdigit() else None
+    if row is None or row["work_item_id"] != work_item_id:
+        return _back(work_item_id, err="No such visit on this ticket")
+    schedule.remove(ctx.conn, int(sid), actor=ctx.user.id, at=ctx.now)
+    ctx.conn.commit()
+    return _back(work_item_id, msg="Visit cancelled")
+
+
+def merge(ctx, work_item_id):
+    from ... import family
+    into = ctx.request.form().get("into", "").strip().upper()
+
+    def go():
+        _other_workable(ctx, into)
+        r = family.merge(ctx.conn, work_item_id, into, actor=ctx.user.id, at=ctx.now)
+        return (f"Merged into {into}: {r['notes']} note(s) copied, {r['files']} file(s) moved"
+                + ("" if r["same_requester"] else "; Discussion notes arrived as Internal"))
+    return _family_change(ctx, work_item_id, go)
 
 
 def _family_change(ctx, work_item_id, fn):

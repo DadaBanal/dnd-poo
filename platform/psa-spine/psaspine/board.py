@@ -159,8 +159,11 @@ def change_status(conn: sqlite3.Connection, work_item_id: str, to_status_id: str
     if new["is_closed"]:
         # Children close with their parent (030). A child has no children, so
         # this goes one level and stops.
-        from . import family
+        from . import family, outbox
         family.close_with_parent(conn, work_item_id, at=at, actor=actor)
+        if not conn.execute("SELECT merged_into FROM ticket WHERE work_item_id = ?",
+                            (work_item_id,)).fetchone()[0]:
+            outbox.queue_requester(conn, work_item_id, "CLOSED", at=at)   # a merge says nothing
     return {"work_item_id": work_item_id, "board_status_id": to_status_id,
             "state": state, "escalation_status": escalation,
             "stopped": stopped, "paused": paused, "resumed": resumed,

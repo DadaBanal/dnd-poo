@@ -135,3 +135,66 @@ def close_with_parent(conn: sqlite3.Connection, parent_id: str, *, at: datetime,
                f"closed with {len(closed)} child(ren)"
                + (f"; {len(left)} left open: {', '.join(left)}" if left else ""))
     return {"closed": closed, "left_open": left}
+
+
+# ------------------------------------------------------------------- merge
+
+def merge(conn: sqlite3.Connection, dup_id: str, into_id: str, *, actor: str,
+          at: datetime) -> dict:
+    """ConnectWise's Merge: the duplicate's notes are copied onto the ticket
+    that stays, its files and links move, its children move, and it closes on
+    its own board with merged_into set so its number still answers.
+
+    A Discussion note is copied as Discussion only when both tickets have the
+    same requester; otherwise it is copied as Internal, because one requester's
+    words are not another requester's to read on their portal (§6.1).
+    """
+    from . import board
+    from .board import _event, touch
+    if dup_id == into_id:
+        raise Refused("a ticket is not merged into itself")
+    dup, into = _ticket(conn, dup_id), _ticket(conn, into_id)
+    for row in (dup, into):
+        if row["state"] in CLOSED_STATES or row["closed_at"]:
+            raise Refused(f"{row['work_item_id']} is closed; only open tickets merge")
+    if conn.execute("SELECT merged_into FROM ticket WHERE work_item_id = ?", (into_id,)).fetchone()[0]:
+        raise Refused(f"{into_id} was itself merged away")
+    if into["parent_id"] and conn.execute("SELECT 1 FROM ticket WHERE parent_id = ?", (dup_id,)).fetchone():
+        raise Refused(f"{dup_id} has children and {into_id} is a child; children have no children")
+    target = conn.execute(
+        "SELECT board_status_id FROM board_status WHERE board_id = ? AND is_closed = 1"
+        " AND inactive = 0 ORDER BY sort_order LIMIT 1", (dup["board_id"],)).fetchone()
+    if target is None:
+        raise Refused(f"{dup_id}'s board has no closed status to merge into")
+    stamp = _stamp(at)
+    same_requester = (conn.execute("SELECT LOWER(COALESCE(requested_by, '')) FROM ticket WHERE work_item_id = ?",
+                                   (dup_id,)).fetchone()[0]
+                      == conn.execute("SELECT LOWER(COALESCE(requested_by, '')) FROM ticket WHERE work_item_id = ?",
+                                      (into_id,)).fetchone()[0])
+    notes = conn.execute(
+        "SELECT occurred_at, actor, detail, note_flag, is_resolution FROM ticket_event"
+        " WHERE work_item_id = ? AND note_flag IS NOT NULL ORDER BY ticket_event_id", (dup_id,)).fetchall()
+    for n in notes:
+        flag = n["note_flag"] if (n["note_flag"] == "INTERNAL" or same_requester) else "INTERNAL"
+        conn.execute("INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail, note_flag)"
+                     " VALUES (?,?,'MERGED_NOTE',?,?,?)",
+                     (into_id, n["occurred_at"], n["actor"], f"(from {dup_id}) {n['detail']}", flag))
+    files = conn.execute("UPDATE attachment SET work_item_id = ? WHERE work_item_id = ?", (into_id, dup_id)).rowcount
+    for l in conn.execute("SELECT * FROM ticket_link WHERE work_item_id = ? OR linked_id = ?", (dup_id, dup_id)).fetchall():
+        a = into_id if l["work_item_id"] == dup_id else l["work_item_id"]
+        b = into_id if l["linked_id"] == dup_id else l["linked_id"]
+        if a != b:
+            conn.execute("INSERT OR IGNORE INTO ticket_link (work_item_id, linked_id, relation, linked_at,"
+                         " linked_by) VALUES (?,?,?,?,?)", (a, b, l["relation"], l["linked_at"], l["linked_by"]))
+    conn.execute("DELETE FROM ticket_link WHERE work_item_id = ? OR linked_id = ?", (dup_id, dup_id))
+    kids = conn.execute("UPDATE ticket SET parent_id = ? WHERE parent_id = ?", (into_id, dup_id)).rowcount
+    if dup["parent_id"]:
+        conn.execute("UPDATE ticket SET parent_id = NULL WHERE work_item_id = ?", (dup_id,))
+    conn.execute("UPDATE ticket SET merged_into = ? WHERE work_item_id = ?", (into_id, dup_id))
+    _event(conn, dup_id, stamp, "MERGED", actor, f"merged into {into_id}: {len(notes)} note(s) copied,"
+           f" {files} file(s) moved" + (f", {kids} child(ren) moved" if kids else ""))
+    _event(conn, into_id, stamp, "MERGED", actor, f"{dup_id} merged in: {len(notes)} note(s) copied,"
+           f" {files} file(s) moved" + ("" if same_requester else "; its Discussion notes arrived as Internal"))
+    board.change_status(conn, dup_id, target["board_status_id"], at=at, actor=actor)
+    touch(conn, into_id, at)
+    return {"notes": len(notes), "files": files, "children": kids, "same_requester": same_requester}

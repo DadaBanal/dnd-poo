@@ -158,6 +158,8 @@ BEGIN
     PRINT N'    psa.attachment';
     PRINT N'    psa.user_view';
     PRINT N'    psa.standard_note';
+    PRINT N'    psa.ticket_schedule';
+    PRINT N'    psa.survey_response';
     PRINT N'    psa.ix_fee_line_effective';
     PRINT N'    psa.ix_time_entry_period';
     PRINT N'    psa.ix_workflow_run_event';
@@ -179,12 +181,15 @@ BEGIN
     PRINT N'    psa.ix_ticket_parent';
     PRINT N'    psa.ix_user_view_member';
     PRINT N'    psa.ix_standard_note_board';
+    PRINT N'    psa.ix_ticket_merged';
+    PRINT N'    psa.ix_ticket_schedule_day';
+    PRINT N'    psa.ix_ticket_schedule_ticket';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  69 tables, 21 indexes, 4 triggers.';
+    PRINT N'  71 tables, 24 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -1968,6 +1973,46 @@ CREATE TABLE psa.[standard_note] (
 );
 END;
 
+-- --------------------------------------------------------------------------
+-- ticket_schedule   (from schema/032_merge_schedule_survey.sql)
+IF OBJECT_ID(N'psa.[ticket_schedule]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ticket_schedule] (
+    [schedule_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_ticket_schedule] PRIMARY KEY,
+    [work_item_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ticket_schedule_work_item_id] REFERENCES psa.[ticket]([work_item_id]),
+    [member] NVARCHAR(200) NOT NULL,
+    [starts_at] NVARCHAR(64) NOT NULL,
+    [ends_at] NVARCHAR(64) NOT NULL,
+    [note] NVARCHAR(MAX) NULL,
+    [created_at] NVARCHAR(64) NOT NULL,
+    [created_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [starts_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [starts_at], 126), CASE WHEN [starts_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [starts_at], 112) END)),
+    [ends_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [ends_at], 126), CASE WHEN [ends_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [ends_at], 112) END)),
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END)),
+    CONSTRAINT [CK_ticket_schedule_01] CHECK (ends_at > starts_at)
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- survey_response   (from schema/032_merge_schedule_survey.sql)
+IF OBJECT_ID(N'psa.[survey_response]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[survey_response] (
+    [work_item_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_survey_response] PRIMARY KEY CONSTRAINT [FK_survey_response_work_item_id] REFERENCES psa.[ticket]([work_item_id]),
+    [score] INT NOT NULL CONSTRAINT [CK_survey_response_01] CHECK (score BETWEEN 1 AND 5),
+    [comment] NVARCHAR(MAX) NULL,
+    [answered_by] NVARCHAR(200) NOT NULL,
+    [answered_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [answered_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [answered_at], 126), CASE WHEN [answered_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [answered_at], 112) END))
+);
+END;
+
 -- ==========================================================================
 -- COLUMNS ADDED TO TABLES THAT ALREADY EXIST
 --
@@ -2118,6 +2163,9 @@ ALTER TABLE psa.[attachment] ADD [purge_reason] NVARCHAR(32) NULL CONSTRAINT [CK
 IF COL_LENGTH(N'psa.[ticket]', N'parent_id') IS NULL
 ALTER TABLE psa.[ticket] ADD [parent_id] NVARCHAR(64) NULL CONSTRAINT [FK_ticket_parent_id] REFERENCES psa.[ticket]([work_item_id]);
 
+IF COL_LENGTH(N'psa.[ticket]', N'merged_into') IS NULL
+ALTER TABLE psa.[ticket] ADD [merged_into] NVARCHAR(64) NULL CONSTRAINT [FK_ticket_merged_into] REFERENCES psa.[ticket]([work_item_id]);
+
 -- --------------------------------------------------------------------------
 -- indexes
 
@@ -2190,6 +2238,15 @@ CREATE INDEX [ix_user_view_member] ON psa.[user_view] ([member], [sort_order]);
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_standard_note_board' AND object_id = OBJECT_ID(N'psa.[standard_note]'))
 CREATE INDEX [ix_standard_note_board] ON psa.[standard_note] ([board_id], [inactive], [name]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ticket_merged' AND object_id = OBJECT_ID(N'psa.[ticket]'))
+CREATE INDEX [ix_ticket_merged] ON psa.[ticket] ([merged_into]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ticket_schedule_day' AND object_id = OBJECT_ID(N'psa.[ticket_schedule]'))
+CREATE INDEX [ix_ticket_schedule_day] ON psa.[ticket_schedule] ([starts_at]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ticket_schedule_ticket' AND object_id = OBJECT_ID(N'psa.[ticket_schedule]'))
+CREATE INDEX [ix_ticket_schedule_ticket] ON psa.[ticket_schedule] ([work_item_id]);
 
 -- ==========================================================================
 -- THE GATE
@@ -2321,10 +2378,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 69 OR @Triggers <> 4 OR @Indexes < 21
+IF @Tables <> 71 OR @Triggers <> 4 OR @Indexes < 24
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 69), %d triggers (expected 4), %d indexes (expected at least 21). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 71), %d triggers (expected 4), %d indexes (expected at least 24). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -2352,6 +2409,7 @@ PRINT N'target is enforced until somebody with the authority says so.';
     DROP TRIGGER IF EXISTS psa.[ticket_close_requires_a_variation];
     DROP TRIGGER IF EXISTS psa.[patient_reference_needs_a_restricted_board];
     DROP TRIGGER IF EXISTS psa.[patient_reference_stays_on_a_restricted_board];
+    ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_merged_into];
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_parent_id];
     ALTER TABLE psa.[workflow_action] DROP CONSTRAINT IF EXISTS [FK_workflow_action_target_template_id];
     ALTER TABLE psa.[board] DROP CONSTRAINT IF EXISTS [FK_board_reopen_status_id];
@@ -2359,6 +2417,8 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[board] DROP CONSTRAINT IF EXISTS [FK_board_calendar_id];
     ALTER TABLE psa.[time_entry] DROP CONSTRAINT IF EXISTS [FK_time_entry_loop_reply_id];
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
+    DROP TABLE IF EXISTS psa.[survey_response];
+    DROP TABLE IF EXISTS psa.[ticket_schedule];
     DROP TABLE IF EXISTS psa.[standard_note];
     DROP TABLE IF EXISTS psa.[user_view];
     DROP TABLE IF EXISTS psa.[attachment];

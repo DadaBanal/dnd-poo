@@ -444,6 +444,7 @@ def _bulk_bar(ctx, boards, f) -> str:
         " Assign <input name=owner placeholder='owner' style='width:130px;padding:4px 8px'>"
         f" Move to <select name=to_board>{move_opts}</select>"
         " Attach to parent <input name=parent placeholder='PMC-000123' style='width:130px;padding:4px 8px'>"
+        " Merge into <input name=merge_into placeholder='PMC-000123' style='width:130px;padding:4px 8px'>"
         " <button type=submit>Apply</button></form>")
 
 
@@ -457,6 +458,7 @@ def bulk(ctx):
     owner = form.get("owner", "").strip()
     to_board = form.get("to_board", "").strip()
     parent = form.get("parent", "").strip().upper()
+    merge_into = form.get("merge_into", "").strip().upper()
     back = form.get("back", "/")
     if not back.startswith("/") or back.startswith("//"):
         back = "/"
@@ -476,6 +478,13 @@ def bulk(ctx):
                                 reason="bulk move from the board")
             if owner:
                 engine.update_fields(ctx.conn, wid, at=ctx.now, actor=ctx.user.id, owner=owner)
+            if merge_into and merge_into != wid:
+                from ... import family
+                mrow = ctx.conn.execute("SELECT board_id FROM ticket WHERE work_item_id = ?",
+                                        (merge_into,)).fetchone()
+                if mrow is None or not common.may_access_board(ctx, mrow["board_id"], need="WORK"):
+                    raise PermissionError
+                family.merge(ctx.conn, wid, merge_into, at=ctx.now, actor=ctx.user.id)
             if parent and parent != wid:
                 from ... import family
                 prow = ctx.conn.execute("SELECT board_id FROM ticket WHERE work_item_id = ?",

@@ -42,6 +42,9 @@ REQUESTER_WORDS = {
                "anything; we will update you here as it moves."),
     "UPDATED": ("Your request has been updated",
                 "IT has added an update to your request. Sign in to the portal to read it."),
+    "CLOSED": ("Your request is closed",
+               "IT has closed your request. If it is not fixed, reply to this email and it "
+               "reopens. On the portal you can tell us how we did, one to five."),
 }
 
 
@@ -60,12 +63,20 @@ def queue_requester(conn: sqlite3.Connection, work_item_id: str, reason: str, *,
         return False
     if not address_for(conn, row["requested_by"]):
         return False                          # only an address we can resolve now
-    if conn.execute("SELECT 1 FROM notification WHERE work_item_id = ? AND recipient = ?"
-                    " AND recipient_role = ? AND status = 'PENDING'",
-                    (work_item_id, row["requested_by"], REQUESTER)).fetchone():
-        return False                          # one unsent email already says so
     headline, said = REQUESTER_WORDS[reason]
     stamp = at.isoformat(sep=" ", timespec="minutes")
+    pending = conn.execute("SELECT notification_id FROM notification WHERE work_item_id = ? AND"
+                           " recipient = ? AND recipient_role = ? AND status = 'PENDING'",
+                           (work_item_id, row["requested_by"], REQUESTER)).fetchone()
+    if pending:
+        if reason != "CLOSED":
+            return False                      # one unsent email already says so
+        # A close outranks an unsent "we have it": the one email says the newer thing.
+        conn.execute("UPDATE notification SET subject = ?, body = ?, created_at = ? WHERE notification_id = ?",
+                     (f"{subject_token(work_item_id)} {headline}", said, stamp, pending["notification_id"]))
+        _event(conn, work_item_id, stamp, "NOTIFY", "desk",
+               f"email to the requester queued: {headline.lower()}")
+        return True
     conn.execute(
         "INSERT INTO notification (work_item_id, recipient, recipient_role, subject, body,"
         " created_at, status) VALUES (?,?,?,?,?,?,'PENDING')",

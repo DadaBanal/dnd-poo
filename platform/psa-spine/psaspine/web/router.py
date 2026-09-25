@@ -9,7 +9,7 @@ context, and return a Response.
 from __future__ import annotations
 
 from .views import (admin, board, companies, configurations, dispatch, files, loop, oncall,
-                    portal, rules, search, ticket, uplift)
+                    portal, reports, rules, search, ticket, uplift)
 
 # (method, pattern, handler). The first pattern that matches the path wins,
 # so a literal segment must be listed before a <capture> in the same place.
@@ -17,6 +17,8 @@ ROUTES = [
     ("GET", "/", board.index),
     ("POST", "/bulk", board.bulk),
     ("GET", "/search.json", search.search),
+    ("GET", "/reports", reports.index),
+    ("GET", "/reports.csv", reports.export_csv),
     ("POST", "/views/save", board.view_save),
     ("POST", "/views/delete", board.view_delete),
     # /ticket/new first: the first matching pattern wins, and <work_item_id>
@@ -37,6 +39,9 @@ ROUTES = [
     ("POST", "/ticket/<work_item_id>/child/remove", ticket.child_remove),
     ("POST", "/ticket/<work_item_id>/parent/set", ticket.parent_set),
     ("POST", "/ticket/<work_item_id>/parent/remove", ticket.parent_remove),
+    ("POST", "/ticket/<work_item_id>/merge", ticket.merge),
+    ("POST", "/ticket/<work_item_id>/schedule/add", ticket.schedule_add),
+    ("POST", "/ticket/<work_item_id>/schedule/remove", ticket.schedule_remove),
     ("POST", "/ticket/<work_item_id>/attach", files.upload),
     ("GET", "/ticket/<work_item_id>/file/<attachment_id>", files.download),
     ("POST", "/ticket/<work_item_id>/file/<attachment_id>/review", files.review),
@@ -60,6 +65,7 @@ ROUTES = [
     ("POST", "/my/new", portal.create),
     ("GET", "/my/<work_item_id>", portal.detail),
     ("POST", "/my/<work_item_id>/reply", portal.reply),
+    ("POST", "/my/<work_item_id>/survey", portal.survey_answer),
     ("GET", "/my/<work_item_id>/file/<attachment_id>", portal.file_download),
     ("GET", "/uplift", uplift.index),
     ("GET", "/admin", admin.index),
