@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import { RESULTS, HOST, seed } from './people.js';
 import { dismissOhifNotices, firstImage, transferred } from './ohif.js';
 
+const base = `https://${HOST}`;
 const measured = {};
 
 test.describe.configure({ mode: 'serial' });
@@ -183,6 +184,25 @@ test("the patient's earlier study is offered beside the current one", async ({ p
   const browser = page.locator('[data-cy="studyBrowser-panel"]');
   await expect(browser).toContainText('06-Jan-2025', { timeout: 30_000 });
   await expect(browser).toContainText('a year earlier');
+});
+
+test("every kind of study PMC's machines make opens in the viewer", async ({ page }) => {
+  // One study of each modality code in the archive (the engine's tests
+  // stored one of every kind), each opened as a link would open it.
+  const r = await page.request.get(`${base}/pmc/api/studies?range=all&limit=200`);
+  expect(r.status()).toBe(200);
+  const first = new Map();
+  for (const s of (await r.json()).studies) for (const m of s.modalities) if (!first.has(m)) first.set(m, s);
+  expect([...first.keys()].sort()).toEqual(expect.arrayContaining(['MG', 'RF', 'NM', 'BMD', 'PX', 'OPT', 'ES', 'RTIMAGE']));
+  const opened = {};
+  for (const [code, s] of first) {
+    const started = Date.now();
+    await page.goto(`/viewer?StudyInstanceUIDs=${s.studyUid}`);
+    const shown = await firstImage(page, started);
+    expect(shown, `${code} (${s.description}) shows an image`).not.toBeNull();
+    opened[code] = shown;
+  }
+  measured.every_kind_first_image_ms = opened;
 });
 
 test('every request stays on the front door, and images are never cached', async ({ page }) => {

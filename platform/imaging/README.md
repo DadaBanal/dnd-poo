@@ -58,6 +58,11 @@ modality ─ DICOM 4242 ─────────────────▶  
   motion that explains (M5.3, see [The reading list](#the-reading-list));
   the reading room holds the list and the viewer together, with the next
   study already loaded (M5.4, see [The reading room](#the-reading-room)).
+- **M5.5, every machine PMC has:** see
+  [Every machine PMC has](#every-machine-pmc-has) below. One filter for each
+  kind of study PMC's machines make, a synthetic study of each kind sent by
+  its own machine and proven lossless, listed, filtered and opened in the
+  viewer; and PMC's logo in its own proportions, from PMC's own artwork.
 - **PMC's identity:** see [Branding](#branding) below. The sign-in page, the
   app, the viewer, the signed-out page and the alert email wear the 2026
   identity as the portal proposal applied it: PMC Blue, the four-segment
@@ -70,6 +75,68 @@ Nothing is mocked, except PMC's Active Directory and Azure themselves: the
 tests sign in against a stand-in AD (Samba's AD domain controller,
 `identity/test/ad/`, with invented people and groups) and copy off-site to a
 stand-in Azure (Azurite). Neither is ever deployed.
+
+## Every machine PMC has
+
+Dada asked (25 Sep 2026) why the draft named seven machines when PMC has
+more. It has these. The list is MEASURED from three of PMC's own documents:
+Purchasing's *Acquired and machine inventory 2025* (23 Oct 2025), Biomed's
+*Equipment connected to the network* (11 Nov 2025) and the Voyager
+archive's own audit in the cathlab transfer file (31 Aug 2026: which AE
+titles have sent what), and VERIFIED against PMC's website on 25 Sep 2026
+(pmcne.ph: *Diagnostic and Imaging Center*, *Nuclear Medicine*). No serial
+number, address or price is repeated here.
+
+| Machine | Where | Makes | Sends to Voyager today | On the new platform |
+|---|---|---|---|---|
+| CT, Aquilion Lightning 16-slice | Radiology | CT | Yes, as `TM_CT_CMW_V3.00` (14,546 studies) | Built and tested: the CT kind |
+| MRI, Magnetom Sempra 1.5 T | Radiology | MR | Yes, as `AN_WP179248` and `AN_AWP179248`; silent since Aug 2026 in the record | Built and tested: the MR kind |
+| X-ray rooms: Radspeed Fit (DR), EZY-RAD PRO | Radiology | DX, CR | Yes: `NX_DEFAULT` (the Agfa NX CR reader, 31,476 studies) and `CONSOLE1` (29,550); a `VXVUE` console last sent in 2024 | Built and tested: the CR and DX kinds |
+| Mobile X-ray, MUX-10, two of them | Radiology | CR | Through the CR reader (INFERRED: the record does not say which console) | The CR kind |
+| Mammography, Viola, with a DR detector fitted in 2024 | Radiology | MG | Yes: Voyager's records show `CONSOLE1` sending CR and MG | **New in M5.5**: the MG kind (CC and MLO), sent by `CONSOLE1` |
+| Dental X-ray, Orthophos XG5 Ceph | Radiology | PX (panoramic), DX (ceph) | No AE title in the record | **New**: the PX kind. Its DICOM send is configured at go-live |
+| Ultrasound, Aplio a; OB-GYN ultrasound, Xario 100 | Radiology | US | Voyager holds one ultrasound study, from 2009 | Built and tested: the US kinds, uncompressed and JPEG |
+| Cath lab, Azurion 3 M15 | Cardiovascular | XA cine | Yes, as `IENGINE_SCU`; Voyager shows one frame of each run | Built and tested: the XA kind, which plays |
+| Echo: Affiniti CVx, Arietta S60, Acuson NX3 Elite, Acuson CV70, Vivid S5 | Cardiovascular | US cine | Not yet (the record: echo would hit Voyager's cine wall) | The US cine kind, which plays |
+| C-arm, Alien 3030 Cardio | Heart Institute | RF or XA (NOT VERIFIED which) | No | **New**: the RF kind |
+| C-arm, OEC Fluorostar 7900 | Operating room | RF | No | **New**: the RF kind |
+| Gamma camera, QuantumCam dual-head SPECT | Nuclear medicine | NM | No | **New**: the NM kind (a whole-body bone scan, two views) |
+| Bone densitometer, Stratos (DXA) | Nuclear medicine | BMD, or a secondary capture (NOT VERIFIED what the Stratos sends) | No | **New**: the BMD kind, as a secondary-capture image |
+| CT, Aquilion Start 16-slice | Cancer Institute | CT (planning) | A second CT AE, `CM_CT_CMW_V1.00`, last sent in Dec 2025 (INFERRED to be this one) | The CT kind |
+| Linear accelerators, Elekta Compact and Elekta Harmony | Cancer Institute | RTIMAGE (portal images), CBCT | No | **New**: the RTIMAGE kind. Whether the oncology system keeps these or the archive does is Dada's decision |
+| Retinal OCT and angiography, Spectralis HRA/OCT | Eye Center | OPT, OP | No | **New**: the OPT kind (B-scans). The Spectralis's DICOM export is a licensed option (NOT VERIFIED at PMC) |
+| Visual fields, Humphrey Field Analyzer 3 | Eye Center | OPV (a report) | No | The Eye filter covers it; no synthetic study yet |
+| Endoscopy: Eluxeo Lite 6000, VP-3500 HD, CV-150; bronchoscopy VP-3500 HD; ERCP | Endoscopy, Pulmonary | ES photographs, video | No | **New**: the ES kind. Whether each processor can send DICOM, or needs a capture box, is NOT VERIFIED |
+| Fibroscan 530 Compact | Endoscopy | A report | No | The scanned-paper path (below); NOT VERIFIED whether it exports DICOM |
+| Laparoscopy tower, HD video recorder | Operating room | Video | No | Not DICOM: the photos-and-scans path, or a capture box |
+| Thyroid uptake, gamma counter | Nuclear medicine | Numbers | No | Not images: reports stay where reports live |
+
+Other sources, as before: Voyager (`PMCPACS01`) and the old archive
+(`PMC-ORTHANC01`) by migration; CDs and USB drives from other hospitals;
+photos and scanned paper; a DICOM-speaking PC workstation. The cath lab's
+dry-film printer is a destination, not a source.
+
+What M5.5 changed for these:
+
+- **The list's filter** (`shared/api.ts`, `MODALITY_GROUPS`): one chip for
+  each kind of machine, by the DICOM modality codes it sends: X-ray (CR,
+  DX), CT, MR, Ultrasound (US), Mammography (MG), Cath lab (XA),
+  Fluoroscopy (RF), Nuclear medicine (NM, PT, BMD), Dental (PX, IO), Eye
+  (OP, OPT, OPV, OPM), Endoscopy (ES, XC), Radiotherapy (RTIMAGE, RTDOSE,
+  RTSTRUCT, RTPLAN, RTRECORD). Each code has its own chip colour.
+- **A synthetic study of each new kind** (`tests/synth.py`): a mammogram in
+  two views, a C-arm run, a bone scan, a bone-density scan, a dental
+  panoramic, retinal OCT B-scans, endoscopy photographs and a portal image,
+  each sent by its own machine's AE title (`tests/conftest.py`; the AE
+  titles the record does not have are the tests' own, `SYN_…`). Each is
+  stored lossless and decodes bit-exact, sorts and counts with the rest
+  (`test_ingest.py`, `test_dicomweb.py`, `test_app.py`), has its filter
+  showing only its own kind (`home.spec.js`), and opens in the viewer
+  (`viewer.spec.js`; see Measured for what each took).
+- **Go-live needs**, per machine: its DICOM destination set to the platform
+  (ICT, with each vendor where a licence or a capture box is needed), and
+  the feed watch's groups extended from the five the tests use to every
+  machine (M4).
 
 ## Sign-in
 
@@ -255,9 +322,12 @@ What a person gets. Each point is MEASURED by the tests unless marked:
   and how long ago; the patient's name, ID, sex and age; the kinds of image;
   the description; the accession number; the image count; and whether images
   are still arriving.
-- **Filters and search:** the kind of study (X-ray, CT, MR, ultrasound, cath
-  lab), how far back, and one box for a name, a patient ID or an accession
-  number. The filters are part of the address, so a view is a link.
+- **Filters and search:** the kind of study, one chip for each kind of
+  machine PMC has (X-ray, CT, MR, ultrasound, mammography, cath lab,
+  fluoroscopy, nuclear medicine, dental, eye, endoscopy, radiotherapy; see
+  [Every machine PMC has](#every-machine-pmc-has)), how far back, and one
+  box for a name, a patient ID or an accession number. The filters are part
+  of the address, so a view is a link.
 - **Opening a study:** Enter or a double-click opens the viewer in one named
   window, and the next study opens in that same window. On two screens the
   list stays on one and the viewer on the other.
@@ -819,7 +889,7 @@ carries the same, and its logo files are the ones in `brand/`.
 | Clinical Black / Support Grey | `#101820` / `#E7E9ED` | text / surfaces |
 | Type | Aptos Display, Aptos | already on every PMC computer, so nothing is downloaded |
 | The bar | blue 40, orange 22, green 22, black 16 (%) | the top edge of every page and email: the letterhead's device |
-| The logo | the white lock-up on blue; the loop alone on a phone | `brand/`, served by the front door at `/brand/` |
+| The logo | the white lock-up on blue; the loop alone on a phone. Since M5.5 the files are cut from PMC's own artwork (a PMC social post in Canva, VERIFIED 25 Sep 2026): the lock-up is 4.7:1, the loop 1.4:1 | `brand/`, served by the front door at `/brand/` |
 | The tagline | *Better Care. For Every Life.* | the sign-in page, the signed-out page, the email |
 
 What wears it:
@@ -837,6 +907,23 @@ What wears it:
   Its subject stays Alertmanager's own (`[FIRING:1] FeedSilent ...`), so ICT's
   mail rules keep matching. It has no images, because mail programs block
   them. Times are Manila time.
+- **The logo was stretched, twice over** (Dada, 25 Sep 2026). MEASURED: the
+  earlier files were a 2.7:1 trace of a lock-up that is 4.7:1, so the
+  header showed it too tall; and the sign-in page's header is a stretching
+  column, which pulled the image to the column's width (446 x 88 for a
+  480 x 176 file). Both are fixed: the files are cut from PMC's artwork,
+  and the sign-in's lock-up is placed at the start of its column and told
+  to fit, not fill. A browser check now compares each drawn lock-up's shape
+  with its file's, on the sign-in page, the signed-out page and the app's
+  header (`toKeepItsShape`).
+- **Keycloak keeps a compressed copy of the theme's files** (MEASURED,
+  26.7.4: `data/tmp/kc-gzip-cache/`, served to any browser that accepts
+  gzip, and kept across a restart). A change to `identity/theme/pmc` shows
+  only once the container is recreated (the build does) or that directory
+  is cleared, and browsers are told to keep the files for 30 days
+  (`Cache-Control: max-age=2592000`), so a changed sign-in page reaches a
+  PC only when its cache expires or the theme's resource path changes. For
+  the runbook (M4).
 - **`brand/` is the one source** of the logo files. The front door serves them
   at `/brand/` without a session: the sign-in page shows them before anyone has
   signed in, and they are on the hospital's signage. Keycloak serves a tab
@@ -892,10 +979,10 @@ was pulled on 23 or 24 Sep 2026 (MEASURED). The official images (`postgres`,
 
 ## What the tests prove
 
-`ci/run.sh` runs 119 tests. All passed on 25 Sep 2026 (MEASURED, cloud build,
-16 minutes). It starts from empty volumes, checks the platform database's
-schema and grants and that the logo files have one source, and runs 61
-engine, API, sign-in, watch, orders and brand tests and 41 browser tests. It then removes the containers, starts new ones
+`ci/run.sh` runs 129 tests. All passed on 25 Sep 2026 (MEASURED, cloud build,
+17 minutes). It starts from empty volumes, checks the platform database's
+schema and grants and that the logo files have one source, and runs 69
+engine, API, sign-in, watch, orders and brand tests and 43 browser tests. It then removes the containers, starts new ones
 from the same volumes, and runs 6 engine tests and 2 browser tests again: the
 radiologist signs in afresh, and a cathlab run still opens playing. Then it
 takes the nightly backup, proves the primary cannot delete from the R740xd's
@@ -944,6 +1031,8 @@ on site).
 | The reading list is counted for readers and never for referrers; a reader marks a study read, which drops the claim, leaves the unread list and can be unmarked only by them; a study someone else holds cannot be marked read; only readers mark; the trail shows claim, read and unread. A study's preview lists its series and the patient's earlier studies; its first image comes through the front door as a JPEG, never cached, and a browser's own image request gets one too; a referrer gets neither for a study not shared | `tests/test_app.py` |
 | A row carries its first image; selecting it previews the series and the earlier study, and `Esc` closes the preview; *Compare* opens the earlier study beside the current one and both draw; `R` marks a study read, *Unread* hides it, and the reader can unmark it; compact rows drop the images and are remembered; the list does not lag (compressed parts, cached second visit, no flash on a filter, no long task); the page moves with purpose (transforms and opacities only), the theme switches, and nothing moves with reduced motion; the accessibility check covers the open preview | `browser/tests/home.spec.js` |
 | The reading room shows the study beside the list with the next one already loading behind; `J` shows the next study within a second and `K` goes back; `Enter` takes the keyboard to the images and `Esc` (pressed in the viewer) brings it back to the rail; `R` marks the study read and moves on; the room passes WCAG 2.2 AA in light and dark (the viewer's own page excluded) | `browser/tests/room.spec.js` |
+| Every kind of study PMC's machines make has its own filter, and each shows only its own kind; PMC's lock-up keeps its shape in the app's header | `browser/tests/home.spec.js` |
+| Every kind of study in the archive opens in the viewer and shows an image, one study per modality code | `browser/tests/viewer.spec.js` |
 | PMC's identity: the logo files need no session, are only read, and nothing else under `/brand/` is served. The sign-in page carries PMC's theme, the lock-up and tagline on PMC Blue and PMC's words, keeps Keycloak's own form, says when Caps Lock is on, and passes axe's contrast check in light and dark. The app's header, the viewer's header and the signed-out page show the lock-up or mark. The alert email is PMC's, in HTML and plain text | `tests/test_brand.py`, `browser/tests/access.spec.js`, `home.spec.js`, `viewer.spec.js`, `tests/test_watch.py` |
 
 All test data is synthetic (`tests/synth.py`). Pixels are drawn from formulas,
@@ -1010,6 +1099,11 @@ The AE titles the tests play are PMC's own, as MEASURED in the record.
   3 s: each of the runner's own actions snapshots the page for its trace,
   and two viewer documents make that cost more than what is being timed
   (MEASURED both ways), so the room's numbers are taken inside the page.
+- **Every kind of study** (`viewer.spec.js`, software rendering, 25 Sep 2026):
+  one study of each of the 14 modality codes in the archive opened in the
+  viewer, to its first image, each in 2.0 to 3.8 s from a cold page
+  (CR 3.8 s, DX 2.3 s, CT 2.6 s, MR 2.0 s, US 2.4 s, MG 2.4 s, XA 2.0 s, RF 2.3 s, NM 2.4 s, BMD 2.2 s, PX 2.3 s, OPT 2.0 s, ES 2.4 s, RTIMAGE 2.5 s). The eight new kinds cost the viewer
+  nothing the old ones did not: it is one stock OHIF for all of them.
 - **The reading list's API** (`test_app.py`): a study's preview (three
   questions to the engine) answered in 18 ms; a first image
   rendered by the engine and passed through the front door in

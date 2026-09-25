@@ -10,6 +10,16 @@ import { dismissOhifNotices, framesSeen, position } from './ohif.js';
 const base = `https://${HOST}`;
 const measured = {};
 
+// An image drawn in its own proportions: PMC's lock-up was once stretched to
+// twice its width by the sign-in page's layout (README: Branding).
+expect.extend({
+  async toKeepItsShape(locator) {
+    const r = await locator.evaluate((img) => ({ box: img.width / img.height, own: img.naturalWidth / img.naturalHeight }));
+    const pass = Math.abs(r.box - r.own) < 0.03 * r.own;
+    return { pass, message: () => `drawn ${r.box.toFixed(2)}:1, the file is ${r.own.toFixed(2)}:1` };
+  },
+});
+
 test.afterAll(() => {
   if (Object.keys(measured).length) {
     fs.writeFileSync(`${RESULTS}/measurements-access.json`, JSON.stringify(measured, null, 2));
@@ -44,6 +54,7 @@ test("the sign-in page is PMC's, and says when Caps Lock is on", async ({ page }
   const lockup = panel.getByRole('img', { name: 'Premiere Medical Center Nueva Ecija' });
   await expect(lockup).toBeVisible();
   expect(await lockup.evaluate((img) => img.naturalWidth)).toBeGreaterThan(0);
+  await expect(lockup).toKeepItsShape();
   await expect(panel).toContainText('Better Care. For Every Life.');
   expect(await panel.evaluate((h) => getComputedStyle(h).backgroundColor)).toBe('rgb(11, 63, 138)');
   // Caps Lock on while typing the password: it says so. Off again: it does not.
@@ -132,5 +143,6 @@ test('signing out ends the session', async ({ page }) => {
   const lockup = page.getByRole('img', { name: 'Premiere Medical Center Nueva Ecija' });
   await expect(lockup).toBeVisible();
   expect(await lockup.evaluate((img) => img.naturalWidth)).toBeGreaterThan(0);
+  await expect(lockup).toKeepItsShape();
   expect((await page.request.get(`${base}/dicom-web/studies`)).status()).toBe(401);
 });

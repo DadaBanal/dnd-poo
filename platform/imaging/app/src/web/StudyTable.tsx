@@ -21,7 +21,9 @@ export const ROW = '.wl-body [role="row"]';
 // on its "ago"): INFERRED thresholds, for Dada to set (README, Open).
 const WAITING_MS = 2 * 3_600_000;
 const WAITING_LONG_MS = 8 * 3_600_000;
-const CHIPS = ['XA', 'RF', 'CT', 'CR', 'DX', 'MR', 'US'];
+// Every code the chips have a colour for (styles.css): the kinds of study
+// PMC's machines make (shared/api.ts, MODALITY_GROUPS), and PET.
+const CHIPS = ['XA', 'RF', 'CT', 'CR', 'DX', 'MR', 'US', 'MG', 'NM', 'PT', 'BMD', 'PX', 'IO', 'OP', 'OPT', 'OPV', 'OPM', 'ES', 'XC', 'RTIMAGE', 'RTDOSE', 'RTSTRUCT', 'RTPLAN', 'RTRECORD'];
 export const chip = (m: string) => `pill chip-${CHIPS.includes(m) ? m : 'other'}`;
 
 // One clock for every row's "8 min": it ticks every 30 s, and only the small

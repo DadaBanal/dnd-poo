@@ -33,13 +33,23 @@ export type Me = z.infer<typeof Me>;
 // The worklist's filters. They live in the page's URL, so a view is a link.
 export const RANGES = ['today', '3d', '7d', '30d', 'all'] as const;
 export const SORTS = ['time', 'patient', 'accession'] as const;
-// The groups a person filters by. "Other" is every modality not named here.
+// The groups a person filters by: one for each kind of machine PMC has
+// (README: Every machine PMC has), by the DICOM modality codes each sends.
+// A study whose codes are in no group (a report, a scanned page) is listed,
+// but no chip picks it out.
 export const MODALITY_GROUPS = {
   xray: { label: 'X-ray', codes: ['CR', 'DX'] },
   ct: { label: 'CT', codes: ['CT'] },
   mr: { label: 'MR', codes: ['MR'] },
   us: { label: 'Ultrasound', codes: ['US'] },
-  xa: { label: 'Cath lab', codes: ['XA', 'RF'] },
+  mg: { label: 'Mammography', codes: ['MG'] },
+  xa: { label: 'Cath lab', codes: ['XA'] },
+  rf: { label: 'Fluoroscopy', codes: ['RF'] },
+  nm: { label: 'Nuclear medicine', codes: ['NM', 'PT', 'BMD'] },
+  dental: { label: 'Dental', codes: ['PX', 'IO'] },
+  eye: { label: 'Eye', codes: ['OP', 'OPT', 'OPV', 'OPM'] },
+  endo: { label: 'Endoscopy', codes: ['ES', 'XC'] },
+  rt: { label: 'Radiotherapy', codes: ['RTIMAGE', 'RTDOSE', 'RTSTRUCT', 'RTPLAN', 'RTRECORD'] },
 } as const;
 export type ModalityGroup = keyof typeof MODALITY_GROUPS;
 export const GROUP_KEYS = Object.keys(MODALITY_GROUPS) as ModalityGroup[];

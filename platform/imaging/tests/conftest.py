@@ -32,6 +32,15 @@ MODALITIES = {
     "dr-console": "CONSOLE1",
     "us-aplio": "SYN_US01",
     "echo-lab": "SYN_ECHO01",
+    # The rest of PMC's machines (README: Every machine PMC has). Their AE
+    # titles are not in the record, so these are the tests' own.
+    "or-c-arm": "SYN_OEC01",
+    "gamma-camera": "SYN_NM01",
+    "bone-density": "SYN_DXA01",
+    "dental-xray": "SYN_PX01",
+    "eye-oct": "SYN_OCT01",
+    "endoscopy": "SYN_ES01",
+    "linac": "SYN_RT01",
 }
 
 # Which modality sends which kind of synthetic study (synth.KINDS).
@@ -43,6 +52,14 @@ SENDER = {
     "dx": "CONSOLE1",
     "us": "SYN_ECHO01",
     "us-jpeg": "SYN_US01",
+    "mg": "CONSOLE1",  # Voyager's records show CONSOLE1 sending CR and MG
+    "rf": "SYN_OEC01",
+    "nm": "SYN_NM01",
+    "bmd": "SYN_DXA01",
+    "px": "SYN_PX01",
+    "opt": "SYN_OCT01",
+    "es": "SYN_ES01",
+    "rt": "SYN_RT01",
 }
 
 

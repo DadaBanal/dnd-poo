@@ -18,6 +18,13 @@
   --green: #69B52C; --ok: #237A4B; --ok-soft: #E3F3E9;
   --warn-ink: #7A5000; --warn-soft: #FBF1DA;
   --crit: #B42318; --crit-soft: #FBE9E7;
+  /* The other kinds of study PMC's machines make, each with its own hue on
+     the chips (README: Every machine PMC has). */
+  --pink-ink: #A8286A; --pink-soft: #FBE4F0;
+  --violet-ink: #5B3FB5; --violet-soft: #ECE6FA;
+  --teal-ink: #0E6F73; --teal-soft: #DDF3F3;
+  --olive-ink: #5E6D14; --olive-soft: #EEF3D6;
+  --rose-ink: #8F3A2B; --rose-soft: #F9E6E1;
   --focus: #1F5BB0;
   --shadow: 0 1px 2px rgba(16,24,32,.05), 0 10px 30px rgba(11,63,138,.07);
   /* Depth by layering: the list and the preview sit a little above the page. */
@@ -53,6 +60,11 @@
     --ok: #7BD39B; --ok-soft: #17312A;
     --warn-ink: #F2C25B; --warn-soft: #3A2E14;
     --crit: #F08A80; --crit-soft: #3A1F1D;
+    --pink-ink: #F3A1CB; --pink-soft: #3A1729;
+    --violet-ink: #B9A7F2; --violet-soft: #241A45;
+    --teal-ink: #7FD6D8; --teal-soft: #0F2E30;
+    --olive-ink: #C9D77A; --olive-soft: #262D0E;
+    --rose-ink: #F0A392; --rose-soft: #3A1D17;
     --focus: #8DB6EE;
     --brand-bg: #062449;
     --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 32px rgba(0,0,0,.35);
@@ -71,6 +83,11 @@
   --ok: #7BD39B; --ok-soft: #17312A;
   --warn-ink: #F2C25B; --warn-soft: #3A2E14;
   --crit: #F08A80; --crit-soft: #3A1F1D;
+  --pink-ink: #F3A1CB; --pink-soft: #3A1729;
+  --violet-ink: #B9A7F2; --violet-soft: #241A45;
+  --teal-ink: #7FD6D8; --teal-soft: #0F2E30;
+  --olive-ink: #C9D77A; --olive-soft: #262D0E;
+  --rose-ink: #F0A392; --rose-soft: #3A1D17;
   --focus: #8DB6EE;
   --brand-bg: #062449;
   --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 32px rgba(0,0,0,.35);
@@ -179,6 +196,12 @@
   .chip-CR, .chip-DX { background: var(--surface-3); color: var(--ink-2); }
   .chip-MR { background: var(--orange-soft); color: var(--orange-ink); }
   .chip-US { background: var(--ok-soft); color: var(--ok); }
+  .chip-MG { background: var(--pink-soft); color: var(--pink-ink); }
+  .chip-NM, .chip-PT, .chip-BMD { background: var(--violet-soft); color: var(--violet-ink); }
+  .chip-PX, .chip-IO { background: var(--teal-soft); color: var(--teal-ink); }
+  .chip-OP, .chip-OPT, .chip-OPV, .chip-OPM { background: var(--olive-soft); color: var(--olive-ink); }
+  .chip-ES, .chip-XC { background: var(--rose-soft); color: var(--rose-ink); }
+  .chip-RTIMAGE, .chip-RTDOSE, .chip-RTSTRUCT, .chip-RTPLAN, .chip-RTRECORD { background: var(--crit-soft); color: var(--crit); }
   .chip-other { background: var(--surface-3); color: var(--ink-2); }
 
   /* A study's first image, small (Thumb.tsx): a fixed black box (as every

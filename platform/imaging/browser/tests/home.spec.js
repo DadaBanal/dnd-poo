@@ -13,6 +13,16 @@ const rowOf = (page, kind) => rows(page).filter({ hasText: seed[kind].patient_id
 const pane = (page) => page.getByRole('complementary', { name: 'Study preview' });
 const measured = {};
 
+// An image drawn in its own proportions: PMC's lock-up was once stretched to
+// twice its width by a page's layout (README: Branding).
+expect.extend({
+  async toKeepItsShape(locator) {
+    const r = await locator.evaluate((img) => ({ box: img.width / img.height, own: img.naturalWidth / img.naturalHeight }));
+    const pass = Math.abs(r.box - r.own) < 0.03 * r.own;
+    return { pass, message: () => `drawn ${r.box.toFixed(2)}:1, the file is ${r.own.toFixed(2)}:1` };
+  },
+});
+
 test.afterAll(() => {
   if (Object.keys(measured).length) {
     fs.writeFileSync(`${RESULTS}/measurements-home.json`, JSON.stringify(measured, null, 2));
@@ -37,6 +47,7 @@ test("the header is PMC's: the lock-up on PMC Blue, the mark in the tab", async 
   const lockup = header.getByRole('img', { name: 'Premiere Medical Center Nueva Ecija' });
   await expect(lockup).toBeVisible();
   expect(await lockup.evaluate((img) => img.naturalWidth)).toBeGreaterThan(0);
+  await expect(lockup).toKeepItsShape();
   expect(await header.evaluate((h) => getComputedStyle(h).backgroundColor)).toBe('rgb(11, 63, 138)');
   expect(await page.locator('link[rel="icon"]').getAttribute('href')).toBe('/brand/pmc-mark.png');
 });
@@ -71,6 +82,33 @@ test('filters are part of the address, so a view is a link', async ({ page }) =>
   await page.reload();
   await expect(page.getByRole('button', { name: 'CT', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(rowOf(page, 'xa')).toHaveCount(0);
+});
+
+// The groups shared/api.ts names (MODALITY_GROUPS), one for each kind of
+// machine PMC has, by the codes each sends.
+const KINDS = [
+  ['X-ray', ['CR', 'DX']], ['CT', ['CT']], ['MR', ['MR']], ['Ultrasound', ['US']], ['Mammography', ['MG']],
+  ['Cath lab', ['XA']], ['Fluoroscopy', ['RF']], ['Nuclear medicine', ['NM', 'PT', 'BMD']], ['Dental', ['PX', 'IO']],
+  ['Eye', ['OP', 'OPT', 'OPV', 'OPM']], ['Endoscopy', ['ES', 'XC']],
+  ['Radiotherapy', ['RTIMAGE', 'RTDOSE', 'RTSTRUCT', 'RTPLAN', 'RTRECORD']],
+];
+
+test("every kind of study PMC's machines make has its own filter, and each shows only its own", async ({ page }) => {
+  await page.goto('/pmc/?range=all');
+  await expect(rows(page).first()).toBeVisible();
+  const codesOnScreen = () => page.locator(`${'.wl-body [role="row"]'} [class*="chip-"]`).allInnerTexts();
+  for (const [label, codes] of KINDS) {
+    const chip = page.getByRole('button', { name: label, exact: true });
+    await chip.click();
+    await expect(chip).toHaveAttribute('aria-pressed', 'true');
+    await expect(page).toHaveURL(/[?&]mod=[a-z]+(&|$)/);
+    // The engine's tests stored one study of every kind, so each chip has
+    // at least one row, and every row on screen is of that kind.
+    await expect.poll(async () => (await codesOnScreen()).length, { message: `${label}: rows` }).toBeGreaterThan(0);
+    await expect.poll(async () => (await codesOnScreen()).filter((c) => !codes.includes(c)), { message: `${label}: only its own` }).toEqual([]);
+    await chip.click();
+    await expect(chip).toHaveAttribute('aria-pressed', 'false');
+  }
 });
 
 test('the keyboard: / finds, Enter searches, j and k move', async ({ page }) => {

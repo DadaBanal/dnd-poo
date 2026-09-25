@@ -97,8 +97,8 @@ window.config = {
         React.createElement('img', {
           src: '/brand/pmc-mark-white.png',
           alt: '',
-          width: 200,
-          height: 183,
+          width: 400,
+          height: 288,
           style: { height: '26px', width: 'auto' },
         }),
         React.createElement(

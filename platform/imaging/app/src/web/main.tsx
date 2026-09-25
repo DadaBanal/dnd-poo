@@ -92,11 +92,11 @@ function Shell() {
           <img
             src="/brand/pmc-lockup-white.png"
             alt="Premiere Medical Center Nueva Ecija"
-            width={480}
-            height={176}
+            width={1200}
+            height={268}
             className="hidden h-[34px] w-auto sm:block"
           />
-          <img src="/brand/pmc-mark-white.png" alt="" width={200} height={183} className="h-[30px] w-auto sm:hidden" />
+          <img src="/brand/pmc-mark-white.png" alt="" width={400} height={288} className="h-[30px] w-auto sm:hidden" />
           <span aria-hidden className="divider hidden sm:block" />
           <b className="font-display text-[19px] font-extrabold tracking-tight">
             PMC <span className="quiet">Imaging</span>

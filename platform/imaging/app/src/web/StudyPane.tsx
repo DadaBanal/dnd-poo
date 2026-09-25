@@ -8,9 +8,9 @@ import type { Series, Study } from '../shared/api.ts';
 import { fetchStudy, markOpened } from './api.ts';
 import { ago, personName, sexAge, studyMoment, when } from './format.ts';
 import { VIEWER_WINDOW, compareUrl, seriesThumbnailUrl, thumbnailUrl, viewerUrl } from './links.ts';
+import { chip } from './StudyTable.tsx';
 import { Thumb } from './Thumb.tsx';
 
-const chip = (m: string) => `pill chip-${['XA', 'RF', 'CT', 'CR', 'DX', 'MR', 'US'].includes(m) ? m : 'other'}`;
 const button = 'inline-flex items-center gap-1.5 rounded-lg border border-line-2 bg-surface px-2.5 py-1 text-[13px] font-semibold text-ink outline-none hover:bg-surface-2 data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)]';
 const primary = 'inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1 text-[13px] font-semibold text-on-accent no-underline outline-none hover:opacity-90 data-[focus-visible]:outline-2 data-[focus-visible]:outline-offset-2 data-[focus-visible]:outline-[var(--focus)]';
 

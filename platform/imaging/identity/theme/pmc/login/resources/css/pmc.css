@@ -81,9 +81,14 @@ html.pf-v5-theme-dark {
   color: var(--pmc-on-blue) !important;
 }
 .login-pf #kc-header-wrapper p { margin: 0; }
+/* The lock-up keeps its own shape: the header is a stretching column, and
+   an image left to it is pulled to the column's width (MEASURED: 446 x 88
+   for a 480 x 176 file, 25 Sep 2026), so it is placed at the start and told
+   to fit rather than fill. */
 .login-pf .pmc-lockup {
   display: block;
-  width: auto; height: 88px;
+  width: auto; height: 88px; max-width: 100%;
+  align-self: flex-start; justify-self: start; object-fit: contain; object-position: left center;
   margin: 0 0 clamp(36px, 7vh, 72px);
 }
 .login-pf .pmc-product {
