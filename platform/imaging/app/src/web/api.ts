@@ -2,7 +2,7 @@
 // schemas before the page uses it.
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { Me, Studies, type StudiesQuery } from '../shared/api.ts';
+import { Me, Studies, StudyDetail, type StudiesQuery } from '../shared/api.ts';
 
 export class SignedOut extends Error {}
 
@@ -24,14 +24,17 @@ async function send(method: 'POST' | 'DELETE', path: string): Promise<Response> 
   return r;
 }
 
-export type ClaimResult = { ok: true } | { ok: false; by: string };
+// Claiming, or marking read, a study someone else holds: who has it.
+export type Outcome = { ok: true } | { ok: false; by: string };
 
-export async function claimStudy(studyUid: string): Promise<ClaimResult> {
+async function held(r: Response): Promise<Outcome> {
+  const body = (await r.json()) as { claim?: { readerName?: string } };
+  return { ok: false, by: body.claim?.readerName ?? 'someone else' };
+}
+
+export async function claimStudy(studyUid: string): Promise<Outcome> {
   const r = await send('POST', `/studies/${studyUid}/claim`);
-  if (r.status === 409) {
-    const body = (await r.json()) as { claim?: { readerName?: string } };
-    return { ok: false, by: body.claim?.readerName ?? 'someone else' };
-  }
+  if (r.status === 409) return held(r);
   if (!r.ok) throw new Error(`claim: ${r.status}`);
   return { ok: true };
 }
@@ -39,6 +42,18 @@ export async function claimStudy(studyUid: string): Promise<ClaimResult> {
 export async function releaseStudy(studyUid: string): Promise<void> {
   const r = await send('DELETE', `/studies/${studyUid}/claim`);
   if (!r.ok && r.status !== 409) throw new Error(`release: ${r.status}`);
+}
+
+export async function markRead(studyUid: string): Promise<Outcome> {
+  const r = await send('POST', `/studies/${studyUid}/read`);
+  if (r.status === 409) return held(r);
+  if (!r.ok) throw new Error(`read: ${r.status}`);
+  return { ok: true };
+}
+
+export async function markUnread(studyUid: string): Promise<void> {
+  const r = await send('DELETE', `/studies/${studyUid}/read`);
+  if (!r.ok && r.status !== 409) throw new Error(`unread: ${r.status}`);
 }
 
 // Recorded in the audit trail; opening the study never waits for it.
@@ -51,6 +66,10 @@ export function fetchStudies(q: Partial<StudiesQuery>, signal?: AbortSignal): Pr
   for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== '') params.set(k, String(v));
   return get(`/studies?${params}`, Studies, signal);
 }
+
+// One study in full, for the preview pane.
+export const fetchStudy = (studyUid: string, signal?: AbortSignal) =>
+  get(`/studies/${studyUid}`, StudyDetail, signal);
 
 // "The studies changed": the server says so the moment the engine does, and
 // the worklist asks again. Reconnects by itself; `live` says whether it is

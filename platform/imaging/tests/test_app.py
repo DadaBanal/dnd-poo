@@ -182,3 +182,110 @@ def test_ict_reads_who_opened_and_claimed_a_study(radiologist, sent, ledger):
         ("rad.test", "release"), ("rad.test", "claim"), ("rad.test", "open")]
     # The restart and the disaster drill look for this same trail again.
     ledger["audit"] = {"study": uid, "trail": [[e["actor"], e["action"]] for e in trail]}
+
+
+# ---- the reading list, upgraded (M5.3): totals, read, the preview ------------------
+def read_url(uid: str) -> str:
+    return f"{BASE}/pmc/api/studies/{uid}/read"
+
+
+def test_the_list_is_counted_for_readers_and_never_for_referrers(radiologist, sent):
+    got = studies(radiologist, range="all", limit=1)
+    assert got["more"] is True
+    # Every study the filters match, whatever the page holds.
+    assert got["total"] >= len(sent)
+    assert studies(radiologist, range="all", mod="ct")["total"] >= 1
+    # Not for a search (three questions merged), not for one's own claims, and
+    # never for a referrer: the engine's count ignores the labels the search
+    # respects, so it would count studies they cannot see.
+    assert "total" not in studies(radiologist, q=sent["ct"].patient_id, range="all")
+    assert "total" not in studies(radiologist, range="all", mine="1")
+    assert "total" not in studies(sign_in("referrer"), range="all")
+
+
+def test_a_reader_marks_a_study_read_and_the_unread_list_drops_it(radiologist, sent):
+    uid = sent["us"].study_uid
+    cardiologist = sign_in("cardiologist")
+    # Claimed, then read: the claim goes with it (a claim says "I am reading
+    # this"; read says "I have").
+    assert radiologist.post(claim_url(uid), headers=ORIGIN, timeout=30).status_code == 200
+    r = radiologist.post(read_url(uid), headers=ORIGIN, timeout=30)
+    assert r.status_code == 200, r.text
+    assert r.json()["read"]["reader"] == "rad.test"
+    # (The search is a wildcard: the JPEG ultrasound's patient ID matches too.)
+    row = next(s for s in studies(cardiologist, q=sent["us"].patient_id, range="all")["studies"] if s["studyUid"] == uid)
+    assert row["read"]["readerName"] == "Test Radiologist"
+    assert row["claim"] is None
+    assert uid not in uids(studies(radiologist, range="all", unread="1", limit=200))
+    assert uid in uids(studies(radiologist, range="all", limit=200))
+    # A study someone else holds cannot be marked read past them.
+    other = sent["mr"].study_uid
+    assert cardiologist.post(claim_url(other), headers=ORIGIN, timeout=30).status_code == 200
+    refused = radiologist.post(read_url(other), headers=ORIGIN, timeout=30)
+    assert refused.status_code == 409
+    assert refused.json()["claim"]["readerName"] == "Test Cardiologist"
+    assert cardiologist.delete(claim_url(other), headers=ORIGIN, timeout=30).status_code == 204
+    # Only readers mark a study read, and only the reader who did can unmark it.
+    assert sign_in("referrer").post(read_url(uid), headers=ORIGIN, timeout=30).status_code == 403
+    assert cardiologist.delete(read_url(uid), headers=ORIGIN, timeout=30).status_code == 409
+    assert radiologist.delete(read_url(uid), headers=ORIGIN, timeout=30).status_code == 204
+    assert uid in uids(studies(radiologist, range="all", unread="1", limit=200))
+    # The trail, newest first: the read took the claim with it.
+    trail = sign_in("ict").get(f"{BASE}/pmc/api/audit", params={"study": uid}, timeout=30).json()["events"]
+    assert [(e["actor"], e["action"]) for e in trail][:3] == [
+        ("rad.test", "unread"), ("rad.test", "read"), ("rad.test", "claim")]
+
+
+def test_a_study_preview_lists_its_series_and_the_patients_earlier_studies(radiologist, sent, engine, run_id,
+                                                                            measurements):
+    current = sent["cr"]
+    # An older chest plate of the same patient: a prior, with an accession of
+    # its own (the sorting test counts this run's S-prefixed accessions).
+    prior = synth.Study("cr", run_id + "P", SENDER["cr"], patient_id=current.patient_id, scale=0.25,
+                        accession=f"P{run_id[:8]}CR")
+    for ds in prior.datasets:
+        ds.StudyDate = ds.SeriesDate = ds.ContentDate = ds.AcquisitionDate = "20250106"
+        ds.StudyDescription = "SYNTHETIC CR chest plate, a year earlier"
+    statuses = engine.store(SENDER["cr"], prior.datasets)
+    assert statuses != REJECTED and all(s == 0x0000 for s in statuses), statuses
+
+    started = time.perf_counter()
+    r = radiologist.get(f"{BASE}/pmc/api/studies/{current.study_uid}", timeout=30)
+    preview_ms = (time.perf_counter() - started) * 1000
+    assert r.status_code == 200, r.text
+    got = r.json()
+    assert got["study"]["studyUid"] == current.study_uid
+    assert got["study"]["patientId"] == current.patient_id
+    assert [(s["modality"], s["seriesUid"], s["instances"]) for s in got["series"]] == [
+        ("CR", current.series_uid, len(current.datasets))]
+    assert [p["studyUid"] for p in got["priors"]] == [prior.study_uid]
+    assert got["priors"][0]["studyDate"] == "20250106"
+    assert got["priors"][0]["read"] is None
+
+    # Its first image, small, through the front door and never cached; the
+    # same for one series.
+    thumb_url = f"{BASE}/dicom-web/studies/{current.study_uid}/thumbnail"
+    started = time.perf_counter()
+    thumb = radiologist.get(thumb_url, params={"viewport": "96,96"}, timeout=30)
+    thumb_ms = (time.perf_counter() - started) * 1000
+    assert thumb.status_code == 200
+    assert thumb.headers["Content-Type"] == "image/jpeg"
+    assert thumb.headers["Cache-Control"] == "no-store"
+    assert thumb.content[:3] == b"\xff\xd8\xff"
+    series = radiologist.get(f"{BASE}/dicom-web/studies/{current.study_uid}/series/{current.series_uid}/thumbnail",
+                             params={"viewport": "96,96"}, timeout=30)
+    assert series.status_code == 200 and series.headers["Content-Type"] == "image/jpeg"
+    # A browser asking for an <img> lists image/avif, image/webp, image/*, ...
+    # and the engine answers that list with 400 (MEASURED, 25 Sep 2026); the
+    # front door asks the engine for a JPEG on the browser's behalf.
+    as_browser = {"Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                  "Sec-Fetch-Dest": "image", "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Site": "same-origin"}
+    img = radiologist.get(thumb_url, params={"viewport": "96,96"}, headers=as_browser, timeout=30)
+    assert img.status_code == 200 and img.headers["Content-Type"] == "image/jpeg"
+
+    # A study a referrer cannot see has neither a preview nor an image.
+    referrer = sign_in("referrer")
+    assert referrer.get(f"{BASE}/pmc/api/studies/{current.study_uid}", timeout=30).status_code == 404
+    assert referrer.get(thumb_url, params={"viewport": "96,96"}, timeout=30).status_code in (403, 404)
+    measurements["reading_list"] = {
+        "preview_ms": round(preview_ms), "thumbnail_ms": round(thumb_ms), "thumbnail_bytes": len(thumb.content)}

@@ -51,7 +51,7 @@ CREATE TABLE audit.event (
     action text NOT NULL,
     study_uid text,
     detail jsonb DEFAULT '{}'::jsonb NOT NULL,
-    CONSTRAINT event_action_check CHECK ((action = ANY (ARRAY['open'::text, 'claim'::text, 'release'::text]))),
+    CONSTRAINT event_action_check CHECK ((action = ANY (ARRAY['open'::text, 'claim'::text, 'release'::text, 'read'::text, 'unread'::text]))),
     CONSTRAINT event_study_uid_check CHECK ((study_uid ~ '^[0-9.]{1,64}$'::text))
 );
 
@@ -90,6 +90,26 @@ CREATE TABLE reading.claim (
 --
 
 COMMENT ON COLUMN reading.claim.reader IS 'the reader''s Windows logon name (AD sAMAccountName)';
+
+
+--
+-- Name: done; Type: TABLE; Schema: reading; Owner: -
+--
+
+CREATE TABLE reading.done (
+    study_uid text NOT NULL,
+    reader text NOT NULL,
+    reader_name text NOT NULL,
+    read_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT done_study_uid_check CHECK ((study_uid ~ '^[0-9.]{1,64}$'::text))
+);
+
+
+--
+-- Name: COLUMN done.reader; Type: COMMENT; Schema: reading; Owner: -
+--
+
+COMMENT ON COLUMN reading.done.reader IS 'the reader''s Windows logon name (AD sAMAccountName)';
 
 
 --
@@ -162,6 +182,14 @@ ALTER TABLE ONLY reading.claim
 
 
 --
+-- Name: done done_pkey; Type: CONSTRAINT; Schema: reading; Owner: -
+--
+
+ALTER TABLE ONLY reading.done
+    ADD CONSTRAINT done_pkey PRIMARY KEY (study_uid);
+
+
+--
 -- Name: event event_pkey; Type: CONSTRAINT; Schema: ris; Owner: -
 --
 
@@ -227,4 +255,5 @@ CREATE INDEX order_map_study ON ris.order_map USING btree (study_uid);
 
 INSERT INTO public.schema_migrations (version) VALUES
     ('20260924000100'),
-    ('20260924000200');
+    ('20260924000200'),
+    ('20260925000100');

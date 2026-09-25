@@ -2,7 +2,8 @@
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { Outlet, RouterProvider, createRootRoute, createRoute, createRouter } from '@tanstack/react-router';
 import { LogOut, SunMoon } from 'lucide-react';
-import { StrictMode, useEffect, useState } from 'react';
+import { StrictMode, useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { Button } from 'react-aria-components';
 import { WorklistSearch } from '../shared/api.ts';
@@ -19,28 +20,56 @@ const ROLE_NAMES = {
 } as const;
 
 // The page follows the PC's light or dark setting unless the person picks one
-// here; the choice stays in this browser only.
-function useTheme(): [string | undefined, () => void] {
+// here; the choice stays in this browser only, and is applied before the
+// first paint, so a page never flashes the other theme.
+function applyTheme(theme: string | undefined): void {
+  if (theme) document.documentElement.dataset.theme = theme;
+  else delete document.documentElement.dataset.theme;
+}
+
+const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function useTheme(): [string | undefined, (from?: HTMLElement | null) => void] {
   const [theme, setTheme] = useState<string | undefined>(() => {
+    let chosen: string | undefined;
     try {
-      return localStorage.getItem('pmc-theme') ?? undefined;
+      chosen = localStorage.getItem('pmc-theme') ?? undefined;
     } catch {
-      return undefined;
+      chosen = undefined;
     }
+    applyTheme(chosen);
+    return chosen;
   });
-  useEffect(() => {
-    if (theme) document.documentElement.dataset.theme = theme;
-    else delete document.documentElement.dataset.theme;
-  }, [theme]);
-  const toggle = () => {
+  useEffect(() => applyTheme(theme), [theme]);
+  // The new theme spreads from the button in a circle (a view transition,
+  // Chromium 111+; elsewhere, or with reduced motion, it simply switches).
+  const toggle = (from?: HTMLElement | null) => {
     const dark = theme ? theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
     const next = dark ? 'light' : 'dark';
-    setTheme(next);
+    const apply = () => {
+      applyTheme(next);
+      setTheme(next);
+    };
     try {
       localStorage.setItem('pmc-theme', next);
     } catch {
       // a browser that keeps nothing still gets the theme for this visit
     }
+    if (!document.startViewTransition || reducedMotion()) {
+      apply();
+      return;
+    }
+    const box = from?.getBoundingClientRect();
+    const x = box ? box.left + box.width / 2 : innerWidth;
+    const y = box ? box.top + box.height / 2 : 0;
+    const reach = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+    const transition = document.startViewTransition(() => flushSync(apply));
+    transition.ready.then(() => {
+      document.documentElement.animate(
+        { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${reach}px at ${x}px ${y}px)`] },
+        { duration: 420, easing: 'cubic-bezier(0.2, 0, 0, 1)', pseudoElement: '::view-transition-new(root)' },
+      );
+    }).catch(() => {});
   };
   return [theme, toggle];
 }
@@ -49,6 +78,7 @@ function Shell() {
   const me = useQuery({ queryKey: ['me'], queryFn: ({ signal }) => fetchMe(signal), staleTime: 60_000 });
   const live = useLiveStudies();
   const [, toggleTheme] = useTheme();
+  const themeButton = useRef<HTMLButtonElement>(null);
   const role = me.data?.roles[0];
 
   return (
@@ -78,7 +108,7 @@ function Shell() {
           >
             <span
               aria-hidden
-              className="inline-block h-2 w-2 rounded-full"
+              className={`inline-block h-2 w-2 rounded-full ${live ? 'live-dot' : ''}`}
               style={{ background: live ? 'var(--brand-live)' : 'rgba(255, 255, 255, .4)' }}
             />
             <span data-testid="live">{live ? 'Live' : 'Connecting'}</span>
@@ -98,8 +128,9 @@ function Shell() {
             </span>
           )}
           <Button
+            ref={themeButton}
             aria-label="Switch between light and dark"
-            onPress={toggleTheme}
+            onPress={() => toggleTheme(themeButton.current)}
             className="hover rounded-lg p-1.5 outline-none data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--brand-focus)]"
             style={{ color: 'inherit' }}
           >

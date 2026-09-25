@@ -43,7 +43,8 @@ def main() -> None:
         }
     # The chest plate's patient has an older chest plate too (a prior), so the
     # viewer's study browser and the reading list can show priors.
-    prior = synth.Study("cr", run_id + "P", SENDER["cr"], patient_id=seeded["cr"]["patient_id"])
+    prior = synth.Study("cr", run_id + "P", SENDER["cr"], patient_id=seeded["cr"]["patient_id"],
+                        accession=f"P{run_id[1:9]}CR")
     for ds in prior.datasets:
         ds.StudyDate = ds.SeriesDate = ds.ContentDate = ds.AcquisitionDate = "20250106"
         ds.StudyDescription = "SYNTHETIC CR chest plate, a year earlier"

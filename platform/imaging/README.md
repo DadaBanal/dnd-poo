@@ -52,7 +52,10 @@ modality ─ DICOM 4242 ─────────────────▶  
   runs low, a certificate is about to expire, or a backup is late.
 - **M5, the reading experience:** the viewer opens fast and stays cached
   (M5.1, see Measured); its reading tools are configured for PMC (M5.2, see
-  [The viewer's tools](#the-viewers-tools)).
+  [The viewer's tools](#the-viewers-tools)); the reading list carries each
+  study's first image, a preview with its series and the patient's earlier
+  studies, read and unread, totals, and never lags, in PMC's look with
+  motion that explains (M5.3, see [The reading list](#the-reading-list)).
 - **PMC's identity:** see [Branding](#branding) below. The sign-in page, the
   app, the viewer, the signed-out page and the alert email wear the 2026
   identity as the portal proposal applied it: PMC Blue, the four-segment
@@ -266,7 +269,11 @@ What a person gets. Each point is MEASURED by the tests unless marked:
 - **An audit trail:** every study opened from the worklist, and every claim
   and release, is recorded with who and when. ICT can read it; nobody can
   change it (the app's database role may only add to it).
-- **The keyboard:** `/` finds, `J` and `K` move, `Enter` opens, `A` claims.
+- **The keyboard:** `/` finds, `J` and `K` move, `Enter` opens, `A` claims,
+  `R` marks read, `Esc` closes the preview.
+- **Since M5.3:** each row's first image, a preview pane, read and unread,
+  totals, compact rows, and a list that does not lag: see
+  [The reading list](#the-reading-list).
 - **Light and dark**, both designed; the page follows the PC unless the person
   picks one. PMC's 2026 identity, as in the sample Dada saw. On a phone the
   worklist narrows to when, who and what.
@@ -297,7 +304,7 @@ Not there yet, and where each part comes from:
 |---|---|
 | Priority and STAT, from the BizBox order | M3, the BizBox connector |
 | Assigning a study to someone else; a claim that expires | M2.3, with ICT's admin screens |
-| Read and unread | after the reporting decision: "read" means a report exists |
+| A report marking its study read by itself | after the reporting decision; today a reader marks a study read (M5.3) |
 | Sharing a study with referrers from the page | M2.3, after Dada decides who may share and for how long |
 | ICT's admin screens | M2.3 |
 | Reports | after the reporting decision (the record's open question) |
@@ -319,9 +326,9 @@ What no archive holds lives in PMC's own database, `platform`, on the
 their DICOM identifiers, never by the engine's own IDs, so the engine stays
 swappable.
 
-- **Schemas:** `reading` (claims) and `audit` (the audit trail, append-only)
-  so far. Orders from BizBox, reports and shares join as those parts are
-  built.
+- **Schemas:** `reading` (claims, and since M5.3 `reading.done`: studies
+  marked read), `ris` (orders from BizBox) and `audit` (the audit trail,
+  append-only). Reports and shares join as those parts are built.
 - **Two roles.** `platform_owner` owns every object and runs the migrations;
   `platform_app` is what the front door app logs in as, with only the grants
   the migrations give it. Neither can reach Keycloak's database, nor
@@ -564,6 +571,142 @@ the watch showed both clusters' backups and the snapshot within seconds.
 - **One firewall rule** (M4): Alertmanager may reach the relay, and Teams if
   it is used, and nothing else.
 
+## The reading list
+
+M5.3 (25 Sep 2026): the worklist grew into a reading list, on Dada's two
+asks of that day, *no lag on the GUI* and *a modern GUI with effects, not a
+simple app*. Each point is MEASURED by `tests/test_app.py` or
+`browser/tests/home.spec.js` unless marked.
+
+What a reader has:
+
+- **Each study's first image**, small, in its row: the engine renders it
+  (`/dicom-web/studies/{uid}/thumbnail`) through the front door, on the
+  person's own session, never cached on the PC. A row that scrolls into view
+  fetches its image then, not before.
+- **A preview pane** for the selected row (a click, or `J`/`K`): the patient,
+  the study, its series each with its own image and count, and the same
+  patient's earlier studies, newest first. **Compare** opens the current
+  study beside a prior in the viewer's compare layout (a 2×2 grid, the
+  current study left and the prior right; the lower row fills when each
+  study has more than one series; OHIF's own `@ohif/hpCompare`). `Esc`
+  closes the pane.
+- **Read and unread.** `R` (or *Mark read*) says the reader has finished
+  with a study, once it is reported where PMC's reports live today
+  (BizBox). A read study drops its claim, shows who read it and when, and
+  leaves the **Unread** list. Only the reader who marked it can unmark it;
+  a study someone else holds cannot be marked read past them; only
+  radiologists and cardiologists mark. Both go into the audit trail. When
+  reports come to the platform, a signed report will mark its study read by
+  itself.
+- **Totals:** "142 studies" for the filters in force, counted by the engine
+  (`/tools/count-resources`). Not for a search (three questions merged),
+  nor for *claimed by me*, and never for a referrer: the engine's count
+  ignores the labels its search respects (INFERRED from the authorization
+  plugin's source), so it would count studies they cannot see.
+- **Waiting:** an unread, unclaimed study's "ago" turns Care Orange after
+  two hours and bold after eight (INFERRED thresholds; see Open). STAT and
+  priority come with the BizBox order (M3).
+- **Compact rows** (the button at the right of the filters): no images,
+  closer rows; remembered on the PC.
+- **State in words, never colour alone:** Arriving, Unread, Claimed, Read.
+
+No lag (the numbers are in Measured):
+
+- **Only the rows on screen exist.** The table is virtualized (React Aria's
+  `Virtualizer`), so a page of 50, or 500 after *Show more*, costs the
+  browser the same fifteen rows. The list is a table on a phone, where three
+  columns and few rows need none of this.
+- **The table re-renders only when what it shows changes.** It is memoized
+  apart from the page: a fetch in progress, a notice, or the clock never
+  re-render the rows; the "8 min" in each row ticks from one shared clock
+  that re-renders those words alone; the rows are drawn at a lower priority
+  than a keystroke (`useDeferredValue`).
+- **A filter keeps the rows on screen until the new ones arrive**
+  (`keepPreviousData`): no empty list, no "loading" flash, ever.
+- **The preview follows the keyboard once it settles** (120 ms): holding
+  `J` never asks the engine fifty times.
+- **The page arrives compressed and in parts:** the front door now
+  compresses scripts and stylesheets too (MEASURED before: the 652 KB
+  script went out as it was), and the page's own code (35 KB) is built apart
+  from its libraries, each part named by its content and kept on the PC for
+  a year, so an update to the page costs a PC only the page's own file. The
+  theme is applied before the first paint (no flash of the other theme).
+- **Every image is a fixed box**: a row never moves when its image arrives.
+- **Every animation is a transform or an opacity**, so it runs off the main
+  thread (tested: the page's animations are read back and checked).
+- **The test:** `home.spec.js` opens the page in a browser with nothing
+  cached, records the time to the rows and to every image, the filter
+  switch, the second visit, every task that held the main thread past 50
+  ms, and fails on a loading flash, an uncached second visit, or a long
+  task.
+
+Look and motion (Dada, 25 Sep: "modern GUI and effects"). What was read
+first, VERIFIED 25 Sep 2026:
+
+- The 2026 direction is *calm interfaces* and *motion that explains, not
+  performs*, with reduced-motion support as infrastructure
+  ([Envato](https://elements.envato.com/learn/ux-ui-design-trends),
+  [Pixelmatters](https://www.pixelmatters.com/insights/7-UI-design-trends-to-watch-in-2026):
+  motion as a UI language, depth by layering, glass only where it keeps
+  content readable).
+- Fluent's timing: 83, 167 and 250 ms, entering on *fast out, slow in*
+  (`cubic-bezier(0, 0, 0, 1)`) and leaving on the reverse
+  ([Microsoft Learn](https://learn.microsoft.com/en-us/windows/apps/design/motion/timing-and-easing));
+  Material 3's rule that enters decelerate and exits accelerate
+  ([m3.material.io](https://m3.material.io/styles/motion/easing-and-duration/tokens-specs)).
+- Springs in plain CSS with `linear()`
+  ([Josh Comeau](https://www.joshwcomeau.com/animation/linear-timing-function/)),
+  same-document view transitions with `flushSync` for React and a
+  reduced-motion rule
+  ([Chrome for Developers](https://developer.chrome.com/docs/web-platform/view-transitions/same-document)),
+  scroll-state container queries for a header that casts a shadow once the
+  list has scrolled under it, Chromium 133+
+  ([Chrome for Developers](https://developer.chrome.com/blog/css-scroll-state-queries)),
+  and `@starting-style` / scroll-driven animations as the 2026 baseline
+  ([Chrome for Developers](https://developer.chrome.com/docs/css-ui/scroll-driven-animations)).
+- Radiology worklists mark STAT and urgent in reds and flag the ageing of
+  what waits ([AJR](https://ajronline.org/doi/pdf/10.2214/AJR.22.28949),
+  [RAD365](https://www.rad365.com/blogs/best-radiology-workflow-management-systems)).
+  PMC's attention colour is Care Orange, so waiting is orange here, and STAT
+  will be too when the order carries it.
+
+What moves, and why (each a transform or an opacity; all of it off when the
+PC asks for reduced motion, view transitions included):
+
+- **Arriving:** the four-segment bar draws itself in (420 ms), the title,
+  the filters and the list rise in turn (250 ms, 50 ms apart), the first
+  dozen rows rise one after another (22 ms apart), and a row that later
+  scrolls or arrives into view fades in (167 ms). Eight quiet, shimmering
+  rows stand in for the first page while it is on its way; an empty list
+  says so with a small drawing rather than a blank.
+- **Images** shimmer faintly in their black box until they arrive, then fade
+  in (250 ms).
+- **Selection:** the accent bar on a row's edge springs into place; a hover
+  answers in 83 ms; anything pressable settles under the finger (scale
+  0.96).
+- **The preview pane** slides in from the right (250 ms) and crossfades
+  from study to study; the list and the pane sit a little above the page
+  (one shadow token, both themes).
+- **The header** of the list casts a shadow once rows have scrolled beneath
+  it (Chromium 133+; elsewhere it simply stays put).
+- **Live** breathes: a ring around the green dot grows and fades every 2.6 s.
+- **Light and dark:** the new theme spreads from the button in a circle (a
+  view transition; a plain switch elsewhere).
+- **Sign-in:** the bar draws, the card rises, the panel's words follow; a
+  field glows with the focus; the button settles when pressed.
+
+Choices:
+
+- **No glass.** A translucent header over scrolling rows would need a blur
+  on every frame; the trend itself asks for it only where it keeps content
+  readable, and PMC's header is solid PMC Blue.
+- **No motion on the images themselves** beyond the fade: a radiologist's
+  eye should never be drawn by movement that is not the image.
+- **The rows carry plain buttons and links**, not React Aria's: four
+  interactive components a row across fifty rows was most of the render
+  cost (MEASURED: the render of 31 rows fell with them).
+
 ## The viewer's tools
 
 The viewer is OHIF 3.13 as shipped, configured (`viewer/app-config.js`),
@@ -703,10 +846,10 @@ was pulled on 23 or 24 Sep 2026 (MEASURED). The official images (`postgres`,
 
 ## What the tests prove
 
-`ci/run.sh` runs 100 tests. All passed on 24 Sep 2026 (MEASURED, cloud build,
-14 minutes). It starts from empty volumes, checks the platform database's
-schema and grants and that the logo files have one source, and runs 58
-engine, API, sign-in, watch, orders and brand tests and 25 browser tests. It then removes the containers, starts new ones
+`ci/run.sh` runs 113 tests. All passed on 25 Sep 2026 (MEASURED, cloud build,
+15 minutes). It starts from empty volumes, checks the platform database's
+schema and grants and that the logo files have one source, and runs 61
+engine, API, sign-in, watch, orders and brand tests and 35 browser tests. It then removes the containers, starts new ones
 from the same volumes, and runs 6 engine tests and 2 browser tests again: the
 radiologist signs in afresh, and a cathlab run still opens playing. Then it
 takes the nightly backup, proves the primary cannot delete from the R740xd's
@@ -752,6 +895,8 @@ on site).
 | A cardiologist opens a cathlab run and it plays | `browser/tests/access.spec.js` |
 | Without a session, DICOMweb answers 401: never data, never a sign-in page. Keycloak's admin console and master realm are not reachable. Signing out ends the session | `browser/tests/access.spec.js` |
 | The viewer's tools on the stored images: window presets by key, the CT in three planes (MPR), a length measured and listed in millimetres, the patient's earlier study offered in the study browser | `browser/tests/viewer.spec.js` |
+| The reading list is counted for readers and never for referrers; a reader marks a study read, which drops the claim, leaves the unread list and can be unmarked only by them; a study someone else holds cannot be marked read; only readers mark; the trail shows claim, read and unread. A study's preview lists its series and the patient's earlier studies; its first image comes through the front door as a JPEG, never cached, and a browser's own image request gets one too; a referrer gets neither for a study not shared | `tests/test_app.py` |
+| A row carries its first image; selecting it previews the series and the earlier study, and `Esc` closes the preview; *Compare* opens the earlier study beside the current one and both draw; `R` marks a study read, *Unread* hides it, and the reader can unmark it; compact rows drop the images and are remembered; the list does not lag (compressed parts, cached second visit, no flash on a filter, no long task); the page moves with purpose (transforms and opacities only), the theme switches, and nothing moves with reduced motion; the accessibility check covers the open preview | `browser/tests/home.spec.js` |
 | PMC's identity: the logo files need no session, are only read, and nothing else under `/brand/` is served. The sign-in page carries PMC's theme, the lock-up and tagline on PMC Blue and PMC's words, keeps Keycloak's own form, says when Caps Lock is on, and passes axe's contrast check in light and dark. The app's header, the viewer's header and the signed-out page show the lock-up or mark. The alert email is PMC's, in HTML and plain text | `tests/test_brand.py`, `browser/tests/access.spec.js`, `home.spec.js`, `viewer.spec.js`, `tests/test_watch.py` |
 
 All test data is synthetic (`tests/synth.py`). Pixels are drawn from formulas,
@@ -800,8 +945,24 @@ The AE titles the tests play are PMC's own, as MEASURED in the record.
   same cache; see Sign-in).
 - **A new study reached an open worklist 1.6–1.7 s** after the modality began
   sending it, in two runs.
-- **The worklist page** is one 646 KB script and a 15 KB stylesheet (198 KB
-  and 4 KB compressed); Vite 8.3 builds it in about 1.3 s.
+- **The reading list** (`home.spec.js`, a browser with nothing cached,
+  software rendering, 25 Sep 2026): rows on screen 603 ms after
+  the link on a first visit, every row's image by 708 ms, a filter switch in
+  265 ms (the rows on screen never left), a second visit to rows in 453 ms
+  with none of the page's files downloaded again; no task held the main
+  thread past 84 ms (79, 84 and 59 ms on the first visit: the scripts'
+  evaluation, the first rows, the filtered rows; 71 ms on the second), and
+  nothing moved the layout. One run; the assertion allows one task over
+  100 ms and none over 300 ms, seen once at 106 ms in a dev-loop run.
+- **The reading list's API** (`test_app.py`): a study's preview (three
+  questions to the engine) answered in 18 ms; a first image
+  rendered by the engine and passed through the front door in
+  55 ms (2.7 KB).
+- **The worklist page** is 7 files, 258 KB on the wire
+  (722 KB uncompressed): the page's own 35 KB script apart from its
+  libraries, and a 27 KB stylesheet; Vite 8.3 builds it in about 1.1 s.
+  Before M5.3 it was one 646 KB script, sent uncompressed (MEASURED: the
+  front door compressed JSON only).
 - **The nightly backup** of both clusters in full, then the snapshot to the
   R740xd, took 9.3 s (one run). pgBackRest's zstd kept the index's 33.4 MB as
   3.9 MB, and the platform database's 51.7 MB as 5.9 MB. These are small
@@ -1082,9 +1243,17 @@ These are INFERRED, not decided by anyone but this build. Argue with them.
   changes it in Windows first (INFERRED; not tested).
 - **People type their Windows username**, not `PMC\name` or an email
   address. What the sign-in page does with those is NOT VERIFIED.
-- **The page is one 646 KB script (198 KB compressed).** Fine on PMC's LAN;
-  over mobile data, splitting it would start the page sooner. Not measured on
-  a phone.
+- **How long a study may wait unread** before its "ago" turns orange (two
+  hours here) and bold (eight) is Dada's to set, with the radiologists; STAT
+  and priority come with the BizBox order (M3).
+- **Compare** opens OHIF's own compare protocol, a 2×2 grid whose lower row
+  is empty for single-series studies (a chest plate against a chest plate).
+  A one-by-two compare for those is a hanging-protocol change in the
+  viewer's configuration, once the readers have seen this one.
+- **A phone gets the plain table**, not the virtualized one: fine for the
+  few rows a phone shows, not measured with hundreds.
+- **The page's chunks are cached for a year by name;** a library update
+  changes the library's file only. Not measured on a phone.
 - **Node 24 leaves active support in October 2026**, when Node 26 becomes the
   LTS line (the date is from the front-door research, NOT VERIFIED here). The
   move is a base-image change plus a test run.
@@ -1093,9 +1262,6 @@ These are INFERRED, not decided by anyone but this build. Argue with them.
   keeps it is a Data Privacy Act question for the DPO.
 - **A claim never lapses.** A reader who goes home keeps it until they
   release it; ICT's release comes with the admin screens.
-- **The worklist has no totals yet** ("41 studies"): counting what a person may
-  see has to respect the same labels as the search, and the engine's count
-  endpoint is not in the permission table.
 - **`secrets/` after a disaster.** The drill keeps the test secrets, so it
   proves the data comes back, not the credentials. On site, losing the
   primary loses `secrets/` too. Either ICT escrows the whole directory with
@@ -1142,9 +1308,11 @@ uv pip compile --generate-hashes --python-version 3.14 \
 
 ## Next
 
-- **M2.3, the rest:** assigning a reader and read or unread; sharing with
-  referrers from the page, once Dada decides who may share and for how long;
-  ICT's admin screens. See [The front door app](#the-front-door-app).
+- **M2.3, the rest:** assigning a reader; sharing with referrers from the
+  page, once Dada decides who may share and for how long; ICT's admin
+  screens. See [The front door app](#the-front-door-app).
+- **M5.4, the reading room:** the list and the viewer together, the next
+  study instant, the keyboard from list to images and back.
 - **M2.4:** the cine fix for the live WS23 portal, prepared and tested in
   `apps/imaging-portal`. It is deployed only on Dada's go.
 - **M4:** migration tooling, the runbook, and the on-prem package for the

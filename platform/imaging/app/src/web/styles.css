@@ -20,6 +20,19 @@
   --crit: #B42318; --crit-soft: #FBE9E7;
   --focus: #1F5BB0;
   --shadow: 0 1px 2px rgba(16,24,32,.05), 0 10px 30px rgba(11,63,138,.07);
+  /* Depth by layering: the list and the preview sit a little above the page. */
+  --shadow-2: 0 1px 2px rgba(16,24,32,.05), 0 8px 24px rgba(11,63,138,.09);
+  --shimmer: rgba(255,255,255,.55);
+  /* Motion that explains, never performs: Fluent's durations (83, 167,
+     250 ms) and its curves (entering: fast out, slow in; leaving: the
+     reverse), a soft spring for things that settle into place. Everything
+     animated is a transform or an opacity, so it runs off the main thread;
+     "reduce motion" on the PC turns all of it off (the rule at the end). */
+  --t-fast: 83ms; --t-normal: 167ms; --t-gentle: 250ms; --t-slow: 420ms;
+  --ease-enter: cubic-bezier(0, 0, 0, 1);
+  --ease-exit: cubic-bezier(1, 0, 1, 1);
+  --ease-std: cubic-bezier(0.2, 0, 0, 1);
+  --ease-spring: linear(0, 0.18, 0.42, 0.72, 0.95, 1.06, 1.04, 1.01, 0.99, 1);
   /* The letterhead's four-segment bar: blue, orange, green, black. */
   --seg-bar: linear-gradient(90deg, #0B3F8A 0 40%, #F06423 40% 62%, #69B52C 62% 84%, #101820 84% 100%);
   --brand-bg: #0B3F8A; --on-brand: #FFFFFF; --on-brand-2: #DBE6F6;
@@ -43,6 +56,8 @@
     --focus: #8DB6EE;
     --brand-bg: #062449;
     --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 32px rgba(0,0,0,.35);
+    --shadow-2: 0 1px 2px rgba(0,0,0,.35), 0 10px 28px rgba(0,0,0,.35);
+    --shimmer: rgba(255,255,255,.09);
   }
 }
 :root[data-theme="dark"] {
@@ -59,7 +74,22 @@
   --focus: #8DB6EE;
   --brand-bg: #062449;
   --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 32px rgba(0,0,0,.35);
+  --shadow-2: 0 1px 2px rgba(0,0,0,.35), 0 10px 28px rgba(0,0,0,.35);
+  --shimmer: rgba(255,255,255,.09);
 }
+
+/* ---- motion ---------------------------------------------------------------- */
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes draw { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes pane-in { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: none; } }
+@keyframes shimmer { to { transform: translateX(100%); } }
+@keyframes pulse { 0% { transform: scale(.7); opacity: .9; } 70%, 100% { transform: scale(1.9); opacity: 0; } }
+/* The theme spreads from the button in a circle (main.tsx): the old page
+   stays put beneath, the new one is revealed over it. */
+::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+::view-transition-old(root) { z-index: 1; }
+::view-transition-new(root) { z-index: 2; }
 
 @theme inline {
   --color-bg: var(--bg);
@@ -109,7 +139,23 @@
 }
 
 @layer components {
-  .seg-bar { height: 4px; flex: 0 0 4px; background: var(--seg-bar); }
+  .seg-bar { height: 4px; flex: 0 0 4px; background: var(--seg-bar); transform-origin: left; animation: draw var(--t-slow) var(--ease-enter) both; }
+  .enter { animation: rise var(--t-gentle) var(--ease-enter) both; }
+  .enter-1 { animation-delay: 50ms; }
+  .enter-2 { animation-delay: 100ms; }
+  .notice { animation: rise var(--t-gentle) var(--ease-enter) both; }
+  /* The live dot breathes: a ring that grows and fades, forever, off the main thread. */
+  .live-dot { position: relative; }
+  .live-dot::after {
+    content: ""; position: absolute; inset: -2px; border-radius: 50%;
+    border: 1.5px solid var(--brand-live); animation: pulse 2.6s var(--ease-std) infinite;
+  }
+  /* Anything pressable settles under the finger and answers a hover at once. */
+  [data-rac][data-pressed] { transform: scale(.96); }
+  [data-rac]:is(button, a, [role="button"], [role="radio"]) {
+    transition: background-color var(--t-fast) var(--ease-std), color var(--t-fast) var(--ease-std),
+      border-color var(--t-fast) var(--ease-std), transform var(--t-fast) var(--ease-std);
+  }
   /* The header: PMC Blue, the white lock-up, white and pale-blue text. */
   .brandbar { background: var(--brand-bg); color: var(--on-brand); }
   .brandbar :focus-visible { outline-color: var(--brand-focus); }
@@ -135,7 +181,39 @@
   .chip-US { background: var(--ok-soft); color: var(--ok); }
   .chip-other { background: var(--surface-3); color: var(--ink-2); }
 
-  /* the worklist table (React Aria) */
+  /* A study's first image, small (Thumb.tsx): a fixed black box (as every
+     image list in radiology), so a row never moves when its image arrives; a
+     faint shimmer while it is on its way; then the image fades in. */
+  .thumbwrap {
+    display: block; flex: 0 0 auto; position: relative; overflow: hidden;
+    border-radius: 6px; background: #000;
+  }
+  .thumbwrap.thumb-lg { border-radius: 8px; }
+  .thumbwrap[data-state="failed"] { background: var(--surface-3); }
+  .thumbwrap .thumb {
+    display: block; width: 100%; height: 100%; object-fit: contain; color: transparent;
+    opacity: 0; transition: opacity var(--t-gentle) var(--ease-enter);
+  }
+  .thumbwrap[data-state="loaded"] .thumb { opacity: 1; }
+  .thumbwrap[data-state="loading"]::after, .skel::after {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent 0%, var(--shimmer) 50%, transparent 100%);
+    transform: translateX(-100%); animation: shimmer 1.4s var(--ease-std) infinite;
+  }
+  /* Eight quiet rows while the first page is on its way. */
+  .skeleton { display: flex; flex-direction: column; gap: 10px; padding: 12px 10px; }
+  .skel-row { display: flex; align-items: center; gap: 14px; height: 44px; animation: fade-in var(--t-gentle) var(--ease-enter) both; }
+  .skel { position: relative; display: block; height: 14px; border-radius: 6px; background: var(--surface-3); overflow: hidden; }
+  .skel-thumb { width: 44px; height: 44px; flex: 0 0 auto; }
+  .empty {
+    display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 48px 16px;
+    color: var(--ink-2); animation: rise var(--t-gentle) var(--ease-enter) both;
+  }
+  .empty-art { color: var(--blue); opacity: .85; margin-bottom: 10px; }
+
+  /* the worklist table (React Aria). On a phone it is a table; anywhere
+     wider it is virtualized: only the rows on screen exist, laid out by the
+     table itself (absolute rows and cells inside a scrolling root). */
   .wl { width: 100%; border-collapse: collapse; font-size: 14px; }
   .wl [role="columnheader"] {
     text-align: left; font-family: var(--f-display); font-weight: 700; font-size: 11px;
@@ -145,16 +223,81 @@
   }
   .wl [role="columnheader"][data-allows-sorting] { cursor: pointer; }
   .wl [role="columnheader"][data-hovered] { color: var(--ink); }
-  .wl [role="row"] { cursor: default; outline: none; }
-  .wl tbody [role="row"]:hover { background: var(--surface-2); }
+  .wl [role="row"] { cursor: default; outline: none; transition: background-color var(--t-fast) var(--ease-std); }
+  .wl .wl-body [role="row"]:hover { background: var(--surface-2); }
   /* After hover, and as specific, so a selected row stays marked under the
      pointer; the bar on its edge carries the mark without colour alone. */
-  .wl tbody [role="row"][data-selected] { background: var(--accent-soft); }
-  .wl tbody [role="row"][data-selected] > :first-child { box-shadow: inset 3px 0 0 var(--accent); }
-  .wl tbody [role="row"][data-focus-visible] > :first-child { box-shadow: inset 3px 0 0 var(--focus); }
+  .wl .wl-body [role="row"][data-selected] { background: var(--accent-soft); }
+  .wl:not(.wl-virtual) .wl-body [role="row"][data-selected] > :first-child { box-shadow: inset 3px 0 0 var(--accent); }
+  .wl:not(.wl-virtual) .wl-body [role="row"][data-focus-visible] > :first-child { box-shadow: inset 3px 0 0 var(--focus); }
+  .wl-virtual .wl-body [role="row"]::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; z-index: 1;
+    border-radius: 0 2px 2px 0; background: var(--accent);
+    transform: scaleY(0); transition: transform var(--t-gentle) var(--ease-spring);
+  }
+  .wl-virtual .wl-body [role="row"][data-selected]::before { transform: scaleY(1); }
+  .wl-virtual .wl-body [role="row"][data-focus-visible]::before { background: var(--focus); transform: scaleY(1); }
+  /* A row that scrolls or arrives into view fades in; on a fresh page the
+     first dozen rise in one after another. */
+  .wl-virtual .wl-body [role="row"] { animation: fade-in var(--t-normal) var(--ease-enter) both; }
+  .wl-fresh .wl-body > :nth-child(1) [role="row"] { animation: rise var(--t-gentle) var(--ease-enter) both; animation-delay: 0ms; }
+  .wl-fresh .wl-body > :nth-child(2) [role="row"] { animation: rise var(--t-gentle) var(--ease-enter) both; animation-delay: 22ms; }
+  .wl-fresh .wl-body > :nth-child(3) [role="row"] { animation: rise var(--t-gentle) var(--ease-enter) both; animation-delay: 44ms; }
+  .wl-fresh .wl-body > :nth-child(4) [role="row"] { animation: rise var(--t-gentle) var(--ease-enter) both; animation-delay: 66ms; }
+  .wl-fresh .wl-body > :nth-child(5) [role="row"] { animation: rise var(--t-gentle) var(--ease-enter) both; animation-delay: 88ms; }
+  .wl-fresh .wl-body > :nth-child(6) [role="row"] { animation: rise var(--t-gentle) var(--ease-enter) both; animation-delay: 110ms; }
+  .wl-fresh .wl-body > :nth-child(7) [role="row"] { animation: rise var(--t-gentle) var(--ease-enter) both; animation-delay: 132ms; }
+  .wl-fresh .wl-body > :nth-child(8) [role="row"] { animation: rise var(--t-gentle) var(--ease-enter) both; animation-delay: 154ms; }
+  .wl-fresh .wl-body > :nth-child(9) [role="row"] { animation: rise var(--t-gentle) var(--ease-enter) both; animation-delay: 176ms; }
+  .wl-fresh .wl-body > :nth-child(10) [role="row"] { animation: rise var(--t-gentle) var(--ease-enter) both; animation-delay: 198ms; }
+  .wl-fresh .wl-body > :nth-child(11) [role="row"] { animation: rise var(--t-gentle) var(--ease-enter) both; animation-delay: 220ms; }
+  .wl-fresh .wl-body > :nth-child(12) [role="row"] { animation: rise var(--t-gentle) var(--ease-enter) both; animation-delay: 242ms; }
+
   .wl [role="gridcell"], .wl [role="rowheader"] {
     padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: middle;
   }
+  /* Compact rows: no images, less room. */
+  .wl[data-density="compact"] [role="gridcell"], .wl[data-density="compact"] [role="rowheader"] {
+    padding: 5px 10px; font-size: 13px;
+  }
+  /* The virtualized table: it scrolls itself, its header is 36 px (the
+     layout is told so), and each cell fills its row's height. The layout
+     sizes and places a wrapper around every row and cell; the row and cell
+     elements fill their wrappers, so a row paints (and a test sees it). */
+  .wl-virtual { flex: 1 1 0%; min-height: 0; overflow: auto; outline: none; }
+  .wl-virtual [role="rowgroup"], .wl-virtual [role="row"] { display: block; height: 100%; position: relative; }
+  .wl-virtual [role="columnheader"] {
+    box-sizing: border-box; height: 36px; display: flex; align-items: center; overflow: hidden;
+  }
+  .wl-virtual [role="gridcell"], .wl-virtual [role="rowheader"] {
+    box-sizing: border-box; height: 100%; display: flex; align-items: center; overflow: hidden;
+  }
+  .wl-virtual [role="gridcell"] > *, .wl-virtual [role="rowheader"] > * { min-width: 0; max-width: 100%; }
+  @supports (container-type: scroll-state) {
+    .wl-virtual { container-type: scroll-state; }
+    .wl-virtual .react-aria-TableHeader { transition: box-shadow var(--t-normal) var(--ease-std); }
+    @container scroll-state(scrollable: top) {
+      .wl-virtual .react-aria-TableHeader { box-shadow: 0 10px 24px -12px rgba(16, 24, 32, .45); }
+    }
+  }
+  /* A small button or link inside a row. */
+  .rowbtn {
+    font: inherit; font-size: 12.5px; font-weight: 600; color: var(--ink-2); background: none;
+    border: 1px solid var(--line-2); border-radius: 6px; padding: 1px 8px; cursor: pointer; white-space: nowrap;
+  }
+  .rowbtn, .rowlink {
+    transition: background-color var(--t-fast) var(--ease-std), color var(--t-fast) var(--ease-std),
+      border-color var(--t-fast) var(--ease-std), transform var(--t-fast) var(--ease-std);
+  }
+  .rowbtn:hover { background: var(--surface-2); color: var(--ink); border-color: var(--ink-3); }
+  .rowbtn:active, .rowlink:active { transform: scale(.96); }
+  .rowlink {
+    display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 6px;
+    font-size: 13px; font-weight: 600; color: var(--accent-ink); text-decoration: none; white-space: nowrap;
+  }
+  .rowlink:hover { background: var(--accent-soft); }
+  .pane { animation: pane-in var(--t-gentle) var(--ease-enter) both; }
+  .pane-body { animation: fade-in var(--t-normal) var(--ease-enter) both; }
   /* A phone: taken, patient and study only; a tap opens the study. */
   @media (max-width: 720px) {
     .wl [role="columnheader"]:nth-child(n + 4), .wl [role="gridcell"]:nth-child(n + 4) { display: none; }
@@ -163,5 +306,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * { animation: none !important; transition: none !important; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
 }

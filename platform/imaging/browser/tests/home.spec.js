@@ -3,12 +3,21 @@
 // referrer from no session. The studies are the ones tests/seed.py stored.
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
-import { HOST, seed, signIn } from './people.js';
-import { dismissOhifNotices, framesSeen, position } from './ohif.js';
+import fs from 'node:fs';
+import { HOST, RESULTS, seed, settled, signIn } from './people.js';
+import { dismissOhifNotices, framesSeen, position, transferred } from './ohif.js';
 
 const base = `https://${HOST}`;
-const rows = (page) => page.locator('tbody [role="row"]');
+const rows = (page) => page.locator('.wl-body [role="row"]');
 const rowOf = (page, kind) => rows(page).filter({ hasText: seed[kind].patient_id });
+const pane = (page) => page.getByRole('complementary', { name: 'Study preview' });
+const measured = {};
+
+test.afterAll(() => {
+  if (Object.keys(measured).length) {
+    fs.writeFileSync(`${RESULTS}/measurements-home.json`, JSON.stringify(measured, null, 2));
+  }
+});
 
 test('the address people are given opens the worklist, live, with every study', async ({ page }) => {
   const outside = [];
@@ -124,12 +133,215 @@ for (const colorScheme of ['light', 'dark']) {
     await page.emulateMedia({ colorScheme });
     await page.goto('/pmc/');
     await expect(rowOf(page, 'xa')).toBeVisible();
+    await rowOf(page, 'cr').getByRole('rowheader').click();
+    await expect(pane(page).getByRole('list', { name: 'Earlier studies' })).toBeVisible();
+    await settled(page);
     const found = await new AxeBuilder({ page })
       .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
       .analyze();
     expect(found.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`)).toEqual([]);
   });
 }
+
+// ---- the reading list, upgraded (M5.3) --------------------------------------------
+test('a row carries its first image; selecting it previews the series and the earlier study', async ({ page }) => {
+  const images = [];
+  page.on('response', (r) => r.url().includes('/thumbnail?') && images.push(r));
+  await page.goto('/pmc/');
+  const row = rowOf(page, 'cr');
+  await expect(row).toBeVisible();
+  const first = row.locator('img.thumb');
+  await expect(first).toBeVisible();
+  await expect.poll(() => first.evaluate((img) => img.naturalWidth)).toBeGreaterThan(0);
+
+  await row.getByRole('rowheader').click();
+  await expect(pane(page)).toBeVisible();
+  await expect(pane(page).getByRole('heading', { level: 2 })).toContainText('SYNTHETIC');
+  const series = pane(page).getByRole('list', { name: 'Series' });
+  await expect(series.getByRole('listitem')).toHaveCount(1);
+  await expect(series.getByRole('listitem').first()).toContainText('CR');
+  const priors = pane(page).getByRole('list', { name: 'Earlier studies' });
+  await expect(priors.getByRole('listitem')).toHaveCount(1);
+  await expect(priors).toContainText(/6 Jan 2025|Jan 6, 2025/);
+  await expect(priors).toContainText('a year earlier');
+  for (const img of await pane(page).locator('img.thumb').all()) {
+    await expect.poll(() => img.evaluate((i) => i.naturalWidth)).toBeGreaterThan(0);
+  }
+  // Every image came through the front door, on the person's own session,
+  // and none may be kept on the PC.
+  expect(images.length).toBeGreaterThanOrEqual(4);
+  for (const r of images) {
+    expect(r.status()).toBe(200);
+    expect(r.headers()['cache-control']).toBe('no-store');
+  }
+  // Escape closes the preview.
+  await page.keyboard.press('Escape');
+  await expect(pane(page)).toHaveCount(0);
+});
+
+test('Compare opens the earlier study beside the current one', async ({ page, context }) => {
+  await page.goto('/pmc/');
+  await rowOf(page, 'cr').getByRole('rowheader').click();
+  const opened = context.waitForEvent('page');
+  await pane(page).getByRole('link', { name: /^Compare/ }).click();
+  const viewer = await opened;
+  await expect(viewer).toHaveURL(new RegExp(`StudyInstanceUIDs=${seed.cr.study},${seed.cr.prior.study}`));
+  await dismissOhifNotices(viewer);
+  // OHIF's compare protocol: the current study on the left, the prior on the
+  // right (a 2x2 grid whose lower row fills when each study has more series).
+  const panes = viewer.locator('[data-cy="viewport-pane"]');
+  const drawn = panes.filter({ hasText: /W:\s*-?\d/ });
+  await expect.poll(() => drawn.count(), { timeout: 60_000 }).toBeGreaterThanOrEqual(2);
+  await expect(drawn.filter({ hasText: '06-Jan-2025' })).toHaveCount(1);
+  await expect(drawn.filter({ hasNotText: '06-Jan-2025' })).toHaveCount(1);
+  await viewer.close();
+});
+
+test('R marks the study read; "Unread" hides it; the reader can unmark it', async ({ page }) => {
+  await page.request.delete(`${base}/pmc/api/studies/${seed.ct.study}/read`, { headers: { Origin: base } });
+  await page.goto('/pmc/');
+  const row = rowOf(page, 'ct');
+  await expect(row.locator('.pill', { hasText: /^Unread$/ })).toBeVisible();
+  await expect(page.getByTestId('total')).toContainText(/^\d+ studies$/);
+  await row.getByRole('rowheader').click();
+  await page.keyboard.press('r');
+  await expect(row.locator('.pill', { hasText: /^Read$/ })).toBeVisible();
+  await expect(row).toContainText('You');
+
+  await page.getByRole('button', { name: 'Unread', exact: true }).click();
+  await expect(page).toHaveURL(/[?&]unread=1(&|$)/);
+  await expect(row).toHaveCount(0);
+  await expect(rowOf(page, 'xa')).toBeVisible();
+  await page.getByRole('button', { name: 'Unread', exact: true }).click();
+  await expect(row).toBeVisible();
+  await row.getByRole('button', { name: /unread$/ }).click();
+  await expect(row.locator('.pill', { hasText: /^Unread$/ })).toBeVisible();
+});
+
+test('compact rows drop the images, and the choice is remembered on this PC', async ({ page }) => {
+  await page.goto('/pmc/');
+  await expect(rowOf(page, 'ct').locator('img.thumb')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Compact rows' }).click();
+  await expect(rowOf(page, 'ct').locator('img.thumb')).toHaveCount(0);
+  await page.reload();
+  await expect(rowOf(page, 'ct')).toBeVisible();
+  await expect(rowOf(page, 'ct').locator('img.thumb')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Comfortable rows' }).click();
+  await expect(rowOf(page, 'ct').locator('img.thumb')).toHaveCount(1);
+});
+
+test('the list does not lag: compressed parts, cached after the first visit, no flash on a filter, no long tasks', async ({ browser }) => {
+  // A PC's first visit: a browser with nothing cached, already signed in.
+  const fresh = await browser.newContext({
+    baseURL: base, storageState: `${RESULTS}/.auth/radiologist.json`, viewport: { width: 1600, height: 900 },
+  });
+  const page = await fresh.newPage();
+  // Every task that held the page's main thread for 50 ms or more.
+  await page.addInitScript(() => {
+    window.__long = [];
+    new PerformanceObserver((list) => list.getEntries().forEach((e) =>
+      window.__long.push({ ms: Math.round(e.duration), at: Math.round(e.startTime) })))
+      .observe({ type: 'longtask', buffered: true });
+  });
+  let started = Date.now();
+  await page.goto('/pmc/');
+  await expect(rowOf(page, 'xa')).toBeVisible();
+  const coldMs = Date.now() - started;
+  const files = await page.evaluate(() => performance.getEntriesByType('resource')
+    .filter((e) => new URL(e.name).pathname.startsWith('/pmc/assets/'))
+    .map((e) => ({ name: new URL(e.name).pathname.split('/').pop(), transfer: e.transferSize, encoded: e.encodedBodySize, decoded: e.decodedBodySize })));
+  // The page's own code apart from its libraries, every part compressed.
+  expect(files.length).toBeGreaterThanOrEqual(5);
+  for (const f of files.filter((f) => f.decoded > 4096)) expect(f.encoded, f.name).toBeLessThan(f.decoded / 2);
+  // Every row's image arrives.
+  const thumbs = page.locator('.wl-body img.thumb');
+  const count = await thumbs.count();
+  expect(count).toBeGreaterThanOrEqual(4);
+  await expect.poll(() => thumbs.evaluateAll((imgs) => imgs.filter((i) => i.complete && i.naturalWidth > 0).length),
+    { timeout: 30_000 }).toBe(count);
+  const thumbsMs = Date.now() - started;
+
+  // A filter: the rows on screen stay until the new ones arrive, so the list
+  // is never empty and never says "loading" in between.
+  await page.evaluate(() => {
+    window.__empty = 0;
+    new MutationObserver(() => {
+      if (!document.querySelector('.wl-body [role="row"]')) window.__empty += 1;
+    }).observe(document.querySelector('main'), { childList: true, subtree: true, characterData: true });
+  });
+  started = Date.now();
+  await page.getByRole('button', { name: 'CT', exact: true }).click();
+  await expect(rowOf(page, 'xa')).toHaveCount(0);
+  await expect(rowOf(page, 'ct')).toBeVisible();
+  const filterMs = Date.now() - started;
+  expect(await page.evaluate(() => window.__empty)).toBe(0);
+  const longCold = await page.evaluate(() => window.__long);
+  // When the page's own moments fell, to read the long tasks against them.
+  const moments = await page.evaluate(() => ({
+    first_paint_at: Math.round(performance.getEntriesByName('first-contentful-paint')[0]?.startTime ?? -1),
+    scripts_done_at: Math.round(Math.max(...performance.getEntriesByType('resource')
+      .filter((e) => new URL(e.name).pathname.startsWith('/pmc/assets/')).map((e) => e.responseEnd))),
+    studies_answered_at: performance.getEntriesByType('resource')
+      .filter((e) => new URL(e.name).pathname === '/pmc/api/studies').map((e) => Math.round(e.responseEnd)),
+  }));
+
+  // A second visit fetches none of the page's files.
+  started = Date.now();
+  await page.goto('/pmc/');
+  await expect(rowOf(page, 'xa')).toBeVisible();
+  const warmMs = Date.now() - started;
+  const warm = await transferred(page, /^\/pmc\/assets\//);
+  expect(warm.count).toBe(files.length);
+  expect(warm.from_cache).toBe(warm.count);
+  const longWarm = await page.evaluate(() => window.__long);
+
+  measured.list = {
+    first_visit_to_rows_ms: coldMs,
+    first_visit_every_thumbnail_ms: thumbsMs,
+    filter_switch_ms: filterMs,
+    second_visit_to_rows_ms: warmMs,
+    page_files: files.length,
+    page_wire_kb: Math.round(files.reduce((n, f) => n + f.transfer, 0) / 1024),
+    page_uncompressed_kb: Math.round(files.reduce((n, f) => n + f.decoded, 0) / 1024),
+    ...moments,
+    long_tasks_first_visit: longCold,
+    long_tasks_second_visit: longWarm,
+  };
+  // The page's main thread is never held long: at most one task over 100 ms
+  // (the page's first render) and none over 300 ms, on a software-rendered
+  // 4-CPU build host.
+  const heldCold = longCold.map((t) => t.ms);
+  const heldWarm = longWarm.map((t) => t.ms);
+  expect(heldCold.filter((ms) => ms > 100).length).toBeLessThanOrEqual(1);
+  expect(Math.max(0, ...heldCold, ...heldWarm)).toBeLessThan(300);
+  await fresh.close();
+});
+
+test('the page moves with purpose, and not at all when the PC asks for less motion', async ({ page }) => {
+  await page.goto('/pmc/');
+  await expect(rowOf(page, 'xa')).toBeVisible();
+  const bar = page.locator('.seg-bar');
+  expect(await bar.evaluate((el) => getComputedStyle(el).animationName)).toBe('draw');
+  // Every animation is a transform or an opacity: nothing that makes the
+  // browser lay the page out again.
+  const animated = await page.evaluate(() => [...new Set(document.getAnimations()
+    .flatMap((a) => a.effect.getKeyframes().flatMap((k) => Object.keys(k)))
+    .filter((k) => !['offset', 'computedOffset', 'easing', 'composite'].includes(k)))]);
+  expect(animated.every((prop) => ['transform', 'opacity'].includes(prop)), animated.join(', ')).toBe(true);
+  // The theme switch is a view transition from the button; the theme flips.
+  const before = await page.evaluate(() => document.documentElement.dataset.theme ?? '');
+  const toggle = page.getByRole('button', { name: 'Switch between light and dark' });
+  await toggle.click();
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme ?? '')).not.toBe(before);
+  await toggle.click();
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme ?? '')).not.toBe('');
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.reload();
+  await expect(rowOf(page, 'xa')).toBeVisible();
+  expect(await bar.evaluate((el) => getComputedStyle(el).animationName)).toBe('none');
+  expect(await page.evaluate(() => document.getAnimations().length)).toBe(0);
+});
 
 test.describe('from no session', () => {
   test.use({ storageState: { cookies: [], origins: [] } });

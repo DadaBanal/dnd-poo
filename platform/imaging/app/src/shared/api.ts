@@ -11,8 +11,14 @@ export const ROLES = [
 ] as const;
 export type Role = (typeof ROLES)[number];
 
-// Who may claim a study to read it.
+// Who may claim a study to read it, and mark it read.
 export const READERS: readonly Role[] = ['pmc-radiologist', 'pmc-cardiologist'];
+
+// Only a referrer's view is cut to a label (identity/auth-service/
+// permissions.json: every other role is authorized for every label, and the
+// authorization service merges a person's roles). So anyone with any other
+// role sees every study, and can be given totals (engine.ts, count).
+export const seesEverything = (roles: readonly Role[]): boolean => roles.some((r) => r !== 'pmc-referrer');
 
 // A person is their Windows logon name (AD's sAMAccountName), which every AD
 // account has; email is shown when AD has one.
@@ -50,6 +56,7 @@ export const WorklistSearch = z.object({
   sort: z.enum(SORTS).optional().catch(undefined),
   dir: z.enum(['asc', 'desc']).optional().catch(undefined),
   mine: z.enum(['1']).optional().catch(undefined), // only the studies I have claimed
+  unread: z.enum(['1']).optional().catch(undefined), // only studies nobody has marked read
 });
 export type WorklistSearch = z.infer<typeof WorklistSearch>;
 
@@ -62,6 +69,7 @@ export const StudiesQuery = z.object({
   sort: z.enum(SORTS).default('time'),
   dir: z.enum(['asc', 'desc']).optional(),
   mine: z.enum(['1']).optional(),
+  unread: z.enum(['1']).optional(),
   since: z.coerce.number().int().min(0).max(100_000).default(0),
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
@@ -74,6 +82,16 @@ export const Claim = z.object({
   claimedAt: z.string(),
 });
 export type Claim = z.infer<typeof Claim>;
+
+// A study read: the reader said so from the reading list, once it was
+// reported where PMC's reports live (BizBox today). A read study is no longer
+// claimed.
+export const Done = z.object({
+  reader: z.string(),
+  readerName: z.string(),
+  readAt: z.string(),
+});
+export type Done = z.infer<typeof Done>;
 
 export const Study = z.object({
   id: z.string(), // the engine's own ID for the study
@@ -92,13 +110,33 @@ export const Study = z.object({
   lastUpdate: z.string(),
   labels: z.array(z.string()),
   claim: Claim.nullable(),
+  read: Done.nullable(),
 });
 export type Study = z.infer<typeof Study>;
+
+// One series of a study, for the preview pane.
+export const Series = z.object({
+  seriesUid: z.string(),
+  number: z.number().nullable(),
+  modality: z.string(),
+  description: z.string(),
+  instances: z.number(),
+});
+export type Series = z.infer<typeof Series>;
+
+// A study in full, for the preview pane: itself, its series in order, and
+// the same patient's earlier studies (priors), newest first.
+export const StudyDetail = z.object({
+  study: Study,
+  series: z.array(Series),
+  priors: z.array(Study),
+});
+export type StudyDetail = z.infer<typeof StudyDetail>;
 
 export const AuditEvent = z.object({
   at: z.string(),
   actor: z.string(),
-  action: z.enum(['open', 'claim', 'release']),
+  action: z.enum(['open', 'claim', 'release', 'read', 'unread']),
   studyUid: z.string().nullable(),
 });
 export const AuditTrail = z.object({ events: z.array(AuditEvent) });
@@ -109,5 +147,8 @@ export const Studies = z.object({
   // "engine": the engine sorted every match. "page": this engine cannot sort,
   // so only the page shown is in order.
   sortedBy: z.enum(['engine', 'page']),
+  // Every study the filters match, when the engine counted for this person
+  // (not for a search, nor for "claimed by me", nor for a referrer).
+  total: z.number().int().nonnegative().optional(),
 });
 export type Studies = z.infer<typeof Studies>;

@@ -223,6 +223,24 @@ html.pf-v5-theme-dark {
   .login-pf .pf-v5-c-login__main-footer:last-child { padding-bottom: 24px; }
 }
 
+/* ---- motion: the bar draws itself, the card rises, the panel's words follow;
+   a field glows when it has the focus; the button settles under the finger.
+   Only transforms and opacities move (off the main thread), briefly, and not
+   at all when the PC asks for less motion. */
+@keyframes pmc-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes pmc-draw { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.login-pf body::before { transform-origin: left; animation: pmc-draw 420ms cubic-bezier(0, 0, 0, 1) both; }
+.login-pf .pf-v5-c-login__main { animation: pmc-rise 250ms cubic-bezier(0, 0, 0, 1) 60ms both; }
+.login-pf #kc-header-wrapper > * { animation: pmc-rise 250ms cubic-bezier(0, 0, 0, 1) both; }
+.login-pf #kc-header-wrapper > :nth-child(2) { animation-delay: 40ms; }
+.login-pf #kc-header-wrapper > :nth-child(3) { animation-delay: 80ms; }
+.login-pf #kc-header-wrapper > :nth-child(4) { animation-delay: 120ms; }
+.login-pf #kc-header-wrapper > :nth-child(5) { animation-delay: 160ms; }
+.login-pf .pf-v5-c-form-control { transition: box-shadow 120ms cubic-bezier(0.2, 0, 0, 1); }
+.login-pf .pf-v5-c-form-control:focus-within { box-shadow: 0 0 0 4px rgba(31, 91, 176, .18); }
+.login-pf .pf-v5-c-button.pf-m-primary { transition: transform 83ms cubic-bezier(0.2, 0, 0, 1), background-color 120ms cubic-bezier(0.2, 0, 0, 1); }
+.login-pf .pf-v5-c-button.pf-m-primary:active { transform: scale(.985); }
+
 @media (prefers-reduced-motion: reduce) {
-  .login-pf * { transition: none !important; }
+  .login-pf *, .login-pf *::before, .login-pf *::after { transition: none !important; animation: none !important; }
 }

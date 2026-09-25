@@ -6,9 +6,13 @@ import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { READERS, StudiesQuery, type Me } from '../shared/api.ts';
-import { auditTrail, claim, claimedBy, claimsFor, opened, release } from './db.ts';
-import { EngineError, changesSince, lastChange, visible, worklist } from './engine.ts';
+import { READERS, StudiesQuery, seesEverything, type Me, type Study } from '../shared/api.ts';
+import {
+  auditTrail, claim, claimedBy, claimsFor, doneFor, markRead, opened, release, unread,
+} from './db.ts';
+import {
+  EngineError, changesSince, count, lastChange, priorsOf, seriesOf, studyByUid, visible, worklist,
+} from './engine.ts';
 import { bearer, person, signedIn } from './identity.ts';
 
 const PORT = Number(process.env.PORT ?? 8080);
@@ -19,8 +23,8 @@ const UID = /^[0-9.]{1,64}$/;
 
 // ---- what changed, for every open page ------------------------------------------
 // One poll of the engine's change log for the whole server; each open page
-// hears "the studies changed" and asks again with its own token. A claim made
-// here is announced the same way.
+// hears "the studies changed" and asks again with its own token. A claim or a
+// read made here is announced the same way.
 type Listener = (version: number) => void;
 const listeners = new Set<Listener>();
 let version = 0;
@@ -79,20 +83,58 @@ const fails = (c: Context, e: unknown, what: string) => {
   return c.json({ error: `${what} failed` }, 502);
 };
 
+const isReader = (me: Me) => me.roles.some((r) => READERS.includes(r));
+
+// Each study's reading state, from the platform database, merged in.
+async function withState(studies: Study[]): Promise<void> {
+  const uids = studies.map((s) => s.studyUid);
+  const [claims, done] = await Promise.all([claimsFor(uids), doneFor(uids)]);
+  for (const s of studies) {
+    s.claim = claims.get(s.studyUid) ?? null;
+    s.read = done.get(s.studyUid) ?? null;
+  }
+}
+
 api.get('/me', (c) => c.json(c.get('me')));
 
 api.get('/studies', async (c) => {
   const me = c.get('me');
   const parsed = StudiesQuery.safeParse(c.req.query());
   if (!parsed.success) return c.json({ error: 'bad query' }, 400);
+  const q = parsed.data;
   try {
-    const only = parsed.data.mine ? await claimedBy(me.username, 200) : undefined;
-    const answer = await worklist(bearer(c), API_KEY, parsed.data, only);
-    const claims = await claimsFor(answer.studies.map((s) => s.studyUid));
-    for (const s of answer.studies) s.claim = claims.get(s.studyUid) ?? null;
+    const only = q.mine ? await claimedBy(me.username, 200) : undefined;
+    // The total: the engine counts what the filters match, for a person whose
+    // roles see every study (engine.ts, count); alongside the page, not after it.
+    const counted = seesEverything(me.roles) && !q.q && !only;
+    const [answer, total] = await Promise.all([
+      worklist(bearer(c), API_KEY, q, only),
+      counted ? count(bearer(c), q) : Promise.resolve(undefined),
+    ]);
+    await withState(answer.studies);
+    if (q.unread) answer.studies = answer.studies.filter((s) => !s.read);
+    if (total !== undefined) answer.total = total;
     return c.json(answer);
   } catch (e) {
     return fails(c, e, 'worklist');
+  }
+});
+
+// One study in full, for the preview pane: itself, its series, and the same
+// patient's earlier studies. All three are the engine's answers to the
+// person's own token.
+api.get('/studies/:uid', async (c) => {
+  const uid = c.req.param('uid');
+  if (!UID.test(uid)) return c.json({ error: 'not a study UID' }, 400);
+  try {
+    const token = bearer(c);
+    const study = await studyByUid(token, uid);
+    if (!study) return c.json({ error: 'no such study' }, 404);
+    const [series, priors] = await Promise.all([seriesOf(token, uid), priorsOf(token, API_KEY, study.patientId, uid)]);
+    await withState([study, ...priors]);
+    return c.json({ study, series, priors });
+  } catch (e) {
+    return fails(c, e, 'study');
   }
 });
 
@@ -102,7 +144,7 @@ api.post('/studies/:uid/claim', async (c) => {
   const me = c.get('me');
   const uid = c.req.param('uid');
   if (!UID.test(uid)) return c.json({ error: 'not a study UID' }, 400);
-  if (!me.roles.some((r) => READERS.includes(r))) return c.json({ error: 'only readers claim studies' }, 403);
+  if (!isReader(me)) return c.json({ error: 'only readers claim studies' }, 403);
   try {
     if (!(await visible(bearer(c), uid))) return c.json({ error: 'no such study' }, 404);
     const result = await claim(uid, me);
@@ -123,6 +165,37 @@ api.delete('/studies/:uid/claim', async (c) => {
     return c.body(null, 204);
   } catch (e) {
     return fails(c, e, 'release');
+  }
+});
+
+// Read: the reader has finished with the study (reported it where PMC's
+// reports live). Readers only; a study someone else holds cannot be marked
+// read past them.
+api.post('/studies/:uid/read', async (c) => {
+  const me = c.get('me');
+  const uid = c.req.param('uid');
+  if (!UID.test(uid)) return c.json({ error: 'not a study UID' }, 400);
+  if (!isReader(me)) return c.json({ error: 'only readers mark a study read' }, 403);
+  try {
+    if (!(await visible(bearer(c), uid))) return c.json({ error: 'no such study' }, 404);
+    const result = await markRead(uid, me);
+    if (!result.ok) return c.json({ error: 'claimed by someone else', claim: result.claim }, 409);
+    announce();
+    return c.json({ read: result.read });
+  } catch (e) {
+    return fails(c, e, 'read');
+  }
+});
+
+api.delete('/studies/:uid/read', async (c) => {
+  const uid = c.req.param('uid');
+  if (!UID.test(uid)) return c.json({ error: 'not a study UID' }, 400);
+  try {
+    if (!(await unread(uid, c.get('me')))) return c.json({ error: 'not read by you' }, 409);
+    announce();
+    return c.body(null, 204);
+  } catch (e) {
+    return fails(c, e, 'unread');
   }
 });
 

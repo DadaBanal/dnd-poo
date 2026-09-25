@@ -4,7 +4,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import fs from 'node:fs';
-import { HOST, RESULTS, seed, signIn } from './people.js';
+import { HOST, RESULTS, seed, settled, signIn } from './people.js';
 import { dismissOhifNotices, framesSeen, position } from './ohif.js';
 
 const base = `https://${HOST}`;
@@ -56,6 +56,7 @@ test("the sign-in page is PMC's, and says when Caps Lock is on", async ({ page }
   for (const colorScheme of ['light', 'dark']) {
     await page.emulateMedia({ colorScheme });
     await expect(page.locator('html')).toHaveClass(colorScheme === 'dark' ? /pf-v5-theme-dark/ : /^(?!.*pf-v5-theme-dark)/);
+    await settled(page);
     const found = await new AxeBuilder({ page }).withRules(['color-contrast']).analyze();
     expect(found.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`), colorScheme).toEqual([]);
   }

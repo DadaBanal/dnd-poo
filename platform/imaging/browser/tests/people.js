@@ -26,3 +26,11 @@ export async function signIn(page, who, path = '/') {
     await page.waitForLoadState('domcontentloaded');
   }
 }
+
+// Wait for the page's entrances to finish before judging it (axe reads the
+// colours as they are); the endless ones (the live dot, a shimmer) are left alone.
+export async function settled(page) {
+  await page.evaluate(() => Promise.all(document.getAnimations()
+    .filter((a) => a.effect?.getTiming().iterations !== Infinity)
+    .map((a) => a.finished.catch(() => {}))));
+}

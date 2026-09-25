@@ -52,6 +52,17 @@ map $request_uri $pmc_return_to {
   default             $request_uri;
 }
 
+# An <img> on the worklist asks for a study's small first image with the
+# browser's own list of image types (image/avif, image/webp, image/*, ...),
+# which the engine's thumbnail route answers with 400 (MEASURED, 25 Sep 2026);
+# asked for a JPEG, or anything, it renders one. So an image request is
+# passed on as a request for a JPEG; the viewer's own requests say what they
+# want and pass unchanged.
+map $http_sec_fetch_dest $pmc_engine_accept {
+  image   "image/jpeg";
+  default $http_accept;
+}
+
 server {
   listen 80 default_server;
   server_name _;
@@ -91,10 +102,15 @@ server {
   add_header Cross-Origin-Resource-Policy "same-origin" always;
   add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'" always;
 
+  # Compressed on the way out: DICOMweb's JSON, the app's own answers, and the
+  # worklist page's scripts and stylesheet (MEASURED, 25 Sep 2026: without the
+  # script types here, the page's 652 KB went out as it was). The viewer's
+  # files arrive already compressed from its own container and pass through.
   gzip on;
   gzip_proxied any;
   gzip_min_length 1024;
-  gzip_types application/dicom+json application/json;
+  gzip_vary on;
+  gzip_types application/dicom+json application/json application/javascript text/javascript text/css;
 
   # ---- the session -------------------------------------------------------------
   # Asked about every request below. Answers 202 with the person's identity and
@@ -253,6 +269,7 @@ server {
     proxy_set_header X-Forwarded-Host $host;
     proxy_set_header Cookie "";
     proxy_set_header Authorization "Bearer $pmc_token";
+    proxy_set_header Accept $pmc_engine_accept;
     proxy_read_timeout 300s;
     # Images never touch a disk on the way through: no temp files here, and
     # no-store tells shared ward PCs not to keep them either.
