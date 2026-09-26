@@ -103,8 +103,8 @@ ODBC Driver 18.7, pyodbc 5.3, Python 3.11:
 
 | Store | Tests | Result |
 |---|---|---|
-| SQLite | 471 | OK |
-| SQL Server (`PSA_TEST_DB`) | 471 | OK, 8 skipped (SQLite's own file settings) |
+| SQLite | 473 | OK |
+| SQL Server (`PSA_TEST_DB`) | 473 | OK, 8 skipped (SQLite's own file settings) |
 
 Forty-odd statements changed shape on the way, every one in one of the two
 places the README names (the translator, or the code, where a portable spelling

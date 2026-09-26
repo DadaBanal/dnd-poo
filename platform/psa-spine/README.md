@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 471 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 473 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -614,7 +614,7 @@ PSA_TEST_DB="Driver={ODBC Driver 18 for SQL Server};Server=127.0.0.1,1433;Databa
 
 Each test empties the database and reseeds it (`db.init(…, reset=True)`, a
 test-only path) and the same assertions run unchanged. **MEASURED, 25 Sep 2026,
-SQL Server 2022 Express 16.0 in a container: 471 tests, OK, 8 skipped** (the
+SQL Server 2022 Express 16.0 in a container: 473 tests, OK, 8 skipped** (the
 eight are SQLite's own file settings: WAL, busy timeout, the escrow copy). CI
 runs the same job against a service container on every push. NOT VERIFIED on
 `DND-SQL01` itself, which no session here can reach; the handoff's step 6 is
