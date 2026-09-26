@@ -369,3 +369,30 @@ the password typed there), because `create-local-account` prompts for passwords 
 must connect as a non-sysadmin.
 
 Sittings 2 to 4: not started; each depends on sitting 1.
+
+### Sitting 1, part 2: 2026-09-26, 15:38 UTC. **Step 8 PASS, run ahead of 5 to 7 on Dada's word**
+
+Dada, verbatim: *"step 8 but cant u do the creation"*. Step 8 was run out of order so that
+`PMC_PSA` has a verified FULL backup and the payroll watchdog's daily alert stops. On the second
+half: a Claude session does not create accounts or set passwords. The operator's part is now one
+script, `D:\psa\bin\New-PsaDeskAccount.ps1`: it prompts for the password twice, creates the local
+account without admin membership, and logs only that it was created. It parses under Windows
+PowerShell 5.1 with 0 errors and is pure ASCII (MEASURED); it has NOT been run. It deliberately
+leaves "Log on as a batch job" to `secpol.msc`, because a scripted user-rights import can replace
+the holders of other rights, such as "Log on as a service" (INFERRED risk; the GUI adds one name
+to one right).
+
+| Check | Evidence |
+|---|---|
+| Read before change | `PMC_PSA` ONLINE, SIMPLE; no job `PSA-Backup-PMC_PSA`; `D:\PMC\backup\PMC_PSA` absent; 0 backups or restores running; SQL Server Agent (PMC_SS) running (all MEASURED). The instance's backup jobs are owned by `sa` (`sa` enabled, not renamed). Nothing is scheduled at 03:40: the LiveDB log backup runs at :00, :15, :30 and :45, the LiveDB differential at 01:00, 07:00, 13:00 and 19:00, and `syspolicy_purge_history` at 02:00. The busy window is 22:00 to 23:30: LiveDB FULL at 22:00 (its last three runs took 1 min 47 s to 1 min 53 s), SystemAndSSRS FULL at 22:30, Stock Snapshot at 23:30 (all MEASURED) |
+| Preview, then apply | One new job, `PSA-Backup-PMC_PSA`: owner `sa`, enabled, category `[Uncategorized (Local)]`, target `(local)`. One T-SQL step in `master`: `BACKUP DATABASE [PMC_PSA] TO DISK = N'D:\PMC\backup\PMC_PSA\PMC_PSA_full.bak' WITH INIT, CHECKSUM, COMPRESSION;` then `RESTORE VERIFYONLY FROM DISK = N'…' WITH CHECKSUM;`. On failure it quits reporting failure; the instance has no Agent operators, so the payroll watchdog is the notifier. Schedule `PSA-Backup-PMC_PSA`: **daily at 03:40:00**. Read back: job enabled, owner `sa`, 1 step, 1 target server, schedule attached and enabled. The other jobs: 8, unchanged in count (all MEASURED) |
+| Run once by hand | The job succeeded. Step 1: `BACKUP DATABASE successfully processed 514 pages in 0.492 seconds` … `The backup set on file 1 is valid.` `msdb.backupset`: type `D`, `is_copy_only` 0, `has_backup_checksums` 1, finished 23:37:55 host time (15:37 UTC); 4,284,416 bytes, 626,966 compressed. File `D:\PMC\backup\PMC_PSA\PMC_PSA_full.bak`, 643,072 bytes, sha256 `991374490C9142E05F87204A4E29E8998CCC5F39C1541F3FF5D40B9B351E1E03` (all MEASURED) |
+| Watchdog | The infra session was told at once, as it asked, so it can add `PMC_PSA` to `Watch-PMCBridge.ps1`'s expected list by its own gated edit. SQL01 does not touch that script |
+
+Two properties of the job as the handoff specified it, stated once. `WITH INIT` keeps one file,
+overwritten daily, so a failed run leaves no good backup until the next success (INFERRED from
+`INIT` semantics). The database and its backup are on the same host. Retention and an offsite
+copy are the record's, as for the Orthanc index. Under SIMPLE recovery, a daily full is the whole
+chain.
+
+Still open in sitting 1: step 3 (the login), then 5, 6 and 7, all waiting on the task account.

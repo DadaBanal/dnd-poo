@@ -173,3 +173,9 @@ databases where pre-flight found 9, plus the folders `D:\psa\` and `D:\PMC\sql\`
 `C:\PMC\Python312`. The payroll watchdog raised a 24-hour "no recent FULL backup" alert for
 `PMC_PSA`, which step 8 quiets. Step 4 took the handoff's by-hand road on SQL01's own decision
 (see that Reply); Dada can reverse it.
+
+**Sitting 1, part 2: 2026-09-26, 15:38 UTC. Step 8 PASS, run early on Dada's word.** Job
+`PSA-Backup-PMC_PSA` (owner `sa`, daily at 03:40:00) was created and run once. "The backup set
+on file 1 is valid", and `msdb` records a FULL of `PMC_PSA` (MEASURED). The operator's
+account-creation script is at `D:\psa\bin\New-PsaDeskAccount.ps1` and has not been run. Steps 3
+(login), 5, 6 and 7 wait for the account.
