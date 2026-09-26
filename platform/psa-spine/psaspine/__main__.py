@@ -31,6 +31,10 @@ def main(argv: list[str] | None = None) -> int:
     pi = sub.add_parser("init", help="create and seed a spine database")
     pi.add_argument("database", help=DB_HELP)
 
+    psp = sub.add_parser("schema-preview", help="SQL Server only: print the generated schema "
+                         "script's plan (@Apply = 0) and change nothing")
+    psp.add_argument("database", help=DB_HELP)
+
     pm = sub.add_parser("import", help="import the workstream register CSV")
     pm.add_argument("database", help=DB_HELP)
     pm.add_argument("register_csv")
@@ -180,6 +184,23 @@ def main(argv: list[str] | None = None) -> int:
             print(f"FAILED: the copy does not match the source {r['mismatched']}",
                   file=sys.stderr)
             return 1
+        return 0
+
+    if a.cmd == "schema-preview":
+        if db.backend_of(a.database) != "mssql":
+            print("refused: the schema script is SQL Server's; a SQLite file has no preview to print",
+                  file=sys.stderr)
+            return 1
+        from . import mssql
+        conn = db.connect(a.database)
+        try:
+            for line in mssql.preview_port(conn):
+                print(line)
+        except RuntimeError as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        finally:
+            db.close(conn)
         return 0
 
     if a.cmd == "init":

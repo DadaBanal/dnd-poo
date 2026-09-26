@@ -113,3 +113,56 @@ SELECT`, `CASE WHEN` for a predicate used as a value, the expression for an
 alias in `GROUP BY`). No test's assertion changed; three fixtures did (a commit
 before a trigger is walked into, a store path read from the module, a dump read
 from the table rather than SQLite's `iterdump`).
+
+---
+
+## Addendum, 26 September 2026 — what the instance is (MEASURED by SQL01)
+
+SQL01's pre-flight of the sitting read the instance. Two premises above were
+wrong and are corrected here rather than rewritten, so the reasoning that was
+made on them stays visible.
+
+**It is not "the imaging index's instance".** `DND-SQL01\PMC_SS` is **SQL
+Server 2022 Standard Edition** (16.0.1190.2, collation
+`SQL_Latin1_General_CP1_CI_AS`) and holds nine user databases, all on `C:`:
+`LiveDB_PMC` (the live HIS), `PMC_Apps` (payroll), `PMC_Reporting`,
+`ReportServer`, the Orthanc index and four more. The "cap" argument above
+therefore does not apply: Standard has no 10 GB limit. The separation argument
+applies **more**, not less: the scope document's own criterion for D7 was
+*"separation from the live HIS, which carries a 173-finding audit, `sa`
+enabled and the Domain firewall off"*, and this instance **is** the HIS's.
+
+**What that means for the decision.** Dada's direction was "the SQL we have",
+and it stands; this addendum makes sure it stands knowingly. The desk in its
+own database on the HIS's instance shares the instance's CPU, memory, patching
+window, `sa` posture and restarts with the HIS. A restore or an outage of one
+does not roll back the other, but a restart of the instance takes both down. If
+that coupling is not wanted, the alternative is cheap and on the same host: a
+second named instance (**SQL Server Express is free**) for `PMC_PSA` alone,
+patched with the host, with its own `sa` disabled. The handoff runs against
+`PMC_SS` unless Dada says "second instance", in which case its step 3 changes
+the instance name and nothing else.
+
+**Recovery model.** The instance's `model` database is FULL, so `PMC_PSA` would
+inherit FULL, and a daily full backup alone would then start a transaction-log
+chain that nothing truncates (VERIFIED, learn.microsoft.com, "Recovery
+models": the log grows until a log backup). The handoff creates `PMC_PSA`
+**SIMPLE for the pilot**: the desk's data are dual-run with Kitameraki and a
+day's loss is recoverable from it; one daily full backup is then the whole
+story. At go-live the change is `ALTER DATABASE … SET RECOVERY FULL` plus an
+Agent job taking log backups every 15 minutes, and the record decides that day.
+
+**Files on `D:`.** Every database on the instance sits on `C:`; `PMC_PSA` is
+created with its files on `D:`, so the desk's growth never competes with the
+system volume the HIS lives on.
+
+**Port.** 8080 on `DND-SQL01` is the live queue screens' (`http.sys`, IIS site
+`PMC-Queue`); the desk binds **8085** there. The default in `psaspine serve`
+stays 8080 for a laptop; the handoffs name 8085.
+
+**Driver.** ODBC Driver 17 is installed, 18 is not; the connection strings name
+17. The backend needs neither in particular.
+
+**Still Dada's (the handoff's "Do NOT decide")**: the PSA task account's name,
+the backup folder and volume, whether SIMPLE for the pilot is accepted, and
+whether the HIS's instance is accepted now that it is known to be the HIS's.

@@ -47,8 +47,13 @@ Every command that takes a `database` takes either shape:
 
 ```bash
 python3 -m psaspine serve spine.db                                   # SQLite, a file
-python3 -m psaspine serve "Driver={ODBC Driver 18 for SQL Server};Server=DND-SQL01\PMC_SS;Database=PMC_PSA;Trusted_Connection=yes;Encrypt=yes;TrustServerCertificate=yes"
+python3 -m psaspine serve "Driver={ODBC Driver 17 for SQL Server};Server=DND-SQL01\PMC_SS;Database=PMC_PSA;Trusted_Connection=yes;Encrypt=yes;TrustServerCertificate=yes" --port 8085
+python3 -m psaspine schema-preview "<the same string>"    # the port script's plan, nothing changed
 ```
+
+Driver 17 is what `DND-SQL01` has (MEASURED, 26 Sep 2026); 18 works the same
+where it is installed. On that host the desk binds 8085: 8080 is the live queue
+screens' and the estate record says never to take it.
 
 A connection string with `Trusted_Connection=yes` holds no secret — the task
 account's Windows identity is the credential — so it may sit in a scheduled

@@ -827,6 +827,31 @@ def apply_port(conn: Connection, *, any_database: bool = False) -> None:
     conn._raw.commit()
 
 
+def preview_port(conn: Connection) -> list[str]:
+    """Run the generated script as it stands (@Apply = 0): the plan it prints,
+    line by line, and nothing changed. What the handoff's step 4 reads before
+    anyone applies, for an operator whose sitting has no sqlcmd."""
+    text = PORT.read_text(encoding="utf-8")
+    cur = conn._raw.cursor()
+    try:
+        cur.execute(text)
+        lines = []
+        while True:
+            for _state, message in cur.messages:
+                # "[01000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]PREVIEW ONLY. ..."
+                lines.append(re.sub(r"^(\s*\[[^\]]*\])+", "", str(message)).rstrip())
+            if not cur.nextset():
+                break
+        return lines
+    except Exception as exc:
+        if exc.__class__.__module__ == "pyodbc":
+            raise RuntimeError(_message(str(exc))) from None
+        raise
+    finally:
+        cur.close()
+        conn._raw.rollback()
+
+
 def table_exists(conn: Connection, name: str) -> bool:
     cur = conn._raw.cursor()
     try:

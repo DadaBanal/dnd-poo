@@ -90,8 +90,13 @@ file or the reply. **Pass:** each account signs in on the sign-in page.
 start-up, the same shape as the rules handoff's step 5:
 
 ```powershell
-& $py -m psaspine serve D:\psa\spine.db --host 127.0.0.1 --port 8080
+& $py -m psaspine serve D:\psa\spine.db --host 127.0.0.1 --port 8085
 ```
+
+(Corrected 26 Sep 2026, before this handoff ran: **never 8080 on `DND-SQL01`**,
+which the live queue screens hold; 8085 unless the record assigns another. With
+the SQL Server handoff done first, `D:\psa\spine.db` above is the connection
+string that handoff sets as `$db`.)
 
 or `--host <the server's LAN address>` if technicians open it from their
 own PCs; never `0.0.0.0` (it refuses). **Pass:** `/login` answers 200 from a

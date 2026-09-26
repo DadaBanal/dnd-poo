@@ -6297,6 +6297,20 @@ class SqlServerDialectTest(unittest.TestCase):
         for like in (board_view._like, search_view._like):
             self.assertEqual(like("a[b]%_\\"), "%a\\[b]\\%\\_\\\\%")
 
+    @unittest.skipUnless(TEST_DB, "needs the SQL Server the suite is pointed at")
+    def test_the_schema_preview_runs_the_script_unapplied_and_refuses_a_second_run(self):
+        # The test database already carries the schema (and may not be named
+        # PMC_PSA), so one of the script's own guards answers: the refusal is
+        # read over pyodbc, word for word, and nothing is changed.
+        conn = db.connect(TEST_DB)
+        try:
+            with self.assertRaises(RuntimeError) as caught:
+                self.m.preview_port(conn)
+            self.assertIn("Refusing:", str(caught.exception))
+            self.assertIn("Nothing was changed", str(caught.exception))
+        finally:
+            conn.close()
+
     def test_backup_refuses_a_sql_server_target(self):
         with self.assertRaises(ValueError):
             db.backup("Driver={x};Server=h;Database=PMC_PSA", "/tmp/nowhere.bak")
