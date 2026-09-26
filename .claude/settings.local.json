@@ -47,7 +47,10 @@
       "Bash(grep -n -i -E \"ITIL 5|version 5|34 practices|incident management|problem management|change enablement|service request|monitoring and event|project management\" itil.wiki)",
       "Bash(wc -l cdx_univ.txt)",
       "Bash(awk '{print $3}' cdx_univ.txt)",
-      "Bash(awk '$3==200{print $1}' cdx_univ.txt)"
+      "Bash(awk '$3==200{print $1}' cdx_univ.txt)",
+      "Bash(sed -i 's/# 471 tests, on SQLite/# 473 tests, on SQLite/; s/in a container: 471 tests, OK, 8 skipped/in a container: 473 tests, OK, 8 skipped/' platform/psa-spine/README.md)",
+      "Bash(sed -i 's/| SQLite | 471 | OK |/| SQLite | 473 | OK |/; s/| SQL Server \\(`PSA_TEST_DB`\\) | 471 | OK, 8 skipped/| SQL Server \\(`PSA_TEST_DB`\\) | 473 | OK, 8 skipped/' docs/WS36-decisions-d7-20260925.md)",
+      "Bash(git -c user.name=Claude -c user.email=noreply@anthropic.com commit -q -m 'docs: 473 tests on both stores *)"
     ]
   }
 }
