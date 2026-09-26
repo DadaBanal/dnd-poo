@@ -528,3 +528,44 @@ runbook now says. Then sitting 2."*
 
 The daily copy of `D:\psa\files` still has no destination. The files are on `D:` only, while the
 SQL backup covers the metadata (the runbook asks for this line every sitting).
+
+### Sitting 1, part 6: 2026-09-26, 17:59 UTC. **Step 7 PASS for `PSA-Desk` and `PSA-Rules`; sitting 1 DONE except the three waiting tasks. One finding blocks sitting 2**
+
+| Item | State | Evidence (MEASURED unless marked) |
+|---|---|---|
+| Registration | **done by the operator** | `D:\psa\bin\Register-PsaTasks.ps1 -Apply`, with `psa_desk`'s password typed once at `Get-Credential`: "registered: PSA-Desk", "registered: PSA-Rules", `/login -> HTTP 200`. Its log line is at `D:\psa\logs\Register-PsaTasks.log` |
+| `PSA-Desk` | **running** | Principal `psa_desk`, logon type Password, run level Limited; at start-up, restarting every minute. The only listener on 8085 is `127.0.0.1`, process `python.exe`, owner `psa_desk`. `/login` answers 200; an unknown path answers 401. `D:\psa\logs\PSA-Desk.log` reads "database: SQL Server … Database=PMC_PSA", "sign-in: break-glass only". Port 8080 is still IIS (PID 4). Its Task Scheduler result is 0x41301 (running), which is how a long-running task reads |
+| `PSA-Rules` | **0x0 every minute** | Repeats every minute indefinitely (interval PT1M, no duration). Last result `0x0`; its log reads `0 tickets with timed rules: 0 actions taken, 0 errors`, the rules handoff's expected line |
+| Sign-in | **PASS** | The operator signed in with the break-glass sysadmin account in Chrome on the host; `audit_event` records `LOCAL_LOGIN` at 01:53 host time |
+| A ticket raised on the board | **PASS, on a test board** (see the finding below) | Through the desk in the operator's signed-in Chrome, at the operator's word ("just do it in chrome"), SQL01 used Setup's "+ New board" to create `ZZ_SQL01_TEST`, "ZZ SQL01 step 7 test (not for use)", from the starter setup and not live. The creator becomes its ADMIN member. SQL01 raised `PMC-000001` ("SQL01 step 7 test ticket - ignore, will be closed"): Incident, P4 computed from "just me" and "no patient waiting", SLA clocks started. The handoff's Pass query `SELECT TOP 5 work_item_id, board_id, state FROM psa.ticket ORDER BY opened_at DESC` returned `PMC-000001 / ZZ_SQL01_TEST / NEW`. The ticket was then set to Closed (events `OPENED`, `STATUS_CHANGE`; state `CLOSED`). The audit shows `BOARD_CREATE` and `BOARD_SETUP` for the test board. The board stays, not live; there is no delete in the desk |
+| `PSA-MailPickup`, `PSA-Notify`, `PSA-Retention` | **not registered** | They wait on the mail handoff's steps 1 to 3 and on the DPO (runbook, "Folded in from sitting 1") |
+
+**Finding that blocks sitting 2: the seeded boards have no members, and the web cannot give them one.**
+`IT_HELP` and `UNROUTED` were created by `init`'s seed, not through Setup, so `board_member` held
+**0 rows** before the test board. Board access is `board_member` only (`web/views/common.py:30-37`,
+`may_access_board`). Every board setup page takes board ADMIN (`web/views/admin.py:130`), and the
+sysadmin flag deliberately does not bypass membership (README; `require_board` answers 404).
+So no account can open, work or administer `IT_HELP` or `UNROUTED` from the web. The sysadmin
+signing in saw "You are not a member of any board yet", and `/admin/board/IT_HELP` answered 404.
+Only a board created through Setup gets an admin (`setup.create_board`, `setup.py:224`). SQL01 did
+**not** write `board_member` directly, because that would go around the desk's own audit. The
+pilot (sitting 2) runs on `IT_HELP`, so it needs one of: a CLI command that makes a named account
+an ADMIN of a seeded board (with an audit row), or the sysadmin allowed to add a board's first
+admin in Setup. Upstream's choice.
+
+**DNS, done on Dada's word** (*"apply proper dns entries make sure it makes sense"*). The infra
+session, which owns DNS, answered first: nothing in flight on `pmcne.ph`; SQL01 was the driver for
+this record; AD only. SQL01 then created `desk.pmcne.ph` on `DND-AD01` through `Invoke-Command`:
+a static A record, TTL 1 h, the same address as `portal`. The zone serial went from 47431 to 47432.
+Read back: through `DND-AD01`, `desk.pmcne.ph` resolves to this host, and a control name gets
+NXDOMAIN. Through the UniFi gateway it still returned NXDOMAIN at 01:58 host time, which is the
+negative cache from an earlier lookup (zone negative TTL 3600 s). The infra session re-measured
+and confirmed. Nothing was put on the gateway or Cloudflare, and the name is not public. The name
+alone does not make the desk reachable from other PCs: it listens on `127.0.0.1` until sitting 2
+moves it to the LAN address and adds `PSA-Desk-8085`. The `*.pmcne.ph` wildcard covers the name.
+Since its key is non-exportable, putting IIS in front (as Portal and Payroll already are) would
+give `https://desk.pmcne.ph` without exporting it; that touches IIS, which the runbook forbids, so
+it is Dada's call (INFERRED design, not tried).
+
+The daily copy of `D:\psa\files` still has no destination (files on `D:` only; the SQL backup
+covers the metadata).

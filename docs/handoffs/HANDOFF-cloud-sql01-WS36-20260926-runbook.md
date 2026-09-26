@@ -251,3 +251,11 @@ string is `False` (MEASURED). Only `PSA-Desk` and `PSA-Rules` can be registered 
 the suite is green and the task account has "Log on as a batch job". Mail and notify also wait
 for the never-run Graph setup (mail and rules handoffs); the attachment copy waits for a
 destination.
+
+**Sitting 1, parts 5 and 6: 2026-09-26, 17:59 UTC. DONE, except the three waiting tasks.**
+Step 6 is green at `5353316` (473 OK, 9 skipped). The runbook's ACLs are set, and "Log on as a
+batch job" is granted. `PSA-Desk` is running on `127.0.0.1:8085` as `psa_desk`, and `PSA-Rules`
+returns 0x0 every minute. The operator signed in, and a ticket raised through the desk (on a test
+board) reached `psa.ticket` and was closed. `desk.pmcne.ph` is a static A record on `DND-AD01`.
+**Sitting 2 is blocked** by one finding: the seeded boards `IT_HELP` and `UNROUTED` have no
+members, and no web road gives them a first admin (detail in the sqlserver Reply, part 6).
