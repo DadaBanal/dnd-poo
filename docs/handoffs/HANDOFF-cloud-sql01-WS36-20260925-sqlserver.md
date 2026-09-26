@@ -473,3 +473,41 @@ FAILED (errors=2, skipped=11)
 Sitting 1 stands **BLOCKED at step 6, on the upstream fix**. Everything else is in place:
 `PMC_PSA` with its schema, boards and break-glass accounts, the task account's login, and a
 verified daily backup.
+
+### Sitting 1, part 4: 2026-09-26, 16:35 UTC. **Step 7 pre-check (read-only): a second code fix, and what else each task waits on**
+
+A correction to part 3: the technician account failed twice before it was created. The first
+attempt was a password mismatch; the second was an empty password ("refused: a break-glass
+password may not be empty"). Neither wrote anything (MEASURED, `D:\psa\logs\Sitting1-AsDesk.log`).
+
+**Second code fix needed: the three PowerShell task scripts cannot take a connection string.**
+`Invoke-PmcMailPickup.ps1:236`, `Send-PmcNotifications.ps1:212` and
+`Invoke-PmcAttachmentRetention.ps1:69` each run
+`foreach ($p in $Database, $SpineDir) { if (-not (Test-Path $p)) { throw "Not found: $p" } }`.
+On this host `Test-Path` on the SQL Server connection string returns `False`; the control,
+`Test-Path D:\psa`, returns `True` (MEASURED, Windows PowerShell 5.1). So `PSA-MailPickup`,
+`PSA-Notify` and `PSA-Retention` would throw before their first pass. Step 7's "put `$db` in
+place of `D:\psa\spine.db`" cannot work for them until the guard skips a connection string.
+
+| Task | Waits on (all MEASURED read-only today unless marked) |
+|---|---|
+| `PSA-Desk` (`serve $db --host 127.0.0.1 --port 8085`, at start-up) | A green step 6, and "Log on as a batch job" for the task account (not granted; its 4 built-in holders are unchanged). `--port` must always be passed, because the code's default is 8080 (`__main__.py` line 74) |
+| `PSA-Rules` (`run-rules $db`, every minute) | The same two, nothing else |
+| `PSA-MailPickup` | The `Test-Path` fix. Also the mail handoff's steps 1 to 3, which were never run (its Reply is empty): there is no certificate for Graph in either store, and no app registration or Exchange Mail.Read scope that can be seen from here. Those are the operator's, an Entra admin's and an Exchange admin's. Its `-DropDir D:\psa\mail-drop` differs from the `D:\psa\drop` that sitting 1 created, so one needs choosing |
+| `PSA-Notify` | The `Test-Path` fix, the same Graph prerequisites (Mail.Send), and the rules handoff's steps 2 to 4 (never run) |
+| `PSA-Retention` (weekly, preview only) | The `Test-Path` fix. `-Apply` also waits for the DPO's periods (sitting 4) |
+| The daily copy of `D:\psa\files` (pilot step 8) | A destination. No volume other than `D:` exists, and `C:` is outside the footprint. It is Dada's |
+
+Two findings for the record:
+- `D:\psa` and `D:\PMC\backup\PMC_PSA` carry only the ACL inherited from `D:`, which includes
+  `BUILTIN\Users` read. The mail and attachments handoffs require the task account,
+  Administrators and SYSTEM only, before any `.eml` or attachment lands (MEASURED). That is not
+  changed from here.
+- For sitting 3 (HTTPS): the `*.pmcne.ph` wildcard is on the host with its private key, but the
+  key is marked **non-exportable**, so the portal handoff's `Export-PfxCertificate` route to PEM
+  cannot work from this store. `dnd-sql01.pmcne.ph` resolves to this host and is covered by the
+  wildcard; `desk.pmcne.ph` has no record (MEASURED by a read-only survey agent today; the key
+  flag and the DNS lookups were not repeated by SQL01 itself).
+
+Step 7 can register `PSA-Desk` and `PSA-Rules` once step 6 is green and the batch-logon right is
+granted. The other three wait for the `Test-Path` fix and their own prerequisites above.

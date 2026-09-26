@@ -187,3 +187,11 @@ created `psa_desk`. Step 3 (login, default schema `psa`), step 4 (`init` twice, 
 `cli.db` that `psaspine.__main__.main()` leaves open). They reproduce on SQLite alone, so they
 are not the SQL Server backend (MEASURED). `PMC_PSA_TEST` is dropped. Step 7 is not run, per
 this file's rule for a red suite. The detail and the last 40 lines are in the sqlserver Reply.
+
+**Sitting 1, part 4: 2026-09-26, 16:35 UTC. Step 7 pre-check, read-only.** A second code fix is
+needed. `Invoke-PmcMailPickup.ps1`, `Send-PmcNotifications.ps1` and
+`Invoke-PmcAttachmentRetention.ps1` each throw "Not found" because `Test-Path` on the connection
+string is `False` (MEASURED). Only `PSA-Desk` and `PSA-Rules` can be registered at step 7: once
+the suite is green and the task account has "Log on as a batch job". Mail and notify also wait
+for the never-run Graph setup (mail and rules handoffs); the attachment copy waits for a
+destination.
