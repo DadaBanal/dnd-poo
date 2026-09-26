@@ -316,4 +316,56 @@ database name and `Trusted_Connection=yes`, and nothing else.
 
 ## Reply
 
-*(appended once by SQL01)*
+### Sitting 1, part 1: 2026-09-26, 15:26 UTC. **BLOCKED at step 3 (the login): the task account does not exist**
+
+SQL01, the local Claude Code session on `DND-SQL01`, at `a8cfa21`, run per the 26 Sep
+runbook. Operator's instruction, pasted verbatim: *"Run the sittings in its order, using its
+defaults for any decision I have not answered. Its first rule applies to every line: nothing
+the hospital already runs on this host is touched."*
+
+| Step | State | Evidence |
+|---|---|---|
+| 0 | **PASS** | `D:\psa\spine.db`: `no file` (MEASURED) |
+| 1 | **PASS** | Edition `Standard Edition (64-bit)`; ProductVersion `16.0.1190.2`; Collation `SQL_Latin1_General_CP1_CI_AS`; `DB_ID('PMC_PSA')` `NULL` (MEASURED) |
+| 1b | **PASS** | 8085 not listening (8086, 8087 and 8443 free as well; 8080 listening and left alone). No `PSA-*` task among 667 visible from an elevated session. `D:\psa` and `D:\PMC\sql` absent. No database `PMC_PSA%`, no server principal `%psa%`, no `PSA-%` job; a control database name returns 0. `max server memory (MB)` value_in_use = **49152** (read, not set). All MEASURED |
+| 2 | **PASS** | `pip install pyodbc` from PyPI: **pyodbc 5.3.0** (cp312 win_amd64 wheel, 70 kB) into `C:\PMC\Python312`, no dependencies, 11 → 12 packages. `pyodbc.drivers()` lists `ODBC Driver 17 for SQL Server` (MEASURED) |
+| 3 (database) | **PASS** | Created `D:\PMC\sql`, `D:\psa\files`, `D:\psa\drop` and `D:\psa\logs`. Previewed, then applied, three statements through `System.Data.SqlClient` as sysadmin: the repo's `sqlcmd` rule is untouched. `CREATE DATABASE PMC_PSA` on `D:\PMC\sql`, `SET RECOVERY SIMPLE`, `SET READ_COMMITTED_SNAPSHOT ON`. Read back: `ONLINE`, `SIMPLE`, RCSI 1, data and log 8 MB each at `D:\PMC\sql\PMC_PSA.mdf` / `PMC_PSA_log.ldf`, created 15:21 UTC (MEASURED). No ACL change was needed. The SQL service wrote into `D:\PMC\sql` under the folder's inherited ACL and set its own explicit ACL on the two files (inheritance off, 3 entries) (MEASURED). Database owner: the operator's login, not named here (MEASURED); whether to hand it to another principal is Dada's |
+| 3 (login) | **BLOCKED** | The runbook's default is a local account `psa_desk`, created by the operator with a password typed at a prompt. It does not exist: `Get-LocalUser` finds it absent, a control name also returns nothing, and the built-in -500 account is found as an anchor (MEASURED). A Claude session does not create accounts or type passwords |
+| 4 | **PASS, by the alternative road; SQL01's decision, reversible** | The handoff says: "If Dada prefers the script run by hand in SSMS with `@Apply` edited on a copy, that is the same result by another road; never edit the committed file." Dada had not stated that preference. It is also not one of the runbook's two named resolutions for step 4. SQL01 took this road itself, through pyodbc rather than SSMS, because neither named resolution can work here. `connect()` refuses any login whose default schema is not `psa` (`psaspine/mssql.py:778-787`, MEASURED). A sysadmin always has default schema `dbo` (VERIFIED, https://learn.microsoft.com/sql/t-sql/statements/create-user-transact-sql and https://learn.microsoft.com/sql/t-sql/statements/alter-user-transact-sql, Remarks: "All members of the sysadmin fixed server role have a default schema of `dbo`"). This operator is sysadmin (MEASURED). So "the operator with `db_owner` and default schema `psa` for the sitting" cannot work. The committed script ran through pyodbc as the operator. Preview (unchanged file): `PREVIEW ONLY … 73 tables, 25 indexes, 4 triggers. Existing objects in [psa] right now: 0.` Apply (in-memory copy, `@Apply = 1`): `Created: 73 tables, 4 triggers, 25 indexes in [psa].` Read back: 73 tables, 4 triggers, 25 indexes, 0 rows; schema `psa` owned by `dbo`. A second run of the same copy refuses: `schema [psa] already holds 77 objects`. That copy set only `@Apply`, not `@AllowExisting`, so this refusal stands in for the handoff's Pass. `init`'s `ready:` line and its idempotent second run were not produced; they need the task account. The file as executed (the CRLF working copy) has sha256 `0a327fba…29aa10`. It is git blob `6efd4bc`, identical to HEAD (whose LF blob hashes to `2995368d…ab6d8218`), and the tree is clean (all MEASURED). Ownership is why this road was taken: the script's `CREATE SCHEMA psa` has no `AUTHORIZATION` (line 216), so if the task account applied it, that account would own the schema after any temporary `db_owner` was revoked (INFERRED from the SQL Server ownership rules). One warning from the apply: `The maximum key length for a clustered index is 900 bytes. The index 'PK_api_alert' has maximum length of 928 bytes.` (MEASURED). That is a schema finding for the generator: in SQL Server's own words, "the insert/update operation will fail" for some large key values (MEASURED, the warning's text) |
+| 5, 6, 7 | **NOT RUN** | Each runs through the desk's `connect()`, so each needs the task account (step 6's test user too, for the reason in step 4) |
+| 8 | **NOT RUN** | Kept in order, after 7. `D:\PMC\backup\PMC_PSA` not yet created; no job created |
+| `D:\psa\test-sqlserver-20260925.txt` | **none** | step 6 not run |
+
+**What the operator does to unblock it** (elevated PowerShell on `DND-SQL01`; the password
+goes into the prompt and nowhere else):
+
+```powershell
+$pw = Read-Host -AsSecureString 'Password for the PSA desk task account'
+New-LocalUser -Name psa_desk -Password $pw -Description 'WS36 PSA desk task account' -UserMayNotChangePassword -PasswordNeverExpires
+Remove-Variable pw
+```
+
+Then grant "Log on as a batch job" to `psa_desk`: `secpol.msc`, Local Policies, User Rights
+Assignment, "Log on as a batch job", Add. No admin membership. `gpresult /x` has no
+user-rights assignment in any GPO, while its extension data is present as a control (MEASURED).
+So the local grant should stay (INFERRED). Today the right is held by four built-in groups
+(Administrators, Backup Operators, Performance Log Users, IIS_IUSRS), not by Users, and no deny
+right is set (MEASURED, `secedit /export`). So `psa_desk` needs the explicit grant.
+
+**The payroll watchdog noticed.** `Watch-PMCBridge.ps1` alerts every 24 h for any online
+database that is not in its expected list and has no recent FULL backup (lines 156 and 357-365,
+read-only, MEASURED). The infra session reports that it emailed Dada "Database PMC_PSA has no
+recent FULL backup" at 23:25 host time, four minutes after `PMC_PSA` was created (theirs; the
+email itself is NOT VERIFIED here). Step 8 quiets it. SQL01 has told the infra session it will
+say when step 8 has run, so that `PMC_PSA` can be added to the watchdog's expected list by that
+session's gated edit. SQL01 does not touch the watchdog.
+
+**What SQL01 does next, in the next sitting:** confirm the account, then step 3's login
+(`[DND-SQL01\psa_desk]`, user on `PMC_PSA` only, default schema `psa`, `db_datareader`,
+`db_datawriter`, `EXECUTE`, `VIEW DEFINITION`; no `db_owner`, because the schema is already
+dbo's). Then `PMC_PSA_TEST` on `D:\PMC\sql` with `psa_desk` as its test user, and steps 5 to 8.
+Steps 5 and 6 need the operator in one PowerShell window running as `psa_desk` (`runas`, with
+the password typed there), because `create-local-account` prompts for passwords and the suite
+must connect as a non-sysadmin.
+
+Sittings 2 to 4: not started; each depends on sitting 1.

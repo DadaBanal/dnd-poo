@@ -161,3 +161,15 @@ from this host; the branch is the channel both ways.
 ## Reply
 
 *(appended per sitting by SQL01, one dated block each)*
+
+**Sitting 1, part 1: 2026-09-26, 15:26 UTC, BLOCKED at step 3 (the login).** Steps 0, 1,
+1b, 2, 3 (database) and 4 pass: `PMC_PSA` exists on `D:\PMC\sql`, SIMPLE, with 73 tables in
+`[psa]` owned by `dbo`. The task account `psa_desk` does not exist, and creating it is the
+operator's (password at a prompt). Steps 5 to 8 and sittings 2 to 4 wait for it. Detail,
+evidence and the operator's two commands are in the Reply of
+`HANDOFF-cloud-sql01-WS36-20260925-sqlserver.md`. Nothing the hospital runs on this host was
+changed (INFERRED from this sitting's own actions). MEASURED: the instance now has 10 user
+databases where pre-flight found 9, plus the folders `D:\psa\` and `D:\PMC\sql\` and pyodbc in
+`C:\PMC\Python312`. The payroll watchdog raised a 24-hour "no recent FULL backup" alert for
+`PMC_PSA`, which step 8 quiets. Step 4 took the handoff's by-hand road on SQL01's own decision
+(see that Reply); Dada can reverse it.
