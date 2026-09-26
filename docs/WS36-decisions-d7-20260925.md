@@ -158,10 +158,16 @@ system volume the HIS lives on.
 
 **Port.** 8080 on `DND-SQL01` is the live queue screens' (`http.sys`, IIS site
 `PMC-Queue`); the desk binds **8085** there. The default in `psaspine serve`
-stays 8080 for a laptop; the handoffs name 8085.
+was moved to 8085 the same day, and `serve` refuses a port something else
+already holds, so a typo cannot land on the queue screens.
 
 **Driver.** ODBC Driver 17 is installed, 18 is not; the connection strings name
 17. The backend needs neither in particular.
+
+**Count.** The suite is 475 on 26 Sep 2026 (MEASURED, both stores: SQLite OK,
+SQL Server OK with 8 skipped). The two added since the table above are the
+seeded board's first administrator, from the CLI and from Setup, built after
+SQL01 found that a seeded board had no members and the web could give it none.
 
 **Still Dada's (the handoff's "Do NOT decide")**: the PSA task account's name,
 the backup folder and volume, whether SIMPLE for the pilot is accepted, and

@@ -2241,6 +2241,35 @@ class WebWSGITest(unittest.TestCase):
 
     # ------------------------------------------------------- conformance & auth
 
+    def test_a_sysadmin_names_a_memberless_boards_first_administrator_once(self):
+        conn = db.connect(self.db_path)
+        conn.execute("INSERT OR REPLACE INTO board (board_id,display_name,phase,fulfiller_group,is_live,is_unrouted)"
+                     " VALUES ('SEEDED','Seeded board','2','Dada',0,0)")
+        conn.commit()
+        conn.close()
+        root = self._cookie_for("root", is_sysadmin=True)
+        status, _, body = self._call("GET", "/admin", cookie=root)
+        self.assertIn("Boards with no administrator", body)
+        self.assertIn("/admin/board/SEEDED/claim", body)
+        self.assertNotIn("/admin/board/IT_HELP/claim", body)          # IT_HELP has members here
+        status, headers, _ = self._call("POST", "/admin/board/SEEDED/claim", cookie=root,
+                                        form={"member": "dana"})
+        self.assertTrue(status.startswith("303"))
+        conn = db.connect(self.db_path)
+        self.assertEqual(tuple(conn.execute("SELECT member, access FROM board_member WHERE board_id = 'SEEDED'").fetchone()),
+                         ("dana", "ADMIN"))
+        self.assertEqual(conn.execute("SELECT detail FROM audit_event WHERE action = 'BOARD_MEMBER'").fetchone()[0],
+                         "first administrator dana (the board had no members)")
+        conn.close()
+        # once: the second claim is refused, and a non-sysadmin never gets there
+        status, headers, _ = self._call("POST", "/admin/board/SEEDED/claim", cookie=root, form={"member": "eve"})
+        self.assertIn("already has members", _urlparse.unquote(dict(headers)["Location"]))
+        status, _, _ = self._call("POST", "/admin/board/SEEDED/claim", cookie=self._cookie_for("alice"),
+                                  form={"member": "alice"})
+        self.assertTrue(status.startswith("403"), status)
+        _, _, body = self._call("GET", "/admin", cookie=root)
+        self.assertNotIn("/admin/board/SEEDED/claim", body)       # UNROUTED, from the seed, may still be listed
+
     def test_the_app_is_pep3333_conformant_when_unauthenticated(self):
         status, _, body = self._call("GET", "/")
         self.assertTrue(status.startswith("401"))
@@ -3932,6 +3961,29 @@ class BoardSetupTest(unittest.TestCase):
             self.assertEqual(main(["setup-board", path, "--board", "IT_HELP"]), 0)
             self.assertEqual(main(["setup-board", path, "--board", "NOPE"]), 1)
         self.assertIn("ready", out.getvalue())
+
+    def test_a_seeded_board_gets_its_first_administrator_from_the_cli_once(self):
+        # IT_HELP and UNROUTED come from the seed with no members, and board
+        # access is membership only (SQL01 found the desk locked out, 26 Sep).
+        import io
+        from contextlib import redirect_stdout, redirect_stderr
+        from psaspine.__main__ import main
+        path = str(Path(self.tmp.name) / "cli2.db")
+        db.init(path).close()
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            self.assertEqual(main(["board-admin", path, "--board", "IT_HELP", "--member", "alice"]), 0)
+            self.assertEqual(main(["board-admin", path, "--board", "IT_HELP", "--member", "bob"]), 1)
+            self.assertEqual(main(["board-admin", path, "--board", "NOPE", "--member", "bob"]), 1)
+            self.assertEqual(main(["setup-board", path, "--board", "UNROUTED", "--admin", "carol"]), 0)
+        self.assertIn("alice is its first administrator", out.getvalue())
+        self.assertIn("already has members", err.getvalue())
+        conn = db.connect(path)
+        self.assertEqual([tuple(r) for r in conn.execute(
+            "SELECT board_id, member, access FROM board_member ORDER BY board_id")],
+            [("IT_HELP", "alice", "ADMIN"), ("UNROUTED", "carol", "ADMIN")])
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'BOARD_MEMBER'").fetchone()[0], 2)
+        conn.close()
 
 
 class ManyBoardsTest(unittest.TestCase):

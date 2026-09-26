@@ -68,7 +68,18 @@ $py = 'C:\PMC\Python312\python.exe'
 & $py -m psaspine setup-board D:\psa\spine.db --board IT_HELP
 ```
 
-Then in the desk (step 4) as the sysadmin account: Setup › *New board* for
+Then (added 26 Sep, after sitting 1 found the seeded boards had no members)
+give each seeded board its first administrator, the Service Manager's
+account, audited:
+
+```powershell
+& $py -m psaspine board-admin $db --board IT_HELP --member <service manager>
+& $py -m psaspine board-admin $db --board UNROUTED --member <service manager>
+```
+
+(`$db` is the SQL Server handoff's connection string; a sysadmin may do the
+same once in Setup under "Boards with no administrator".) Then in the desk
+(step 4) as the sysadmin account: Setup › *New board* for
 each board the pilot runs with its **kind** (Service / Change / Project),
 copying the starter; Setup › the board › *Types*, *Statuses*, *SLA*,
 *Members & roles*, *Templates*, *Standard notes*. The record decides which

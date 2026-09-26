@@ -196,6 +196,32 @@ def board_id_for(name: str) -> str:
     return re.sub(r"[^A-Z0-9]+", "_", name.upper()).strip("_")[:40] or "BOARD"
 
 
+def first_admin(conn: sqlite3.Connection, board_id: str, member: str, *, actor: str,
+                at: datetime) -> bool:
+    """Make `member` the ADMIN of a board that has no members yet.
+
+    A board created through Setup gets its creator as administrator; a board
+    the seed created (IT_HELP, UNROUTED) has nobody, and board access is
+    membership only, never the sysadmin flag. So the first administrator of a
+    seeded board is given here, by the CLI on the server or by a sysadmin in
+    Setup, and only while the board has no members: after that, its own
+    administrators manage its members. Audited as BOARD_MEMBER. Returns False
+    when the board already has members."""
+    if conn.execute("SELECT 1 FROM board WHERE board_id = ?", (board_id,)).fetchone() is None:
+        raise LookupError(f"no board {board_id!r}")
+    member = (member or "").strip()
+    if not member:
+        raise ValueError("a member name is needed")
+    if conn.execute("SELECT 1 FROM board_member WHERE board_id = ? LIMIT 1", (board_id,)).fetchone():
+        return False
+    conn.execute("INSERT INTO board_member (board_id, member, access) VALUES (?,?,'ADMIN')",
+                 (board_id, member))
+    db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor,
+             action="BOARD_MEMBER", subject_kind="board", subject_id=board_id,
+             detail=f"first administrator {member} (the board had no members)")
+    return True
+
+
 def create_board(conn: sqlite3.Connection, *, display_name: str, fulfiller_group: str,
                  creator: str, at: datetime, board_id: str | None = None,
                  restricted: bool = False, closed_loop_required: bool = False,

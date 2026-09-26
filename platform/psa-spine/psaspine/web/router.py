@@ -87,6 +87,7 @@ ROUTES = [
     ("GET", "/admin/catalogue", admin.catalogue),
     ("POST", "/admin/catalogue/template", admin.catalogue_template),
     ("POST", "/admin/catalogue/toggle", admin.catalogue_toggle),
+    ("POST", "/admin/board/<board_id>/claim", admin.claim_board),
     ("GET", "/admin/board/<board_id>", admin.board_setup),
     ("POST", "/admin/board/<board_id>/settings", admin.save_settings),
     ("POST", "/admin/board/<board_id>/team", admin.add_team),

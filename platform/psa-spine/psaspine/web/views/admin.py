@@ -15,6 +15,7 @@ credential.
 from __future__ import annotations
 
 import re
+import urllib.parse
 
 from ... import db, itil
 from .. import templates as t
@@ -91,6 +92,24 @@ def index(ctx):
                      "<thead><tr><th>Board</th><th>Setup</th><th>Tickets</th><th></th></tr></thead>"
                      "<tbody>" + "".join(rows) + "</tbody></table></div></div>")
     if ctx.user.is_sysadmin:
+        orphans = ctx.conn.execute(
+            "SELECT b.board_id, b.display_name FROM board b"
+            " WHERE NOT EXISTS (SELECT 1 FROM board_member m WHERE m.board_id = b.board_id)"
+            " ORDER BY b.display_name").fetchall()
+        if orphans:
+            cards.append(
+                "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-layers></use></svg>"
+                "Boards with no administrator</h3><p class=sub>A board the seed created has no "
+                "members, and board access is membership only: nobody can open it until it has a "
+                "first administrator. A system administrator may name one here, once; after that "
+                "the board's own administrators manage its members. Audited.</p>"
+                "<div class=tablewrap><table><thead><tr><th>Board</th><th>First administrator</th>"
+                "</tr></thead><tbody>" + "".join(
+                    f"<tr><td><b>{t.esc(o['display_name'])}</b> <span class=muted>{t.esc(o['board_id'])}</span></td>"
+                    f"<td><form method=post action='/admin/board/{t.esc(o['board_id'])}/claim' class=row>"
+                    f"<input name=member value='{t.esc(ctx.user.id)}' aria-label='account' style='max-width:220px'>"
+                    "<button type=submit>Make administrator</button></form></td></tr>"
+                    for o in orphans) + "</tbody></table></div></div>")
         n_links = ctx.conn.execute("SELECT COUNT(*) FROM integration_link WHERE inactive = 0").fetchone()[0]
         cards.append(
             "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-link></use></svg>Integrations</h3><p class=sub>Links out from configurations and "
@@ -887,6 +906,27 @@ def add_member(ctx):
     if f.get("back") == "members":
         return _done(board_id, "members", f"{member} saved")
     return redirect("/admin")
+
+
+def claim_board(ctx, board_id: str):
+    """POST /admin/board/<id>/claim: a sysadmin names the first administrator
+    of a board that has no members. Refused for any board that has one."""
+    from .. import redirect, HttpError
+    from ... import setup
+    common.require_sysadmin(ctx)
+    member = ctx.request.form().get("member", "").strip()
+    try:
+        given = setup.first_admin(ctx.conn, board_id, member, actor=ctx.user.id, at=ctx.now)
+    except LookupError:
+        raise HttpError("404 Not Found", "No such board.")
+    except ValueError as exc:
+        ctx.conn.rollback()
+        return redirect("/admin?msg=" + urllib.parse.quote(str(exc)))
+    if not given:
+        ctx.conn.rollback()
+        return redirect("/admin?msg=" + urllib.parse.quote(f"{board_id} already has members"))
+    ctx.conn.commit()
+    return redirect("/admin?msg=" + urllib.parse.quote(f"{member} is the first administrator of {board_id}"))
 
 
 def disable_local(ctx):

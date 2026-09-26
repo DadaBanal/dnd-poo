@@ -159,6 +159,14 @@ def main(argv: list[str] | None = None) -> int:
                              "targets (adds what is missing, never overwrites)")
     pu.add_argument("database", help=DB_HELP)
     pu.add_argument("--board", required=True, dest="board_id")
+    pu.add_argument("--admin", dest="admin", help="make this account the board's first "
+                    "administrator, if it has no members yet (audited)")
+
+    pba = sub.add_parser("board-admin", help="make an account the first administrator of a "
+                         "board that has no members (a seeded board); audited")
+    pba.add_argument("database", help=DB_HELP)
+    pba.add_argument("--board", required=True, dest="board_id")
+    pba.add_argument("--member", required=True)
 
     pr = sub.add_parser("report", help="write Annex B, dependency notices and the exception report")
     pr.add_argument("database", help=DB_HELP)
@@ -397,12 +405,32 @@ def _run(conn, a) -> int:
             print("nothing changed; re-run with --apply")
         return 0
 
+    if a.cmd == "board-admin":
+        from . import setup
+        try:
+            given = setup.first_admin(conn, a.board_id, a.member, actor="cli", at=datetime.now())
+            conn.commit()
+        except (LookupError, ValueError) as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        if not given:
+            print(f"refused: {a.board_id} already has members; its administrators add more in "
+                  "Setup, Members & roles", file=sys.stderr)
+            return 1
+        print(f"{a.board_id}: {a.member} is its first administrator (audited)")
+        return 0
+
     if a.cmd == "setup-board":
         from . import setup
         try:
             r = setup.apply_starter(conn, a.board_id, actor="cli", at=datetime.now())
+            if a.admin:
+                if setup.first_admin(conn, a.board_id, a.admin, actor="cli", at=datetime.now()):
+                    print(f"{a.board_id}: {a.admin} is its first administrator (audited)")
+                else:
+                    print(f"{a.board_id}: already has members; --admin ignored", file=sys.stderr)
             conn.commit()
-        except LookupError as exc:
+        except (LookupError, ValueError) as exc:
             print(f"refused: {exc}", file=sys.stderr)
             return 1
         print(f"{a.board_id}: added {r['statuses']} statuses, {r['targets']} SLA targets"

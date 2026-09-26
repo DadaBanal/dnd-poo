@@ -143,6 +143,36 @@ Read with the tables below; each is now the rule.
   the column stays 400 wide; that is harmless (the warning only bites on a
   key over 900 bytes, which the API now prevents) and is not altered in place.
 
+## Folded in from sitting 1, parts 5 and 6 (26 Sep)
+
+- **Sitting 1 is DONE** except the three tasks that wait on the mail
+  handoff's Graph registration (`PSA-MailPickup`, `PSA-Notify`) and the
+  DPO (`PSA-Retention`). `PSA-Desk` runs on `127.0.0.1:8085` as `psa_desk`,
+  `PSA-Rules` returns `0x0` every minute, step 6 is green on the instance
+  (473 OK, 9 skipped), `desk.pmcne.ph` is a static A record on `DND-AD01`.
+- **A seeded board has no members, and membership is the only key.** Fixed
+  upstream, two roads, both audited as `BOARD_MEMBER`: on the server,
+  `psaspine board-admin $db --board IT_HELP --member <account>` (and
+  `setup-board … --admin <account>`), or in Setup, where a system
+  administrator sees "Boards with no administrator" and names one, once.
+  Sitting 2's step 2 starts with `board-admin` for `IT_HELP` and `UNROUTED`,
+  naming the Service Manager's account (a break-glass name until the Windows
+  sign-in is on; then the Windows username). A board with members never
+  takes this road again; its own administrators add the rest.
+- **The test board `ZZ_SQL01_TEST`** stays, not live; the desk has no board
+  delete by design. Its one closed test ticket `PMC-000001` is the first
+  number issued and is never reused (D4).
+- **HTTPS without exporting the key.** SQL01's finding: the wildcard's key is
+  non-exportable, but IIS on this host already fronts Portal and Payroll with
+  it, so an IIS site with a reverse proxy to `127.0.0.1:8085` would give
+  `https://desk.pmcne.ph` with no export. That touches IIS, which this file
+  forbids, so it is **Dada's decision**, with two roads: (a) the original PFX
+  or a re-key, and the desk's own TLS as the portal handoff says; (b) one new
+  IIS site named `PSA-Desk`, bound to `desk.pmcne.ph:443` with the existing
+  certificate, proxying to the desk, added to the footprint table and to the
+  kill switch, and nothing else in IIS touched. Until Dada chooses, the desk
+  stays on the LAN in plain HTTP and the portal stays off.
+
 ## When a step does not pass
 
 Every handoff step has a **Pass** line. This is what to do when it is not
