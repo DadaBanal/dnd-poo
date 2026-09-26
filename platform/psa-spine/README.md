@@ -541,6 +541,11 @@ something to be remembered, and a test asserts it.
 
 ## On SQL Server (D7, 25 Sep 2026)
 
+**The on-premises runbook** is `docs/handoffs/HANDOFF-cloud-sql01-WS36-20260926-runbook.md`:
+the order of the sittings, a default for every decision, what to do when a
+step does not pass, the kill switch, and the rule that nothing the hospital
+already runs on the host may be touched.
+
 The desk runs on the SQL Server instance PMC already has, `DND-SQL01\PMC_SS`, in
 a database of its own, **`PMC_PSA`**, schema `psa`. Not inside `PMC_SS`, the
 imaging index's database: a separate database has its own backup and restore, its

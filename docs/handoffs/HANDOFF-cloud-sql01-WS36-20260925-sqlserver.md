@@ -12,7 +12,7 @@ command that named the file names the connection string.
 | **From** | Cloud Build |
 | **Workstream** | WS36 (PSA ticketing): the store |
 | **Bucket** | The database `PMC_PSA` on the existing instance, the schema applied by the generated script, the desk and its tasks running against it, the test suite green against it, and one verified backup. Nothing in `PMC_SS` is touched. |
-| **Read first** | 1. `platform/psa-spine/README.md`, "On SQL Server (D7, 25 Sep 2026)" 2. `docs/WS36-decisions-d7-20260925.md` 3. `sqlserver/PMC_PSA_Spine_SqlServer.sql`, its header 4. this file |
+| **Read first** | 0. `HANDOFF-cloud-sql01-WS36-20260926-runbook.md` (the order, the defaults, what to do when a step does not pass, the rule that outranks every line here) 1. `platform/psa-spine/README.md`, "On SQL Server (D7, 25 Sep 2026)" 2. `docs/WS36-decisions-d7-20260925.md` 3. `sqlserver/PMC_PSA_Spine_SqlServer.sql`, its header 4. this file |
 
 ## Pre-flight findings, 26 Sep 2026 (SQL01, MEASURED, read-only) and what changed
 
