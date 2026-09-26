@@ -396,3 +396,80 @@ copy are the record's, as for the Orthanc index. Under SIMPLE recovery, a daily 
 chain.
 
 Still open in sitting 1: step 3 (the login), then 5, 6 and 7, all waiting on the task account.
+
+### Sitting 1, part 3: 2026-09-26, 16:29 UTC. **Steps 3, 4 (init), 5 PASS; step 6 RED; stopped before step 7 as the runbook says**
+
+The operator created the task account with `D:\psa\bin\New-PsaDeskAccount.ps1` ("script has been
+run"). Checked read-only: `DND-SQL01\psa_desk` is enabled, password never expires, the user
+cannot change it, and it is not in Administrators. It is not a direct member of Users, but Users
+contains Authenticated Users and INTERACTIVE, so it gets Users' read rights and interactive
+logon. **"Log on as a batch job" is not granted yet**: the right still has its 4 built-in
+holders. It is needed only at step 7 (all MEASURED).
+
+| Step | State | Evidence |
+|---|---|---|
+| 3 (login) | **PASS** | Previewed, then applied as sysadmin: `CREATE LOGIN [DND-SQL01\psa_desk] FROM WINDOWS`; user on `PMC_PSA` with `DEFAULT_SCHEMA = psa`; `db_datareader`, `db_datawriter`; `GRANT EXECUTE, VIEW DEFINITION`. **Pass line:** `default_schema_name` = `psa`. Read back: roles `db_datareader,db_datawriter`; grants `CONNECT, EXECUTE, VIEW DEFINITION`; no server role. No `db_owner`, because `[psa]` is dbo's (MEASURED) |
+| 4 (init) | **PASS** | Run as `psa_desk` by the operator (`runas`, password typed there) through `D:\psa\bin\Sitting1-AsDesk.ps1`: `init` twice printed `ready: SQL Server, Driver={ODBC Driver 17 for SQL Server};Server=DND-SQL01\PMC_SS;Database=PMC_PSA` both times, exit 0 (MEASURED, the operator's pasted console and `D:\psa\logs\Sitting1-AsDesk.log`) |
+| 5 | **PASS** | `setup-board UNROUTED` and `IT_HELP`: each "added 8 statuses, 12 SLA targets, calendar ALL_HOURS". A re-run added 0, so the command is idempotent. SLA targets are the starter placeholders, `enforced = 0`, for the Service Manager to set. Two break-glass accounts, one sysadmin and one board-scoped technician; the names are not recorded here, and the passwords were typed by the operator at the desk's no-echo prompt. The first attempt at the technician stopped on a password mismatch and wrote nothing; the re-run created it. `psa.local_account` now holds 2 rows: 1 sysadmin, 1 not, 0 disabled. `psa.ticket` holds 0 rows (MEASURED, read-only) |
+| 6 | **RED: `FAILED (errors=2, skipped=11)`, 471 run in 450.7 s** | `PMC_PSA_TEST` was created on `D:\PMC\sql` (SIMPLE, RCSI) with `psa_desk` as `db_owner` and default schema `psa`. The handoff names the operator here, but a sysadmin's default schema is always `dbo`. The database was given one normal FULL at creation, because the payroll watchdog's new-database check alerts at once on a database with no FULL and ignores COPY_ONLY backups (`Watch-PMCBridge.ps1` lines 166 and 364). **Both errors are Windows-only and are not the SQL Server backend.** Each is `tearDown` failing `tempfile.cleanup()` with `PermissionError: [WinError 32]` on a SQLite `cli.db` that is still open. Both tests call `psaspine.__main__.main()` in-process, and `main()` opens `conn = db.connect(a.database)` (line 213) but returns from most commands without closing it. Windows cannot delete an open file; Linux can. Reproduced as the operator with **no SQL Server at all** (`PSA_TEST_DB` unset, SQLite only): the same 2 errors, the same `WinError 32` (MEASURED). There are 0 FAILs, so neither test's assertions failed (INFERRED from unittest reporting). The skips: 8 "SQLite's file settings; SQL Server has its own" (the README's 8), 2 "openssl is not on this machine to make a test certificate" (`openssl` is not on `psa_desk`'s PATH), and 1 "this asserts the refusal on a non-Windows host" (MEASURED) |
+| 6 (close-out) | **done** | `DROP DATABASE PMC_PSA_TEST` (0 sessions in it), its files gone from `D:\PMC\sql`, and its one backup file deleted. `PMC_PSA` untouched; the instance is back to 10 user databases (MEASURED). The infra session was told when it was created and when it was dropped |
+| 7 | **NOT RUN** | The runbook: "The desk does not run on SQL Server on a red suite." It also needs the batch-logon grant |
+| 8 | PASS in part 2 | unchanged |
+
+**The fix belongs upstream.** Close the connection in `main()` (one `try/finally` around the
+dispatch after line 213), or have the two tests close what they open. Then the re-run is step 6
+alone. SQL01 recreates `PMC_PSA_TEST` the same way, and the operator runs
+`runas /user:DND-SQL01\psa_desk "powershell.exe -NoProfile -NoExit -File D:\psa\bin\Sitting1-AsDesk.ps1 -TestsOnly"`.
+The script gained `-TestsOnly` for this, and it now prints stderr text instead of 8
+`System.Management.Automation.RemoteException` lines. Those 8 lines are in today's test file;
+they are a Windows PowerShell 5.1 artifact of the wrapper, not test output.
+
+The last 40 lines of `D:\psa\test-sqlserver-20260925.txt`, the 8 wrapper-artifact lines
+removed (MEASURED):
+
+```
+test_a_p1_fires_at_the_moment_it_is_created (__main__.WorkflowRunnerTest.test_a_p1_fires_at_the_moment_it_is_created) ... ok
+test_a_rule_that_was_never_tested_cannot_be_switched_on (__main__.WorkflowRunnerTest.test_a_rule_that_was_never_tested_cannot_be_switched_on) ... ok
+test_a_rules_own_status_change_fires_no_further_rules (__main__.WorkflowRunnerTest.test_a_rules_own_status_change_fires_no_further_rules) ... ok
+test_escalation_is_successive_events_on_sla_time (__main__.WorkflowRunnerTest.test_escalation_is_successive_events_on_sla_time)
+ConnectWise's own pattern: New too long tells dispatch; later still, ... ok
+======================================================================
+ERROR: test_setup_board_cli (__main__.BoardSetupTest.test_setup_board_cli)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "shutil.py", line 633, in _rmtree_unsafe
+PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\psa_desk\\AppData\\Local\\Temp\\tmpcxafer4o\\cli.db'
+During handling of the above exception, another exception occurred:
+Traceback (most recent call last):
+  File "D:\dnd-poo\platform\psa-spine\tests\test_spine.py", line 3800, in tearDown
+    self.tmp.cleanup()
+  File "tempfile.py", line 954, in cleanup
+  File "tempfile.py", line 934, in _rmtree
+  File "shutil.py", line 781, in rmtree
+  File "shutil.py", line 635, in _rmtree_unsafe
+  File "tempfile.py", line 909, in onexc
+PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\psa_desk\\AppData\\Local\\Temp\\tmpcxafer4o\\cli.db'
+======================================================================
+ERROR: test_the_cli_imports_and_counts (__main__.ContactsTest.test_the_cli_imports_and_counts)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "shutil.py", line 633, in _rmtree_unsafe
+PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\psa_desk\\AppData\\Local\\Temp\\tmpp7nkbmei\\cli.db'
+During handling of the above exception, another exception occurred:
+Traceback (most recent call last):
+  File "D:\dnd-poo\platform\psa-spine\tests\test_spine.py", line 5830, in tearDown
+    self.tmp.cleanup()
+  File "tempfile.py", line 954, in cleanup
+  File "tempfile.py", line 934, in _rmtree
+  File "shutil.py", line 781, in rmtree
+  File "shutil.py", line 635, in _rmtree_unsafe
+  File "tempfile.py", line 909, in onexc
+PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\psa_desk\\AppData\\Local\\Temp\\tmpp7nkbmei\\cli.db'
+----------------------------------------------------------------------
+Ran 471 tests in 450.707s
+FAILED (errors=2, skipped=11)
+```
+
+Sitting 1 stands **BLOCKED at step 6, on the upstream fix**. Everything else is in place:
+`PMC_PSA` with its schema, boards and break-glass accounts, the task account's login, and a
+verified daily backup.

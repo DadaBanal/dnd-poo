@@ -179,3 +179,11 @@ databases where pre-flight found 9, plus the folders `D:\psa\` and `D:\PMC\sql\`
 on file 1 is valid", and `msdb` records a FULL of `PMC_PSA` (MEASURED). The operator's
 account-creation script is at `D:\psa\bin\New-PsaDeskAccount.ps1` and has not been run. Steps 3
 (login), 5, 6 and 7 wait for the account.
+
+**Sitting 1, part 3: 2026-09-26, 16:29 UTC. BLOCKED at step 6 on an upstream fix.** The operator
+created `psa_desk`. Step 3 (login, default schema `psa`), step 4 (`init` twice, the same
+`ready:` line) and step 5 (boards, two break-glass accounts) PASS. Step 6: 471 run, `FAILED
+(errors=2, skipped=11)`. Both errors are a Windows-only file lock (`WinError 32` on a SQLite
+`cli.db` that `psaspine.__main__.main()` leaves open). They reproduce on SQLite alone, so they
+are not the SQL Server backend (MEASURED). `PMC_PSA_TEST` is dropped. Step 7 is not run, per
+this file's rule for a red suite. The detail and the last 40 lines are in the sqlserver Reply.
