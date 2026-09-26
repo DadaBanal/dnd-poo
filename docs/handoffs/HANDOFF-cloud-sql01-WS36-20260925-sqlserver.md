@@ -125,8 +125,10 @@ it and refuses a user whose default schema is not `psa`. Use
 `ODBC Driver 17 for SQL Server` in `$db` if that is what step 2 found.
 `TrustServerCertificate=yes` is for the instance's self-signed certificate
 (INFERRED; if the instance carries a CA-issued certificate, drop it).
-**Pass:** `init` prints nothing and exits 0 (the schema is already there; it
-changes nothing); each account signs in at step 7.
+**Pass:** `init` prints `ready: SQL Server, Driver=…;Server=DND-SQL01\PMC_SS;Database=PMC_PSA`
+and exits 0 (the schema is already there; it changes nothing; the console
+never shows more of a connection string than that); each account signs in at
+step 7.
 
 **6. The test suite, against the real instance.** The one step that turns NOT
 VERIFIED into MEASURED, and the reason for a separate test database:

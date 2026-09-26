@@ -110,7 +110,8 @@ def desk(conn: sqlite3.Connection, boards, *, now: datetime, months: int = 6,
 
     if db.table_exists(conn, "survey_response"):
         row = conn.execute(
-            f"SELECT AVG(s.score), COUNT(*) FROM survey_response s JOIN ticket t ON t.work_item_id = s.work_item_id"
+            f"SELECT AVG(CAST(s.score AS REAL)), COUNT(*) FROM survey_response s"
+            f" JOIN ticket t ON t.work_item_id = s.work_item_id"
             f" WHERE t.board_id IN ({marks}) AND s.answered_at >= ?", (*boards, since)).fetchone()
         if row and row[1]:
             out["satisfaction"], out["satisfaction_n"] = round(row[0], 2), row[1]

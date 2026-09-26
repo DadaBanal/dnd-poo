@@ -43,13 +43,6 @@ class QuietHandler(WSGIRequestHandler):
         pass
 
 
-def _redact(connection_string: str) -> str:
-    """A connection string on the console: server and database, nothing else."""
-    keep = {"server", "database", "driver", "dsn"}
-    parts = [p for p in connection_string.split(";") if p.split("=", 1)[0].strip().lower() in keep]
-    return ";".join(parts)
-
-
 def serve(db_path: str, *, host: str = "127.0.0.1", port: int = 8080,
           config: Config | None = None) -> None:
     if host in PUBLIC_BINDS:
@@ -64,8 +57,7 @@ def serve(db_path: str, *, host: str = "127.0.0.1", port: int = 8080,
     posture = ("Entra + break-glass" if config.entra_configured
                else "break-glass only (no Entra tenant configured)")
     print(f"PSA desk (Phase B pilot) on http://{host}:{port}", file=sys.stderr)
-    print(f"  database: {db_path if db.backend_of(db_path) == 'sqlite' else 'SQL Server, ' + _redact(db_path)}",
-          file=sys.stderr)
+    print(f"  database: {db.describe(db_path)}", file=sys.stderr)
     print(f"  sign-in:  {posture}", file=sys.stderr)
     print("  wsgiref.simple_server is not a production server. Phase C puts the "
           "same app behind a real one.", file=sys.stderr)

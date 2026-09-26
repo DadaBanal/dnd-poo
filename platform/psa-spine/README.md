@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 451 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 454 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -511,15 +511,22 @@ statement in the message. What it has decided:
 
 | SQLite | SQL Server | Note |
 |---|---|---|
-| `INSERT OR IGNORE … VALUES` | the INSERT; a duplicate-key error (2627/2601) is swallowed, `rowcount` 0 | `INSERT OR IGNORE … SELECT` is refused: write `WHERE NOT EXISTS`, which both run |
-| `INSERT OR REPLACE … VALUES` | `DELETE` on every unique key the new row collides with, then the INSERT | Keys read once from `sys.indexes` |
+| `INSERT OR IGNORE … VALUES` | the INSERT; what SQLite ignores is swallowed (a unique key 2627/2601, a NOT NULL 515, a CHECK 547), `rowcount` 0; a foreign key is refused on both | `INSERT OR IGNORE … SELECT` is refused: write `WHERE NOT EXISTS`, which both run |
+| `INSERT OR REPLACE … VALUES` | an `UPDATE` of the row with that key (unlisted columns back to `DEFAULT`), else the INSERT | SQLite checks foreign keys at statement end, so it can delete-and-reinsert a parent other rows point at; SQL Server checks the delete at once, so the same outcome is written in place. Keys read once from `sys.indexes` |
 | `LIMIT n [OFFSET m]` | `OFFSET m ROWS FETCH NEXT n ROWS ONLY`, with `ORDER BY (SELECT NULL)` when the query has no ORDER BY | Valid in a subquery too; a moved `?` moves its parameter |
 | `SUM(<predicate>)` | `SUM(CASE WHEN … THEN 1 ELSE 0 END)` | SQL Server has no boolean value to add |
 | `substr`, `length`, `ifnull`, `\|\|`, `COLLATE NOCASE`, `CAST(… AS INTEGER/REAL)` | `SUBSTRING`, `LEN`, `ISNULL`, `+`, `COLLATE Latin1_General_CI_AS`, `INT`/`FLOAT` | |
 | `lastrowid` | `SCOPE_IDENTITY()` fetched in the INSERT's own batch | |
-| `PRAGMA`, `sqlite_master`, `strftime` and the rest of SQLite's own functions | **refused** | `db.table_exists()` answers the one question the code asked `sqlite_master` |
+| `PRAGMA`, `sqlite_master`, `IS ?`, `strftime` and the rest of SQLite's own functions | **refused** | `db.table_exists()` answers the one question the code asked `sqlite_master` |
+| `AVG(int)` | — | An integer average on SQL Server; the code averages `CAST(… AS REAL)` where a fraction matters |
 | `JOIN … USING (col)` | — | Rewritten as `ON` in the code: T-SQL has no USING |
 | `IntegrityError` | the same class: a unique key, CHECK, foreign key or gate trigger (`THROW 5000n`) raises `sqlite3.IntegrityError` from this backend too | No caller has to know which store it is on |
+
+Every request opens its own connection, as on SQLite; on SQL Server that is a
+login handshake, so the session settings and the schema check go in one
+round trip and the check is remembered per target. Beyond that, connection
+pooling is the ODBC driver manager's (`pyodbc.pooling` is on by default; on
+Windows the driver manager pools for the process).
 
 Three things a SQL Server desk must be told, because a file told the SQLite one:
 `PSA_ATTACHMENT_DIR` (the attachment folder; there is no `<db>.attachments`
@@ -538,7 +545,7 @@ PSA_TEST_DB="Driver={ODBC Driver 18 for SQL Server};Server=127.0.0.1,1433;Databa
 
 Each test empties the database and reseeds it (`db.init(…, reset=True)`, a
 test-only path) and the same assertions run unchanged. **MEASURED, 25 Sep 2026,
-SQL Server 2022 Express 16.0 in a container: 451 tests, OK, 8 skipped** (the
+SQL Server 2022 Express 16.0 in a container: 454 tests, OK, 8 skipped** (the
 eight are SQLite's own file settings: WAL, busy timeout, the escrow copy). CI
 runs the same job against a service container on every push. NOT VERIFIED on
 `DND-SQL01` itself, which no session here can reach; the handoff's step 6 is

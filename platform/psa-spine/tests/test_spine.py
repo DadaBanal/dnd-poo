@@ -5490,6 +5490,13 @@ class MergeScheduleSurveyTest(unittest.TestCase):
         from psaspine import metrics
         m = metrics.desk(self.conn, {"IT_HELP"}, now=self.at, months=1)
         self.assertEqual((m["satisfaction"], m["satisfaction_n"]), (4.0, 1))
+        # a second answer: the average is a fraction on both stores (SQL
+        # Server's AVG of an integer column would have said 4)
+        other = self._open(who="b@pmcne.ph")
+        board.change_status(self.conn, other, "IT_HELP.CLOSED", at=self.at, actor="alice")
+        self.survey.answer(self.conn, other, score=5, comment=None, by="b@pmcne.ph", at=self.at)
+        m = metrics.desk(self.conn, {"IT_HELP"}, now=self.at, months=1)
+        self.assertEqual((m["satisfaction"], m["satisfaction_n"]), (4.5, 2))
 
 
 class MergeScheduleSurveyWebTest(unittest.TestCase):
@@ -6183,6 +6190,18 @@ class SqlServerDialectTest(unittest.TestCase):
         self.assertEqual(db.backend_of(Path("/tmp/x/spine.db")), "sqlite")
         self.assertEqual(db.backend_of("Driver={ODBC Driver 18 for SQL Server};Server=h;Database=PMC_PSA"), "mssql")
         self.assertEqual(db.backend_of("DSN=psa"), "mssql")
+        # the keys come in any order; a string that starts with Database= is no file
+        self.assertEqual(db.backend_of("Database=PMC_PSA;Trusted_Connection=yes;Server=h;Driver={x}"), "mssql")
+        self.assertEqual(db.backend_of("D:\\psa\\spine.db"), "sqlite")
+
+    def test_a_connection_string_is_described_never_printed(self):
+        cs = "Driver={ODBC Driver 18 for SQL Server};Server=h;Database=PMC_PSA;UID=u;PWD=hunter2;Encrypt=yes"
+        shown = db.describe(cs)
+        self.assertNotIn("hunter2", shown)
+        self.assertNotIn("UID", shown)
+        self.assertIn("Server=h", shown)
+        self.assertIn("Database=PMC_PSA", shown)
+        self.assertEqual(db.describe("spine.db"), "spine.db")
 
     def test_limit_becomes_offset_fetch_and_needs_an_order_by(self):
         self.assertEqual(self.t("SELECT 1 FROM ticket WHERE parent_id = ? LIMIT 1"),
@@ -6221,9 +6240,45 @@ class SqlServerDialectTest(unittest.TestCase):
 
     def test_what_has_no_decision_is_refused_by_name(self):
         for sql in ("PRAGMA foreign_keys", "SELECT strftime('%Y', x) FROM t", "SELECT 1 FROM sqlite_master",
-                    "SELECT random()", "SELECT * FROM t WHERE a IS ?"):
+                    "SELECT random()", "SELECT * FROM t WHERE a IS ?", "SELECT * FROM t WHERE a IS NOT ?"):
             with self.assertRaises(self.m.Refused, msg=sql):
                 self.m.translate(sql)
+
+    def test_the_first_history_row_after_a_fresh_start_is_number_one(self):
+        # On SQL Server the test reset reseeds identities; a reseed to 0 on a
+        # table that never had a row would make the first id 0, so only tables
+        # that have had rows are reseeded. Either way the answer is 1.
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            conn = _fresh(tmp)
+            first = conn.execute(
+                "INSERT INTO audit_event (occurred_at, actor, action, subject_kind, subject_id, detail,"
+                " override_reason) VALUES ('2026-09-26 09:00','t','TEST','x',NULL,NULL,NULL)").lastrowid
+            self.assertEqual(first, 1)
+            conn.close()
+        finally:
+            tmp.cleanup()
+
+    def test_ignore_swallows_what_sqlite_ignores_and_no_more(self):
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            conn = _fresh(tmp)
+            conn.execute("INSERT OR IGNORE INTO entity (entity_id, name, is_covered, note) VALUES ('E1','one',1,NULL)")
+            # a unique key: skipped
+            self.assertEqual(conn.execute("INSERT OR IGNORE INTO entity (entity_id, name, is_covered, note)"
+                                          " VALUES ('E1','again',1,NULL)").rowcount, 0)
+            # a CHECK (is_covered IN (0,1)): skipped
+            self.assertEqual(conn.execute("INSERT OR IGNORE INTO entity (entity_id, name, is_covered, note)"
+                                          " VALUES ('E2','two',7,NULL)").rowcount, 0)
+            # a foreign key: refused, on both stores
+            with self.assertRaises(sqlite3.IntegrityError):
+                conn.execute("INSERT OR IGNORE INTO board_member (board_id, member, access)"
+                             " VALUES ('NO_SUCH_BOARD','x','READ')")
+            conn.rollback()
+            self.assertEqual(conn.execute("SELECT name FROM entity WHERE entity_id = 'E1'").fetchone(), None)
+            conn.close()
+        finally:
+            tmp.cleanup()
 
     def test_a_row_answers_like_sqlite_row(self):
         import decimal

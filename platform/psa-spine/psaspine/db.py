@@ -52,6 +52,13 @@ def connect(path: str | Path):
     return conn
 
 
+def describe(target) -> str:
+    """The target for a console or a log: the path, or a connection string
+    reduced to its server, database and driver. A password never reaches a
+    console through here."""
+    return mssql.describe(str(target)) if backend_of(target) == "mssql" else str(target)
+
+
 def backend(conn) -> str:
     return getattr(conn, "backend", "sqlite")
 

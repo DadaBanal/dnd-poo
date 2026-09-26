@@ -34,12 +34,22 @@ ROOT = Path(__file__).resolve().parent.parent
 PORT = ROOT / "sqlserver" / "PMC_PSA_Spine_SqlServer.sql"
 SCHEMA = "psa"
 
-# A file path is never shaped like this; a connection string always is.
-_CONNECTION_STRING = re.compile(r"^\s*(driver|server|dsn|data source|addr|address|network address)\s*=", re.I)
+# An ODBC connection string names its server or driver somewhere among its
+# ';'-separated keys, in any order; a file path names neither.
+_CONNECTION_STRING = re.compile(
+    r"(^|;)\s*(driver|server|dsn|data source|addr|address|network address)\s*=", re.I)
 
 
 def is_connection_string(target) -> bool:
-    return isinstance(target, str) and bool(_CONNECTION_STRING.match(target))
+    return isinstance(target, str) and bool(_CONNECTION_STRING.search(target))
+
+
+def describe(target: str) -> str:
+    """A connection string for a console or a log: server, database and driver
+    only. Never the rest, which is where a password would be."""
+    keep = {"server", "database", "driver", "dsn", "data source"}
+    parts = [p.strip() for p in target.split(";") if p.split("=", 1)[0].strip().lower() in keep]
+    return "SQL Server, " + ";".join(parts)
 
 
 class Refused(NotImplementedError):
@@ -292,17 +302,9 @@ def translate(sql: str) -> Plan:
         conflict = words[2]
         if conflict not in ("IGNORE", "REPLACE"):
             raise Refused(f"INSERT OR {conflict} has no port decided")
-        # drop "OR <conflict>"
-        seen = 0
-        keep = []
-        for t in toks:
-            if seen < 2 and _is_word(t) and t.upper() in ("OR", conflict) and any(True for _ in [0]):
-                if (seen == 0 and t.upper() == "OR") or (seen == 1 and t.upper() == conflict):
-                    seen += 1
-                    continue
-            keep.append(t)
-        toks = keep
-        # normalise the doubled space
+        # drop the "OR <conflict>" words; the INSERT itself is the same
+        word_at = [k for k, t in enumerate(toks) if _is_word(t)]
+        del toks[word_at[1]:word_at[3]]                # "OR", the conflict word, and the spaces after each
     if verb == "INSERT":
         nonspace = [(i, t) for i, t in enumerate(toks) if not _is_space(t)]
         try:
@@ -360,8 +362,8 @@ def translate(sql: str) -> Plan:
                 raise Refused("sqlite_master: use db.table_exists()")
             elif u in ("GLOB", "REGEXP", "MATCH") :
                 raise Refused(f"{u} has no port decided")
-            elif u == "IS" and nxt == "?":
-                raise Refused("IS ? (null-safe equality) has no port decided")
+            elif u == "IS" and (nxt == "?" or (nxt.upper() == "NOT" and _after(toks, i, 2) == "?")):
+                raise Refused("IS ? / IS NOT ? (null-safe equality) has no port decided")
             elif u in ("TRUE", "FALSE"):
                 out.append("1" if u == "TRUE" else "0")
             elif u == "AUTOINCREMENT":
@@ -375,6 +377,16 @@ def translate(sql: str) -> Plan:
     out = _rewrite_limit(out)
     param_map = _param_order(toks, out)
     return Plan("".join(out), verb, conflict, table, columns, values, param_map, out.count("?"))
+
+
+def _after(toks: list[str], i: int, n: int) -> str:
+    """The n-th non-space token after toks[i], or ''."""
+    for j in range(i + 1, len(toks)):
+        if not _is_space(toks[j]):
+            n -= 1
+            if n == 0:
+                return toks[j]
+    return ""
 
 
 def _in_cast(toks: list[str], i: int) -> bool:
@@ -396,7 +408,10 @@ def _in_cast(toks: list[str], i: int) -> bool:
 
 # --------------------------------------------------------------- errors
 
-_DUPLICATE = re.compile(r"\((2627|2601)\) \(SQLExecDirectW\)")
+# What SQLite's OR IGNORE swallows: a unique key (2627, 2601), a NOT NULL
+# (515) and a CHECK (547, when it is the CHECK and not a FOREIGN KEY, which
+# SQLite does not ignore and neither does this).
+_DUPLICATE = re.compile(r"\((2627|2601|515)\) \(SQLExecDirectW\)|CHECK constraint .*\(547\) \(SQLExecDirectW\)")
 
 
 def _sqlite_error(exc) -> Exception:
@@ -472,13 +487,13 @@ def _plain(v):
 
 
 class Cursor:
-    __slots__ = ("_cur", "_index", "rowcount", "lastrowid", "description", "_rows")
+    __slots__ = ("_index", "rowcount", "lastrowid", "description", "_rows", "_pos")
 
     def __init__(self, cur, rowcount, lastrowid, rows=None):
-        self._cur = None
         self.rowcount = rowcount
         self.lastrowid = lastrowid
         self._rows = list(rows) if rows else []
+        self._pos = 0
         desc = cur.description if cur is not None else None
         self.description = desc
         self._index = {}
@@ -490,19 +505,20 @@ class Cursor:
         return None if raw is None else Row(tuple(_plain(v) for v in raw), self._index)
 
     def fetchone(self):
-        if not self._rows:
+        if self._pos >= len(self._rows):
             return None
-        return self._wrap(self._rows.pop(0))
+        row = self._rows[self._pos]
+        self._pos += 1
+        return self._wrap(row)
 
     def fetchall(self):
-        rows, self._rows = self._rows or [], []
+        rows, self._pos = self._rows[self._pos:], len(self._rows)
         return [self._wrap(r) for r in rows]
 
     def fetchmany(self, n=1):
-        out = []
-        while self._rows and len(out) < n:
-            out.append(self._wrap(self._rows.pop(0)))
-        return out
+        rows = self._rows[self._pos:self._pos + n]
+        self._pos += len(rows)
+        return [self._wrap(r) for r in rows]
 
     def __iter__(self):
         while True:
@@ -512,12 +528,13 @@ class Cursor:
             yield r
 
     def close(self):
-        self._rows = []
+        self._rows, self._pos = [], 0
 
 
 # ------------------------------------------------------------ connection
 
 _live: "weakref.WeakSet[Connection]" = weakref.WeakSet()
+_schema_checked: set[str] = set()
 _unique_keys: dict[str, list[tuple[str, ...]]] = {}
 _columns: dict[str, tuple[list[str], list[str]]] = {}
 _unique_lock = threading.Lock()
@@ -750,11 +767,16 @@ def connect(target: str) -> Connection:
                            "SQL Server; see README, 'On SQL Server'") from exc
     raw = pyodbc.connect(target, autocommit=False)
     cur = raw.cursor()
-    cur.execute("SET NOCOUNT ON; SET XACT_ABORT OFF")
-    # The user's DEFAULT_SCHEMA, not SCHEMA_NAME(): on a new database the psa
-    # schema does not exist until init applies the port, and SCHEMA_NAME() is
-    # NULL until it does.
-    row = cur.execute("SELECT default_schema_name FROM sys.database_principals"
+    # One round trip: the session settings, and (the first time for this
+    # target) the user's DEFAULT_SCHEMA. Not SCHEMA_NAME(): on a new database
+    # the psa schema does not exist until init applies the port, and
+    # SCHEMA_NAME() is NULL until it does.
+    if target in _schema_checked:
+        cur.execute("SET NOCOUNT ON; SET XACT_ABORT OFF")
+        cur.close()
+        return Connection(raw, target)
+    row = cur.execute("SET NOCOUNT ON; SET XACT_ABORT OFF;"
+                      " SELECT default_schema_name FROM sys.database_principals"
                       " WHERE principal_id = DATABASE_PRINCIPAL_ID()").fetchone()
     cur.close()
     schema = row[0] if row else None
@@ -763,6 +785,7 @@ def connect(target: str) -> Connection:
         raise RuntimeError(
             f"the desk's login must have default schema [{SCHEMA}] on this database; it has "
             f"[{schema}]. ALTER USER <name> WITH DEFAULT_SCHEMA = {SCHEMA}.")
+    _schema_checked.add(target)
     return Connection(raw, target)
 
 
@@ -830,8 +853,12 @@ def wipe(conn: Connection) -> None:
     tables = [r[0] for r in cur.execute(
         "SELECT t.name FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id"
         " WHERE s.name = ? ORDER BY t.name", (SCHEMA,)).fetchall()]
+    # Only a table that has ever had a row is reseeded: DBCC CHECKIDENT's
+    # RESEED 0 on one that never has makes its first id 0, not 1 (last_value
+    # is NULL until the first insert; after a reseed it is 0, and the next is 1).
     ident = {r[0] for r in cur.execute(
-        "SELECT OBJECT_NAME(object_id) FROM sys.identity_columns WHERE OBJECT_SCHEMA_NAME(object_id) = ?",
+        "SELECT OBJECT_NAME(object_id) FROM sys.identity_columns"
+        " WHERE OBJECT_SCHEMA_NAME(object_id) = ? AND last_value IS NOT NULL",
         (SCHEMA,)).fetchall()}
     batch = [f"ALTER TABLE [{SCHEMA}].[{t}] NOCHECK CONSTRAINT ALL;" for t in tables]
     batch += [f"DELETE FROM [{SCHEMA}].[{t}];" for t in tables]

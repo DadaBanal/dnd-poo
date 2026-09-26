@@ -184,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if a.cmd == "init":
         db.init(a.database).close()
-        print(("ready: " if db.backend_of(a.database) == "mssql" else "created ") + a.database)
+        print(("ready: " if db.backend_of(a.database) == "mssql" else "created ") + db.describe(a.database))
         return 0
 
     conn = db.connect(a.database)
