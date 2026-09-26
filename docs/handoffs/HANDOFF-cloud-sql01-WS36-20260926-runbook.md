@@ -330,3 +330,64 @@ converted to PEM by the operator with its password, for the desk's own TLS) is a
 choice between (a) and (b) (IIS in front) is still Dada's; nothing was done toward either. For the
 record, not acted on: `C:\Temp` also holds three other `.pfx` files dated 2026-04-29
 (`agentcert.pfx`, `agentcert.cert.pfx`, `QWEQWEert.pfx`).
+
+### Part 8: 2026-09-26, 23:53 UTC. **Dada chose HTTPS with no port: road (b), IIS in front. IIS can take it; the desk needs a code fix first**
+
+Dada, verbatim, in order: *"use https"*, then *"can u remove the port when going to the site"*.
+On this host IIS (http.sys) holds 443 and 80 on all addresses, so a URL with no port means IIS
+fronting the desk: road (b). Road (a) (the PFX to PEM, `:8443`) is therefore not taken.
+`D:\psa\bin\Enable-PsaDeskHttps.ps1` was written for road (a) and **was not run**.
+`Set-PsaDeskLan.ps1` (plain 8085 on the LAN) is superseded and **was not run**. Two read-only
+investigators (IIS on the host, the desk's code) reported. Everything below is MEASURED unless
+marked.
+
+**IIS: a desk site fits without touching the four live sites.**
+- The existing https bindings on 443 are all SNI (`sslFlags=1`), for `queue`, `payroll` and
+  `portal.pmcne.ph`. Only Portal's binding carries its own certificate. Payroll and Queue HTTPS are
+  served by the `0.0.0.0:443` fallback entry in http.sys (a TLS probe with SNI `payroll.pmcne.ph`
+  gets `*.pmcne.ph` with no hostname entry of its own).
+- No binding contains `desk` (the control found 6 `pmcne.ph` bindings), and http.sys has no
+  `desk.pmcne.ph:443` entry. Today `https://desk.pmcne.ph` completes TLS on the wildcard and then
+  http.sys answers 404: it reaches no site.
+- URL Rewrite 2 (7.2.1993) and ARR 3.0 (3.0.05311) are installed. `system.webServer/proxy
+  enabled="true"` is server-wide (AppHostOnly), with `preserveHostHeader=False`. Portal and Payroll
+  already reverse-proxy to `localhost:4100` through site `web.config` rules. So a desk site with one
+  rewrite rule to `http://127.0.0.1:8085/{R:1}` needs **no** `applicationHost.config` proxy change.
+- Constraints for the site (INFERRED from the measurements):
+  - its own app pool, No Managed Code, because `applicationDefaults` would otherwise put it in
+    `DefaultAppPool`, which PMC Portal shares;
+  - an https binding `desk.pmcne.ph:443` with **SNI required**, because a non-SNI binding would
+    rewrite, and its later removal would delete, the `0.0.0.0:443` entry Payroll and Queue depend on;
+  - its own `desk.pmcne.ph:80` binding redirecting to https, because otherwise
+    `http://desk.pmcne.ph` lands on Default Web Site's `*:80` catch-all (it answers 200 today);
+  - a named `appcmd add backup` before the change, because `configHistory` keeps only 10 snapshots
+    at 2-minute intervals;
+  - the site added to the kill switch.
+- Certificate renewal (2027-02-23) must then re-point three entries, not two.
+
+**The desk cannot run behind ARR as the code stands.** ARR sends `Host: 127.0.0.1:8085` and
+scheme http.
+1. The CSRF check (`psaspine/web/__init__.py:298-304`) refuses every POST whose `Origin` netloc
+   differs from `Host`, `/login` included. Nobody could sign in.
+2. `psa_session` and the Entra cookie are `Secure` only when the desk serves TLS itself
+   (`__init__.py:219-231`, `entra.py:105-110`, `server.py:98-106`). An in-process probe shows no
+   `Secure` behind a TLS proxy.
+3. There is no reverse-proxy awareness at all: no `X-Forwarded-*` reads and no trusted-proxy
+   setting.
+
+Redirects are all relative, so they are fine. The Entra `redirect_uri` is right if
+`PSA_PUBLIC_URL=https://desk.pmcne.ph`. The Windows door is not gated on TLS in code (only in
+procedure). Changing ARR's server-wide `preserveHostHeader` would alter Portal and Payroll, so it
+is not the fix.
+
+**Asked upstream** (message sent 27 Sep):
+- accept an `Origin` equal to `PSA_PUBLIC_URL`'s scheme and netloc;
+- mark cookies `Secure` when `PSA_PUBLIC_URL` is https and the desk binds loopback, derived from
+  config and never from a request header;
+- HSTS recommended;
+- tests for both;
+- `PSA_PUBLIC_URL`, the Entra redirect URI and `PSA-Notify -PortalUrl` without `:8443`.
+
+After the fix, on the host: `PSA-Desk` gets `PSA_PUBLIC_URL=https://desk.pmcne.ph` and
+`PSA_WINDOWS_DOMAIN=PMCNE` (the operator's password prompt), then the IIS site as above. The
+desk itself stays on `127.0.0.1:8085`, so no firewall rule is needed for it.
