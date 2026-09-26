@@ -511,3 +511,20 @@ Two findings for the record:
 
 Step 7 can register `PSA-Desk` and `PSA-Rules` once step 6 is green and the batch-logon right is
 granted. The other three wait for the `Test-Path` fix and their own prerequisites above.
+
+### Sitting 1, part 5: 2026-09-26, 17:30 UTC. **Step 6 GREEN at `5353316`; the runbook's ACLs set; the batch right granted**
+
+Pulled `claude/psa-ticketing-build` to `4873f6b` (`5353316` plus a settings-only commit).
+Dada's instruction: *"Re-run step 6 as you described, then continue sitting 1 from step 7 for
+PSA-Desk and PSA-Rules once 'Log on as a batch job' is granted. Set the ACL on D:\psa as the
+runbook now says. Then sitting 2."*
+
+| Item | State | Evidence (MEASURED unless marked) |
+|---|---|---|
+| ACL, runbook "Folded in" | **done** | The existing ACLs were saved first with `icacls /save` (every entry had been inherited from `D:`). Then the runbook's line: `D:\psa` got `/inheritance:r` and `/grant:r` for `DND-SQL01\psa_desk` `(OI)(CI)M`, Administrators F, SYSTEM F; `D:\PMC\backup\PMC_PSA` got the same with `NT SERVICE\MSSQL$PMC_SS` in place of the task account. Read back: both are protected with exactly those three entries, and 0 of their 11 children still grant Users, Everyone or Authenticated Users. Nothing above either folder was touched. The empty `D:\psa\drop` was removed; `D:\psa\mail-drop` is left for the mail script to create |
+| "Log on as a batch job" | **granted** | The operator ran `D:\psa\bin\Grant-PsaDeskBatchLogon.ps1 -Apply`. It calls `LsaAddAccountRights`, which adds one right to one account (VERIFIED, https://learn.microsoft.com/windows/win32/api/ntsecapi/nf-ntsecapi-lsaaddaccountrights). Holders went from 4 to 5, and no other user right changed (the script's before/after diff). Its "UNEXPECTED" line was SQL01's comparison bug: `secedit` writes a named local account by name, not `*SID`. It is fixed in the script, and a re-check reads the 4 built-in groups plus `psa_desk`, whose entry resolves to its own SID |
+| Step 6 re-run | **PASS** | `PMC_PSA_TEST` was recreated the same way (one FULL at creation; the SQL service wrote it into the newly restricted backup folder, which also proves the new ACL). The operator ran `Sitting1-AsDesk.ps1 -TestsOnly` as `psa_desk`: **`Ran 473 tests in 449.332s` / `OK (skipped=9)`**, exit 0. The skips are the 8 SQLite-settings ones and 1 "this asserts the refusal on a non-Windows host". The 2 openssl skips are gone: the tests found Git's `openssl.exe`. No wrapper-artifact lines this time. Then `DROP DATABASE PMC_PSA_TEST`, and its backup file deleted; 10 user databases remain. The infra session was told at creation and at the drop |
+| No password-free road to step 7 | **measured** | An S4U task registered as `psa_desk` by the administrator without a password was refused: `Register-ScheduledTask` answered "Access is denied". That matches Microsoft's rule that an administrator registering an S4U task for a *different* user must supply that user's password (VERIFIED, https://learn.microsoft.com/windows/win32/taskschd/security-contexts-for-running-tasks). Nothing was left behind (0 `PSA-*` tasks after). So step 7's registration is the operator's one password prompt: `D:\psa\bin\Register-PsaTasks.ps1 -Apply` registers `PSA-Desk` (`serve … --host 127.0.0.1 --port 8085` at start-up, restart every minute) and `PSA-Rules` (`run-rules`, every minute) as `psa_desk`, each writing `D:\psa\logs\<TaskName>.log`. Its preview is clean |
+
+The daily copy of `D:\psa\files` still has no destination. The files are on `D:` only, while the
+SQL backup covers the metadata (the runbook asks for this line every sitting).
