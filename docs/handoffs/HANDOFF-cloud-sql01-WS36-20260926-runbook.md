@@ -289,3 +289,44 @@ returns 0x0 every minute. The operator signed in, and a ticket raised through th
 board) reached `psa.ticket` and was closed. `desk.pmcne.ph` is a static A record on `DND-AD01`.
 **Sitting 2 is blocked** by one finding: the seeded boards `IT_HELP` and `UNROUTED` have no
 members, and no web road gives them a first admin (detail in the sqlserver Reply, part 6).
+
+### Part 7: 2026-09-26, 21:24 UTC. `a776c10` in; seeded boards have their admin; sitting 2 started
+
+| Step (the operator's list) | State | Evidence (MEASURED unless marked) |
+|---|---|---|
+| 1 Pull | **PASS** | HEAD `a776c10` ("a seeded board's first administrator"), fast-forward from `3e2548f` |
+| 2 Restart `PSA-Desk` | **PASS** | `Stop-ScheduledTask` left no `psaspine serve` process (old PID gone); port 8085 was free; `Start-ScheduledTask`. The new listener is `python.exe`, owner `psa_desk`, on `127.0.0.1:8085`, started 02:57:20 host time; `/login` answers 200. `PSA-Rules` untouched, still 0x0 |
+| 3 First administrators | **PASS** | Run as `psa_desk` by the operator through `D:\psa\bin\Sitting2-BoardAdmin.ps1` (runas). It reads the one active break-glass sysadmin's name from `psa.local_account`, so nobody types it. `board-admin … --board IT_HELP` and `--board UNROUTED` each printed "`<account>` is its first administrator (audited)", exit 0. The same two again each printed "refused: … already has members", exit 1. `board_member` now holds `IT_HELP ADMIN` and `UNROUTED ADMIN` for that account, and exactly one `BOARD_MEMBER` audit row per board. The operator ran the script a second time, and all four calls were refused: idempotent |
+| 4 Sign in, open IT_HELP | **PASS** | The operator signed in again (the restart ends sessions). In Chrome, the Service Board lists IT Help, Unrouted and the test board. Setup › IT Help › Members & roles lists the account as **ADMIN**, no team |
+
+**Tests at `a776c10`.** `tests/smoke.py`: **7 of 7 steps passed** (Python 3.12.10, win32), including
+"desk boots on 127.0.0.1 and challenges an unauthenticated request" (401) and "desk refuses a public
+bind". The unit suite on SQLite, run as the operator: `Ran 475 tests`, `FAILED (errors=1,
+skipped=2)`. The one error is Windows-only and SQLite-only: `EntraSignInTest.test_a_wrong_state_a_stale_flight_and_a_foreign_nonce_are_each_refused`
+fails in `tearDown` with `WinError 32` on its temporary `spine.db`, a connection the test leaves
+open, the same class as the part-3 fix. The SQL Server suite, the one that governs the desk, was
+green at `5353316` (473 OK). **For upstream:** close that test's connection; low severity.
+
+**Sitting 2: the pilot handoff, where it stands**
+
+| Pilot step | State | Evidence and what it waits on |
+|---|---|---|
+| 0 | **PASS** | `D:\psa\spine.db` does not exist; the store is `PMC_PSA` |
+| 1 | **PASS** | smoke 7/7 (above); the SQL Server suite 473 OK at `5353316`. SQLite-on-Windows has the one test-cleanup error above |
+| 2 | **first admins PASS; the rest Dada's** | Which boards, Types, Statuses, SLA targets, templates and rules the pilot runs are "Setup decisions for Dada and the Service Manager" (this handoff's "Do NOT decide"). Not made by SQL01 |
+| 3 | **in part; waits on names** | The break-glass sysadmin and one technician (`itadmin`) exist. The test script needs two or three technicians (B8 needs a second). `D:\psa\bin\Sitting2-AsDesk.ps1` (runas `psa_desk`) creates each one named by the operator, with the password at the desk's no-echo prompt. It parses with 0 errors; not run |
+| 4 | **ready; operator's** | For technicians' PCs (test A1): `D:\psa\bin\Set-PsaDeskLan.ps1 -Apply` moves `PSA-Desk` to the address `desk.pmcne.ph` resolves to, and adds the runbook's one rule `PSA-Desk-8085` (inbound TCP 8085, LocalSubnet, Domain profile). It needs `psa_desk`'s password (Task Scheduler re-validates a task that runs as another account), and the firewall rule is the operator's to apply. `-Rollback` restores `127.0.0.1` and removes the rule. Preview: `desk.pmcne.ph` is one of this host's addresses; `PSA-Desk` on `127.0.0.1`; the rule does not exist yet. Not applied |
+| 5 | **held** | The export scripts say "Run it as an ordinary domain user … Do not run it as a Domain Admin". This session is in Domain Admins and Enterprise Admins (MEASURED, token groups), so SQL01 did not run them. The ActiveDirectory module is installed. Either an ordinary domain user runs the two exports into `D:\psa\`, then `Sitting2-AsDesk.ps1` imports them, or Dada overrides the scripts' rule |
+| 6 | **unchanged** | Mail and notify wait on the Graph registration; retention waits on the DPO (Dada's, the Folded-in section) |
+| 7 | **waits on people** | The test script needs two or three technicians at their own PCs, after step 4 |
+| 8 | **half** | `PSA-Backup-PMC_PSA`, daily 03:40, verified (sitting 1 part 2). The attachment copy still has no destination (Dada's). The files are on `D:` only; the SQL backup covers the metadata |
+
+**The wildcard certificate: a PFX exists on the host.** Dada: *"the cert should be here"*. A
+name-only search (no file opened; the repo's rules forbid reading `*.pfx`) found
+`C:\Certs\wildcard.pmcne.ph.pfx`, 6,145 bytes, dated 2026-08-17. A control file was found by
+the same method; one folder refused access. The store's copy of `*.pmcne.ph` (RapidSSL,
+2027-02-23) still has export policy None (MEASURED). So HTTPS road (a) (the original PFX,
+converted to PEM by the operator with its password, for the desk's own TLS) is available. The
+choice between (a) and (b) (IIS in front) is still Dada's; nothing was done toward either. For the
+record, not acted on: `C:\Temp` also holds three other `.pfx` files dated 2026-04-29
+(`agentcert.pfx`, `agentcert.cert.pfx`, `QWEQWEert.pfx`).
