@@ -1850,6 +1850,7 @@ import io as _io             # noqa: E402
 import json as _json         # noqa: E402
 import secrets as _secrets   # noqa: E402
 import time as _time         # noqa: E402
+import urllib.error            # noqa: E402
 import urllib.parse as _urlparse   # noqa: E402
 from wsgiref.validate import validator as _validator   # noqa: E402
 
@@ -6171,6 +6172,221 @@ class MarkdownRenderTest(unittest.TestCase):
         html = self._render("A paragraph with <script> in it.")
         self.assertNotIn("<script>", html)
         self.assertIn("&lt;script&gt;", html)
+
+
+class EntraSignInTest(unittest.TestCase):
+    """The browser's way in: authorization code with PKCE against a tenant that
+    never leaves the process. The token endpoint and the keys are fakes on the
+    Config; the ID token is signed with the suite's synthetic RSA key."""
+    _call = WebWSGITest._call
+    _environ = WebWSGITest._environ
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = _target(self.tmp)
+        _fresh(self.tmp).close()
+        self.n, self.e, self.d = _rsa_keypair()
+        self.gets, self.posts = [], []
+        self.nonce_to_sign = None            # None: the one the flight carries
+        self.post_raises = None
+
+        def http_get(url):
+            self.gets.append(url)
+            nb = self.n.to_bytes((self.n.bit_length() + 7) // 8, "big")
+            eb = self.e.to_bytes((self.e.bit_length() + 7) // 8, "big")
+            return {"keys": [{"kty": "RSA", "kid": "k1", "n": _b64u(nb), "e": _b64u(eb)}]}
+
+        def http_post(url, data):
+            self.posts.append((url, data))
+            if self.post_raises:
+                raise self.post_raises
+            now = _time.time()
+            claims = {"aud": "client-z", "iss": "https://login.microsoftonline.com/tenant-y/v2.0",
+                      "exp": now + 600, "nbf": now - 10, "oid": "oid-alice", "name": "Alice Cruz",
+                      "preferred_username": "alice@pmcne.ph",
+                      "nonce": self.nonce_to_sign if self.nonce_to_sign is not None else self.flight["nonce"]}
+            return {"id_token": _sign_rs256(claims, self.n, self.d)}
+
+        self.config = Config(session_secret=_secrets.token_bytes(32), entra_tenant="tenant-y",
+                             entra_client="client-z", http_get=http_get, http_post=http_post)
+        self.raw = make_app(self.db_path, config=self.config, clock=lambda: datetime(2026, 9, 26, 9, 0))
+        self.flight = {}
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _start(self, next_url="/my"):
+        status, headers, _ = self._call("GET", "/entra/start", query=f"next={next_url}",
+                                        headers={"host": "desk.test:8443"})
+        self.assertTrue(status.startswith("303"), status)
+        location = dict(headers)["Location"]
+        cookie = next(v for k, v in headers if k == "Set-Cookie")
+        self.flight_cookie_header = cookie
+        value = cookie.split(";", 1)[0].split("=", 1)[1]
+        self.flight = _json.loads(_b64.urlsafe_b64decode(value.split(".")[0] + "=="))
+        return location, "psa_entra=" + value
+
+    def test_the_login_page_offers_entra_when_a_tenant_is_configured(self):
+        status, _, body = self._call("GET", "/login")
+        self.assertIn("/entra/start", body)
+        self.assertIn("Break-glass", body)
+
+    def test_start_sends_the_browser_to_the_tenant_with_pkce_and_a_signed_flight(self):
+        location, cookie = self._start()
+        self.assertTrue(location.startswith("https://login.microsoftonline.com/tenant-y/oauth2/v2.0/authorize?"))
+        q = dict(_urlparse.parse_qsl(_urlparse.urlsplit(location).query))
+        self.assertEqual((q["client_id"], q["response_type"], q["code_challenge_method"]),
+                         ("client-z", "code", "S256"))
+        self.assertEqual(q["redirect_uri"], "http://desk.test:8443/entra/callback")
+        self.assertEqual(q["state"], self.flight["state"])
+        self.assertEqual(q["nonce"], self.flight["nonce"])
+        expected = _b64u(_hashlib.sha256(self.flight["verifier"].encode()).digest())
+        self.assertEqual(q["code_challenge"], expected)
+        for attr in ("HttpOnly", "SameSite=Lax", "Path=/entra", "Max-Age=600"):
+            self.assertIn(attr, self.flight_cookie_header)
+        self.assertNotIn("Secure", self.flight_cookie_header)          # plain http in this test
+
+    def test_the_callback_exchanges_the_code_verifies_the_token_and_opens_a_session(self):
+        location, cookie = self._start("/my")
+        state = self.flight["state"]
+        status, headers, _ = self._call("GET", "/entra/callback", query=f"code=abc&state={state}",
+                                        cookie=cookie, headers={"host": "desk.test:8443"})
+        self.assertTrue(status.startswith("303"), status)
+        self.assertEqual(dict(headers)["Location"], "/my")
+        cookies = [v for k, v in headers if k == "Set-Cookie"]
+        self.assertTrue(any(c.startswith("psa_session=") for c in cookies))
+        self.assertTrue(any(c.startswith("psa_entra=;") for c in cookies))
+        url, data = self.posts[0]
+        self.assertEqual(url, "https://login.microsoftonline.com/tenant-y/oauth2/v2.0/token")
+        self.assertEqual((data["code"], data["code_verifier"], data["redirect_uri"], data["client_id"]),
+                         ("abc", self.flight["verifier"], "http://desk.test:8443/entra/callback", "client-z"))
+        self.assertNotIn("client_secret", data)
+        self.assertEqual(self.gets, ["https://login.microsoftonline.com/tenant-y/discovery/v2.0/keys"])
+        conn = db.connect(self.db_path)
+        row = conn.execute("SELECT actor, subject_id, detail FROM audit_event WHERE action = 'ENTRA_LOGIN'").fetchone()
+        conn.close()
+        self.assertEqual(tuple(row), ("oid-alice", "alice@pmcne.ph", "Alice Cruz"))
+        # the session works: the portal answers for this person
+        session = next(c for c in cookies if c.startswith("psa_session=")).split(";", 1)[0]
+        status, _, body = self._call("GET", "/my", cookie=session)
+        self.assertTrue(status.startswith("200"), status)
+
+    def test_a_wrong_state_a_stale_flight_and_a_foreign_nonce_are_each_refused(self):
+        _, cookie = self._start()
+        status, _, body = self._call("GET", "/entra/callback", query="code=abc&state=not-it", cookie=cookie)
+        self.assertTrue(status.startswith("401"))
+        self.assertIn("did not match", body)
+        self.assertEqual(self.posts, [])
+        status, _, body = self._call("GET", "/entra/callback", query=f"code=abc&state={self.flight['state']}",
+                                     cookie="psa_entra=" + cookie.split("=", 1)[1][:-3] + "xyz")
+        self.assertTrue(status.startswith("401"))
+        self.assertIn("did not start here", body)
+        self.nonce_to_sign = "someone-elses"
+        status, _, body = self._call("GET", "/entra/callback", query=f"code=abc&state={self.flight['state']}",
+                                     cookie=cookie)
+        self.assertTrue(status.startswith("401"))
+        self.assertIn("not issued for this sign-in", body)
+        self.assertEqual(db.connect(self.db_path).execute(
+            "SELECT COUNT(*) FROM audit_event WHERE action = 'ENTRA_LOGIN'").fetchone()[0], 0)
+
+    def test_when_the_tenant_is_unreachable_the_break_glass_door_is_offered(self):
+        _, cookie = self._start()
+        self.post_raises = OSError("no route")
+        status, _, body = self._call("GET", "/entra/callback", query=f"code=abc&state={self.flight['state']}",
+                                     cookie=cookie)
+        self.assertTrue(status.startswith("401"))
+        self.assertIn("could not be reached", body)
+        self.assertIn("Break-glass", body)
+
+    def test_a_bearer_token_on_the_api_side_fetches_the_keys_it_needs(self):
+        from psaspine.web import entra
+        cfg = Config(session_secret=b"x" * 32, entra_tenant="tenant-y", entra_client="client-z",
+                     http_get=lambda url: {"keys": [{"kty": "RSA", "kid": "k9", "n": "AQAB", "e": "AQAB"}]})
+        self.assertEqual(cfg.jwks, {})
+        keys = entra.ensure_key(cfg, "k9")
+        self.assertEqual(keys["k9"], {"n": 65537, "e": 65537})
+        self.assertIs(entra.ensure_key(cfg, "k9"), cfg.jwks)      # held, not fetched twice
+
+
+class HttpsServerTest(unittest.TestCase):
+    """The desk speaking TLS itself, with a certificate made for the test."""
+
+    @classmethod
+    def setUpClass(cls):
+        import shutil
+        cls.openssl = shutil.which("openssl")
+
+    def setUp(self) -> None:
+        if not self.openssl:
+            self.skipTest("openssl is not on this machine to make a test certificate")
+        import subprocess
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = _target(self.tmp)
+        conn = _fresh(self.tmp)
+        webauth.create_local_account(conn, "glass", "correct horse battery staple", created_by="t",
+                                     at=datetime(2026, 9, 26, 9))
+        conn.commit()
+        conn.close()
+        self.cert = str(Path(self.tmp.name) / "desk.pem")
+        self.key = str(Path(self.tmp.name) / "desk-key.pem")
+        subprocess.run([self.openssl, "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", self.key,
+                        "-out", self.cert, "-days", "2", "-subj", "/CN=localhost",
+                        "-addext", "subjectAltName=IP:127.0.0.1,DNS:localhost"],
+                       check=True, capture_output=True)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_https_answers_and_the_session_cookie_is_secure(self):
+        import ssl
+        import threading
+        import urllib.request
+        from psaspine.web import server
+        cfg = Config(session_secret=_secrets.token_bytes(32))
+        httpd = server.build(str(self.db_path), host="127.0.0.1", port=0, config=cfg,
+                             cert=self.cert, key=self.key)
+        port = httpd.server_address[1]
+        t = threading.Thread(target=httpd.serve_forever, daemon=True)
+        t.start()
+        try:
+            ctx = ssl.create_default_context(cafile=self.cert)
+            with urllib.request.urlopen(f"https://127.0.0.1:{port}/login", context=ctx, timeout=10) as r:
+                self.assertEqual(r.status, 200)
+                self.assertIn("Break-glass", r.read().decode())
+            body = _urlparse.urlencode({"username": "glass", "password": "correct horse battery staple",
+                                        "next": "/"}).encode()
+            req = urllib.request.Request(f"https://127.0.0.1:{port}/login", data=body, method="POST")
+
+            class NoRedirect(urllib.request.HTTPRedirectHandler):
+                def redirect_request(self, *a, **k):
+                    return None
+            opener = urllib.request.build_opener(NoRedirect, urllib.request.HTTPSHandler(context=ctx))
+            try:
+                r = opener.open(req, timeout=10)
+                status, headers = r.status, r.headers
+            except urllib.error.HTTPError as e:
+                status, headers = e.code, e.headers
+            self.assertEqual(status, 303)
+            cookie = headers.get("Set-Cookie", "")
+            self.assertIn("psa_session=", cookie)
+            self.assertIn("Secure", cookie)
+            self.assertIn("HttpOnly", cookie)
+            # plain http to the TLS port is refused by the handshake, not served
+            with self.assertRaises(Exception):
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/login", timeout=5)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
+    def test_a_certificate_without_its_key_or_a_missing_file_is_refused_in_a_sentence(self):
+        from psaspine.web import server
+        with self.assertRaises(SystemExit) as c1:
+            server.build(str(self.db_path), host="127.0.0.1", port=0, cert=self.cert)
+        self.assertIn("go together", str(c1.exception))
+        with self.assertRaises(SystemExit) as c2:
+            server.build(str(self.db_path), host="127.0.0.1", port=0, cert=self.cert,
+                         key=str(Path(self.tmp.name) / "nope.pem"))
+        self.assertIn("does not exist", str(c2.exception))
 
 
 class SqlServerDialectTest(unittest.TestCase):

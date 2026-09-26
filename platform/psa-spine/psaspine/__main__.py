@@ -72,6 +72,8 @@ def main(argv: list[str] | None = None) -> int:
     ps.add_argument("--host", default="127.0.0.1",
                     help="interface to bind; refuses 0.0.0.0 (default 127.0.0.1)")
     ps.add_argument("--port", type=int, default=8080)
+    ps.add_argument("--cert", help="PEM certificate: the desk then speaks HTTPS (with --key)")
+    ps.add_argument("--key", help="PEM private key for --cert; readable by the task account only")
 
     pc = sub.add_parser("create-local-account",
                         help="create a sealed break-glass account (password read from a "
@@ -408,7 +410,7 @@ def main(argv: list[str] | None = None) -> int:
         # Imported here so the rest of the CLI needs nothing under web/, and so a
         # deployment without the web tier still runs init/import/report.
         from .web.server import serve
-        serve(a.database, host=a.host, port=a.port)
+        serve(a.database, host=a.host, port=a.port, cert=a.cert, key=a.key)
         return 0
 
     if a.cmd == "create-local-account":

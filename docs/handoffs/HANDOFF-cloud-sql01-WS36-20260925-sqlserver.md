@@ -44,7 +44,7 @@ never a change to what was found.
 | One database on the instance | `PMC_PSA` (and `PMC_PSA_TEST` for step 6, dropped after) | any other database read or written, any instance setting changed |
 | One login and one database user | `<psa task account>` (Windows), default schema `psa` on `PMC_PSA` only | membership of any server role; any right on another database |
 | One folder tree | `D:\psa\` (files, drop, logs) and `D:\PMC\sql\` for the database files | anything on `C:` |
-| One listening port, one address | **8085** on `127.0.0.1` or the one LAN address the record names | 8080, `0.0.0.0`, any port `Get-NetTCPConnection` shows listening |
+| One listening port, one address | **8085** on `127.0.0.1` or the one LAN address the record names (**8443** once the portal handoff puts HTTPS on it) | 8080, `0.0.0.0`, any port `Get-NetTCPConnection` shows listening |
 | Scheduled tasks | all named `PSA-…` (`PSA-Desk`, `PSA-MailPickup`, `PSA-Rules`, `PSA-Notify`, `PSA-Retention`) | editing or disabling any existing task |
 | One SQL Agent job | `PSA-Backup-PMC_PSA` | editing any existing job |
 | Python packages | `pyodbc` into `C:\PMC\Python312` | a system-wide install; any other package |

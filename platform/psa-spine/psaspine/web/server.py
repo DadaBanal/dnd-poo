@@ -57,13 +57,37 @@ def _refuse_if_taken(host: str, port: int) -> None:
         probe.close()
 
 
-def serve(db_path: str, *, host: str = "127.0.0.1", port: int = 8080,
-          config: Config | None = None) -> None:
+def tls_context(cert: str, key: str):
+    """TLS for the desk from a certificate and its key, both PEM. TLS 1.2 at
+    least; the cipher choice is the standard library's current default. The
+    key file is read once here, at start, and should be readable by the task
+    account alone (the handoff sets that)."""
+    import os
+    import ssl
+    for label, path in (("certificate", cert), ("key", key)):
+        if not os.path.isfile(path):
+            raise SystemExit(f"refusing to start: the {label} file {path!r} does not exist")
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    try:
+        ctx.load_cert_chain(cert, key)
+    except ssl.SSLError as exc:
+        raise SystemExit(f"refusing to start: the certificate and key do not load ({exc.reason or exc}). "
+                         "Both must be PEM; the handoff shows the export from the Windows store.") from None
+    return ctx
+
+
+def build(db_path: str, *, host: str = "127.0.0.1", port: int = 8080,
+          config: Config | None = None, cert: str | None = None, key: str | None = None):
+    """The server, ready to serve_forever(); serve() prints and runs it, and the
+    tests run it on a port of their own."""
     if host in PUBLIC_BINDS:
         raise SystemExit(
             f"refusing to bind to {host!r}: the Phase B pilot is LAN only and Dada "
             "IT only. Bind to 127.0.0.1, or to a specific LAN address you mean to "
             "expose, never to all interfaces.")
+    if bool(cert) != bool(key):
+        raise SystemExit("refusing to start: --cert and --key go together")
 
     # A port another service holds is refused in a sentence, before anything
     # else happens: on a host that runs the hospital's other services (the
@@ -71,19 +95,35 @@ def serve(db_path: str, *, host: str = "127.0.0.1", port: int = 8080,
     # fails half-way, or a port taken from something live, is the wrong start.
     _refuse_if_taken(host, port)
 
+    ctx = tls_context(cert, key) if cert else None     # refused before any socket is opened
     config = config or Config.from_env()
     app = make_app(db_path, config=config)
+    httpd = make_server(host, port, app, server_class=ThreadedServer, handler_class=QuietHandler)
+    if ctx is not None:
+        httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
+        # wsgiref reads this to say wsgi.url_scheme = https, which is what
+        # marks the session cookie Secure and builds the Entra redirect URI.
+        httpd.base_environ["HTTPS"] = "on"
+    return httpd
 
+
+def serve(db_path: str, *, host: str = "127.0.0.1", port: int = 8080,
+          config: Config | None = None, cert: str | None = None, key: str | None = None) -> None:
+    config = config or Config.from_env()
+    httpd = build(db_path, host=host, port=port, config=config, cert=cert, key=key)
+    scheme = "https" if cert else "http"
     posture = ("Entra + break-glass" if config.entra_configured
                else "break-glass only (no Entra tenant configured)")
-    print(f"PSA desk (Phase B pilot) on http://{host}:{port}", file=sys.stderr)
+    print(f"PSA desk (Phase B pilot) on {scheme}://{host}:{port}", file=sys.stderr)
     print(f"  database: {db.describe(db_path)}", file=sys.stderr)
     print(f"  sign-in:  {posture}", file=sys.stderr)
+    if not cert:
+        print("  plain HTTP: the pilot's LAN only. The requester portal and Entra sign-in "
+              "wait for --cert and --key.", file=sys.stderr)
     print("  wsgiref.simple_server is not a production server. Phase C puts the "
           "same app behind a real one.", file=sys.stderr)
 
-    with make_server(host, port, app, server_class=ThreadedServer,
-                     handler_class=QuietHandler) as httpd:
+    with httpd:
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:

@@ -23,6 +23,7 @@ import os
 import secrets
 import sqlite3
 import urllib.parse
+from typing import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -53,16 +54,28 @@ class Config:
     session_secret: bytes = field(default_factory=lambda: secrets.token_bytes(32))
     entra_tenant: str | None = None
     entra_client: str | None = None
-    jwks: dict = field(default_factory=dict)     # {kid: {"n": int, "e": int}}
+    jwks: dict = field(default_factory=dict)     # {kid: {"n": int, "e": int}}, fetched as needed
+    # The URL staff type (https://desk.example:8443); the Entra redirect URI is
+    # built on it. Unset, the request's own scheme and host are used.
+    public_url: str | None = None
+    # The two network calls the browser sign-in makes; tests hand in their own.
+    http_get: "Callable[[str], dict]" = None
+    http_post: "Callable[[str, dict], dict]" = None
+
+    def __post_init__(self):
+        from . import entra
+        self.http_get = self.http_get or entra.http_get_json
+        self.http_post = self.http_post or entra.http_post_form
 
     @property
     def entra_configured(self) -> bool:
-        return bool(self.entra_tenant and self.entra_client and self.jwks)
+        return bool(self.entra_tenant and self.entra_client)
 
     @classmethod
     def from_env(cls) -> "Config":
         return cls(entra_tenant=os.environ.get("PSA_ENTRA_TENANT"),
-                   entra_client=os.environ.get("PSA_ENTRA_CLIENT"))
+                   entra_client=os.environ.get("PSA_ENTRA_CLIENT"),
+                   public_url=os.environ.get("PSA_PUBLIC_URL"))
 
 
 @dataclass
@@ -73,6 +86,11 @@ class Request:
     headers: dict[str, str]
     cookies: http.cookies.SimpleCookie
     body: bytes
+    scheme: str = "http"
+
+    @property
+    def secure(self) -> bool:
+        return self.scheme == "https"
 
     @classmethod
     def from_environ(cls, environ) -> "Request":
@@ -95,7 +113,8 @@ class Request:
             method=environ.get("REQUEST_METHOD", "GET").upper(),
             path=environ.get("PATH_INFO", "/") or "/",
             query=dict(urllib.parse.parse_qsl(environ.get("QUERY_STRING", ""))),
-            headers=headers, cookies=cookies, body=body)
+            headers=headers, cookies=cookies, body=body,
+            scheme=environ.get("wsgi.url_scheme", "http"))
 
     def _multipart(self):
         """(fields, files) of a multipart/form-data body, parsed with the
@@ -188,7 +207,7 @@ class Ctx:
     now: datetime
 
 
-def _session_cookie_value(token: str) -> str:
+def _session_cookie_value(token: str, *, secure: bool = False) -> str:
     c = http.cookies.SimpleCookie()
     c[SESSION_COOKIE] = token
     m = c[SESSION_COOKIE]
@@ -196,6 +215,10 @@ def _session_cookie_value(token: str) -> str:
     m["httponly"] = True
     m["samesite"] = "Lax"
     m["max-age"] = str(auth.SESSION_SECONDS)
+    if secure:
+        # Over HTTPS the cookie is never sent in the clear; over the pilot's
+        # plain LAN it cannot be marked so, or the browser would drop it.
+        m["secure"] = True
     return m.OutputString()
 
 
@@ -220,7 +243,13 @@ def resolve_user(conn, request: Request, config: Config) -> auth.User:
     # not an Entra token and is never tried as one, so one leaked machine
     # credential cannot become a person on the desk.
     if token and not token.startswith("psa_") and config.entra_configured:
-        return auth.verify_entra_token(token, config.jwks,
+        from . import entra
+        header = auth._jwt_segments(token)[0]
+        try:
+            jwks = entra.ensure_key(config, header.get("kid"))
+        except Exception as exc:
+            raise auth.Unauthenticated(f"the tenant's keys could not be read ({exc.__class__.__name__})")
+        return auth.verify_entra_token(token, jwks,
                                        tenant=config.entra_tenant,
                                        client_id=config.entra_client)
     raise auth.Unauthenticated("no session and no bearer token")
@@ -271,6 +300,14 @@ def _route(conn, request: Request, config: Config, now: datetime) -> Response:
         return _do_login(conn, request, config, now)
     if request.path == "/logout":
         return redirect("/login", set_cookie=_cleared_cookie())
+    if request.path in ("/entra/start", "/entra/callback") and request.method == "GET":
+        from . import entra
+        if not config.entra_configured:
+            return Response("404 Not Found", "<h1>404</h1><p>Entra sign-in is not configured "
+                            "on this desk.</p>")
+        if request.path == "/entra/start":
+            return entra.start(request, config)
+        return entra.callback(conn, request, config, now)
 
     try:
         user = resolve_user(conn, request, config)
@@ -304,7 +341,7 @@ def _do_login(conn, request: Request, config: Config, now: datetime) -> Response
     # Never redirect an open session to an absolute or off-site URL.
     if not next_url.startswith("/"):
         next_url = "/"
-    return redirect(next_url, set_cookie=_session_cookie_value(token))
+    return redirect(next_url, set_cookie=_session_cookie_value(token, secure=request.secure))
 
 
 # The PEP 3333 callable a production server or the tests import directly is built

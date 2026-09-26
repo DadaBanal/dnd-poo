@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 454 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 464 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -411,6 +411,49 @@ Where this desk differs from ConnectWise:
 Waiting statuses pause the **resolve** clock, never the respond clock. A board
 move keeps the ticket id and its clocks. A POST from another site is refused,
 on top of the `SameSite=Lax` session cookie.
+
+## HTTPS and the organisation sign-in (26 Sep 2026)
+
+The desk speaks TLS itself when it is given a certificate, so nothing else has
+to be installed in front of it on a host that already runs the hospital's
+services:
+
+```bash
+python3 -m psaspine serve <database> --host <the LAN address> --port 8443 \
+    --cert D:\psa\tls\desk.pem --key D:\psa\tls\desk-key.pem
+```
+
+Both files are PEM (the portal handoff shows the export from the Windows
+certificate store), TLS 1.2 is the floor, and the key file should be readable
+by the task account alone. Over HTTPS the session cookie is `Secure`; over the
+pilot's plain LAN it cannot be, or the browser would drop it. A certificate
+without its key, a missing file, or a pair that does not load is refused in a
+sentence before any socket is opened.
+
+**Sign in with Entra** is the normal way in for the ~400 staff the portal
+serves and for every fulfiller with an organisation account. The desk is
+registered in PMC's tenant as a **public client**: no client secret exists
+anywhere, and the authorization-code exchange is protected by PKCE. Two
+settings switch it on:
+
+| Setting | What |
+|---|---|
+| `PSA_ENTRA_TENANT` | the tenant id |
+| `PSA_ENTRA_CLIENT` | the app registration's client id |
+| `PSA_PUBLIC_URL` | optional: the URL staff type, e.g. `https://desk.pmcne.ph:8443`; the redirect URI is built on it and must equal, byte for byte, the one registered on the app. Unset, the request's own scheme and host are used. |
+
+`/entra/start` sends the browser to Microsoft with a state, a nonce and a code
+challenge, remembered in a signed cookie that lives ten minutes and only on
+`/entra`; `/entra/callback` trades the code for an ID token (proving it holds
+the verifier), verifies the token with the same by-hand RS256 check the API
+tokens get against the tenant's published keys (fetched when a key is first
+needed, and again when Microsoft rotates them), checks the nonce, writes an
+`ENTRA_LOGIN` audit row and opens the ordinary session. A person signed in
+this way sees their own requests on `/my`; they see a board only if an
+administrator made them a member of it. When the tenant cannot be reached (the
+WAN), the sign-in page says so and the break-glass door below it still works,
+which is the §6.2 posture. NOT VERIFIED against a real tenant from here; the
+portal handoff's last step is that sign-in.
 
 ## Requester intake (Phase C)
 
