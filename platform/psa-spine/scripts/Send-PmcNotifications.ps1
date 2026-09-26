@@ -209,7 +209,10 @@ function Invoke-Pass {
 }
 
 # ---------------------------------------------------------------- main
-foreach ($p in $Database, $SpineDir) {
+# $Database is a SQLite file or, since D7, an ODBC connection string (Driver=...;
+# Server=...); Test-Path knows only the first. The desk itself refuses a bad string.
+$isConnectionString = $Database -match '(^|;)\s*(Driver|Server|DSN|Data Source)\s*='
+foreach ($p in @($SpineDir) + $(if ($isConnectionString) { @() } else { @($Database) })) {
     if (-not (Test-Path $p)) { throw "Not found: $p" }
 }
 if ($Apply -and -not (Test-Path $StateDir)) { New-Item -ItemType Directory -Path $StateDir | Out-Null }

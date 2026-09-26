@@ -77,7 +77,7 @@ def tls_context(cert: str, key: str):
     return ctx
 
 
-def build(db_path: str, *, host: str = "127.0.0.1", port: int = 8080,
+def build(db_path: str, *, host: str = "127.0.0.1", port: int = 8085,
           config: Config | None = None, cert: str | None = None, key: str | None = None):
     """The server, ready to serve_forever(); serve() prints and runs it, and the
     tests run it on a port of their own."""
@@ -107,7 +107,7 @@ def build(db_path: str, *, host: str = "127.0.0.1", port: int = 8080,
     return httpd
 
 
-def serve(db_path: str, *, host: str = "127.0.0.1", port: int = 8080,
+def serve(db_path: str, *, host: str = "127.0.0.1", port: int = 8085,
           config: Config | None = None, cert: str | None = None, key: str | None = None) -> None:
     config = config or Config.from_env()
     httpd = build(db_path, host=host, port=port, config=config, cert=cert, key=key)

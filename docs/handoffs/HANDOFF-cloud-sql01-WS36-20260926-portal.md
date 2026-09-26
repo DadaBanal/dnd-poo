@@ -18,12 +18,15 @@ touched.
 
 ## Two decisions first (Dada)
 
-1. **The desk's name.** Staff will type it, the certificate must cover it,
-   and the Entra redirect URI is built on it. If the certificate is a wildcard
-   for `pmcne.ph`, `desk.pmcne.ph` is the proposal; if it names one host, that
-   host is the name. An internal DNS A record for it, pointing at
-   `DND-SQL01`'s LAN address, is step 1. **NOT VERIFIED** which kind of
-   certificate PMC holds; step 1 reads it.
+1. **The desk's name.** Staff will type it and the certificate must cover
+   it. MEASURED 26 Sep (SQL01's pre-check): the host holds the `*.pmcne.ph`
+   wildcard, `dnd-sql01.pmcne.ph` is covered by it and already resolves to
+   this host, `desk.pmcne.ph` has no record. So **`dnd-sql01.pmcne.ph` is the
+   default**; `desk.pmcne.ph` needs one DNS A record first and is Dada's if
+   preferred. **The wildcard's private key is non-exportable in the store**,
+   so step 2 needs the original PFX from whoever installed it, or a re-key
+   with the CA imported as exportable; that is Dada's before this sitting
+   starts, and the sitting stops at step 2 without it.
 2. **The first group.** Dada IT plus **one ward or department** whose staff
    raise the most tickets. Their board gets *Email the requester* ticked; the
    rest stay off. The DPO's answer on §6.1 (a PIA, or none needed) gates the
@@ -50,8 +53,11 @@ and by whom). Write the subject and the expiry into the reply, **never the
 thumbprint**.
 
 **2. CHANGE: the certificate as PEM files the desk can read.** Python's TLS
-reads PEM; the store holds a PFX. Git for Windows ships `openssl.exe`, so no
-install:
+reads PEM. The store's copy of the wildcard has a non-exportable key
+(MEASURED 26 Sep), so `Export-PfxCertificate` refuses; use the **original PFX
+file** Dada supplies (skip the export line and point `openssl` at that file),
+or, if the certificate was re-keyed and imported as exportable, the export
+below. Git for Windows ships `openssl.exe`, so no install:
 
 ```powershell
 New-Item -ItemType Directory D:\psa\tls -Force | Out-Null

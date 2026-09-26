@@ -3529,6 +3529,15 @@ class MachineApiTest(unittest.TestCase):
     def _conn(self):
         return db.connect(self.db_path)
 
+    def test_a_dedup_key_longer_than_its_column_is_refused(self):
+        # api_alert's clustered key on SQL Server is capped at 900 bytes; the
+        # column is 200 characters and the API says so instead of failing later.
+        status, _, data = self._api("POST", "/api/v1/tickets", token=self.token,
+                                    payload={"summary": "x", "impact": "I3", "urgency": "U3",
+                                             "dedup_key": "k" * 201})
+        self.assertTrue(status.startswith("400"), status)
+        self.assertIn("200 characters", str(data))
+
     # ------------------------------------------------------------- the credential
 
     def test_no_token_is_401_with_a_bearer_challenge(self):
@@ -6433,6 +6442,13 @@ class HttpsServerTest(unittest.TestCase):
     def setUpClass(cls):
         import shutil
         cls.openssl = shutil.which("openssl")
+        if not cls.openssl:
+            # Git for Windows ships one; on DND-SQL01 it is not on the task account's PATH
+            for candidate in (r"C:\Program Files\Git\usr\bin\openssl.exe",
+                              r"C:\Program Files (x86)\Git\usr\bin\openssl.exe"):
+                if Path(candidate).is_file():
+                    cls.openssl = candidate
+                    break
 
     def setUp(self) -> None:
         if not self.openssl:
@@ -6659,6 +6675,22 @@ class SqlServerDialectTest(unittest.TestCase):
             self.assertIn("already in use", str(caught.exception))
         finally:
             holder.close()
+
+    def test_the_cli_closes_its_connection_on_every_road_out(self):
+        # Windows cannot delete a file a process still holds; two CLI tests
+        # found that on DND-SQL01 (26 Sep). Every command closes what it opened.
+        from unittest import mock
+        from psaspine.__main__ import main as cli_main
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            target = _fresh(tmp)
+            target.close()
+            with mock.patch.object(db, "close", wraps=db.close) as closed:
+                self.assertEqual(cli_main(["setup-board", str(_target(tmp)), "--board", "IT_HELP"]), 0)
+                self.assertEqual(cli_main(["setup-board", str(_target(tmp)), "--board", "NOPE"]), 1)
+            self.assertEqual(closed.call_count, 2)
+        finally:
+            tmp.cleanup()
 
     def test_backup_refuses_a_sql_server_target(self):
         with self.assertRaises(ValueError):

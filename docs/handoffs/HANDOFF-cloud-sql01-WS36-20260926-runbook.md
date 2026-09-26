@@ -89,6 +89,60 @@ else is restored.
 Sittings 1 and 2 are the pilot. Sitting 3 is when staff first touch it.
 Sitting 4 is on a date the record sets.
 
+## Folded in from sitting 1 (26 Sep, SQL01's Replies)
+
+Read with the tables below; each is now the rule.
+
+- **Two code fixes are in** (head after `a8cfa21`): the CLI closes its
+  connection on every road out (the Windows file lock that made step 6 red
+  on two SQLite-only tests), and the three task scripts accept a connection
+  string (the `Test-Path` guard skips one). Step 6 is re-run as SQL01 said:
+  `PMC_PSA_TEST` recreated the same way, the operator runs the tests as
+  `psa_desk` with `-TestsOnly`. Expect `OK`, 8 skipped for SQLite's settings
+  and 1 for the non-Windows assertion; the two openssl skips are gone if
+  Git's `openssl.exe` is where Git put it.
+- **The task account is `DND-SQL01\psa_desk`** (created by the operator).
+  "Log on as a batch job" is granted in `secpol.msc` by the operator, one
+  name added to one right, before step 7. The desk's login has
+  `db_datareader`, `db_datawriter`, `EXECUTE`, `VIEW DEFINITION` on `PMC_PSA`
+  and nothing else; schema `psa` stays `dbo`'s.
+- **The default port is now 8085 in the code**, so a task that omits
+  `--port` still never lands on 8080.
+- **`D:\psa` and `D:\PMC\backup\PMC_PSA` are the desk's folders and their
+  ACL is inside the footprint.** Before any `.eml` or attachment lands
+  (step 7): `icacls D:\psa /inheritance:r /grant:r "DND-SQL01\psa_desk:(OI)(CI)M" "Administrators:(OI)(CI)F" "SYSTEM:(OI)(CI)F"`,
+  and the same on the backup folder with the SQL Server service account in
+  place of `psa_desk`. Nothing above `D:\psa` is touched.
+- **The mail drop is `D:\psa\mail-drop`** (the mail handoff's name);
+  `D:\psa\drop` from sitting 1 is removed once empty.
+- **`PSA-MailPickup` and `PSA-Notify` wait on the mail handoff's steps 1 to
+  3** (the Graph app registration, its certificate, the mailbox scopes),
+  which were never run and are an Entra administrator's and an Exchange
+  administrator's, not SQL01's. That registration is an application, not a
+  user licence (Entra ID Free covers it, VERIFIED, learn.microsoft.com). Until
+  it is done the desk runs without email intake; tickets come from the desk
+  and the portal. `PSA-Desk` and `PSA-Rules` do not wait for it.
+- **The daily copy of `D:\psa\files` needs a destination** that is not `C:`
+  and not `D:`; none exists on the host. Dada's, with the record's backup
+  volume. Until then the SQL backup covers the metadata and the files are
+  on `D:` only, and the Reply says so every sitting.
+- **The `*.pmcne.ph` certificate's private key is non-exportable** in the
+  host's store, so sitting 3's export to PEM cannot run from that store. The
+  route is the original PFX from whoever imported it, or a re-key of the
+  wildcard with the CA (imported as exportable this time). `dnd-sql01.pmcne.ph`
+  is covered by it and resolves to this host, so it is the desk's name by
+  default; `desk.pmcne.ph` would need a DNS record.
+- **The payroll watchdog** (`Watch-PMCBridge.ps1`) alerts on any new database
+  without a FULL backup; step 8 quiets it and the infra session adds
+  `PMC_PSA` to its expected list by that session's own gated edit. SQL01
+  never edits the watchdog. Any `PMC_PSA_TEST` gets one FULL at creation for
+  the same reason and is dropped with its backup file.
+- **A schema finding is fixed:** `api_alert`'s clustered key was over 900
+  bytes; the generated script now makes `dedup_key` 200 characters and the
+  API refuses a longer one. On `PMC_PSA` (already applied with the old width)
+  the column stays 400 wide; that is harmless (the warning only bites on a
+  key over 900 bytes, which the API now prevents) and is not altered in place.
+
 ## When a step does not pass
 
 Every handoff step has a **Pass** line. This is what to do when it is not
@@ -109,11 +163,12 @@ footprint, and "stop and report BLOCKED" for everything else.
 | 2 | No ODBC Driver 17 or 18 | Microsoft's ODBC Driver 18 x64 MSI, defaults, no other option changed; a reboot is not required and is not done. |
 | 3 | `CREATE DATABASE` fails on the path | `D:\PMC\sql` does not exist or the SQL Server service account cannot write there: create the folder and grant the service account Modify on it, nothing wider. |
 | 3 | The login exists with another default schema | `ALTER USER … WITH DEFAULT_SCHEMA = psa` on `PMC_PSA` only. |
+| 3, 4, 6 | The operator is `sysadmin`, whose default schema is always `dbo` | The desk's own commands run as `psa_desk` (`runas`, the password typed there); the schema is applied by the operator through pyodbc with the committed file unchanged, as sitting 1 did, so `psa` stays `dbo`'s. |
 | 4 | `schema-preview` refuses: wrong database | `$db` names the wrong database; fix the string, never the script. |
 | 4 | `schema-preview` refuses: default schema | The operator ran it as themselves; run as the task account, or add the operator to `PMC_PSA` with default schema `psa` for the sitting and remove them after. |
 | 4 | `init` reports VERIFY FAILED | The script rolled itself back; nothing was created. Paste the message. Do not re-run with the switches changed. BLOCKED. |
 | 5 | `create-local-account` refuses a duplicate | The account exists from a previous sitting; use it. |
-| 6 | Tests: anything but `OK` | Paste the last 40 lines into the Reply and stop the sitting before step 7. The desk does not run on SQL Server on a red suite. `DROP DATABASE PMC_PSA_TEST` still happens. |
+| 6 | Tests: anything but `OK` | Paste the last 40 lines into the Reply and stop the sitting before step 7. The desk does not run on SQL Server on a red suite. `DROP DATABASE PMC_PSA_TEST` still happens. A `WinError 32` on a `cli.db` in `tearDown` is the closed-connection fix above; pull and re-run. |
 | 7 | `serve` refuses the port | Another service took it between 1b and now; back to 1b's rule. |
 | 7 | `serve` refuses `0.0.0.0` or the LAN address | The address in the task is not one of the host's; `Get-NetIPAddress` lists them. |
 | 7 | A task shows `Last Run Result` other than `0x0` | Its log in `D:\psa\logs\<TaskName>.log` says why (every `PSA-*` task is registered with its action's output redirected there, `*> D:\psa\logs\PSA-Desk.log` and so on; a task with no log is registered wrong); the usual cause is `$env:PSA_ATTACHMENT_DIR` missing from the task. Fix the task; never re-run a task by hand as an administrator. |
@@ -134,8 +189,9 @@ footprint, and "stop and report BLOCKED" for everything else.
 
 | Step | Not passing looks like | Do |
 |---|---|---|
-| 1 | The certificate covers no name that resolves to this host | The portal sitting stops here. The desk keeps running on plain 8085, LAN only, and the Reply asks Dada for a name the certificate covers or a certificate for the name. |
+| 1 | The certificate covers no name that resolves to this host | The portal sitting stops here. The desk keeps running on plain 8085, LAN only, and the Reply asks Dada for a name the certificate covers or a certificate for the name. (`dnd-sql01.pmcne.ph` is covered and resolves, MEASURED 26 Sep.) |
 | 1 | `HasPrivateKey` is False | The certificate was imported without its key; the portal sitting stops here; the reply says so. |
+| 2 | The private key is non-exportable (MEASURED 26 Sep for `*.pmcne.ph`) | `Export-PfxCertificate` cannot run. Two roads, both Dada's: the original PFX file from whoever installed the certificate (import it once more with the key marked exportable, or convert that file directly with openssl), or a re-key with the CA. Until one is in hand the desk stays on plain 8085, LAN only. Never any tool that "extracts" a non-exportable key. |
 | 2 | `openssl.exe` is not where Git put it | `Get-Command openssl`; if none, the operator exports the PFX and converts it on a machine that has OpenSSL, copies the two PEM files to `D:\psa\tls\`, and deletes them there. |
 | 2 | `icacls` refuses | The task account name is wrong; `Get-LocalUser` / the AD name from sitting 1's Reply. |
 | 3 | `$env:USERDOMAIN` is the host's own name (the host is not domain-joined) | The Windows door cannot check a domain; BLOCKED for the portal sitting, the desk keeps running on break-glass accounts, the Reply says so. |

@@ -71,7 +71,8 @@ def main(argv: list[str] | None = None) -> int:
     ps.add_argument("database", help=DB_HELP)
     ps.add_argument("--host", default="127.0.0.1",
                     help="interface to bind; refuses 0.0.0.0 (default 127.0.0.1)")
-    ps.add_argument("--port", type=int, default=8080)
+    ps.add_argument("--port", type=int, default=8085,
+                    help="port to listen on (default 8085; 8080 is the queue screens' on DND-SQL01)")
     ps.add_argument("--cert", help="PEM certificate: the desk then speaks HTTPS (with --key)")
     ps.add_argument("--key", help="PEM private key for --cert; readable by the task account only")
 
@@ -211,6 +212,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     conn = db.connect(a.database)
+    try:
+        return _run(conn, a)
+    finally:
+        # Closed on every road out. Windows cannot delete a file a process
+        # still holds, which is how a test on DND-SQL01 found this (26 Sep).
+        db.close(conn)
+
+
+def _run(conn, a) -> int:
+    """The commands that work on an open connection."""
     if a.cmd == "import":
         as_of = _as_of(a.as_of)
         s = register.import_register(conn, a.register_csv, run_id=a.run_id, at=as_of.isoformat())

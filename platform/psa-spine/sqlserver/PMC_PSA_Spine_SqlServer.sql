@@ -1583,7 +1583,7 @@ CREATE TABLE psa.[api_alert] (
     [board_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_api_alert_board_id] REFERENCES psa.[board]([board_id]),
 
     -- Chosen by the sender. Stable across firings of the same condition.
-    [dedup_key] NVARCHAR(400) NOT NULL,
+    [dedup_key] NVARCHAR(200) NOT NULL,
     [work_item_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_api_alert_work_item_id] REFERENCES psa.[ticket]([work_item_id]),
     [first_seen] NVARCHAR(64) NOT NULL,
     [last_seen] NVARCHAR(64) NOT NULL,

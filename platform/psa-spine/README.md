@@ -71,7 +71,7 @@ Python. Phase B is the desk that puts it in front of Dada IT — the phasing gat
 is that *Dada IT runs its own work on it before anyone at PMC is asked to*.
 
 ```bash
-python3 -m psaspine serve spine.db --host 127.0.0.1 --port 8080
+python3 -m psaspine serve spine.db --host 127.0.0.1 --port 8085
 ```
 
 A standard-library WSGI app (`psaspine/web/`), run for the pilot by

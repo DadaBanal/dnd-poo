@@ -196,6 +196,8 @@ def _create(conn, token, request, *, now: datetime):
                        field="urgency")
     description = str(data.get("description") or "").strip()
     dedup_key = str(data.get("dedup_key") or "").strip() or None
+    if dedup_key and len(dedup_key) > 200:
+        raise ApiError("400 Bad Request", "dedup_key is at most 200 characters")
 
     board_id = token["board_id"]
     actor = f"api:{token['token_id']}"

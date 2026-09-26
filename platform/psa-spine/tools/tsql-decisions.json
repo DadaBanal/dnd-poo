@@ -58,6 +58,10 @@
     "DIGEST": {
       "sql": "NVARCHAR(256)",
       "why": "A salted scrypt digest in the shape 'scrypt$N$r$p$salt_hex$hash_hex': about 150 characters as psaspine writes it today. Never a password."
+    },
+    "KEY": {
+      "sql": "NVARCHAR(200)",
+      "why": "A machine's dedup key for an alert, part of a clustered primary key with a 64-character board id. SQL Server caps a clustered key at 900 bytes (found on the first apply, 26 Sep 2026: REF's 400 made it 928); 200 characters keep it at 528 and are more than an alert key needs. The API refuses a longer one."
     }
   },
   "decimals": {
@@ -439,7 +443,7 @@
     "intake_message.duplicate_of": "REF",
     "intake_message.run_id": "ID",
     "api_alert.board_id": "ID",
-    "api_alert.dedup_key": "REF",
+    "api_alert.dedup_key": "KEY",
     "api_alert.work_item_id": "ID",
     "api_alert.first_seen": "TIMESTAMP_TEXT",
     "api_alert.last_seen": "TIMESTAMP_TEXT",
