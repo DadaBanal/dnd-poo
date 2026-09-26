@@ -43,6 +43,20 @@ class QuietHandler(WSGIRequestHandler):
         pass
 
 
+def _refuse_if_taken(host: str, port: int) -> None:
+    import socket
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind((host, port))
+    except OSError as exc:
+        raise SystemExit(
+            f"refusing to start: port {port} on {host} is already in use by another "
+            f"service on this host ({exc.strerror or exc}). The desk never takes a port "
+            "something else holds; choose a free one with --port.") from None
+    finally:
+        probe.close()
+
+
 def serve(db_path: str, *, host: str = "127.0.0.1", port: int = 8080,
           config: Config | None = None) -> None:
     if host in PUBLIC_BINDS:
@@ -50,6 +64,12 @@ def serve(db_path: str, *, host: str = "127.0.0.1", port: int = 8080,
             f"refusing to bind to {host!r}: the Phase B pilot is LAN only and Dada "
             "IT only. Bind to 127.0.0.1, or to a specific LAN address you mean to "
             "expose, never to all interfaces.")
+
+    # A port another service holds is refused in a sentence, before anything
+    # else happens: on a host that runs the hospital's other services (the
+    # queue screens on 8080 of DND-SQL01, MEASURED 26 Sep 2026) a bind that
+    # fails half-way, or a port taken from something live, is the wrong start.
+    _refuse_if_taken(host, port)
 
     config = config or Config.from_env()
     app = make_app(db_path, config=config)

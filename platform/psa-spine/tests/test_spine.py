@@ -6311,6 +6311,21 @@ class SqlServerDialectTest(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_serve_refuses_a_port_another_service_holds(self):
+        import socket
+        from psaspine.web import server
+        holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        holder.bind(("127.0.0.1", 0))
+        holder.listen(1)
+        taken = holder.getsockname()[1]
+        try:
+            with self.assertRaises(SystemExit) as caught:
+                server.serve("spine.db", host="127.0.0.1", port=taken)
+            self.assertIn(f"port {taken}", str(caught.exception))
+            self.assertIn("already in use", str(caught.exception))
+        finally:
+            holder.close()
+
     def test_backup_refuses_a_sql_server_target(self):
         with self.assertRaises(ValueError):
             db.backup("Driver={x};Server=h;Database=PMC_PSA", "/tmp/nowhere.bak")

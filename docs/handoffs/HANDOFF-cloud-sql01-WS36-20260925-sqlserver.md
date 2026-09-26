@@ -30,6 +30,48 @@ on the server has changed.
 | `sqlcmd` is denied to Claude sessions by this repo's `.claude/settings.json`. | Step 4 previews and applies through pyodbc: `psaspine schema-preview` prints the plan, `psaspine init` applies. No rule changes. The backup is an Agent job the operator creates in SSMS. |
 | The PSA task account is named nowhere. The nightly backup folder is nobody's decision yet. | Both are Dada's; see "Do NOT decide". Until named, the steps say `<psa task account>` and `<backup folder>`. |
 
+## The desk's footprint on this host, and the no-clash check
+
+Dada's direction, 26 Sep: on-prem, and **nothing the hospital runs on this
+host may be touched or displaced.** So here is everything the desk adds to
+`DND-SQL01`, by name, and a read-only check that none of it collides with
+something already there. If any line of the check finds a collision, stop at
+that line and report it; the fix is a different name or port in this file,
+never a change to what was found.
+
+| The desk adds | Name | Never |
+|---|---|---|
+| One database on the instance | `PMC_PSA` (and `PMC_PSA_TEST` for step 6, dropped after) | any other database read or written, any instance setting changed |
+| One login and one database user | `<psa task account>` (Windows), default schema `psa` on `PMC_PSA` only | membership of any server role; any right on another database |
+| One folder tree | `D:\psa\` (files, drop, logs) and `D:\PMC\sql\` for the database files | anything on `C:` |
+| One listening port, one address | **8085** on `127.0.0.1` or the one LAN address the record names | 8080, `0.0.0.0`, any port `Get-NetTCPConnection` shows listening |
+| Scheduled tasks | all named `PSA-…` (`PSA-Desk`, `PSA-MailPickup`, `PSA-Rules`, `PSA-Notify`, `PSA-Retention`) | editing or disabling any existing task |
+| One SQL Agent job | `PSA-Backup-PMC_PSA` | editing any existing job |
+| Python packages | `pyodbc` into `C:\PMC\Python312` | a system-wide install; any other package |
+
+The check, read-only, before step 2 (**1b**):
+
+```powershell
+# ports: 8085 must be absent from this list; 8080's owner is left alone
+Get-NetTCPConnection -State Listen | Sort-Object LocalPort | Select-Object LocalAddress, LocalPort, OwningProcess
+# names: none of these may exist yet
+Get-ScheduledTask | Where-Object TaskName -like 'PSA-*' | Select-Object TaskName, State
+Test-Path D:\psa; Test-Path D:\PMC\sql
+# SQL: the database, the login and the job must not exist; the instance's memory cap is read, not set
+Invoke-Sqlcmd is denied here; run these in SSMS as the operator and paste the results:
+--   SELECT name FROM sys.databases WHERE name LIKE 'PMC_PSA%';
+--   SELECT name FROM sys.server_principals WHERE name LIKE '%psa%';
+--   SELECT name FROM msdb.dbo.sysjobs WHERE name LIKE 'PSA-%';
+--   SELECT value_in_use FROM sys.configurations WHERE name = 'max server memory (MB)';
+```
+
+**Pass:** 8085 not listening; no `PSA-*` task; neither folder; no such
+database, login or job; the memory figure written into the reply. The desk's
+own process is small (one Python process, tens of MB; INFERRED) and its
+database is small (the D7 record's estimate is ~1 GB a year); neither is
+expected to change what the HIS gets from this host, and the memory figure is
+recorded so that claim can be checked later rather than assumed.
+
 ## Before you start
 
 - **The instance.** `DND-SQL01\PMC_SS` carries the live HIS and eight other
@@ -69,6 +111,9 @@ SELECT SERVERPROPERTY('Edition'), SERVERPROPERTY('ProductVersion'),
 
 **Pass:** `ProductVersion` 14.x or higher (2017+); `DB_ID('PMC_PSA')` is NULL.
 Write all four values into the reply.
+
+**1b. The no-clash check** (above). **Pass:** every line clean, memory figure
+in the reply.
 
 **2. CHANGE: pyodbc.** Driver 17 is already there (MEASURED, 26 Sep); only
 the Python package is missing:
@@ -189,8 +234,11 @@ Server.
 
 **7. CHANGE: the desk and its tasks.** Every scheduled task from the pilot
 handoff (serve, mail pickup, run-rules, send notifications, retention preview)
-re-registered with `$db` in place of `D:\psa\spine.db` and `PSA_ATTACHMENT_DIR`
-set in the task's environment or the wrapper it runs. The `serve` task first:
+registered under the `PSA-…` names in the footprint table, with `$db` in place
+of `D:\psa\spine.db` and `PSA_ATTACHMENT_DIR` set in the task's environment or
+the wrapper it runs. The `serve` task first. `serve` now refuses a port
+something else already holds, in a sentence naming the port, so a clash stops
+the desk rather than the other service:
 
 ```powershell
 & $py -m psaspine serve $db --host 127.0.0.1 --port 8085
