@@ -774,8 +774,21 @@ def page(title: str, body: str, *, user=None, active: str = "") -> str:
         f"{palette}<script>{SCRIPT}</script></body></html>")
 
 
-def login_page(*, entra_configured: bool, error: str = "", next_url: str = "/") -> str:
+def login_page(*, entra_configured: bool, error: str = "", next_url: str = "/",
+               windows_domain: str | None = None) -> str:
     err = f'<div class="banner err">{esc(error)}</div>' if error else ""
+    windows = ""
+    if windows_domain:
+        windows = (
+            '<div class="card"><h1>Sign in</h1>'
+            f'<p class="sub">Your Windows account, the one you use on your PC ({esc(windows_domain)}).</p>'
+            '<form class="stack" method="post" action="/login">'
+            '<input type="hidden" name="door" value="windows">'
+            f'<input type="hidden" name="next" value="{esc(next_url)}">'
+            "<label>Username<input name=username autocomplete=username autofocus></label>"
+            "<label>Password<input name=password type=password "
+            "autocomplete=current-password></label>"
+            "<button type=submit>Sign in</button></form></div>")
     entra = ""
     if entra_configured:
         entra = (
@@ -788,10 +801,11 @@ def login_page(*, entra_configured: bool, error: str = "", next_url: str = "/") 
         '<p class="sub">For the on-call rota, when the WAN is down. Every use is '
         "audited.</p>"
         '<form class="stack" method="post" action="/login">'
+        '<input type="hidden" name="door" value="local">'
         f'<input type="hidden" name="next" value="{esc(next_url)}">'
-        "<label>Username<input name=username autocomplete=username autofocus></label>"
+        f"<label>Username<input name=username autocomplete=username{'' if windows_domain else ' autofocus'}></label>"
         "<label>Password<input name=password type=password "
         "autocomplete=current-password></label>"
         "<button type=submit>Sign in</button></form></div>")
-    body = err + entra + glass
+    body = err + windows + entra + glass
     return page("Sign in", body)

@@ -61,6 +61,10 @@ class Config:
     # The two network calls the browser sign-in makes; tests hand in their own.
     http_get: "Callable[[str], dict]" = None
     http_post: "Callable[[str, dict], dict]" = None
+    # The Windows sign-in: the domain to check against (PSA_WINDOWS_DOMAIN,
+    # e.g. the NetBIOS name the host is joined to). Unset, the door is not shown.
+    windows_domain: str | None = None
+    windows_logon: "Callable[[str, str, str], tuple[bool, int]]" = None
 
     def __post_init__(self):
         from . import entra
@@ -71,11 +75,16 @@ class Config:
     def entra_configured(self) -> bool:
         return bool(self.entra_tenant and self.entra_client)
 
+    @property
+    def windows_configured(self) -> bool:
+        return bool(self.windows_domain)
+
     @classmethod
     def from_env(cls) -> "Config":
         return cls(entra_tenant=os.environ.get("PSA_ENTRA_TENANT"),
                    entra_client=os.environ.get("PSA_ENTRA_CLIENT"),
-                   public_url=os.environ.get("PSA_PUBLIC_URL"))
+                   public_url=os.environ.get("PSA_PUBLIC_URL"),
+                   windows_domain=os.environ.get("PSA_WINDOWS_DOMAIN"))
 
 
 @dataclass
@@ -314,12 +323,13 @@ def _route(conn, request: Request, config: Config, now: datetime) -> Response:
     except auth.Unauthenticated:
         if request.path == "/login":
             return Response(body=templates.login_page(
-                entra_configured=config.entra_configured,
+                entra_configured=config.entra_configured, windows_domain=config.windows_domain,
                 next_url=request.query.get("next", "/")))
         # Anything else, unauthenticated, becomes the sign-in page with a 401 so
         # a script gets a status and a browser gets a form.
         return Response("401 Unauthorized", templates.login_page(
-            entra_configured=config.entra_configured, next_url=request.path))
+            entra_configured=config.entra_configured, windows_domain=config.windows_domain,
+            next_url=request.path))
 
     ctx = Ctx(conn=conn, request=request, user=user, config=config, now=now)
     return router.dispatch(ctx)
@@ -331,11 +341,23 @@ def _do_login(conn, request: Request, config: Config, now: datetime) -> Response
     username = form.get("username", "")
     password = form.get("password", "")
     next_url = form.get("next", "/") or "/"
+    door = form.get("door", "local")
     try:
-        user = auth.authenticate_local(conn, username, password, at=now)
+        if door == "windows":
+            if not config.windows_configured:
+                raise auth.Unauthenticated("the Windows sign-in is not configured on this desk")
+            user = auth.authenticate_windows(conn, username, password, at=now,
+                                             domain=config.windows_domain,
+                                             logon=config.windows_logon)
+        else:
+            user = auth.authenticate_local(conn, username, password, at=now)
+    except auth.AuthConfigError as exc:
+        return Response("401 Unauthorized", templates.login_page(
+            entra_configured=config.entra_configured, windows_domain=config.windows_domain,
+            error=str(exc), next_url=next_url))
     except auth.Unauthenticated as exc:
         return Response("401 Unauthorized", templates.login_page(
-            entra_configured=config.entra_configured,
+            entra_configured=config.entra_configured, windows_domain=config.windows_domain,
             error=str(exc), next_url=next_url))
     token = auth.open_session(user, config.session_secret)
     # Never redirect an open session to an absolute or off-site URL.

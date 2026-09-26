@@ -13,7 +13,7 @@ touched.
 | **To** | SQL01 for the server steps; **365 Desk** (or whoever administers PMC's Entra tenant) for step 3; Dada for the two decisions. |
 | **From** | Cloud Build |
 | **Workstream** | WS36 (PSA ticketing): the front door |
-| **Bucket** | The desk answering on `https://<desk name>:8443` with PMC's certificate; "Continue with Entra" signing a technician in with their organisation account; the portal at `/my` reachable by Dada IT and one pilot ward; requester emails on for that ward's board. Hospital-wide stays off until the DPO answers §6.1. Two sittings: the server, then the tenant. |
+| **Bucket** | The desk answering on `https://<desk name>:8443` with PMC's certificate; staff signing in with their **Windows account** (no licence, no tenant; Dada's direction, 26 Sep); the portal at `/my` reachable by Dada IT and one pilot ward; requester emails on for that ward's board. Hospital-wide stays off until the DPO answers §6.1. One sitting on the server; the Entra steps are optional and only if PMC wants the tenant used as well. |
 | **Read first** | 1. `platform/psa-spine/README.md`, "HTTPS and the organisation sign-in" 2. the SQL Server handoff's footprint table 3. this file |
 
 ## Two decisions first (Dada)
@@ -72,8 +72,26 @@ intermediate, append it to `desk.pem` after the leaf (`openssl pkcs12 -cacerts
 account and Administrators only. Neither file, nor the PFX, nor the password,
 goes anywhere near the repository or the reply.
 
-**3. CHANGE (tenant): the app registration.** In the Entra admin centre, by
-whoever holds that role, as a **single-tenant public client**:
+**3. CHANGE: the Windows sign-in.** Nothing to install and nothing in the
+tenant: the desk asks Windows. Read the domain's short name (changes nothing):
+
+```powershell
+(Get-CimInstance Win32_ComputerSystem).Domain
+$env:USERDOMAIN
+```
+
+`PSA_WINDOWS_DOMAIN` in step 4 is `$env:USERDOMAIN`'s value (the NetBIOS name,
+e.g. `PMCNE`, not the DNS name). **Pass:** the value written into the Reply.
+The task account needs no extra right for a network logon (INFERRED from the
+LogonUser documentation; step 6 measures it). Skip **3b** unless Dada wants
+the tenant used as well.
+
+**3b. Optional, CHANGE (tenant): the Entra app registration.** Only if PMC
+wants "Continue with Entra" beside the Windows door. Entra ID Free covers it
+(VERIFIED, learn.microsoft.com, "Microsoft Entra ID Free": SSO is included, no
+per-user licence for the sign-in), but it needs a cloud identity per person and
+a tenant administrator's hour; Dada said licences are short, so it is not the
+default. In the Entra admin centre, as a **single-tenant public client**:
 
 | Setting | Value |
 |---|---|
@@ -97,23 +115,23 @@ step 6 is the proof.
 & $py -m psaspine serve $db --host <the LAN address> --port 8443 --cert D:\psa\tls\desk.pem --key D:\psa\tls\desk-key.pem
 ```
 
-with these in the task's environment (or the wrapper it runs), the values from
-step 3:
+with these in the task's environment (or the wrapper it runs):
 
 ```
-PSA_ENTRA_TENANT=<tenant id>
-PSA_ENTRA_CLIENT=<client id>
+PSA_WINDOWS_DOMAIN=<the short domain name from step 3>
 PSA_PUBLIC_URL=https://<desk name>:8443
 PSA_ATTACHMENT_DIR=D:\psa\files
 ```
 
+and, only if 3b was done, `PSA_ENTRA_TENANT` and `PSA_ENTRA_CLIENT` as well.
+
 `--host` is the LAN address, not `127.0.0.1` (staff must reach it) and never
 `0.0.0.0` (refused). The old 8085 task is stopped, not deleted, until step 6
 passes. **Pass:** `https://<desk name>:8443/login` opens in a browser on a
-staff PC with no certificate warning, shows "Continue with Entra" above the
-break-glass form; `http://<desk name>:8443/` does not answer (the handshake
-refuses plain HTTP); the console line reads `on https://…:8443` and `sign-in:
-Entra + break-glass`.
+staff PC with no certificate warning, shows "Sign in — your Windows account"
+first and the break-glass form last; `http://<desk name>:8443/` does not answer
+(the handshake refuses plain HTTP); the console line reads `on https://…:8443`
+and `sign-in: Windows account + break-glass`.
 
 **5. CHANGE: the portal for the first group.** In the desk as the sysadmin
 account: Setup › the ward's board › tick *Email the requester*. Re-register the
@@ -125,24 +143,31 @@ their emails map to them; no board membership is given to a requester.
 "your ticket was updated" with the portal link and nothing else.
 
 **6. The proof: a real sign-in.** A technician on a staff PC opens the desk,
-chooses *Continue with Entra*, signs in with their organisation account, and
-lands on the board. A ward member does the same and lands on `/my`, sees their
-own requests and nothing else, raises one, and gets the email. In SSMS:
+types their Windows username and password, and lands on the board (an
+administrator made them a board member in Setup first). A ward member does the
+same and lands on `/my`, sees their own requests and nothing else, raises one,
+and gets the email. Then one deliberate wrong password. In SSMS:
 
 ```sql
-SELECT TOP 5 occurred_at, actor, subject_id, detail FROM psa.audit_event
- WHERE action = 'ENTRA_LOGIN' ORDER BY audit_event_id DESC;
+SELECT TOP 5 occurred_at, actor, action, detail FROM psa.audit_event
+ WHERE action IN ('WINDOWS_LOGIN', 'WINDOWS_LOGIN_REFUSED') ORDER BY audit_id DESC;
 ```
 
-**Pass:** both sign-ins, one row each, and the ward member's `/` shows "not a
-member of any board" while `/my` shows their ticket. If the sign-in fails, the
-page says which of the seven checks failed in one sentence; put that sentence
-in the reply and stop.
+**Pass:** two `WINDOWS_LOGIN` rows naming the contact each account maps to,
+one `WINDOWS_LOGIN_REFUSED` saying "the username or password is wrong", and
+the ward member's `/` shows "not a member of any board" while `/my` shows their
+ticket. If Windows refuses a good password, the page says Windows's reason in
+words; "refused by Windows (code n)" with an unlisted code goes in the Reply
+with the code. If a ward member's `/my` is empty though their ticket exists,
+their AD contact has no `email` or the ticket's `requested_by` is another
+spelling of it; the contact import (pilot handoff step 5) is the fix, not the
+ticket. With 3b done, repeat with *Continue with Entra* and `ENTRA_LOGIN`.
 
-**7. What the WAN-down posture looks like now.** With the WAN down, *Continue
-with Entra* says the tenant could not be reached and the break-glass form below
-it still signs the rota in (§11 test 10). Nothing to do; read it once so the
-first outage is not the first time anyone sees the sentence.
+**7. What the WAN-down posture looks like now.** The Windows sign-in needs
+only the domain controller, which is on the LAN, so it keeps working with the
+WAN down; if the domain controller itself is down, the break-glass form still
+signs the rota in (§11 test 10). With 3b done, *Continue with Entra* says the
+tenant could not be reached during an outage; nothing to do, read it once.
 
 ## Do NOT decide
 

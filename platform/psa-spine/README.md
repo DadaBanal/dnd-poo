@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 464 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 471 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -430,8 +430,24 @@ pilot's plain LAN it cannot be, or the browser would drop it. A certificate
 without its key, a missing file, or a pair that does not load is refused in a
 sentence before any socket is opened.
 
-**Sign in with Entra** is the normal way in for the ~400 staff the portal
-serves and for every fulfiller with an organisation account. The desk is
+**Sign in with your Windows account** is the door for the ~400 staff and the
+fulfillers, and it needs no licence and no tenant: the desk hands the username
+and password to Windows itself (`LogonUser`, network logon, no privilege
+needed) on the domain the host is joined to, keeps nothing, and audits every
+outcome as `WINDOWS_LOGIN` or `WINDOWS_LOGIN_REFUSED` with Windows's reason in
+words (wrong password, locked out, expired, disabled). One setting switches it
+on: `PSA_WINDOWS_DOMAIN`, the domain's short name. The person signed in is the
+AD contact the import holds for that account, so the portal's ownership and
+the requester's email line up; `DOMAIN\user`, `user@domain` and `user` are the
+same person. The door is shown first on the sign-in page; break-glass stays
+last, for the rota. The real call runs only on Windows; a test hands the
+Config a fake (`windows_logon`). NOT VERIFIED against PMC's domain from here;
+the portal handoff's step 6 is that sign-in.
+
+**Sign in with Entra** is the alternative for a tenant that is used (Entra ID
+Free covers it, VERIFIED, learn.microsoft.com "Microsoft Entra ID Free"; no
+per-user paid licence is needed for the sign-in itself), and the only door for
+a staff member who has a cloud identity but no domain account. The desk is
 registered in PMC's tenant as a **public client**: no client secret exists
 anywhere, and the authorization-code exchange is protected by PKCE. Two
 settings switch it on:

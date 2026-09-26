@@ -74,7 +74,7 @@ class User:
     id: str
     name: str
     email: str | None = None
-    via: str = "entra"                       # 'entra' | 'local'
+    via: str = "entra"                       # 'entra' | 'windows' | 'local'
     is_sysadmin: bool = False
     roles: dict[str, str] = field(default_factory=dict)   # board_id -> access
 
@@ -173,6 +173,88 @@ def authenticate_local(conn: sqlite3.Connection, username: str, password: str, *
     return User(id=row["username"], name=row["username"], via="local",
                 is_sysadmin=bool(row["is_sysadmin"]),
                 roles=board_roles(conn, row["username"]))
+
+
+# ------------------------------------------------------- Windows sign-in
+#
+# The staff's own Windows account, checked against the domain the host is
+# joined to, through the operating system's LogonUser call (advapi32). No
+# licence, no tenant, no network beyond the domain controller the host already
+# talks to; the password is handed to Windows and never kept, hashed or logged.
+# LOGON32_LOGON_NETWORK needs no privilege on the calling account. Windows
+# answers with a code when it refuses, and the codes that a person can act on
+# are said back in words (expired, locked, disabled); anything else is "refused".
+
+LOGON_CODES = {
+    1326: "the username or password is wrong",
+    1327: "this account may not sign in without a password",
+    1328: "this account may not sign in at this hour",
+    1329: "this account may not sign in from this computer",
+    1330: "the password has expired; change it on your PC first",
+    1331: "the account is disabled",
+    1385: "this account is not allowed to sign in here",
+    1793: "the account has expired",
+    1907: "the password must be changed before signing in; do that on your PC first",
+    1909: "the account is locked out",
+}
+
+
+def windows_logon(domain: str, username: str, password: str) -> tuple[bool, int]:
+    """Ask Windows whether these credentials are good. (True, 0) or (False, code)."""
+    import ctypes
+    if not hasattr(ctypes, "windll"):
+        raise AuthConfigError("the Windows sign-in runs only on a Windows host")
+    advapi32 = ctypes.windll.advapi32
+    kernel32 = ctypes.windll.kernel32
+    token = ctypes.c_void_p()
+    LOGON32_LOGON_NETWORK, LOGON32_PROVIDER_DEFAULT = 3, 0
+    ok = advapi32.LogonUserW(username, domain, password, LOGON32_LOGON_NETWORK,
+                             LOGON32_PROVIDER_DEFAULT, ctypes.byref(token))
+    if ok:
+        kernel32.CloseHandle(token)
+        return True, 0
+    return False, ctypes.get_last_error() or kernel32.GetLastError()
+
+
+def authenticate_windows(conn: sqlite3.Connection, username: str, password: str, *,
+                         at: datetime, domain: str, logon=None) -> User:
+    """Verify a Windows account against the domain, record it, and return who
+    it is: the AD contact if the import holds one (so the portal's ownership
+    and the requester's email line up), else the bare account name.
+
+    `logon` is windows_logon unless a test hands in its own. Every outcome is
+    audited; the password appears nowhere."""
+    logon = logon or windows_logon
+    stamp = at.isoformat(sep=" ", timespec="minutes")
+    name = username.strip()
+    if "\\" in name:
+        name = name.split("\\", 1)[1]                 # DOMAIN\user -> user
+    if "@" in name:
+        name = name.split("@", 1)[0]                   # user@domain -> user
+    name = name.lower()
+    if not name or not password:
+        db.audit(conn, at=stamp, actor=name or "?", action="WINDOWS_LOGIN_REFUSED",
+                 subject_kind="windows_account", subject_id=name or None, detail="empty")
+        conn.commit()
+        raise Unauthenticated("Windows sign-in refused: a username and a password are needed")
+    ok, code = logon(domain, name, password)
+    if not ok:
+        reason = LOGON_CODES.get(code, f"refused by Windows (code {code})")
+        db.audit(conn, at=stamp, actor=name, action="WINDOWS_LOGIN_REFUSED",
+                 subject_kind="windows_account", subject_id=name, detail=reason)
+        conn.commit()
+        raise Unauthenticated(f"Windows sign-in refused: {reason}")
+    contact = conn.execute(
+        "SELECT contact_id, display_name, email FROM contact"
+        " WHERE (LOWER(sam_account) = ? OR LOWER(upn) LIKE ?) AND inactive = 0"
+        " ORDER BY CASE WHEN LOWER(sam_account) = ? THEN 0 ELSE 1 END LIMIT 1",
+        (name, name + "@%", name)).fetchone()
+    db.audit(conn, at=stamp, actor=name, action="WINDOWS_LOGIN", subject_kind="windows_account",
+             subject_id=name, detail=("contact " + contact["contact_id"]) if contact else "no contact row")
+    conn.commit()
+    return User(id=name, name=contact["display_name"] if contact else name,
+                email=(contact["email"] or "").lower() or None if contact else None,
+                via="windows", roles=board_roles(conn, name))
 
 
 def board_roles(conn: sqlite3.Connection, member: str) -> dict[str, str]:

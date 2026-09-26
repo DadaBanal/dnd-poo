@@ -6308,6 +6308,124 @@ class EntraSignInTest(unittest.TestCase):
         self.assertIs(entra.ensure_key(cfg, "k9"), cfg.jwks)      # held, not fetched twice
 
 
+class WindowsSignInTest(unittest.TestCase):
+    """The staff's own Windows account at the login page. Windows itself is a
+    fake on the Config here; on the host it is LogonUser. No licence, no tenant."""
+    _call = WebWSGITest._call
+    _environ = WebWSGITest._environ
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = _target(self.tmp)
+        conn = _fresh(self.tmp)
+        conn.execute("INSERT OR IGNORE INTO entity (entity_id, name, is_covered, note) VALUES ('PMC','PMC',1,NULL)")
+        conn.execute("INSERT INTO contact (contact_id, entity_id, display_name, email, upn, sam_account, source,"
+                     " created_at) VALUES ('CT-1','PMC','Alice Cruz','Alice.Cruz@pmcne.ph','alice@pmcne.ph','alice',"
+                     "'AD','2026-09-26 09:00')")
+        conn.execute("INSERT OR REPLACE INTO board (board_id,display_name,phase,fulfiller_group,owner,deputy,"
+                     " is_live,is_unrouted) VALUES ('IT_HELP','IT Help','2','Dada','a','b',1,0)")
+        conn.execute("INSERT INTO board_member (board_id, member, access) VALUES ('IT_HELP','bob','WORK')")
+        conn.commit()
+        conn.close()
+        self.asked = []
+
+        def logon(domain, username, password):
+            self.asked.append((domain, username))
+            if (username, password) == ("alice", "correct horse"):
+                return True, 0
+            if username == "locked":
+                return False, 1909
+            if username == "stale":
+                return False, 1330
+            return False, 1326
+
+        self.config = Config(session_secret=_secrets.token_bytes(32), windows_domain="PMCNE",
+                             windows_logon=logon)
+        self.raw = make_app(self.db_path, config=self.config, clock=lambda: datetime(2026, 9, 26, 9, 0))
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _login(self, username, password):
+        return self._call("POST", "/login", form={"door": "windows", "username": username,
+                                                  "password": password, "next": "/my"})
+
+    def test_the_page_offers_the_windows_account_first_and_break_glass_last(self):
+        status, _, body = self._call("GET", "/login")
+        self.assertLess(body.index("Your Windows account"), body.index("Break-glass"))
+        self.assertIn("PMCNE", body)
+        self.assertNotIn("/entra/start", body)          # no tenant configured
+
+    def test_a_good_password_opens_a_session_as_the_ad_contact(self):
+        status, headers, _ = self._login("alice", "correct horse")
+        self.assertTrue(status.startswith("303"), status)
+        self.assertEqual(dict(headers)["Location"], "/my")
+        cookie = next(v for k, v in headers if k == "Set-Cookie").split(";", 1)[0]
+        self.assertEqual(self.asked, [("PMCNE", "alice")])
+        status, _, body = self._call("GET", "/my", cookie=cookie)
+        self.assertTrue(status.startswith("200"))
+        conn = db.connect(self.db_path)
+        row = conn.execute("SELECT actor, detail FROM audit_event WHERE action = 'WINDOWS_LOGIN'").fetchone()
+        conn.close()
+        self.assertEqual(tuple(row), ("alice", "contact CT-1"))
+
+    def test_domain_and_upn_spellings_of_the_name_are_the_same_person(self):
+        for spelling in ("PMCNE\\alice", "alice@pmcne.ph", "  Alice "):
+            self.asked.clear()
+            status, _, _ = self._login(spelling, "correct horse")
+            self.assertTrue(status.startswith("303"), spelling)
+            self.assertEqual(self.asked, [("PMCNE", "alice")], spelling)
+
+    def test_the_session_carries_the_contacts_email_so_the_portal_finds_their_tickets(self):
+        from psaspine import tickets
+        conn = db.connect(self.db_path)
+        setup.apply_starter(conn, "IT_HELP", actor="t", at=datetime(2026, 9, 26, 8))
+        wid = tickets.open_ticket(conn, board_id="IT_HELP", summary="Printer in ward 3", impact="I3",
+                                  urgency="U3", requested_by="alice.cruz@pmcne.ph",
+                                  at=datetime(2026, 9, 26, 8), actor="t")
+        conn.commit()
+        conn.close()
+        _, headers, _ = self._login("alice", "correct horse")
+        cookie = next(v for k, v in headers if k == "Set-Cookie").split(";", 1)[0]
+        _, _, body = self._call("GET", "/my", cookie=cookie)
+        self.assertIn("Printer in ward 3", body)
+        # and no board: a requester is not a fulfiller
+        status, _, body = self._call("GET", "/", cookie=cookie)
+        self.assertIn("not a member of any board", body)
+
+    def test_a_refusal_says_what_windows_said_and_is_audited_without_the_password(self):
+        for user, words in (("alice", "wrong"), ("locked", "locked out"), ("stale", "expired")):
+            status, _, body = self._login(user, "nope")
+            self.assertTrue(status.startswith("401"), user)
+            self.assertIn(words, body)
+            self.assertNotIn("nope", body)
+        conn = db.connect(self.db_path)
+        rows = conn.execute("SELECT actor, detail FROM audit_event WHERE action = 'WINDOWS_LOGIN_REFUSED'"
+                            " ORDER BY audit_id").fetchall()
+        conn.close()
+        self.assertEqual([tuple(r) for r in rows], [
+            ("alice", "the username or password is wrong"), ("locked", "the account is locked out"),
+            ("stale", "the password has expired; change it on your PC first")])
+        self.assertNotIn("nope", str([tuple(r) for r in rows]))
+
+    def test_without_a_domain_the_door_is_neither_shown_nor_open(self):
+        cfg = Config(session_secret=_secrets.token_bytes(32))
+        app = make_app(self.db_path, config=cfg, clock=lambda: datetime(2026, 9, 26, 9, 0))
+        self.raw = app
+        _, _, body = self._call("GET", "/login")
+        self.assertNotIn("Your Windows account", body)
+        status, _, body = self._login("alice", "correct horse")
+        self.assertTrue(status.startswith("401"))
+        self.assertIn("not configured", body)
+
+    def test_on_a_host_that_is_not_windows_the_real_logon_says_so(self):
+        import sys as _sys
+        if _sys.platform.startswith("win"):
+            self.skipTest("this asserts the refusal on a non-Windows host")
+        with self.assertRaises(webauth.AuthConfigError):
+            webauth.windows_logon("PMCNE", "alice", "x")
+
+
 class HttpsServerTest(unittest.TestCase):
     """The desk speaking TLS itself, with a certificate made for the test."""
 

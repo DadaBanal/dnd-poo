@@ -112,8 +112,10 @@ def serve(db_path: str, *, host: str = "127.0.0.1", port: int = 8080,
     config = config or Config.from_env()
     httpd = build(db_path, host=host, port=port, config=config, cert=cert, key=key)
     scheme = "https" if cert else "http"
-    posture = ("Entra + break-glass" if config.entra_configured
-               else "break-glass only (no Entra tenant configured)")
+    doors = [d for d, on in (("Windows account", config.windows_configured),
+                             ("Entra", config.entra_configured)) if on]
+    posture = " + ".join(doors + ["break-glass"]) if doors else \
+        "break-glass only (no Windows domain and no Entra tenant configured)"
     print(f"PSA desk (Phase B pilot) on {scheme}://{host}:{port}", file=sys.stderr)
     print(f"  database: {db.describe(db_path)}", file=sys.stderr)
     print(f"  sign-in:  {posture}", file=sys.stderr)
