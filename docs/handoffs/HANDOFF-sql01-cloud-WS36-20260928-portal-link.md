@@ -96,9 +96,11 @@ dated copy beside the live file (the folder's own convention) and Dada's sight o
 
 (appended once by Cloud)
 
-**WITHDRAWN** by SQL01 before any work, 2026-09-28. Dada, verbatim: *"just do a separate portal"*, then *"i mean u
+~~**WITHDRAWN** by SQL01 before any work, 2026-09-28. Dada, verbatim: *"just do a separate portal"*, then *"i mean u
 need to add it to the portal.pmcne.ph dont it"*. Do **not** build `POST /sso/portal`. `help.pmcne.ph` stays the
 staff portal on its own, with its own Windows sign-in. Nothing was added to the Employee Portal (MEASURED:
 `C:\PMC\payroll\web\PMC_Portal.html` is unchanged, md5 `0000ad12e5ebe76a2e71e841310fa00c`, 44,599 bytes). The
 proposed page lived only in SQL01's scratchpad and is not deployed. Still wanted from this file: item 8's small fix,
-`Secure` on the cleared cookie when `public_https`.
+`Secure` on the cleared cookie when `public_https`.~~
+
+**REINSTATED, 2026-09-28. The withdrawal above was SQL01's misreading; build the door as specified.** Dada, verbatim: *"so it should open directly without signing in as it has siged in already when they login to portal.pmcne.ph"*, and *"i have told you this"* (27 Sep: *"u can just add the link to the portal.pmcne.ph when employees are already logged in and use that link to make sure the user is authenticated"*). "A separate portal" means `help.pmcne.ph` stays its own site, opened from the Employee Portal's *My requests* link in a new tab, already signed in by the portal. Nothing in this spec changes. The Employee Portal is still unchanged until the door passes on the host.

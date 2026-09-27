@@ -687,3 +687,5 @@ restart. It is deployed only after the door passes on this host.
 *Addendum to part 11, 2026-09-28:* Dada reversed the Employee Portal decision: *"just do a separate portal"*.
 `HANDOFF-sql01-cloud-WS36-20260928-portal-link.md` is **WITHDRAWN**; `help.pmcne.ph` stays the separate staff
 portal. `portal.pmcne.ph` was never changed (MEASURED, md5 unchanged).
+
+*Correction to the addendum above, 2026-09-28:* the withdrawal was SQL01's misreading and is **reversed**. Dada: *"so it should open directly without signing in as it has siged in already when they login to portal.pmcne.ph"*. `HANDOFF-sql01-cloud-WS36-20260928-portal-link.md` stands as written: `help.pmcne.ph` is the separate staff portal, and the Employee Portal's *My requests* link opens it signed in.
