@@ -55,9 +55,17 @@ class Config:
     entra_tenant: str | None = None
     entra_client: str | None = None
     jwks: dict = field(default_factory=dict)     # {kid: {"n": int, "e": int}}, fetched as needed
-    # The URL staff type (https://desk.example:8443); the Entra redirect URI is
-    # built on it. Unset, the request's own scheme and host are used.
+    # The URL staff type for the desk (https://desk.example); the Entra redirect
+    # URI is built on it. Unset, the request's own scheme and host are used.
+    # When a reverse proxy (IIS with ARR on DND-SQL01, MEASURED 27 Sep 2026)
+    # fronts the desk, this is also what tells the desk the world is https:
+    # cookies are Secure and HSTS is sent, derived from this setting and never
+    # from a request header a client could write.
     public_url: str | None = None
+    # The requester portal's own address (https://help.example). A request that
+    # arrives for this host is a portal request: `/` goes to `/my`, the
+    # technician pages answer 404, and sign-in returns to `/my`.
+    portal_url: str | None = None
     # The two network calls the browser sign-in makes; tests hand in their own.
     http_get: "Callable[[str], dict]" = None
     http_post: "Callable[[str, dict], dict]" = None
@@ -79,12 +87,73 @@ class Config:
     def windows_configured(self) -> bool:
         return bool(self.windows_domain)
 
+    # ------------------------------------------------- the public addresses
+    # Both URLs are optional and are read the same way: scheme and netloc,
+    # lowercased, a default port dropped. Nothing else in them is used.
+
+    @property
+    def public_origins(self) -> set[str]:
+        """The origins a browser form may legitimately be posted from: the desk's
+        and the portal's public URLs. Behind a proxy the Host header the desk
+        sees is the proxy's, so the same-host rule alone would refuse every
+        sign-in; these are accepted in addition, and nothing else is."""
+        out = set()
+        for url in (self.public_url, self.portal_url):
+            parts = _public_parts(url)
+            if parts:
+                out.add(parts[0] + "://" + parts[1])
+        return out
+
+    @property
+    def public_https(self) -> bool:
+        """The world reaches the desk over TLS, whether the desk speaks it or a
+        proxy does. Then every cookie is Secure and HSTS is sent."""
+        return any(p and p[0] == "https" for p in map(_public_parts, (self.public_url, self.portal_url)))
+
+    def secure_cookie(self, request: "Request") -> bool:
+        return request.secure or self.public_https
+
+    def is_portal_host(self, request: "Request") -> bool:
+        parts = _public_parts(self.portal_url)
+        if not parts:
+            return False
+        got = _norm_netloc(parts[0], request.public_host)
+        return bool(got) and got == parts[1]
+
     @classmethod
     def from_env(cls) -> "Config":
         return cls(entra_tenant=os.environ.get("PSA_ENTRA_TENANT"),
                    entra_client=os.environ.get("PSA_ENTRA_CLIENT"),
                    public_url=os.environ.get("PSA_PUBLIC_URL"),
+                   portal_url=os.environ.get("PSA_PORTAL_URL"),
                    windows_domain=os.environ.get("PSA_WINDOWS_DOMAIN"))
+
+
+def _norm_netloc(scheme: str, netloc: str) -> str:
+    netloc = (netloc or "").strip().lower()
+    if scheme == "https" and netloc.endswith(":443"):
+        netloc = netloc[:-4]
+    if scheme == "http" and netloc.endswith(":80"):
+        netloc = netloc[:-3]
+    return netloc
+
+
+def _public_parts(url: str | None) -> tuple[str, str] | None:
+    """(scheme, netloc) of a configured public URL, or None when it is unset or
+    not a URL. Anything after the netloc is ignored: these settings name a
+    host, not a page."""
+    if not url:
+        return None
+    parts = urllib.parse.urlsplit(url.strip())
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        return None
+    return parts.scheme, _norm_netloc(parts.scheme, parts.netloc)
+
+
+# The peer addresses a reverse proxy on the same host speaks from. A forwarded
+# host header is believed from these and from nowhere else: a client on the
+# LAN cannot claim to be the portal by writing a header.
+LOOPBACK_PEERS = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1"})
 
 
 @dataclass
@@ -96,10 +165,27 @@ class Request:
     cookies: http.cookies.SimpleCookie
     body: bytes
     scheme: str = "http"
+    remote_addr: str = ""
 
     @property
     def secure(self) -> bool:
         return self.scheme == "https"
+
+    @property
+    def forwarded_host(self) -> str | None:
+        """The host the proxy was asked for, believed only from a loopback peer.
+        IIS/ARR on DND-SQL01 sends `Host: 127.0.0.1:8085` and can be told to
+        add X-Forwarded-Host (MEASURED 27 Sep 2026, part 8 of the runbook
+        Reply); anything not on the loopback does not get to say this."""
+        if self.remote_addr in LOOPBACK_PEERS:
+            return self.headers.get("x-forwarded-host") or None
+        return None
+
+    @property
+    def public_host(self) -> str:
+        """The host this request was really made to: the forwarded one when a
+        proxy on this machine says so, else the Host header."""
+        return (self.forwarded_host or self.headers.get("host", "")).split(",", 1)[0].strip()
 
     @classmethod
     def from_environ(cls, environ) -> "Request":
@@ -123,7 +209,8 @@ class Request:
             path=environ.get("PATH_INFO", "/") or "/",
             query=dict(urllib.parse.parse_qsl(environ.get("QUERY_STRING", ""))),
             headers=headers, cookies=cookies, body=body,
-            scheme=environ.get("wsgi.url_scheme", "http"))
+            scheme=environ.get("wsgi.url_scheme", "http"),
+            remote_addr=environ.get("REMOTE_ADDR", ""))
 
     def _multipart(self):
         """(fields, files) of a multipart/form-data body, parsed with the
@@ -271,6 +358,7 @@ def make_app(db_path: str, *, config: Config | None = None, clock=datetime.now):
 
     def application(environ, start_response):
         conn = db.connect(db_path)
+        request = None
         try:
             request = Request.from_environ(environ)
             response = _route(conn, request, config, clock())
@@ -278,6 +366,13 @@ def make_app(db_path: str, *, config: Config | None = None, clock=datetime.now):
             response = Response(exc.status, f"<h1>{exc.status}</h1><p>{exc.message}</p>")
         finally:
             db.close(conn)
+        if (request is not None and config.secure_cookie(request)
+                and not any(k.lower() == "strict-transport-security" for k, _ in response.headers)):
+            # The world reaches the desk over TLS (its own, or the proxy's, by
+            # config): a browser that has seen the desk once never tries http
+            # again for a year. No includeSubDomains: this host is one name
+            # under pmcne.ph and decides nothing for the others.
+            response.headers.append(("Strict-Transport-Security", "max-age=31536000"))
         return response.emit(start_response)
 
     return application
@@ -288,25 +383,41 @@ def _route(conn, request: Request, config: Config, now: datetime) -> Response:
     # before the browser's identity is resolved so that a session cookie can
     # never authorise an API call. A cookie on an API is how a page on another
     # site makes a signed-in browser raise tickets it never meant to.
+    # The portal's own address serves the requester's pages and nothing else.
+    # Decided before identity: a technician path on the portal host is not
+    # there, for anyone, and the answer that reveals least is the plain 404.
+    portal = config.is_portal_host(request)
+    if portal:
+        if request.path == "/":
+            return redirect("/my")
+        if not _portal_path(request.path):
+            return Response("404 Not Found", "<h1>404 Not Found</h1><p>No such page.</p>")
+
     if request.path.startswith("/api/"):
         from . import api
         return api.handle(conn, request, now=now)
 
     # A form posted from another site. The session cookie is SameSite=Lax, which
     # already keeps it off a cross-site POST; this refuses the request outright
-    # as well, so the defence does not rest on one browser setting.
+    # as well, so the defence does not rest on one browser setting. The origin
+    # must be this host's, or one of the two public addresses the deployment
+    # named: behind the proxy the Host the desk sees is the proxy's own.
     if request.method == "POST":
         origin = request.headers.get("origin", "")
         host = request.headers.get("host", "")
-        if origin and origin != "null" and host and \
-                urllib.parse.urlsplit(origin).netloc.lower() != host.lower():
-            return Response("403 Forbidden", "<h1>403 Forbidden</h1>"
-                            "<p>This form was posted from another site.</p>")
+        if origin and origin != "null" and host:
+            o = urllib.parse.urlsplit(origin)
+            same_host = o.netloc.lower() == host.lower()
+            public = (o.scheme.lower() + "://" + _norm_netloc(o.scheme.lower(), o.netloc)
+                      ) in config.public_origins
+            if not (same_host or public):
+                return Response("403 Forbidden", "<h1>403 Forbidden</h1>"
+                                "<p>This form was posted from another site.</p>")
 
     # The two doors that do not require an established identity.
     from . import templates
     if request.path == "/login" and request.method == "POST":
-        return _do_login(conn, request, config, now)
+        return _do_login(conn, request, config, now, portal=portal)
     if request.path == "/logout":
         return redirect("/login", set_cookie=_cleared_cookie())
     if request.path in ("/entra/start", "/entra/callback") and request.method == "GET":
@@ -322,25 +433,49 @@ def _route(conn, request: Request, config: Config, now: datetime) -> Response:
         user = resolve_user(conn, request, config)
     except auth.Unauthenticated:
         if request.path == "/login":
+            next_url = request.query.get("next", "/")
             return Response(body=templates.login_page(
                 entra_configured=config.entra_configured, windows_domain=config.windows_domain,
-                next_url=request.query.get("next", "/")))
+                next_url=_portal_next(next_url) if portal else next_url))
         # Anything else, unauthenticated, becomes the sign-in page with a 401 so
         # a script gets a status and a browser gets a form.
         return Response("401 Unauthorized", templates.login_page(
             entra_configured=config.entra_configured, windows_domain=config.windows_domain,
-            next_url=request.path))
+            next_url=_portal_next(request.path) if portal else request.path))
 
     ctx = Ctx(conn=conn, request=request, user=user, config=config, now=now)
+    # Who gets the requester's layout: everyone on the portal host, and anyone
+    # who is on no board (a requester is not a fulfiller). Derived here, once,
+    # so every page draws the same shell for the same person.
+    from .views import common
+    user.requester = portal or not common.board_ids_for(ctx)
     return router.dispatch(ctx)
 
 
-def _do_login(conn, request: Request, config: Config, now: datetime) -> Response:
+# What the portal host answers. Everything else there is a 404 before identity
+# is even looked at. `/my` and below is the requester's surface; the rest is
+# the way in and out.
+_PORTAL_EXACT = frozenset({"/my", "/login", "/logout", "/entra/start", "/entra/callback"})
+
+
+def _portal_path(path: str) -> bool:
+    return path in _PORTAL_EXACT or path.startswith("/my/")
+
+
+def _portal_next(next_url: str) -> str:
+    """Where a sign-in on the portal host lands: their requests, never a desk page."""
+    return next_url if next_url == "/my" or next_url.startswith("/my/") else "/my"
+
+
+def _do_login(conn, request: Request, config: Config, now: datetime, *,
+              portal: bool = False) -> Response:
     from . import templates
     form = request.form()
     username = form.get("username", "")
     password = form.get("password", "")
     next_url = form.get("next", "/") or "/"
+    if portal:
+        next_url = _portal_next(next_url)
     door = form.get("door", "local")
     try:
         if door == "windows":
@@ -363,7 +498,7 @@ def _do_login(conn, request: Request, config: Config, now: datetime) -> Response
     # Never redirect an open session to an absolute or off-site URL.
     if not next_url.startswith("/"):
         next_url = "/"
-    return redirect(next_url, set_cookie=_session_cookie_value(token, secure=request.secure))
+    return redirect(next_url, set_cookie=_session_cookie_value(token, secure=config.secure_cookie(request)))
 
 
 # The PEP 3333 callable a production server or the tests import directly is built

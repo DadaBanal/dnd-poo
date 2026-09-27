@@ -153,7 +153,8 @@ def index(ctx):
              + _tile(m["opened_total"], "Opened in period") + _tile(m["closed_total"], "Closed in period")
              + _tile(m["backlog"], "Open now")
              + _tile(m["resolve_met_total"], "Resolve clock met", unit="%",
-                     cls="" if (m["resolve_met_total"] or 100) >= 80 else "warn")
+                     # None is "nothing closed yet", uncoloured; 0 is every clock missed
+                     cls="" if m["resolve_met_total"] is None or m["resolve_met_total"] >= 80 else "warn")
              + _tile(fmt(m["median_respond"]), "Median time to respond")
              + _tile(fmt(m["median_resolve"]), "Median time to resolve") + "</div>")
     sat = ""

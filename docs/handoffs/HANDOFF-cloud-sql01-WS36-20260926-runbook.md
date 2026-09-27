@@ -12,7 +12,7 @@ are not edited; where this file and they differ, this file is later and wins.
 | **From** | Cloud Build |
 | **Workstream** | WS36 (PSA ticketing): the desk on premises |
 | **Bucket** | Everything below, in order, over as many sittings as it takes; each sitting ends with a Reply appended to the handoff it ran and a push to `claude/psa-ticketing-build`. |
-| **Read first** | this file, then each handoff as its turn comes: 1 `…-20260925-sqlserver.md` 2 `…-20260925-pilot.md` (and `docs/WS36-pilot-test-script-20260925.md`) 3 `…-20260926-portal.md` 4 the earlier `…-20260923-mail.md`, `…-20260923-rules.md`, `…-20260924-attachments.md` for the tasks they set up |
+| **Read first** | this file, then each handoff as its turn comes: 1 `…-20260925-sqlserver.md` 2 `…-20260925-pilot.md` (and `docs/WS36-pilot-test-script-20260927.md`) 3 `…-20260926-portal.md` 4 the earlier `…-20260923-mail.md`, `…-20260923-rules.md`, `…-20260924-attachments.md` for the tasks they set up |
 
 ## The rule that outranks every other line
 
@@ -172,6 +172,72 @@ Read with the tables below; each is now the rule.
   certificate, proxying to the desk, added to the footprint table and to the
   kill switch, and nothing else in IIS touched. Until Dada chooses, the desk
   stays on the LAN in plain HTTP and the portal stays off.
+
+## Folded in from sitting 2, parts 7 to 10 (27 Sep)
+
+Read by Cloud on 27 Sep after parts 7 to 10 landed. What SQL01 asked for is
+built at the head this section arrives with; what it decided stands.
+
+- **Sitting 2 stands where part 7 left it.** First administrators done and
+  idempotent; step 3 waits on the technicians' names; step 5 (the AD exports)
+  waits on an ordinary domain user, and **that rule stands**: SQL01's session
+  is in Domain Admins, the scripts say not to run as one, and nothing here
+  overrides a script's own safety line; the attachment copy still has no
+  destination volume (Dada's).
+- **The IIS front doors stand** (`PSA-Desk` on `desk.pmcne.ph`, `PSA-Portal`
+  on `help.pmcne.ph`, both proven no-meddle before and after). They are in
+  the footprint from now on: two sites, two pools, two `web.config` files,
+  two named `appcmd` backups; the kill switch gains `Stop-Website -Name
+  PSA-Desk` and `Stop-Website -Name PSA-Portal`, and the full reverse gains
+  `New-PsaDeskIis.ps1 -Rollback` and `New-PsaPortalIis.ps1 -Rollback`.
+  Certificate renewal (2027-02-23) re-points two http.sys entries, as part 9
+  measured.
+- **The part 8 fix is in.** The desk now accepts an `Origin` equal to
+  `PSA_PUBLIC_URL`'s or `PSA_PORTAL_URL`'s scheme and host; marks every
+  cookie `Secure` and sends HSTS when either is `https://`, from config and
+  never from a header; and reads `X-Forwarded-Host` from a loopback peer
+  only, to know which public address a request came for. On the host, in
+  this order, each step verified before the next:
+  1. `Set-PsaDeskEnv.ps1 -Apply -PublicUrl https://desk.pmcne.ph -PortalUrl
+     https://help.pmcne.ph` (the `-PortalUrl` parameter is SQL01's to add;
+     it sets `PSA_PORTAL_URL`). Restart `PSA-Desk`; the console's `public:`
+     line names both and says `cookies Secure, HSTS on`.
+  2. In both sites' `web.config`, add the server variable
+     `HTTP_X_FORWARDED_HOST` set to the request's own host (`{HTTP_HOST}`)
+     on the proxy rule, and allow it in the site's `<location>` as
+     `HTTP_ORIGIN` is. Verify: `https://help.pmcne.ph/dispatch` answers
+     **404** from the desk (not the IIS redirect), `https://help.pmcne.ph/`
+     lands on `/my`, and `https://desk.pmcne.ph/dispatch` still answers.
+  3. Remove the Origin rewrite rule and the `HTTP_ORIGIN` allowance from
+     both sites. Verify: a same-site POST on each address gets 303 and the
+     cross-site control still gets 403.
+  4. Remove the portal site's path filter (the desk now does it, as 404s).
+     Keep the http→https redirect and the body cap in both sites. The
+     `Secure` rewrite of `Set-Cookie` may go as well once the desk's own
+     `Set-Cookie` is seen to carry `Secure` (step 1 makes it so); keeping it
+     is harmless.
+  If any verify fails, put the removed rule back and write the failing URL
+  and status into the Reply; the desk is unchanged by any of these.
+- **Part 9's defects, all seven, are answered upstream** at this head:
+  Uplift's ticket tables are limited to the reader's boards and audited;
+  Dispatch's queue and day audit a restricted board's listing; an
+  every-board rule is tested on the tester's boards only and never runs on a
+  restricted board; Reports colours 0 % as the worst number; `OVERRIDE` is
+  documented as reserved and unbuilt; the pilot script is superseded by
+  `docs/WS36-pilot-test-script-20260927.md` (B3 books 0.5 h, H3 now passes
+  because the desk scans a technician's note, E1 is marked "only once
+  PSA-MailPickup runs", the portal has steps F3 to F6); the portal's words
+  no longer ask for a record number.
+- **Part 10's asks are built:** anyone on no board lands on `/my` with the
+  requester's shell (My requests alone; no New ticket, ⌘K or keyboard
+  sheet); on the portal host that shell is drawn for everyone, `/` goes to
+  `/my`, technician paths answer 404 before identity is looked at, and
+  sign-in returns to `/my`. Requester emails already link to
+  `PSA_PORTAL_URL` (`PSA-Notify -PortalUrl`, https only).
+- **Not decided here, still Dada's:** announcing `help.pmcne.ph` to a first
+  ward; the attachment copy's destination; the Graph registration for
+  `PSA-MailPickup` and `PSA-Notify`; the DPO's word for `PSA-Retention`; the
+  technicians' names for pilot step 3.
 
 ## When a step does not pass
 

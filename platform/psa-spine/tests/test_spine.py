@@ -2200,7 +2200,8 @@ class WebWSGITest(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def _environ(self, method, path, *, cookie=None, body=b"", query="", headers=None):
+    def _environ(self, method, path, *, cookie=None, body=b"", query="", headers=None,
+                 remote_addr=None):
         env = {
             "REQUEST_METHOD": method, "PATH_INFO": path, "SCRIPT_NAME": "",
             "QUERY_STRING": query, "SERVER_NAME": "t", "SERVER_PORT": "80",
@@ -2215,10 +2216,12 @@ class WebWSGITest(unittest.TestCase):
             env["HTTP_COOKIE"] = cookie
         for k, v in (headers or {}).items():
             env["HTTP_" + k.upper().replace("-", "_")] = v
+        if remote_addr:
+            env["REMOTE_ADDR"] = remote_addr
         return env
 
     def _call(self, method, path, *, cookie=None, form=None, query="", validate=True,
-              headers=None):
+              headers=None, remote_addr=None):
         body = _urlparse.urlencode(form).encode() if form else b""
         app = _validator(self.raw) if validate else self.raw
         captured = {}
@@ -2227,7 +2230,7 @@ class WebWSGITest(unittest.TestCase):
             captured["status"] = status
             captured["headers"] = headers
         it = app(self._environ(method, path, cookie=cookie, body=body, query=query,
-                               headers=headers), start_response)
+                               headers=headers, remote_addr=remote_addr), start_response)
         try:
             payload = b"".join(it).decode()
         finally:
@@ -2461,6 +2464,24 @@ class WebWSGITest(unittest.TestCase):
             "SELECT board_status_id FROM board_status WHERE board_id='IT_HELP' AND is_default=1")]
         self.assertEqual(defaults, ["IT_HELP.ASSIGNED"])
         conn.close()
+
+    def test_a_technicians_note_is_scanned_for_patient_details_like_every_other_intake(self):
+        """Pilot script H3 (SQL01 part 9, defect 6): the note is saved and a
+        data-quality finding names the shape, never the number."""
+        status, headers, _ = self._call("POST", "/ticket/ITO-1/note", cookie=self._cookie_for("alice"),
+                                        form={"body": "Patient PhilHealth 12-345678901-2 says the printer is out",
+                                              "flag": "DISCUSSION"})
+        self.assertTrue(status.startswith("303"), status)
+        self.assertIn("Note+saved", dict(headers)["Location"])
+        conn = db.connect(self.db_path)
+        rows = conn.execute("SELECT code, detail FROM data_quality WHERE subject_id = 'ITO-1'").fetchall()
+        note = conn.execute("SELECT detail FROM ticket_event WHERE work_item_id = 'ITO-1' AND kind = 'NOTE'").fetchone()
+        conn.close()
+        self.assertIn("PHI_PHILHEALTH_NUMBER", [r["code"] for r in rows])
+        for r in rows:
+            self.assertNotIn("345678901", r["detail"])
+            self.assertIn("in the note", r["detail"])
+        self.assertIn("345678901", note["detail"])           # kept, flagged, never dropped
 
     def test_a_form_posted_from_another_site_is_refused(self):
         status, _, _ = self._call("POST", "/ticket/ITO-1/note", cookie=self._cookie_for("alice"),
@@ -2839,6 +2860,75 @@ class WebWSGITest(unittest.TestCase):
         cookie = self._cookie_for("alice", via="local")
         self._call("GET", "/ticket/ITO-9", cookie=cookie)
         self.assertIn("via local", self._audit_rows()[0]["detail"])
+
+    # ---- SQL01 sitting 2, part 9: the pages that named tickets without the rule
+
+    def test_uplift_names_only_my_boards_tickets_and_audits_a_restricted_listing(self):
+        conn = db.connect(self.db_path)
+        conn.execute("UPDATE work_item SET contract_basis = 'UNKNOWN' WHERE work_item_id IN ('ITO-1','ITO-9')")
+        conn.commit()
+        conn.close()
+        # carol is on IT_HELP only: the restricted ticket is not on her page
+        status, _, body = self._call("GET", "/uplift", cookie=self._cookie_for("carol"))
+        self.assertTrue(status.startswith("200"))
+        self.assertIn("ITO-1", body)
+        self.assertNotIn("ITO-9", body)
+        self.assertNotIn("Sensitive", body)
+        self.assertIn("boards you are a member of", body)
+        self.assertEqual(self._audit_rows(), [])
+        # nobody on no board reads it at all
+        status, _, body = self._call("GET", "/uplift", cookie=self._cookie_for("dave"))
+        self.assertTrue(status.startswith("200"))
+        self.assertIn("for board members", body)
+        self.assertNotIn("ITO-1", body)
+        # alice is on PHI: she sees it, and the read is on the record
+        _, _, body = self._call("GET", "/uplift", cookie=self._cookie_for("alice"))
+        self.assertIn("ITO-9", body)
+        rows = self._audit_rows()
+        self.assertEqual([(r["subject_kind"], r["subject_id"]) for r in rows], [("board", "PHI")])
+        self.assertIn("uplift evidence listed 1 ticket(s)", rows[0]["detail"])
+
+    def test_the_dispatch_day_audits_a_restricted_boards_visit(self):
+        from psaspine import schedule
+        conn = db.connect(self.db_path)
+        schedule.add(conn, "ITO-9", member="alice", starts_at=datetime(2026, 9, 17, 14),
+                     ends_at=datetime(2026, 9, 17, 15), note=None, actor="t", at=datetime(2026, 9, 17, 9))
+        conn.commit()
+        conn.close()
+        _, _, body = self._call("GET", "/dispatch", cookie=self._cookie_for("carol"))
+        self.assertNotIn("ITO-9", body)
+        self.assertEqual(self._audit_rows(), [])
+        _, _, body = self._call("GET", "/dispatch", cookie=self._cookie_for("alice"))
+        self.assertIn("ITO-9", body)
+        rows = self._audit_rows()
+        self.assertEqual([(r["subject_kind"], r["subject_id"]) for r in rows], [("board", "PHI")])
+        self.assertIn("dispatch listed 1 ticket(s)", rows[0]["detail"])
+
+    def test_a_sysadmins_every_board_rule_is_tested_on_their_own_boards_only(self):
+        root = self._cookie_for("root", is_sysadmin=True)          # on no board at all
+        _, headers, _ = self._call("POST", "/admin/rules/new", cookie=root,
+                                   form={"name": "Any P1", "board_id": ""})
+        wid = dict(headers)["Location"].rsplit("/", 1)[1]
+        self._call("POST", f"/admin/rules/{wid}/event", cookie=root, form={
+            "event_name": "P1 anywhere", "fires_on": "ON_CREATE", "mode": "ONCE",
+            "field0": "TICKET.PRIORITY", "op0": "EQ", "value0": "P1",
+            "act0": "ADD_NOTE", "detail0": "noted"})
+        _, headers, _ = self._call("POST", f"/admin/rules/{wid}/test", cookie=root,
+                                   form={"event_id": f"{wid}_E1"})
+        loc = _urlparse.unquote(dict(headers)["Location"]).replace("+", " ")
+        # both P1s exist (ITO-1, ITO-9); root is on neither board, so neither is named
+        self.assertIn("0 open ticket(s) match now on the boards you are a member of", loc)
+        self.assertNotIn("ITO-9", loc)
+        self.assertEqual(self._audit_rows(), [])
+        # alice, a sysadmin on both boards, sees both and the restricted one is audited
+        alice = self._cookie_for("alice", is_sysadmin=True)
+        _, headers, _ = self._call("POST", f"/admin/rules/{wid}/test", cookie=alice,
+                                   form={"event_id": f"{wid}_E1"})
+        loc = _urlparse.unquote(dict(headers)["Location"]).replace("+", " ")
+        self.assertIn("2 open ticket(s) match now on the boards you are a member of", loc)
+        rows = self._audit_rows()
+        self.assertEqual([(r["subject_kind"], r["subject_id"]) for r in rows], [("board", "PHI")])
+        self.assertIn("rule test listed 1 ticket(s)", rows[0]["detail"])
 
     def test_the_admin_surface_adds_a_board_status(self):
         cookie = self._cookie_for("alice")
@@ -3487,6 +3577,163 @@ class PortalTest(unittest.TestCase):
                               " AND kind='PORTAL_REPLY'").fetchone()
         conn.close()
         self.assertIsNone(leaked)
+
+
+class ProxyAndPortalTest(unittest.TestCase):
+    """The desk behind IIS/ARR on DND-SQL01 (SQL01 sitting 2, parts 8 to 10):
+    the proxy sends `Host: 127.0.0.1:8085`, the browser's Origin is the public
+    one, TLS ends at the proxy, and the requester portal has an address of its
+    own. Everything the desk decides about that comes from PSA_PUBLIC_URL and
+    PSA_PORTAL_URL, never from a header a LAN client could write."""
+
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+    tearDown = WebWSGITest.tearDown
+
+    def setUp(self) -> None:
+        WebWSGITest.setUp(self)
+        self.config.public_url = "https://desk.pmcne.ph"
+        self.config.portal_url = "https://help.pmcne.ph"
+        self.alice = self._cookie_for("alice")
+        self.nurse = self._cookie_for("nurse.a", email="nurse.a@pmcne.ph")
+        self.proxy = {"Host": "127.0.0.1:8085"}
+
+    # ------------------------------------------------------------ part 8
+
+    def test_a_form_posted_from_a_public_address_is_accepted_and_any_other_refused(self):
+        for origin, ok in (("https://desk.pmcne.ph", True), ("https://help.pmcne.ph", True),
+                           ("https://DESK.pmcne.ph:443", True), ("https://evil.example", False),
+                           ("http://desk.pmcne.ph", False)):
+            status, _, _ = self._call("POST", "/ticket/ITO-1/note", cookie=self.alice,
+                                      form={"body": "via the proxy", "flag": "DISCUSSION"},
+                                      headers={**self.proxy, "Origin": origin})
+            self.assertEqual(status.startswith("303"), ok, origin)
+
+    def test_with_a_public_https_url_every_cookie_is_secure_and_hsts_is_sent_over_plain_http(self):
+        conn = db.connect(self.db_path)
+        webauth.create_local_account(conn, "glass", "correct horse battery staple", created_by="t",
+                                     at=datetime(2026, 9, 17, 9))
+        conn.commit()
+        conn.close()
+        status, headers, _ = self._call("POST", "/login", headers=self.proxy, form={
+            "username": "glass", "password": "correct horse battery staple", "next": "/"})
+        self.assertTrue(status.startswith("303"), status)
+        cookie = next(v for k, v in headers if k == "Set-Cookie")
+        self.assertIn("psa_session=", cookie)
+        self.assertIn("Secure", cookie)
+        self.assertIn(("Strict-Transport-Security", "max-age=31536000"), headers)
+        # and the same page with no public URL at all: neither
+        self.config.public_url = self.config.portal_url = None
+        _, headers, _ = self._call("POST", "/login", headers=self.proxy, form={
+            "username": "glass", "password": "correct horse battery staple", "next": "/"})
+        cookie = next(v for k, v in headers if k == "Set-Cookie")
+        self.assertNotIn("Secure", cookie)
+        self.assertFalse(any(k == "Strict-Transport-Security" for k, _ in headers))
+
+    def test_secure_comes_from_config_never_from_a_forwarded_proto_header(self):
+        self.config.public_url = self.config.portal_url = None
+        conn = db.connect(self.db_path)
+        webauth.create_local_account(conn, "glass", "pw pw pw pw", created_by="t", at=datetime(2026, 9, 17, 9))
+        conn.commit()
+        conn.close()
+        _, headers, _ = self._call("POST", "/login", form={"username": "glass", "password": "pw pw pw pw"},
+                                   headers={**self.proxy, "X-Forwarded-Proto": "https"}, remote_addr="127.0.0.1")
+        self.assertNotIn("Secure", next(v for k, v in headers if k == "Set-Cookie"))
+
+    # ------------------------------------------------------------ part 10
+
+    def _portal(self, method, path, **kw):
+        """A request that came through the portal's IIS site: the proxy is on the
+        loopback and says which host it was asked for."""
+        headers = {**self.proxy, "X-Forwarded-Host": "help.pmcne.ph", **kw.pop("headers", {})}
+        return self._call(method, path, headers=headers, remote_addr="127.0.0.1", **kw)
+
+    def test_the_portal_host_serves_the_requesters_pages_and_nothing_else(self):
+        status, headers, _ = self._portal("GET", "/")
+        self.assertTrue(status.startswith("303"))
+        self.assertEqual(dict(headers)["Location"], "/my")
+        # technician paths are not there, signed in or not, and say nothing more
+        for path in ("/dispatch", "/uplift", "/admin", "/ticket/new", "/ticket/ITO-1",
+                     "/api/v1/tickets", "/search.json", "/reports", "/companies", "/bulk"):
+            status, _, body = self._portal("GET", path, cookie=self.alice)
+            self.assertTrue(status.startswith("404"), f"{path} -> {status}")
+            self.assertNotIn("Printer down", body)
+            status, _, _ = self._portal("GET", path)
+            self.assertTrue(status.startswith("404"), f"{path} unauthenticated -> {status}")
+        # the requester's own pages answer
+        status, _, body = self._portal("GET", "/my", cookie=self.nurse)
+        self.assertTrue(status.startswith("200"))
+        self.assertIn("Your requests", body)
+        status, _, _ = self._portal("GET", "/logout", cookie=self.nurse)
+        self.assertTrue(status.startswith("303"))
+
+    def test_on_the_portal_host_sign_in_returns_to_my_requests(self):
+        status, _, body = self._portal("GET", "/dispatch")
+        self.assertTrue(status.startswith("404"))
+        status, _, body = self._portal("GET", "/login", query="next=/admin")
+        self.assertTrue(status.startswith("200"))
+        self.assertIn('name="next" value="/my"', body)
+        status, _, body = self._portal("GET", "/my/ITO-1")            # not signed in
+        self.assertTrue(status.startswith("401"))
+        self.assertIn('name="next" value="/my/ITO-1"', body)
+        conn = db.connect(self.db_path)
+        webauth.create_local_account(conn, "glass", "correct horse battery staple", created_by="t",
+                                     at=datetime(2026, 9, 17, 9))
+        conn.commit()
+        conn.close()
+        status, headers, _ = self._portal("POST", "/login", form={
+            "username": "glass", "password": "correct horse battery staple", "next": "/admin"})
+        self.assertTrue(status.startswith("303"), status)
+        self.assertEqual(dict(headers)["Location"], "/my")
+
+    def test_on_the_portal_host_even_a_technician_gets_the_requesters_shell(self):
+        _, _, body = self._portal("GET", "/my", cookie=self.alice)
+        self.assertIn("<body data-requester>", body)
+        self.assertIn("PMC IT help", body)
+        for gone in (">Dispatch<", ">Service Board<", ">Setup<", 'id="pal"', "⌘K", 'class="newbtn"',
+                     'popovertarget="keys"'):
+            self.assertNotIn(gone, body, gone)
+        self.assertIn('id="theme"', body)                         # light/dark stays
+        self.assertIn("sign out", body)
+        # the same person on the desk's address has the whole desk
+        _, _, body = self._call("GET", "/my", cookie=self.alice, headers={"Host": "desk.pmcne.ph"})
+        self.assertNotIn("<body data-requester>", body)
+        for there in (">Dispatch<", ">Service Board<", 'id="pal"', 'class="newbtn"'):
+            self.assertIn(there, body, there)
+
+    def test_a_forwarded_host_is_believed_from_the_loopback_only(self):
+        # a LAN client naming the portal host in a header is not on the portal
+        status, _, body = self._call("GET", "/dispatch", cookie=self.alice,
+                                     headers={"Host": "desk.pmcne.ph", "X-Forwarded-Host": "help.pmcne.ph"},
+                                     remote_addr="192.0.2.10")
+        self.assertTrue(status.startswith("200"), status)
+        # the same header from the loopback is the proxy speaking
+        status, _, _ = self._call("GET", "/dispatch", cookie=self.alice,
+                                  headers={"Host": "127.0.0.1:8085", "X-Forwarded-Host": "help.pmcne.ph"},
+                                  remote_addr="127.0.0.1")
+        self.assertTrue(status.startswith("404"), status)
+        # and the Host header alone names the portal when nothing is in front
+        status, _, _ = self._call("GET", "/dispatch", cookie=self.alice,
+                                  headers={"Host": "help.pmcne.ph"})
+        self.assertTrue(status.startswith("404"), status)
+        # with no portal URL configured nothing is a portal host
+        self.config.portal_url = None
+        status, _, _ = self._call("GET", "/dispatch", cookie=self.alice, headers={"Host": "help.pmcne.ph"})
+        self.assertTrue(status.startswith("200"), status)
+
+    def test_a_person_on_no_board_lands_on_their_requests_with_the_requesters_shell(self):
+        status, headers, _ = self._call("GET", "/", cookie=self.nurse, headers={"Host": "desk.pmcne.ph"})
+        self.assertTrue(status.startswith("303"))
+        self.assertEqual(dict(headers)["Location"], "/my")
+        _, _, body = self._call("GET", "/my", cookie=self.nurse, headers={"Host": "desk.pmcne.ph"})
+        self.assertIn("<body data-requester>", body)
+        self.assertNotIn(">Dispatch<", body)
+        self.assertNotIn('id="pal"', body)
+        # a member keeps the desk's shell on the same page
+        _, _, body = self._call("GET", "/my", cookie=self.alice, headers={"Host": "desk.pmcne.ph"})
+        self.assertNotIn("<body data-requester>", body)
+        self.assertIn(">Dispatch<", body)
 
 
 class MachineApiTest(unittest.TestCase):
@@ -4421,6 +4668,46 @@ class WorkflowRunnerTest(unittest.TestCase):
         self.wf.activate(self.conn, "W", actor="t", at=self.at)
         self.wf.edited(self.conn, "W")                      # an edit switches it off again
         self.assertEqual(self.conn.execute("SELECT is_active FROM workflow").fetchone()[0], 0)
+
+    def test_an_every_board_rule_never_touches_a_restricted_board(self):
+        """SQL01 part 9, defect 3: a system administrator's Every-board rule ran on
+        restricted boards, so "Move to board" could carry a patient's ticket onto an
+        open one. A restricted board is never "every board": its own administrators
+        write its rules, on the board."""
+        setup.create_board(self.conn, display_name="Ward systems", fulfiller_group="Clin",
+                           creator="t", at=self.at, board_id="WARD", restricted=True)
+        self.conn.execute("INSERT INTO workflow (workflow_id, board_id, name, table_type)"
+                          " VALUES ('W_ALL', NULL, 'Any P1', 'TICKET')")
+        self.conn.execute("INSERT INTO workflow_event (event_id, workflow_id, fires_on, execution_time)"
+                          " VALUES ('E_ALL', 'W_ALL', 'ON_CREATE', 'ONCE')")
+        self.conn.execute("INSERT INTO workflow_condition (event_id, trigger_id, operator, value,"
+                          " sort_order) VALUES ('E_ALL', 'TICKET.PRIORITY', 'EQ', 'P1', 0)")
+        self.conn.execute("INSERT INTO workflow_action (event_id, action, detail, sort_order)"
+                          " VALUES ('E_ALL', 'ADD_NOTE', 'seen by the every-board rule', 0)")
+        # the unscoped test (the CLI's) counts open boards only, and says which
+        r = self.wf.test_event(self.conn, "E_ALL", at=self.at)
+        self.assertEqual(r["matches"], 0)
+        self.wf.activate(self.conn, "W_ALL", actor="t", at=self.at)
+        open_p1 = self._open(min_priority="P1")
+        ward_p1 = tickets.open_ticket(self.conn, board_id="WARD", summary="Monitor in bay 2",
+                                      impact="I3", urgency="U3", requested_by=None, at=self.at,
+                                      min_priority="P1")
+        noted = {r[0] for r in self.conn.execute(
+            "SELECT work_item_id FROM ticket_event WHERE kind = 'NOTE' AND actor = 'workflow:W_ALL/E_ALL'")}
+        self.assertEqual(noted, {open_p1})
+        self.assertNotIn(ward_p1, noted)
+        # a rule written on the restricted board itself still runs there
+        self.conn.execute("INSERT INTO workflow (workflow_id, board_id, name, table_type, is_active)"
+                          " VALUES ('W_WARD', 'WARD', 'Ward P1', 'TICKET', 1)")
+        self.conn.execute("INSERT INTO workflow_event (event_id, workflow_id, fires_on, execution_time,"
+                          " tested_at) VALUES ('E_WARD', 'W_WARD', 'ON_CREATE', 'ONCE', '2026-09-23 09:00')")
+        self.conn.execute("INSERT INTO workflow_action (event_id, action, detail, sort_order)"
+                          " VALUES ('E_WARD', 'ADD_NOTE', 'seen by the ward rule', 0)")
+        ward_2 = tickets.open_ticket(self.conn, board_id="WARD", summary="Monitor in bay 3",
+                                     impact="I3", urgency="U3", requested_by=None, at=self.at)
+        self.assertIsNotNone(self.conn.execute(
+            "SELECT 1 FROM ticket_event WHERE work_item_id = ? AND actor = 'workflow:W_WARD/E_WARD'",
+            (ward_2,)).fetchone())
 
     def test_a_p1_fires_at_the_moment_it_is_created(self):
         self._rule("W_P1", [("E_P1", "ON_CREATE", [("TICKET.PRIORITY", "EQ", "P1")],
@@ -6347,8 +6634,12 @@ class EntraSignInTest(unittest.TestCase):
                                      cookie=cookie)
         self.assertTrue(status.startswith("401"))
         self.assertIn("not issued for this sign-in", body)
-        self.assertEqual(db.connect(self.db_path).execute(
-            "SELECT COUNT(*) FROM audit_event WHERE action = 'ENTRA_LOGIN'").fetchone()[0], 0)
+        conn = db.connect(self.db_path)
+        try:
+            self.assertEqual(conn.execute(
+                "SELECT COUNT(*) FROM audit_event WHERE action = 'ENTRA_LOGIN'").fetchone()[0], 0)
+        finally:
+            db.close(conn)             # left open, Windows refuses to delete the file (WinError 32)
 
     def test_when_the_tenant_is_unreachable_the_break_glass_door_is_offered(self):
         _, cookie = self._start()
@@ -6358,6 +6649,19 @@ class EntraSignInTest(unittest.TestCase):
         self.assertTrue(status.startswith("401"))
         self.assertIn("could not be reached", body)
         self.assertIn("Break-glass", body)
+
+    def test_behind_a_tls_proxy_the_flight_cookie_is_secure_and_the_redirect_uri_is_the_public_one(self):
+        """SQL01 part 8: IIS terminates TLS and speaks plain http to the desk, so
+        `request.secure` is False; the public URL is what says the world is https."""
+        self.config.public_url = "https://desk.pmcne.ph"
+        status, headers, _ = self._call("GET", "/entra/start", query="next=/my",
+                                        headers={"host": "127.0.0.1:8085"})
+        self.assertTrue(status.startswith("303"), status)
+        cookie = next(v for k, v in headers if k == "Set-Cookie")
+        self.assertIn("Secure", cookie)
+        q = dict(_urlparse.parse_qsl(_urlparse.urlsplit(dict(headers)["Location"]).query))
+        self.assertEqual(q["redirect_uri"], "https://desk.pmcne.ph/entra/callback")
+        self.assertIn(("Strict-Transport-Security", "max-age=31536000"), headers)
 
     def test_a_bearer_token_on_the_api_side_fetches_the_keys_it_needs(self):
         from psaspine.web import entra
@@ -6450,9 +6754,10 @@ class WindowsSignInTest(unittest.TestCase):
         cookie = next(v for k, v in headers if k == "Set-Cookie").split(";", 1)[0]
         _, _, body = self._call("GET", "/my", cookie=cookie)
         self.assertIn("Printer in ward 3", body)
-        # and no board: a requester is not a fulfiller
-        status, _, body = self._call("GET", "/", cookie=cookie)
-        self.assertIn("not a member of any board", body)
+        # and no board: a requester is not a fulfiller, so '/' is their requests
+        status, headers, _ = self._call("GET", "/", cookie=cookie)
+        self.assertTrue(status.startswith("303"), status)
+        self.assertEqual(dict(headers)["Location"], "/my")
 
     def test_a_refusal_says_what_windows_said_and_is_audited_without_the_password(self):
         for user, words in (("alice", "wrong"), ("locked", "locked out"), ("stale", "expired")):

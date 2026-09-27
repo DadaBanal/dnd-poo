@@ -483,7 +483,9 @@ try{setDensity(localStorage.getItem("psa-density")||"")}catch(e){}
 $$(".densi button").forEach(function(b){b.addEventListener("click",function(){setDensity(b.dataset.density||"")})});
 /* shortcuts */
 var pend=null;
+var requester=d.body.hasAttribute("data-requester");
 d.addEventListener("keydown",function(e){
+  if(requester)return;
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="k"){e.preventDefault();pal&&!pal.open?open(""):close();return}
   if(e.key==="Escape"){close();if(cur>=0){rows[cur].classList.remove("cur");cur=-1}return}
   if(inField(e)||e.ctrlKey||e.metaKey||e.altKey)return;
@@ -713,6 +715,12 @@ def page(title: str, body: str, *, user=None, active: str = "") -> str:
     is at the desk and how they got in is not a detail to hunt for in a log when
     the desk is being run on the fallback path.
     """
+    # The requester's shell: the person is on no board, or came to the portal's
+    # own address. One entry, no New ticket button (the portal's form is on the
+    # page), no command palette and no keyboard sheet: those are the
+    # technician's tools, and their shortcuts would send a requester to desk
+    # pages that answer 404 or "not a member".
+    requester = user is not None and getattr(user, "requester", False)
     nav_items = [
         ("board", "/", "Service Board"),
         ("dispatch", "/dispatch", "Dispatch"),
@@ -723,25 +731,30 @@ def page(title: str, body: str, *, user=None, active: str = "") -> str:
         ("admin", "/admin", "Setup"),
         ("my", "/my", "My requests"),
     ]
+    if requester:
+        nav_items = [("my", "/my", "My requests")]
+        active = "my"
     nav = "".join(
         f'<a href="{esc(href)}"{" class=on aria-current=page" if key == active else ""}>'
         f'{icon("setup" if key == "admin" else key)}{esc(label)}</a>'
         for key, href, label in nav_items)
     nav += (f'<a class="newbtn" href="/ticket/new" title="New ticket (n)">{icon("plus")} New ticket</a>'
-            if user is not None else "")
+            if user is not None and not requester else "")
     who = ""
     if user is not None:
         glass = ('<span class="glass">break-glass</span> · ' if user.via == "local" else "")
+        tools = ""
+        if not requester:
+            tools = ('<button class="iconbtn" id="pal-open" type="button" title="Search and commands (Ctrl+K)"'
+                     ' aria-label="Search and commands"><span class=kbd>⌘K</span></button>'
+                     '<button class="iconbtn" type="button" popovertarget="keys" title="Keyboard shortcuts (?)"'
+                     f' aria-label="Keyboard shortcuts">{icon("keyboard")}</button>')
         who = (f'<div class="who">{glass}<span class=name>{esc(user.name)}</span>'
-               f' · <a href="/logout">sign out</a>'
-               '<button class="iconbtn" id="pal-open" type="button" title="Search and commands (Ctrl+K)"'
-               ' aria-label="Search and commands"><span class=kbd>⌘K</span></button>'
-               '<button class="iconbtn" type="button" popovertarget="keys" title="Keyboard shortcuts (?)"'
-               f' aria-label="Keyboard shortcuts">{icon("keyboard")}</button>'
+               f' · <a href="/logout">sign out</a>' + tools +
                f'<button class="iconbtn" id="theme" type="button" title="Light / dark (t)"'
                f' aria-label="Toggle light or dark">{icon("sun")}</button></div>')
     palette = ""
-    if user is not None:
+    if user is not None and not requester:
         palette = (
             '<dialog id="pal" aria-label="Commands"><div class="pal-box">'
             '<input id="pal-q" autocomplete="off" spellcheck="false" placeholder="Go to a page, open PMC-000123, or search this board…">'
@@ -764,9 +777,11 @@ def page(title: str, body: str, *, user=None, active: str = "") -> str:
         '<meta name=theme-color media="(prefers-color-scheme: light)" content="#f4f5f8">'
         '<meta name=theme-color media="(prefers-color-scheme: dark)" content="#0f1115">'
         f'<link rel=icon href="{FAVICON}">'
-        f"<title>{esc(title)} · PSA desk</title>{THEME_BOOT}<style>{STYLE}</style></head><body>"
+        f"<title>{esc(title)} · {'PMC IT help' if requester else 'PSA desk'}</title>{THEME_BOOT}"
+        f"<style>{STYLE}</style></head><body{' data-requester' if requester else ''}>"
         f'<div id="nprog" aria-hidden="true"></div>{SPRITE}'
-        f'<header class="top"><a class="brand" href="/"><i></i>PSA desk</a>'
+        f'<header class="top"><a class="brand" href="{"/my" if requester else "/"}"><i></i>'
+        f'{"PMC IT help" if requester else "PSA desk"}</a>'
         f"<nav>{nav}</nav>{who}</header>"
         f"<main>{body}</main>"
         "<footer>PMC PSA spine — Phase B pilot. LAN only, Dada IT only. "

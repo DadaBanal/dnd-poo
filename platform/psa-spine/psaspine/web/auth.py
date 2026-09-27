@@ -77,6 +77,10 @@ class User:
     via: str = "entra"                       # 'entra' | 'windows' | 'local'
     is_sysadmin: bool = False
     roles: dict[str, str] = field(default_factory=dict)   # board_id -> access
+    # Set per request by the app, never stored in a session: this person gets
+    # the requester's shell (My requests only) because they are on no board,
+    # or because the request came to the portal's own address.
+    requester: bool = False
 
 
 # ----------------------------------------------------------- password hashing

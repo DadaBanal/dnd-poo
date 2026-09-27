@@ -12,8 +12,8 @@ test script with the technicians.
 | **To** | SQL01, with the operator at the keyboard, then the Dada IT technicians for the test script. Admin steps outside the server are the ones the mail and rules handoffs already had done; none are new here. |
 | **From** | Cloud Build |
 | **Workstream** | WS36 (PSA ticketing): pilot |
-| **Bucket** | A pilot desk on `DND-SQL01` that Dada IT uses for real work in dual-run with Kitameraki, LAN only, with every technician signed in and every step of `docs/WS36-pilot-test-script-20260925.md` passed once. Two sittings: one to stand it up, one with the technicians. |
-| **Read first** | 1. `platform/psa-spine/README.md` (all of "The desk, laid out like ConnectWise") 2. `docs/WS36-pilot-test-script-20260925.md` 3. this file |
+| **Bucket** | A pilot desk on `DND-SQL01` that Dada IT uses for real work in dual-run with Kitameraki, LAN only, with every technician signed in and every step of `docs/WS36-pilot-test-script-20260927.md` passed once. Two sittings: one to stand it up, one with the technicians. |
+| **Read first** | 1. `platform/psa-spine/README.md` (all of "The desk, laid out like ConnectWise") 2. `docs/WS36-pilot-test-script-20260927.md` 3. this file |
 
 ## What the pilot is, and is not
 
@@ -113,6 +113,14 @@ or `--host <the server's LAN address>` if technicians open it from their
 own PCs; never `0.0.0.0` (it refuses). **Pass:** `/login` answers 200 from a
 technician's browser, and `/` unauthenticated answers 401.
 
+(Superseded on the host, 27 Sep 2026: the desk stays on `127.0.0.1:8085` and
+technicians open **`https://desk.pmcne.ph`**, staff **`https://help.pmcne.ph`**,
+both through IIS, as the runbook's "Folded in from sitting 2" records. The
+`--host <LAN address>` road above was not taken and `Set-PsaDeskLan.ps1` was
+not run. **Pass** is then: `https://desk.pmcne.ph/login` answers 200 with no
+certificate warning, `https://desk.pmcne.ph/` unauthenticated answers 401,
+and `https://help.pmcne.ph/dispatch` answers 404.)
+
 **5. CHANGE: contacts and machines from AD.** The two export scripts read AD
 as an ordinary user and change nothing in it:
 
@@ -135,7 +143,7 @@ attachment retention (**preview only**, weekly). **Pass:** each shows `Last
 Run Result 0x0`.
 
 **7. The test script.** With two or three technicians at the desk, run
-`docs/WS36-pilot-test-script-20260925.md` top to bottom, ticking each step's
+`docs/WS36-pilot-test-script-20260927.md` top to bottom, ticking each step's
 *Pass* and writing what happened where it did not. That file is the record of
 the pilot's first day.
 

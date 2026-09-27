@@ -132,8 +132,9 @@ def _raise_form(error: str = "", notice: str = "") -> str:
             _radio_group("urgency", "Is a patient waiting?", PATIENT_WAITING) +
             "<label>Anything that would help us"
             "<textarea name='description' placeholder='Please do not include "
-            "patient names or case numbers -- give us the record number if we "
-            "need one.'></textarea></label>" + _FILE_FIELD +
+            "patient names, case numbers or record numbers. Tell us the ward, the "
+            "room or the machine and we will take it from there.'></textarea></label>"
+            + _FILE_FIELD +
             "<div><button type='submit'>Send it</button></div></form></div>")
 
 
@@ -329,8 +330,8 @@ def create(ctx):
         if findings:
             notice += (" It looks like your message may contain "
                        "patient details. We have flagged it so it can be removed -- next "
-                       "time, please give us the record number instead of the patient's "
-                       "details.")
+                       "time, please tell us the ward, the room or the machine instead of "
+                       "the patient's details.")
         if refused:
             notice += " " + " ".join(refused)
         return Response(body=t.page("Your requests", (

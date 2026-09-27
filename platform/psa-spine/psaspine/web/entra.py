@@ -13,7 +13,8 @@ unknown key id appears (Microsoft rotates them).
 Two cookies are involved. `psa_entra` holds the state, nonce and verifier of a
 sign-in in flight, signed with the process secret and dead in ten minutes; it
 is set on /entra only. The session cookie is the same one a break-glass login
-sets. Both are Secure when the desk speaks HTTPS, which the portal handoff
+sets. Both are Secure when the world reaches the desk over HTTPS (its own TLS,
+or a proxy's, by PSA_PUBLIC_URL), which the portal handoff
 requires before anyone types an organisation password near it.
 
 The network calls (the token endpoint, the keys) are two functions on Config
@@ -136,7 +137,7 @@ def start(request, config, *, now: float | None = None):
         "code_challenge": challenge, "code_challenge_method": "S256"}
     url = AUTHORITY.format(tenant=config.entra_tenant) + "oauth2/v2.0/authorize?" + urllib.parse.urlencode(params)
     cookie = _cookie(_sign(json.dumps(flight).encode("utf-8"), config.session_secret),
-                     secure=request.secure, max_age=FLIGHT_SECONDS)
+                     secure=config.secure_cookie(request), max_age=FLIGHT_SECONDS)
     return redirect(url, set_cookie=cookie)
 
 
@@ -193,6 +194,7 @@ def callback(conn, request, config, now, *, clock: float | None = None):
              subject_id=user.email, detail=user.name)
     conn.commit()
     session = auth.open_session(user, config.session_secret, now=clock)
-    resp = redirect(flight["next"], set_cookie=_session_cookie_value(session, secure=request.secure))
-    resp.headers.append(("Set-Cookie", _cookie("", secure=request.secure, max_age=0)))
+    secure = config.secure_cookie(request)
+    resp = redirect(flight["next"], set_cookie=_session_cookie_value(session, secure=secure))
+    resp.headers.append(("Set-Cookie", _cookie("", secure=secure, max_age=0)))
     return resp

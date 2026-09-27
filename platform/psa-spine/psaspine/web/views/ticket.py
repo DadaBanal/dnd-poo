@@ -22,7 +22,7 @@ import re
 import urllib.parse
 
 from ... import board as engine
-from ... import tickets
+from ... import phi, tickets
 from .. import templates as t
 from . import common
 from .portal import PATIENT_WAITING, WHO_IS_AFFECTED
@@ -420,6 +420,12 @@ def add_note(ctx, work_item_id):
                         charge_method=f.get("charge") or None,
                         to_status_id=f.get("to_status") or None,
                         resolution=f.get("resolution") == "1")
+        # §6.1: a technician's note is an intake path too. Saved, and flagged by
+        # shape, never by value; a Discussion note reaches the portal and mail.
+        for code, severity, detail in phi.scan_fields({"note": f.get("body", "")}):
+            ctx.conn.execute(
+                "INSERT INTO data_quality (run_id, subject_kind, subject_id, code, detail,"
+                " severity) VALUES (?,?,?,?,?,?)", ("desk", "ticket", work_item_id, code, detail, severity))
         ctx.conn.commit()
     except (ValueError, LookupError, engine.EffortRefused, engine.NotOnThisBoard) as exc:
         ctx.conn.rollback()
@@ -533,7 +539,6 @@ def new_form(ctx, *, error: str = "", values: dict | None = None):
 
 def new_create(ctx):
     from .. import redirect
-    from ... import phi
     f = ctx.request.form()
     board_id = f.get("board_id", "")
     if not common.may_access_board(ctx, board_id, need="WORK"):

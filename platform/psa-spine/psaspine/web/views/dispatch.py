@@ -107,6 +107,16 @@ def index(ctx):
         d0 = ctx.now.date()
         day = d0.isoformat()
     entries = schedule.day(ctx.conn, boards, day)
+    # §6.1 requirement 4: the day and the queue name tickets (number and the
+    # start of the summary); on a restricted board that is a read, audited once
+    # per board with a count. Unrestricted boards write nothing.
+    listed: dict[str, int] = {}
+    for r in list(unrouted_rows) + list(entries):
+        listed[r["board_id"]] = listed.get(r["board_id"], 0) + 1
+    for board_id, n in sorted(listed.items()):
+        common.audit_restricted_read(
+            ctx, board_id, detail=f"dispatch listed {n} ticket(s) on restricted board "
+                                  f"{board_id} via {ctx.user.via}")
     by_member: dict[str, list] = {}
     for e in entries:
         by_member.setdefault(e["member"], []).append(e)

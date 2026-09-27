@@ -456,37 +456,50 @@ def effort_by_basis(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     ).fetchall()
 
 
-def decisions_owed(conn: sqlite3.Connection) -> dict[str, list[sqlite3.Row]]:
+def decisions_owed(conn: sqlite3.Connection, *,
+                   boards=None) -> dict[str, list[sqlite3.Row]]:
     """Everything on the ticket estate that nobody has ruled on.
 
     Three separate questions, kept separate because they have three different
     answers and three different people who can give them.
+
+    `boards`, when given, limits the tickets named to those boards. The web
+    passes the caller's memberships, because these tables name tickets (board,
+    priority, state, summary) and a restricted board's tickets are exactly what
+    a non-member must never see (§11 test 5). The CLI passes nothing and gets
+    the whole estate; a file on the server is the operator's, not a page.
     """
+    scope, params = "", []
+    if boards is not None:
+        if not boards:
+            return {"unknown_basis": [], "closed_unattached": [], "open_unattached": []}
+        scope = " AND t.board_id IN (%s)" % ",".join("?" * len(boards))
+        params = list(sorted(boards))
     unknown_basis = conn.execute(
         "SELECT t.work_item_id, t.external_ref, t.board_id, t.priority, t.state,"
         "       t.catalogue_item_id, w.name, w.entity_id"
         "  FROM ticket t JOIN work_item w ON w.work_item_id = t.work_item_id"
-        " WHERE w.contract_basis = 'UNKNOWN' ORDER BY t.work_item_id"
-    ).fetchall()
+        " WHERE w.contract_basis = 'UNKNOWN'" + scope + " ORDER BY t.work_item_id",
+        params).fetchall()
     closed_unattached = conn.execute(
         "SELECT t.work_item_id, t.external_ref, t.board_id, t.state, w.name, w.entity_id"
         "  FROM ticket t JOIN work_item w ON w.work_item_id = t.work_item_id"
         " WHERE t.path = 'VARIATION' AND t.state IN ('RESOLVED','CLOSED')"
-        "   AND w.variation_id IS NULL ORDER BY t.work_item_id"
-    ).fetchall()
+        "   AND w.variation_id IS NULL" + scope + " ORDER BY t.work_item_id",
+        params).fetchall()
     open_unattached = conn.execute(
         "SELECT t.work_item_id, t.external_ref, t.board_id, t.state, w.name, w.entity_id"
         "  FROM ticket t JOIN work_item w ON w.work_item_id = t.work_item_id"
         " WHERE t.path = 'VARIATION' AND t.state NOT IN ('RESOLVED','CLOSED','CANCELLED')"
-        "   AND w.variation_id IS NULL ORDER BY t.work_item_id"
-    ).fetchall()
+        "   AND w.variation_id IS NULL" + scope + " ORDER BY t.work_item_id",
+        params).fetchall()
     return {"unknown_basis": unknown_basis,
             "closed_unattached": closed_unattached,
             "open_unattached": open_unattached}
 
 
 def uplift_evidence(conn: sqlite3.Connection, *, as_of: date,
-                    capacity_hours: float | None = None) -> str:
+                    capacity_hours: float | None = None, boards=None) -> str:
     """The report the whole spine exists to produce.
 
     Effort by contract basis, per entity, per month, with variation-path effort
@@ -507,7 +520,7 @@ def uplift_evidence(conn: sqlite3.Connection, *, as_of: date,
         smaller claim.
     """
     rows = effort_by_basis(conn)
-    owed = decisions_owed(conn)
+    owed = decisions_owed(conn, boards=boards)
 
     totals: dict[tuple[str, str, str], float] = {}
     variation_path: dict[tuple[str, str], float] = {}
@@ -636,6 +649,10 @@ def uplift_evidence(conn: sqlite3.Connection, *, as_of: date,
     # ------------------------------------------------------- decisions owed
     unknown = owed["unknown_basis"]
     out += ["", f"## Decisions somebody owes — {len(unknown)} tickets with no contract basis", ""]
+    if boards is not None:
+        out += ["*The ticket tables below name only tickets on the boards you are a member "
+                "of; the effort totals above are the whole estate's. The server's own copy "
+                "of this report (`psaspine report`) is unscoped.*", ""]
     if unknown:
         out += [
             "Each of these is work that has been done or is being done, which is neither "

@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 475 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 489 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -120,6 +120,12 @@ checked against Zammad and HaloPSA:
   **P**lan, re**S**olve. Tick rows to change status, assign or move board in
   bulk. Bulk changes go through the same engine seams as a single ticket.
 - **Ticket** (`/ticket/<id>`): the priority and why (computed, never typed).
+  `ticket.priority_source` says which rule set it: `MATRIX` (impact ×
+  urgency), `CATALOGUE_FLOOR` or `CLINICAL_FLOOR` (a catalogue item's or a
+  clinical answer's minimum lifted it), `CLINICAL_IMPACT`. `OVERRIDE` is in
+  the CHECK for a manual override that **is not built**: nothing on the desk
+  sets it, and the engine leaves an `OVERRIDE` priority alone if one ever
+  arrives by import. Reserved, documented, not a feature.
   One box per SLA clock. Notes flagged **Discussion / Internal / Resolution**,
   as ConnectWise flags them. The requester's portal shows Discussion and
   Resolution only. A note can carry banded time, with a charge method the
@@ -467,7 +473,8 @@ settings switch it on:
 |---|---|
 | `PSA_ENTRA_TENANT` | the tenant id |
 | `PSA_ENTRA_CLIENT` | the app registration's client id |
-| `PSA_PUBLIC_URL` | optional: the URL staff type, e.g. `https://desk.pmcne.ph:8443`; the redirect URI is built on it and must equal, byte for byte, the one registered on the app. Unset, the request's own scheme and host are used. |
+| `PSA_PUBLIC_URL` | optional: the URL staff type, e.g. `https://desk.pmcne.ph`; the redirect URI is built on it and must equal, byte for byte, the one registered on the app. Unset, the request's own scheme and host are used. It is also what tells the desk the world is https when a proxy terminates TLS (next section). |
+| `PSA_PORTAL_URL` | optional: the requester portal's own address, e.g. `https://help.pmcne.ph`. A request for that host serves the requester's pages and nothing else (next section); requester emails link to it. |
 
 `/entra/start` sends the browser to Microsoft with a state, a nonce and a code
 challenge, remembered in a signed cookie that lives ten minutes and only on
@@ -481,6 +488,48 @@ administrator made them a member of it. When the tenant cannot be reached (the
 WAN), the sign-in page says so and the break-glass door below it still works,
 which is the §6.2 posture. NOT VERIFIED against a real tenant from here; the
 portal handoff's last step is that sign-in.
+
+## Behind IIS, and the portal's own address (27 Sep 2026)
+
+On `DND-SQL01` the desk is not reached directly: IIS (URL Rewrite + ARR, which
+already front Portal and Payroll there) holds 443 and proxies
+`https://desk.pmcne.ph` and `https://help.pmcne.ph` to the desk on
+`127.0.0.1:8085` (MEASURED by SQL01, 27 Sep 2026). The desk sees
+`Host: 127.0.0.1:8085`, plain http, and whatever the proxy forwards. Three
+things follow, and all three are decided from **configuration, never from a
+request header a client on the LAN could write**:
+
+- **Origin.** A browser form's `Origin` is the public address, not the Host
+  the desk sees, so the same-host rule alone would refuse every sign-in. An
+  `Origin` equal to `PSA_PUBLIC_URL`'s or `PSA_PORTAL_URL`'s scheme and host
+  is accepted in addition; any other is still refused with a 403.
+- **Secure and HSTS.** When either public URL is `https://`, every cookie the
+  desk sets is `Secure` and every response carries
+  `Strict-Transport-Security: max-age=31536000` (no `includeSubDomains`: the
+  desk is one name under `pmcne.ph` and decides nothing for the others). A
+  loopback probe of `/login` still answers 200; only a cookie-setting call on
+  plain http stops working, which is the point.
+- **Which public host.** The proxy says which address it was asked for in
+  `X-Forwarded-Host`. The desk believes that header **only from a loopback
+  peer** (`127.0.0.1`, `::1`): a LAN client cannot claim to be the portal by
+  writing it. With nothing in front, the `Host` header is the public host.
+
+**The portal's address** (`PSA_PORTAL_URL`) serves the requester and nothing
+else. On that host `/` goes to `/my`; `/my…`, `/login`, `/logout` and the
+Entra pair answer; every other path (the board, Dispatch, Uplift, Setup, the
+API, search) is a plain 404 for everyone, signed in or not, decided before
+identity is looked at; and sign-in returns to `/my` whatever `next` says. The
+requester's shell is drawn for everyone there, technicians included.
+
+**The requester's shell.** Anyone on no board is a requester (a fulfiller who
+is not yet on a board is added on Setup by an admin): `/` sends them to `/my`,
+the header shows *My requests* alone, and the New ticket button, the command
+palette (⌘K), the keyboard sheet and its shortcuts are not drawn, because they
+lead to pages that answer 404 or "not a member". The theme toggle and sign out
+stay. A board member on `/my` keeps the whole desk.
+
+The desk's own TLS (`--cert/--key`, previous section) is unchanged and is the
+road when nothing fronts the desk; the two are not combined on one host.
 
 ## Requester intake (Phase C)
 
@@ -496,7 +545,16 @@ the controls land first. They did:
   still imports: refusing it sends the identifier to the telephone, where
   nothing records it.
 - **Every read of a restricted ticket is audited** — `RESTRICTED_READ`, with the
-  ticket, the actor and which door they came through.
+  ticket, the actor and which door they came through. That includes the pages
+  that *list* tickets: the board, search, Dispatch (the queue and the day),
+  Uplift's ticket tables and a rule test each write one row per restricted
+  board with a count. Uplift's ticket tables and an every-board rule's test
+  are limited to the boards the reader is a member of; an every-board rule
+  never runs on a restricted board at all (its own administrators write its
+  rules, on the board), so "Move to board" cannot carry a patient's ticket
+  onto an open one.
+- **A technician's note is scanned like every other intake path** (SQL01,
+  pilot script H3): saved, and flagged by shape, never by value.
 - **One ticket sequence (D4).** `PMC-000001`, hospital-wide, never reused; the
   prefix is a row, not a constant (§12). See
   [`docs/WS36-decisions-d4-d5-20260922.md`](../../docs/WS36-decisions-d4-d5-20260922.md).
@@ -512,7 +570,7 @@ python3 -m psaspine create-api-token spine.db --label "orthanc monitoring" --boa
 
 | Path | Who | The rule that matters |
 |---|---|---|
-| `/my` (portal) | a requester | Ownership, not board membership, is the filter. Reads `customer_description`, never the internal status name. |
+| `/my` (portal, `https://help.pmcne.ph` on the host) | a requester | Ownership, not board membership, is the filter. Reads `customer_description`, never the internal status name. The form never asks for a record number: `phi.py` flags one written beside its label, so the words ask for the ward, the room or the machine instead. |
 | `import-mail` | the helpdesk mailboxes | Keyed by Message-ID, so a re-run makes no second ticket; replies thread by In-Reply-To. Kills the MEASURED double-creation at the intake end. |
 | `/api/v1/tickets` | monitoring, the archive | A local token (§6.2 — the WAN-down alarm cannot fetch an Entra token), sha256 only, one board, tokens only. Priority computed from impact × urgency, never asserted. A `dedup_key` holds one open ticket per alert. |
 
@@ -624,8 +682,8 @@ PSA_TEST_DB="Driver={ODBC Driver 18 for SQL Server};Server=127.0.0.1,1433;Databa
 ```
 
 Each test empties the database and reseeds it (`db.init(…, reset=True)`, a
-test-only path) and the same assertions run unchanged. **MEASURED, 26 Sep 2026,
-SQL Server 2022 Express 16.0 in a container: 475 tests, OK, 8 skipped** (the
+test-only path) and the same assertions run unchanged. **MEASURED, 27 Sep 2026,
+SQL Server 2022 Express 16.0 in a container: 489 tests, OK, 8 skipped** (the
 eight are SQLite's own file settings: WAL, busy timeout, the escrow copy). CI
 runs the same job against a service container on every push. NOT VERIFIED on
 `DND-SQL01` itself, which no session here can reach; the handoff's step 6 is

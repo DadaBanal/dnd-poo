@@ -103,13 +103,25 @@ def ticket_row(conn: sqlite3.Connection, work_item_id: str, *, now: datetime) ->
     return row
 
 
+# A ticket's board is not restricted. Used where a rule written for "every
+# board" is applied: a restricted board is never "every board". Its own
+# administrators write its rules, on the board, and a system administrator's
+# rule (who is not a member, by design) neither reads its tickets in a test nor
+# moves, renames or notifies about them when it runs. Otherwise "Move to board"
+# on an every-board rule would carry a restricted ticket onto an open board.
+_NOT_RESTRICTED = ("board_id IN (SELECT board_id FROM board WHERE COALESCE(restricted, 0) = 0)")
+
+
 def _events(conn: sqlite3.Connection, board_id: str, fires_on: tuple) -> list[sqlite3.Row]:
     marks = ",".join("?" * len(fires_on))
+    restricted = conn.execute("SELECT COALESCE(restricted, 0) FROM board WHERE board_id = ?",
+                              (board_id,)).fetchone()
+    scope = "w.board_id = ?" if restricted and restricted[0] else "(w.board_id IS NULL OR w.board_id = ?)"
     return conn.execute(
         "SELECT e.*, w.name AS workflow_name, w.board_id AS workflow_board FROM workflow_event e"
         "  JOIN workflow w ON w.workflow_id = e.workflow_id"
         f" WHERE w.is_active = 1 AND w.table_type = 'TICKET' AND e.fires_on IN ({marks})"
-        "   AND (w.board_id IS NULL OR w.board_id = ?)"
+        f"   AND {scope}"
         " ORDER BY w.sort_order, w.workflow_id, e.event_id", (*fires_on, board_id)).fetchall()
 
 
@@ -259,27 +271,43 @@ def _act(conn, event, action, row, *, at: datetime) -> None:
 # -------------------------------------------------------- test and activate
 
 def test_event(conn: sqlite3.Connection, event_id: str, *, at: datetime,
-               limit: int = 1000) -> dict:
+               limit: int = 1000, boards=None) -> dict:
     """How many open tickets this event's conditions match now (ConnectWise
     shows the count and at most 1,000 records). Records the test; acts on
-    nothing."""
+    nothing.
+
+    `boards`, when given, limits the tickets tried to those boards: the desk
+    passes the tester's memberships, so an every-board rule's test never names
+    a ticket on a restricted board its tester is not on. The count is then the
+    count on those boards, and the result says so (`scoped`).
+    """
     ev = conn.execute("SELECT e.*, w.board_id FROM workflow_event e JOIN workflow w"
                       " ON w.workflow_id = e.workflow_id WHERE e.event_id = ?",
                       (event_id,)).fetchone()
     if ev is None:
         raise LookupError(f"no workflow event {event_id!r}")
-    sql = "SELECT work_item_id FROM ticket WHERE closed_at IS NULL"
+    sql = "SELECT work_item_id, board_id FROM ticket WHERE closed_at IS NULL"
     params: list = []
     if ev["board_id"]:
         sql += " AND board_id = ?"
         params.append(ev["board_id"])
-    hits = []
-    for (wid,) in conn.execute(sql, params).fetchall():
+    elif boards is not None:
+        if not boards:
+            sql += " AND 1 = 0"
+        else:
+            sql += " AND board_id IN (%s)" % ",".join("?" * len(boards))
+            params.extend(sorted(boards))
+    else:
+        sql += " AND " + _NOT_RESTRICTED
+    hits, on_boards = [], {}
+    for wid, board_id in conn.execute(sql, params).fetchall():
         if rules.matches(conn, event_id, ticket_row(conn, wid, now=at)):
             hits.append(wid)
+            on_boards[board_id] = on_boards.get(board_id, 0) + 1
     conn.execute("UPDATE workflow_event SET tested_at = ?, tested_matches = ? WHERE event_id = ?",
                  (at.isoformat(sep=" ", timespec="minutes"), len(hits), event_id))
-    return {"matches": len(hits), "sample": hits[:limit]}
+    return {"matches": len(hits), "sample": hits[:limit], "boards": on_boards,
+            "scoped": ev["board_id"] is None and boards is not None}
 
 
 def activate(conn: sqlite3.Connection, workflow_id: str, *, actor: str, at: datetime) -> None:

@@ -119,6 +119,9 @@ def serve(db_path: str, *, host: str = "127.0.0.1", port: int = 8085,
     print(f"PSA desk (Phase B pilot) on {scheme}://{host}:{port}", file=sys.stderr)
     print(f"  database: {db.describe(db_path)}", file=sys.stderr)
     print(f"  sign-in:  {posture}", file=sys.stderr)
+    if config.public_url or config.portal_url:
+        print(f"  public:   desk {config.public_url or '(unset)'} · portal {config.portal_url or '(unset)'}"
+              + (" · cookies Secure, HSTS on" if config.public_https else ""), file=sys.stderr)
     if not cert:
         print("  plain HTTP: the pilot's LAN only. The requester portal and Entra sign-in "
               "wait for --cert and --key.", file=sys.stderr)

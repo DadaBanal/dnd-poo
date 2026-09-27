@@ -315,13 +315,20 @@ def test(ctx, workflow_id):
     _load(ctx, workflow_id)
     ev = ctx.request.form().get("event_id", "")
     try:
-        r = workflow.test_event(ctx.conn, ev, at=ctx.now)
+        # An every-board rule is tried on the tester's own boards only, so the
+        # sample never names a ticket on a restricted board they are not on.
+        r = workflow.test_event(ctx.conn, ev, at=ctx.now, boards=common.board_ids_for(ctx))
     except Exception as exc:                                  # noqa: BLE001
         ctx.conn.rollback()
         return _back(workflow_id, err=f"Test failed: {exc}")
     ctx.conn.commit()
+    for board_id, n in sorted(r.get("boards", {}).items()):
+        common.audit_restricted_read(
+            ctx, board_id, detail=f"rule test listed {n} ticket(s) on restricted board "
+                                  f"{board_id} via {ctx.user.via}")
     sample = ", ".join(r["sample"][:10])
-    return _back(workflow_id, msg=f"{r['matches']} open ticket(s) match now"
+    where = " on the boards you are a member of" if r.get("scoped") else ""
+    return _back(workflow_id, msg=f"{r['matches']} open ticket(s) match now{where}"
                               + (f": {sample}" + ("…" if r["matches"] > 10 else "") if sample else ""))
 
 
