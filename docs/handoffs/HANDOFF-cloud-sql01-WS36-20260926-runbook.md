@@ -738,3 +738,58 @@ restart. It is deployed only after the door passes on this host.
 portal. `portal.pmcne.ph` was never changed (MEASURED, md5 unchanged).
 
 *Correction to the addendum above, 2026-09-28:* the withdrawal was SQL01's misreading and is **reversed**. Dada: *"so it should open directly without signing in as it has siged in already when they login to portal.pmcne.ph"*. `HANDOFF-sql01-cloud-WS36-20260928-portal-link.md` stands as written: `help.pmcne.ph` is the separate staff portal, and the Employee Portal's *My requests* link opens it signed in.
+
+### Part 12: 2026-09-28, 07:50 +08:00. **The Employee Portal door: steps 1 and 2 PASS; step 3 is with the operator; steps 4 and 5 wait on Dada**
+
+Section "Folded in from part 11". Everything below is MEASURED unless marked.
+
+1. **Pull, suite and restart.**
+   - At `e2e4bc8` the SQLite suite as SQL01's user gives **495 OK, 2 skipped**. PSA-Desk was restarted; with
+     `PSA_EMPLOYEE_PORTAL_ORIGINS` unset, `/sso/portal` answers **404**.
+   - Your `23ee0b8` (pods move between columns) landed during the sitting. The suite at `e500888` is again 495 OK,
+     2 skipped, and it went live with step 2's restart.
+2. **The origins setting.**
+   - `Set-PsaDeskEnv.ps1` gained `-EmployeePortalOrigins`, `-EmployeePortalBridge` and
+     `-EmployeePortalDepartments`, each refused if malformed:
+     - origins must be https with no path;
+     - the bridge must be on the loopback;
+     - quotes, backticks and `$` are refused;
+     - each department must match exactly one of payroll's 52 `Employee.Department` names (read-only,
+       case-sensitive).
+   - The operator ran `-Apply -EmployeePortalOrigins https://portal.pmcne.ph` at 07:44. **Only `portal.pmcne.ph`,
+     not `payroll.pmcne.ph`**: the payroll session's suggestion, least privilege. `PSA_EMPLOYEE_PORTAL_BRIDGE` is
+     left at its default, and **departments are unset**.
+   - `D:\psa\bin\Test-PsaPortalDoor.ps1`, made-up tokens only: **RESULT: PASS**.
+
+     | Try | Result |
+     |---|---|
+     | Loopback, portal origin | **401** "session has ended", token not echoed |
+     | Loopback, `http://portal.pmcne.ph` | **403** |
+     | Loopback, no Origin | **403** |
+     | Loopback, `https://payroll.pmcne.ph` (not listed) | **403** |
+     | Through IIS, `help.pmcne.ph`, portal origin | **401** |
+     | Through IIS, `desk.pmcne.ph/sso/portal` | **404** |
+
+     **Audit:** 5 `PORTAL_SSO_REFUSED` rows for the 5 refused tries ("bridge answered 401" ×2, "origin not
+     allowed (not https)", "origin not allowed" ×2), 0 `PORTAL_SSO`, and **no token text** in any row or in the
+     console log.
+   - Step 2's Pass counts "one row per try", but the `desk.pmcne.ph` 404 writes none, by design. The wording fix
+     is in `HANDOFF-sql01-cloud-WS36-20260928-portal-door-fixes.md` item 10.
+3. **Step 3 is with the operator.** The real portal token is posted from DevTools on the signed-in
+   `portal.pmcne.ph` tab (the only way that passes the Origin rule, item 11), and should get 403 "not open for
+   your department yet".
+4. **Step 4 waits on Dada's first department(s),** set by `-EmployeePortalDepartments` until the Setup checklist
+   (`HANDOFF-sql01-cloud-WS36-20260928-department-checklist.md`) replaces the setting.
+5. **Step 5 is held** by the payroll session (page built from SQL01's diff, "Raise a request to any department")
+   until the door passes steps 3–4 **and** the fixes before ward PCs (`…-portal-door-fixes.md`, items 1–9) are in.
+
+**Review of `e2e4bc8`** (read-only, three lenses): all three say **safe to enable** for steps 2–4. The nine fixes
+before step 5 lead with post-redirect-get on refusals, so a reloaded refusal tab on a shared PC cannot re-send
+another person's portal token.
+
+*Part 12, continued, 07:48 +08:00:* **step 3 PASS.** Dada signed in to `portal.pmcne.ph` and posted his portal token
+from DevTools on that tab. `help.pmcne.ph` answered **"My requests is not open for your department yet."** Audit row
+67 is `PORTAL_SSO_REFUSED`, "department not open", with a named employee as actor (MEASURED; the name is not
+written here). The bridge accepted the real token and the door recognised the person: the whole path works, closed
+only by the department gate. The same screenshot shows the requester shell branded **"PMC IT help"**; that is added
+to `…-portal-door-fixes.md`. Step 4 waits on Dada's first department.

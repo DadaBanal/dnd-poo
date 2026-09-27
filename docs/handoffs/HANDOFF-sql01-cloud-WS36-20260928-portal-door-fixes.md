@@ -70,6 +70,12 @@ Also wanted, smaller:
   401, 500, 302 to elsewhere, 200 text/html, and a sleep longer than the timeout. For the "same tickets as the
   Windows door" test, sign in through `POST /login door=windows` with a fake logon, not a hand-made cookie.
 
+- **The staff page is still called "PMC IT help"** (`templates.py:806`, the `<title>`, and `:810`, the brand), as
+  Dada's screenshot of step 3 on 28 Sep shows. His rule: *"dont do it help as the tickets may befor other
+  departments"*. Use a neutral name on the requester shell (SQL01 suggests **"PMC Requests"**; Dada's own words
+  were "ticketing or my requests"). Also leave "Dada IT only" out of the pilot footer on the requester shell: to a
+  ward it reads as "not for you". Keep the notice on the technician desk.
+
 ## Runbook wording (steps 2 and 3)
 
 10. **Step 2 counts rows per try, but the 404 writes none.** Say instead: one `PORTAL_SSO_REFUSED` row for each
