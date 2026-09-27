@@ -391,3 +391,98 @@ is not the fix.
 After the fix, on the host: `PSA-Desk` gets `PSA_PUBLIC_URL=https://desk.pmcne.ph` and
 `PSA_WINDOWS_DOMAIN=PMCNE` (the operator's password prompt), then the IIS site as above. The
 desk itself stays on `127.0.0.1:8085`, so no firewall rule is needed for it.
+
+### Part 9: 2026-09-27, 01:57 UTC. **https://desk.pmcne.ph is live through IIS, and Windows sign-in is on. The desk's code is unchanged: IIS does the proxy fix's two jobs from outside, for this site only**
+
+Dada, verbatim, in order: *"can we create accounts now linked to ad?"*, then *"do the iis fromt door now
+make sure it doesnt meddle with the other apps"*. The part 8 fix had not landed (branch head still
+`536dd97`), so the front door does its two jobs (Origin, Secure cookie) at IIS. Everything below is
+MEASURED unless marked.
+
+**Windows sign-in, 00:54 UTC.** The operator ran `D:\psa\bin\Set-PsaDeskEnv.ps1 -Apply`. PSA-Desk's
+action now sets `PSA_WINDOWS_DOMAIN=PMCNE`, and nothing else in it changed. The task definition was
+saved before the change, the task restarted (which signs everyone out), and `/login` shows the Windows
+card. Checked first: the host is joined to `pmcne.ph` and DND-AD01 answers; "Access this computer from
+the network" is held by Everyone and Users, with no deny entry. `PSA_PUBLIC_URL` is **not** set; it is
+not needed while Entra and mail are off, and the script takes `-PublicUrl` when it is.
+
+**IIS front door, 01:57 UTC.** SQL01 ran `D:\psa\bin\New-PsaDeskIis.ps1 -Apply`: **RESULT PASS.**
+- **Before applying:** two previews came out identical. Three read-only reviewers then checked the
+  script, one each on http.sys/TLS, URL Rewrite/ARR, and rollback/PowerShell 5.1. Their fixes were
+  taken:
+  - a **fifth site**, `PMC-Queue-JRBY` (http `*:8081`, its own pool), unknown to part 8, is now
+    covered, because the site list is read from IIS at run time;
+  - worker-process IDs are logged;
+  - each undo step runs on its own, and a verify follows;
+  - a failure, a difference or Ctrl+C rolls everything back automatically.
+
+  `-Rollback` was run on the clean host first and was a verified no-op.
+- **Added:**
+  - the named backup `PSA-Desk-before-20260927-095718`;
+  - `C:\inetpub\psa-desk\web.config`;
+  - app pool `PSA-Desk` (no managed code);
+  - site `PSA-Desk`, http `desk.pmcne.ph:80` plus https `:443` with SNI;
+  - `<location path="PSA-Desk">` allowing `HTTP_ORIGIN`.
+- **Not added, a change from part 8:** no http.sys certificate entry of its own. The site uses the
+  `0.0.0.0:443` fallback, which was checked to be the same `*.pmcne.ph` certificate portal uses.
+  Payroll and Queue work the same way. So renewal on 2027-02-23 re-points two entries, not three.
+- **The web.config (this site only):**
+  - http is redirected to https with a 302;
+  - an `Origin` of exactly `https://desk.pmcne.ph` is rewritten to the desk's own origin before
+    forwarding, and every other `Origin` passes unchanged and is refused by the desk;
+  - requests are forwarded as `{UNENCODED_URL}` to `127.0.0.1:8085`;
+  - every `Set-Cookie` leaving the site gets `Secure`;
+  - request bodies are capped at the desk's own 10,747,904 bytes.
+- **No meddling, proven before and after, identical:**
+  - all 5 other sites' configuration and state, and every other app pool;
+  - every http.sys certificate entry and the server proxy section;
+  - a SHA-256 of `applicationHost.config` minus the desk's three elements;
+  - 9 HTTP probes of the other sites.
+
+  DefaultAppPool, PMC Payroll Pool, PMCQueuePool and PMCQueueJRBYPool kept the **same worker
+  process** throughout, so none recycled.
+- **Tests:**
+  - http gets a 302 to https;
+  - https `/login` answers 200 with the sign-in page;
+  - a same-site POST gets 303, not 403;
+  - the control, a cross-site POST, gets **403**;
+  - the session cookie leaves marked `Secure`;
+  - the loopback still answers 200.
+- **Kill switch:** add `Stop-Website -Name PSA-Desk` to the runbook's list (the desk keeps running on
+  the loopback). Undo: `New-PsaDeskIis.ps1 -Rollback`.
+- Known, reviewer-measured: on **plain http**, `/reports` and `/reportserver` belong to SSRS's
+  strong-wildcard reservations, so SSRS answers them. Over https (the only way the desk links) they
+  reach the desk.
+
+**Still wanted upstream, no longer blocking:** the part 8 fix (accept an `Origin` equal to
+`PSA_PUBLIC_URL`; `Secure` from config). When it lands, on the host:
+1. `Set-PsaDeskEnv.ps1 -Apply -PublicUrl https://desk.pmcne.ph`;
+2. remove the Origin rule and the `<location>` entry;
+3. keep the Secure rule until the desk marks cookies itself.
+
+**Defects found while writing the staff user guide.** The guide was checked claim by claim against the
+code: 39 corrections were confirmed and 4 refuted. All of the following are from code reading, with
+file:line.
+1. **Uplift** (`web/views/uplift.py:17-53`) has no access check and is not board-scoped. Anyone signed
+   in sees every unclassified ticket on every board, restricted boards included (board, priority,
+   state and summary), and no `RESTRICTED_READ` is written. With Windows sign-in on, that means any
+   PMCNE account. Today no board is restricted and the only ticket is the sitting-1 test ticket, so
+   nothing is exposed yet. **Fix before any restricted board exists.**
+2. Dispatch "The day" shows a restricted ticket's number and the start of its summary, without an audit.
+3. A system administrator's **Every board** workflow rule runs on restricted boards. Its test lists
+   ticket numbers there, and Move to board can move those tickets.
+4. Reports leaves "Resolve clock met" uncoloured at 0%.
+5. The `OVERRIDE` priority source is allowed by the schema, but nothing sets it.
+6. The pilot test script disagrees with the code:
+   - B3 books 0.25 h, but the bands are 0.5/2/4/8/20;
+   - H3 expects a technician's note to be scanned for patient details, and `board.add_note` runs no
+     scan;
+   - E1 cannot pass until the Graph mail setup is done.
+7. Wording: the portal asks for "the record number", but `phi.py` flags a record number written after a
+   label (MRN, hospital no. and so on).
+
+**Next on the host:**
+- board members for the Windows accounts (Dada, in Setup: the username without the domain, in lower
+  case);
+- the AD contact import (step 5) still waits on an ordinary domain user;
+- boards, SLA targets and rules stay Dada's Setup decisions.
