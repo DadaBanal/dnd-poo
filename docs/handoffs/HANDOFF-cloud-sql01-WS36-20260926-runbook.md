@@ -786,3 +786,10 @@ Section "Folded in from part 11". Everything below is MEASURED unless marked.
 **Review of `e2e4bc8`** (read-only, three lenses): all three say **safe to enable** for steps 2–4. The nine fixes
 before step 5 lead with post-redirect-get on refusals, so a reloaded refusal tab on a shared PC cannot re-send
 another person's portal token.
+
+*Part 12, continued, 07:48 +08:00:* **step 3 PASS.** Dada signed in to `portal.pmcne.ph` and posted his portal token
+from DevTools on that tab. `help.pmcne.ph` answered **"My requests is not open for your department yet."** Audit row
+67 is `PORTAL_SSO_REFUSED`, "department not open", with a named employee as actor (MEASURED; the name is not
+written here). The bridge accepted the real token and the door recognised the person: the whole path works, closed
+only by the department gate. The same screenshot shows the requester shell branded **"PMC IT help"**; that is added
+to `…-portal-door-fixes.md`. Step 4 waits on Dada's first department.
