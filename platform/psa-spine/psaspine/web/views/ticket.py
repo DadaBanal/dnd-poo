@@ -290,7 +290,7 @@ def detail(ctx, work_item_id):
                           f"<option value='{n['note_id']}' data-flag='{n['flag']}' data-body='{t.esc(n['body'])}'>"
                           f"{t.esc(n['name'])}</option>" for n in std) + "</select></div></div>")
         composer = (
-            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-note></use></svg>Add a note</h3>"
+            "<div class=card data-pod=composer><h3><svg class=ic aria-hidden=true><use href=#i-note></use></svg>Add a note</h3>"
             f"<form method=post action='/ticket/{wid}/note'>" + picker +
             "<textarea name=body required placeholder='No patient names or case numbers (§6.1).'></textarea>"
             "<div class=row style='margin-top:10px'>"
@@ -307,7 +307,14 @@ def detail(ctx, work_item_id):
             "is a Discussion note, are shown to the requester on their portal. Internal notes never "
             "leave the desk, even when they are the resolution.</p></form></div>")
 
-    left = (f"<div><div class=card><div class=tabs>{tabs}</div>{stream}</div>{composer}</div>")
+    # Every card on the ticket is a pod, in one of two columns. The activity
+    # stream and the note composer ship on the left, the rest on the right;
+    # each user drags any card to either column, reorders, folds, and the
+    # browser remembers. data-order on each column is the shipped layout that
+    # "Reset layout" restores.
+    left = (f"<div class=pods data-col=left data-order='stream,composer'>"
+            f"<div class=card data-pod=stream><h3><svg class=ic aria-hidden=true><use href=#i-rows></use></svg>Activity</h3>"
+            f"<div class=tabs>{tabs}</div>{stream}</div>{composer}</div>")
 
     # ---------------------------------------------------------- right rail
     boards = ctx.conn.execute(
@@ -380,10 +387,8 @@ def detail(ctx, work_item_id):
     configs = (_change_card(ctx, tk, can_work=can_work) + _family_card(ctx, tk, can_work=can_work)
                + _schedule_card(ctx, tk, can_work=can_work) + _tasks_card(ctx, tk, can_work=can_work)
                + file_views.ticket_card(ctx, tk, can_work=can_work) + _links_card(ctx, tk, can_work=can_work) + configs)
-    # The side cards are pods: each user drags or folds them and the browser
-    # remembers; data-order is the shipped layout that "Reset layout" restores.
-    body = header + strip + (f"<div class=rail>{left}<div class=pods data-order='ticket,change,family,schedule,tasks,"
-                             f"files,links,configurations,time,commercial,details'>{fields}{configs}{time_card}"
+    body = header + strip + (f"<div class=rail>{left}<div class=pods data-col=right data-order='ticket,change,family,"
+                             f"schedule,tasks,files,links,configurations,time,commercial,details'>{fields}{configs}{time_card}"
                              f"{commercial}{details}</div></div>")
     return Response(body=t.page(work_item_id, body, user=ctx.user, active="board"))
 

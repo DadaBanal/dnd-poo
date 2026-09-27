@@ -131,7 +131,11 @@ checked against Zammad and HaloPSA:
   Resolution only. A note can carry banded time, with a charge method the
   technician must choose, and can move the status in the same save. The
   right-hand panel edits board, status, owner, company, contact and the two
-  questions.
+  questions. **Every card on the ticket is a pod**, in one of two columns: drag
+  a card to either column (onto another card, or onto the column's empty
+  space), use its arrows (up, down, across), fold it, and this browser
+  remembers; *Reset layout* restores the shipped layout. The activity stream
+  and the note composer ship on the left, the rest on the right.
 - **New ticket** (`/ticket/new`): for phone calls and walk-ups. It records its
   source.
 - **Setup** (`/admin/board/<id>`): Board, Statuses, SLA, and Members & roles

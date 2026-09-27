@@ -5603,11 +5603,17 @@ class DeskLookTest(unittest.TestCase):
         from psaspine.web import templates
         _, _, ticket = self._call("GET", "/ticket/ITO-1", cookie=self._cookie_for("alice"))
         pods = _re.findall(r"data-pod=([a-z]+)", ticket)
-        order = _re.search(r"data-order='([a-z,]+)'", ticket).group(1).split(",")
+        # two columns, each with its shipped order; every card is in one of them
+        cols = _re.findall(r"<div class=pods data-col=([a-z]+) data-order='([a-z,]+)'>", ticket)
+        self.assertEqual([c for c, _ in cols], ["left", "right"])
+        order = [k for _, o in cols for k in o.split(",")]
         self.assertTrue(set(pods) <= set(order), set(pods) - set(order))
         self.assertIn("ticket", pods)
+        self.assertIn("stream", pods)                       # the activity stream is a pod too
+        self.assertIn("composer", pods)
         self.assertIn("psa-pods", templates.SCRIPT)
         self.assertIn("Reset layout", templates.SCRIPT)
+        self.assertIn("Move to the other column", templates.SCRIPT)
 
     def test_the_script_is_plain_and_escapes_what_it_shows(self):
         from psaspine.web import templates

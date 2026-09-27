@@ -144,6 +144,9 @@ dialog#pal::backdrop{background:rgb(10 12 18/.35);-webkit-backdrop-filter:blur(3
 .pods .card.collapsed{padding-bottom:12px} .pods .card.collapsed h3{margin-bottom:0}
 .pods .card.collapsed .podctl .fold .ic{transform:rotate(-90deg)}
 .pods .card.dragging{opacity:.5} .pods .card.over{box-shadow:0 -2px 0 0 var(--accent)}
+.pods{min-height:56px;border-radius:var(--r-lg)} .pods.over-col{outline:2px dashed var(--accent);outline-offset:4px}
+.pods .card[data-pod] h3{padding-right:112px}
+.pods:empty::after,.pods.blank::after{content:"Drop a card here";display:block;color:var(--ink-3);font-size:12px;text-align:center;padding:14px;border:1px dashed var(--line-2);border-radius:var(--r-lg)}
 .pods .podreset{font-size:12px;color:var(--ink-3);text-align:right;margin:-6px 0 12px}
 .pods .podreset button{padding:2px 8px;font-size:12px}
 .views{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
@@ -440,37 +443,57 @@ d.addEventListener("click",function(e){var a=e.target.closest&&e.target.closest(
   np.className="go"});
 d.addEventListener("submit",function(){if(np)np.className="go"});
 addEventListener("pageshow",function(){if(np)np.className=""});
-/* pods: the ticket's side cards reorder by drag (or the arrows) and fold, remembered here */
-(function(){var rail=$(".pods");if(!rail)return;var KEY="psa-pods";
-  function state(){try{return JSON.parse(localStorage.getItem(KEY)||"{}")}catch(e){return {}}}
+/* pods: every card on the ticket sits in one of two columns; drag it to either column (or use the
+   arrows: up, down, and across), fold it, and this browser remembers. Reset restores the shipped layout. */
+(function(){var cols=$$(".rail .pods");if(!cols.length)return;var KEY="psa-pods";
+  function state(){var st;try{st=JSON.parse(localStorage.getItem(KEY)||"{}")}catch(e){st={}}
+    if(!st.cols&&st.order){st.cols={right:st.order};delete st.order}      /* the one-column layout of before: that was the right column */
+    st.cols=st.cols||{};st.folded=st.folded||{};return st}
   function save(st){try{localStorage.setItem(KEY,JSON.stringify(st))}catch(e){}}
-  function pods(){return $$(".card[data-pod]",rail)}
+  function colOf(name){return cols.filter(function(c){return c.dataset.col===name})[0]}
+  function pods(c){return $$(".card[data-pod]",c)}
+  function all(){return cols.reduce(function(a,c){return a.concat(pods(c))},[])}
+  function byKey(k){return all().filter(function(c){return c.dataset.pod===k})[0]}
   function ic(n){return '<svg class=ic aria-hidden=true><use href=#i-'+n+'></use></svg>'}
-  function apply(){var st=state(),order=st.order||[];pods().sort(function(a,b){var i=order.indexOf(a.dataset.pod),j=order.indexOf(b.dataset.pod);
-      return (i<0?99:i)-(j<0?99:j)}).forEach(function(c){rail.appendChild(c)});
-    pods().forEach(function(c){c.classList.toggle("collapsed",!!(st.folded||{})[c.dataset.pod])});
-    var r=$(".podreset",rail);if(r)r.style.display=(order.length||Object.keys(st.folded||{}).length)?"":"none"}
-  function remember(){var st=state();st.order=pods().map(function(c){return c.dataset.pod});
-    st.folded={};pods().forEach(function(c){if(c.classList.contains("collapsed"))st.folded[c.dataset.pod]=1});save(st);apply()}
-  pods().forEach(function(c){c.draggable=true;var h=$("h3",c);if(!h)return;
+  function customised(st){return Object.keys(st.folded).length>0||cols.some(function(c){var want=(st.cols[c.dataset.col]||[]).join(),
+    shipped=(c.dataset.order||"").split(",").filter(function(k){return byKey(k)}).join();return want&&want!==shipped})}
+  function apply(){var st=state();
+    cols.forEach(function(c){(st.cols[c.dataset.col]||[]).forEach(function(k){var p=byKey(k);if(p)c.appendChild(p)})});
+    /* a card the saved layout does not name stays where the server put it, after the named ones */
+    cols.forEach(function(c){pods(c).forEach(function(p){var named=(st.cols[c.dataset.col]||[]).indexOf(p.dataset.pod)>=0;
+      if(!named)c.appendChild(p)})});
+    all().forEach(function(p){p.classList.toggle("collapsed",!!st.folded[p.dataset.pod]);
+      var sw=$(".swap",p);if(sw){var here=p.parentNode.dataset.col,to=here==="left"?"right":"left";$("use",sw).setAttribute("href","#i-"+to);
+        sw.title="Move to the "+to+" column";sw.setAttribute("aria-label",sw.title)}});
+    cols.forEach(function(c){c.classList.toggle("blank",pods(c).length===0)});
+    var r=$(".podreset");if(r)r.style.display=customised(st)?"":"none"}
+  function remember(){var st=state();st.cols={};cols.forEach(function(c){st.cols[c.dataset.col]=pods(c).map(function(p){return p.dataset.pod})});
+    st.folded={};all().forEach(function(p){if(p.classList.contains("collapsed"))st.folded[p.dataset.pod]=1});save(st);apply()}
+  function dropInto(from,target,before){if(!from||from===before)return;if(before)target.insertBefore(from,before);else target.appendChild(from);remember()}
+  all().forEach(function(c){c.draggable=true;var h=$("h3",c);if(!h)return;
     var ctl=d.createElement("span");ctl.className="podctl";
     ctl.innerHTML='<button type=button class="iconbtn mv" data-dir=-1 title="Move up" aria-label="Move up">'+ic("up")+'</button>'
       +'<button type=button class="iconbtn mv" data-dir=1 title="Move down" aria-label="Move down">'+ic("down")+'</button>'
+      +'<button type=button class="iconbtn swap" title="Move to the other column" aria-label="Move to the other column">'+ic("right")+'</button>'
       +'<button type=button class="iconbtn fold" title="Fold" aria-label="Fold or unfold" aria-expanded=true>'+ic("chevron")+'</button>';
     c.appendChild(ctl);
     $(".fold",ctl).addEventListener("click",function(){c.classList.toggle("collapsed");this.setAttribute("aria-expanded",String(!c.classList.contains("collapsed")));remember()});
-    $$(".mv",ctl).forEach(function(b){b.addEventListener("click",function(){var dir=+b.dataset.dir,list=pods(),i=list.indexOf(c),j=i+dir;
-      if(j<0||j>=list.length)return;rail.insertBefore(c,dir<0?list[j]:list[j].nextSibling);remember()})});
+    $(".swap",ctl).addEventListener("click",function(){var here=c.parentNode.dataset.col,other=colOf(here==="left"?"right":"left");if(other)dropInto(c,other,null)});
+    $$(".mv",ctl).forEach(function(b){b.addEventListener("click",function(){var dir=+b.dataset.dir,col=c.parentNode,list=pods(col),i=list.indexOf(c),j=i+dir;
+      if(j<0||j>=list.length)return;col.insertBefore(c,dir<0?list[j]:list[j].nextSibling);remember()})});
     c.addEventListener("dragstart",function(e){c.classList.add("dragging");e.dataTransfer.effectAllowed="move";e.dataTransfer.setData("text/plain",c.dataset.pod)});
-    c.addEventListener("dragend",function(){c.classList.remove("dragging");pods().forEach(function(x){x.classList.remove("over")})});
-    c.addEventListener("dragover",function(e){e.preventDefault();e.dataTransfer.dropEffect="move";c.classList.add("over")});
+    c.addEventListener("dragend",function(){c.classList.remove("dragging");all().forEach(function(x){x.classList.remove("over")});cols.forEach(function(x){x.classList.remove("over-col")})});
+    c.addEventListener("dragover",function(e){e.preventDefault();e.stopPropagation();e.dataTransfer.dropEffect="move";c.classList.add("over")});
     c.addEventListener("dragleave",function(){c.classList.remove("over")});
-    c.addEventListener("drop",function(e){e.preventDefault();var from=$(".card[data-pod='"+e.dataTransfer.getData("text/plain")+"']",rail);
-      if(from&&from!==c)rail.insertBefore(from,c);remember()})});
-  var reset=d.createElement("div");reset.className="podreset";reset.innerHTML='<button type=button class=ghost>Reset layout</button>';
-  reset.style.display="none";rail.insertBefore(reset,rail.firstChild);
-  $("button",reset).addEventListener("click",function(){save({});pods().forEach(function(c){c.classList.remove("collapsed")});
-    var order=rail.dataset.order?rail.dataset.order.split(","):[];order.forEach(function(k){var c=$(".card[data-pod='"+k+"']",rail);if(c)rail.appendChild(c)});apply()});
+    c.addEventListener("drop",function(e){e.preventDefault();e.stopPropagation();dropInto(byKey(e.dataTransfer.getData("text/plain")),c.parentNode,c)})});
+  cols.forEach(function(col){
+    col.addEventListener("dragover",function(e){e.preventDefault();e.dataTransfer.dropEffect="move";col.classList.add("over-col")});
+    col.addEventListener("dragleave",function(e){if(!col.contains(e.relatedTarget))col.classList.remove("over-col")});
+    col.addEventListener("drop",function(e){e.preventDefault();col.classList.remove("over-col");dropInto(byKey(e.dataTransfer.getData("text/plain")),col,null)})});
+  var rail=cols[0].parentNode,reset=d.createElement("div");reset.className="podreset";reset.innerHTML='<button type=button class=ghost>Reset layout</button>';
+  reset.style.display="none";reset.style.gridColumn="1/-1";rail.insertBefore(reset,rail.firstChild);
+  $("button",reset).addEventListener("click",function(){save({});all().forEach(function(c){c.classList.remove("collapsed")});
+    cols.forEach(function(c){(c.dataset.order||"").split(",").forEach(function(k){var p=byKey(k);if(p)c.appendChild(p)})});apply()});
   apply()})();
 /* a standard note fills the note box and sets its flag; the words stay editable */
 var sn=$("#stdnote");if(sn)sn.addEventListener("change",function(){var o=sn.options[sn.selectedIndex];if(!o||!o.value)return;
@@ -547,6 +570,8 @@ ICONS = {
     "grip": "M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01",
     "up": "M12 19V5M5 12l7-7 7 7",
     "down": "M12 5v14M5 12l7 7 7-7",
+    "left": "M19 12H5M12 5l-7 7 7 7",
+    "right": "M5 12h14M12 5l7 7-7 7",
     "sparkle": "M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6",
 }
 
