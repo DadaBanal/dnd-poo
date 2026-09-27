@@ -486,3 +486,73 @@ file:line.
   case);
 - the AD contact import (step 5) still waits on an ordinary domain user;
 - boards, SLA targets and rules stay Dada's Setup decisions.
+
+### Part 10: 2026-09-27, 02:44 UTC. **The staff portal has its own address: https://help.pmcne.ph (My requests only)**
+
+Dada, verbatim: *"staff portal to chgeck their tickets and submit their tickets has this been built?"*,
+then *"yes send it to ws36 also we need to have a proper site for it"*. Asked for the name and the
+timing, Dada chose **help.pmcne.ph** (to match the `help@` mailbox) and **"put it up now"**.
+Everything below is MEASURED unless marked.
+
+**Asked of WS36** (message sent 27 Sep):
+1. Uplift access and scope (part 9 defect 1), with Dispatch "The day" and the Every-board rule test.
+2. People on no board land on `/my`, not the Service Board. Requesters see only My requests in the
+   nav, and ⌘K and the keyboard sheet become technician-only.
+3. A proper staff portal:
+   - its own requester layout;
+   - a `PSA_PORTAL_URL` setting;
+   - on the portal host, `/` goes to `/my`, technician paths answer 404, and sign-in returns to `/my`;
+   - requester email links use `PSA_PORTAL_URL`;
+   - the Origin check accepts both public URLs.
+
+**DNS.** `help.pmcne.ph` is a static A record on DND-AD01 (AD-integrated zone, TTL 1 h), copied from
+the `desk` record's target (checked equal). DND-AD01 and this host's second DNS server answer it. This
+host's **first** DNS server still returned "no such name" right after: it cached SQL01's own
+availability check from a few minutes before. That clears by itself, INFERRED within the zone's
+negative-cache time. The gateway was not touched.
+
+**IIS site `PSA-Portal`.** Built by `D:\psa\bin\New-PsaPortalIis.ps1 -Apply`, the same reviewed shape
+as `PSA-Desk`.
+- **Added:**
+  - its own pool;
+  - http `help.pmcne.ph:80`, redirected to https;
+  - https `:443` with SNI on the `*.pmcne.ph` fallback certificate (no http.sys entry added);
+  - `<location path="PSA-Portal">` allowing `HTTP_ORIGIN`;
+  - the named backup `PSA-Portal-before-20260927-104407`.
+- **web.config:**
+  - `/` redirects to `/my`;
+  - **only** `/my` and below, `/login`, `/logout` and `/entra/start|callback` pass; every other path
+    (technician desk, Uplift, the API, search) is redirected to `/my`;
+  - same-site Origin is rewritten; Secure is added to cookies; request bodies are capped.
+
+  So on this address staff never reach a technician page, even through the menu links the desk still
+  draws.
+- **No meddling:** before and after were identical across all **6** other sites (PSA-Desk included),
+  every other pool, the certificate entries, the proxy section, the applicationHost hash and 11 probes
+  (the desk included). DefaultAppPool, PMC Payroll Pool, PMCQueuePool, PMCQueueJRBYPool and PSA-Desk
+  all kept the same worker process.
+- **Tests** used curl `--resolve`, so the cached DNS answer could not skew them:
+  - http gets a 302 to https;
+  - `/` gets a 302 to `/my`;
+  - `/dispatch`, `/uplift`, `/admin`, `/ticket/new`, `/api/tickets` and `/search.json` each get a 302
+    to `/my`;
+  - a same-site POST gets 303, and the control cross-site POST gets 403;
+  - the cookie leaves marked Secure;
+  - desk.pmcne.ph still answers 200.
+- **The script's one "FAIL" was its own test.** A signed-out `/my` answers **401** with the desk's
+  sign-in page (48,611 bytes, identical to the loopback) and **no `WWW-Authenticate`** header, so
+  browsers show the page and never prompt. desk.pmcne.ph behaves the same way. The test was corrected;
+  the run is recorded as PASS in `D:\psa\logs\New-PsaPortalIis.log`.
+- **Kill switch:** `Stop-Website -Name PSA-Portal`. Undo: `New-PsaPortalIis.ps1 -Rollback`.
+
+**Noticed, not ours:** `https://queue.pmcne.ph/` answered 200 at the part 9 build (09:57 local) and
+now answers **302 to `http://queue.pmcne.ph/`**. Neither front-door script touched PMC-Queue; the
+part 9 after-snapshot still showed 200. INFERRED: the queue session's own change, which is consistent
+with the rule that the queue screens run over http only.
+
+**Still open:**
+- the portal is reachable by any PMCNE account but **not announced**; the first ward is Dada's call;
+- `desk.pmcne.ph/uplift` still shows every board's unclassified tickets to anyone signed in, until
+  WS36 fixes it (nothing restricted exists yet);
+- when WS36 ships `PSA_PORTAL_URL`, set it with `Set-PsaDeskEnv.ps1` (a `-PortalUrl` parameter to be
+  added) and retire the IIS Origin rules.
