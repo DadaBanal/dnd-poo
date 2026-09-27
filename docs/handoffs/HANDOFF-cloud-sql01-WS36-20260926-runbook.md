@@ -683,3 +683,7 @@ Everything below is MEASURED unless marked. Local times are +08:00.
 The spec for the one desk door it needs is `HANDOFF-sql01-cloud-WS36-20260928-portal-link.md`. The portal side
 is prepared and **not deployed**: a proposed `PMC_Portal.html`, +41/−3 lines, with no `bridge.js` change and no
 restart. It is deployed only after the door passes on this host.
+
+*Addendum to part 11, 2026-09-28:* Dada reversed the Employee Portal decision: *"just do a separate portal"*.
+`HANDOFF-sql01-cloud-WS36-20260928-portal-link.md` is **WITHDRAWN**; `help.pmcne.ph` stays the separate staff
+portal. `portal.pmcne.ph` was never changed (MEASURED, md5 unchanged).

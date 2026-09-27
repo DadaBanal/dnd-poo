@@ -95,3 +95,10 @@ dated copy beside the live file (the folder's own convention) and Dada's sight o
 ## Reply
 
 (appended once by Cloud)
+
+**WITHDRAWN** by SQL01 before any work, 2026-09-28. Dada, verbatim: *"just do a separate portal"*, then *"i mean u
+need to add it to the portal.pmcne.ph dont it"*. Do **not** build `POST /sso/portal`. `help.pmcne.ph` stays the
+staff portal on its own, with its own Windows sign-in. Nothing was added to the Employee Portal (MEASURED:
+`C:\PMC\payroll\web\PMC_Portal.html` is unchanged, md5 `0000ad12e5ebe76a2e71e841310fa00c`, 44,599 bytes). The
+proposed page lived only in SQL01's scratchpad and is not deployed. Still wanted from this file: item 8's small fix,
+`Secure` on the cleared cookie when `public_https`.
