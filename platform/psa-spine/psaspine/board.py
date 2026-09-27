@@ -267,11 +267,12 @@ def close_loop(conn: sqlite3.Connection, work_item_id: str, to_status_id: str, *
         conn.execute(
             "INSERT INTO time_entry (work_item_id, entity_id, worked_on, band_hours,"
             " performed_by, entered_by, counts_to_capacity, charge_method,"
-            " authority_source, loop_reply_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            " authority_source, loop_reply_id, actual_hours, hours_deduct, billable_option,"
+            " entry_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,0,'NO_DEFAULT','OPEN')",
             (work_item_id, book_entity, at.date().isoformat(), band_hours,
              performed_by or sent_by, entered_by or sent_by,
              1 if counts_to_capacity else 0, charge_method, authority_source,
-             loop_reply_id))
+             loop_reply_id, band_hours))
 
     # The reply is what the requester reads on the portal, so it is a
     # Resolution note on the ticket as well as a loop_reply row.
@@ -452,8 +453,198 @@ def move(conn: sqlite3.Connection, work_item_id: str, to_board_id: str, *,
 NOTE_FLAGS = ("DISCUSSION", "INTERNAL", "RESOLUTION")
 CHARGE_METHODS = ("INCLUDED_IN_MONTHLY_FEE", "CAPACITY_UPLIFT", "SEPARATE_CHARGE",
                   "PASS_THROUGH", "NON_CHARGEABLE")
-# The bands effort is recorded in (003_delivery: time_entry.band_hours).
+# The bands effort is recorded in (003_delivery: time_entry.band_hours). Since
+# 033 a band is DERIVED from the actual hours ConnectWise-style time entry
+# records: the smallest band the hours fit in. §5.2's arithmetic stays in bands.
 BANDS = (0.5, 2, 4, 8, 20)
+# ConnectWise's TimeEntry.billableOption (the record's model, VERIFIED 9 Sep
+# 2026 from ConnectWise's OpenAPI schema). NO_DEFAULT: the agreement decides.
+BILL_OPTIONS = ("BILLABLE", "DO_NOT_BILL", "NO_CHARGE", "NO_DEFAULT")
+# Time is kept to the quarter hour. INFERRED: ConnectWise rounds time entries
+# by a per-company setting; a quarter hour is the usual choice and is what the
+# desk applies. Half up, so 0.13 h is a quarter, never nothing.
+ROUND_HOURS = 0.25
+MAX_HOURS = BANDS[-1]
+
+# The starter work roles and work types, as data: Setup › Time edits them.
+# ConnectWise ships its own list; these are the ones a hospital IT desk uses.
+STARTER_WORK_ROLES = (("TECHNICIAN", "Technician"), ("ENGINEER", "Engineer"),
+                      ("SERVICE_MANAGER", "Service manager"), ("ON_CALL", "On-call"))
+STARTER_WORK_TYPES = (("REGULAR", "Regular", "BILLABLE"), ("REMOTE", "Remote", "BILLABLE"),
+                      ("ON_SITE", "On-site", "BILLABLE"), ("AFTER_HOURS", "After hours", "BILLABLE"),
+                      ("INTERNAL", "Internal", "DO_NOT_BILL"))
+
+
+def ensure_time_vocabulary(conn: sqlite3.Connection) -> None:
+    """Seed the starter work roles and types once; never overwrite an edit."""
+    for n, (rid, name) in enumerate(STARTER_WORK_ROLES):
+        conn.execute("INSERT OR IGNORE INTO work_role (work_role_id, name, sort_order)"
+                     " VALUES (?,?,?)", (rid, name, n))
+    for n, (tid, name, bill) in enumerate(STARTER_WORK_TYPES):
+        conn.execute("INSERT OR IGNORE INTO work_type (work_type_id, name, bill_time, sort_order)"
+                     " VALUES (?,?,?,?)", (tid, name, bill, n))
+
+
+def work_roles(conn: sqlite3.Connection, *, all_rows: bool = False) -> list[sqlite3.Row]:
+    return conn.execute("SELECT * FROM work_role" + ("" if all_rows else " WHERE inactive = 0")
+                        + " ORDER BY sort_order, name").fetchall()
+
+
+def work_types(conn: sqlite3.Connection, *, all_rows: bool = False) -> list[sqlite3.Row]:
+    return conn.execute("SELECT * FROM work_type" + ("" if all_rows else " WHERE inactive = 0")
+                        + " ORDER BY sort_order, name").fetchall()
+
+
+def band_for(hours: float) -> float:
+    """The smallest band the hours fit in; over the largest band is refused,
+    because a day's work is one entry and a week's work is several."""
+    for b in BANDS:
+        if hours <= b + 1e-9:
+            return b
+    raise EffortRefused(f"{hours:g} h is more than one entry holds ({MAX_HOURS:g} h); "
+                        "enter one per day worked")
+
+
+def _round_hours(hours: float) -> float:
+    steps = int(hours / ROUND_HOURS + 0.5 + 1e-9)
+    return steps * ROUND_HOURS
+
+
+def _parse_when(value, label: str) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    text = (value or "").strip().replace("T", " ")
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    raise EffortRefused(f"{label} is not a date and time (YYYY-MM-DD HH:MM)")
+
+
+def resolve_hours(*, actual_hours=None, time_start=None, time_end=None,
+                  hours_deduct=None) -> dict:
+    """ConnectWise's rule: start and end, OR actual hours, never both. Hours
+    are end minus start minus the deduction, rounded to the quarter hour, and
+    must come out above zero. Returns what to store."""
+    deduct = float(hours_deduct or 0)
+    if deduct < 0:
+        raise EffortRefused("a deduction cannot be negative")
+    has_span = bool(time_start) or bool(time_end)
+    has_actual = actual_hours not in (None, "", 0, 0.0) if not isinstance(actual_hours, str) \
+        else bool(actual_hours.strip())
+    if has_span and has_actual:
+        raise EffortRefused("enter a start and end time, or the actual hours, not both")
+    if has_span:
+        if not (time_start and time_end):
+            raise EffortRefused("a start time needs an end time, and the other way round")
+        start, end = _parse_when(time_start, "start"), _parse_when(time_end, "end")
+        if end <= start:
+            raise EffortRefused("the end time is not after the start time")
+        raw = (end - start).total_seconds() / 3600 - deduct
+        start_text, end_text = start.isoformat(sep=" ", timespec="minutes"), \
+            end.isoformat(sep=" ", timespec="minutes")
+        worked_on = start.date().isoformat()
+    elif has_actual:
+        try:
+            raw = float(actual_hours) - deduct
+        except (TypeError, ValueError):
+            raise EffortRefused("actual hours is a number, e.g. 1.5") from None
+        start_text = end_text = worked_on = None
+    else:
+        raise EffortRefused("enter a start and end time, or the actual hours")
+    hours = _round_hours(raw)
+    if hours <= 0:
+        raise EffortRefused("the time comes to nothing once the deduction is taken off")
+    return {"actual_hours": hours, "hours_deduct": deduct, "time_start": start_text,
+            "time_end": end_text, "worked_on": worked_on, "band_hours": band_for(hours)}
+
+
+def prepare_time(conn: sqlite3.Connection, work_item_id: str, *, charge_method,
+                 work_role_id=None, work_type_id=None, billable_option=None,
+                 **hours_kw) -> dict:
+    """Everything a time entry needs, checked before a byte is written: the
+    hours (ConnectWise's rule), the charge method (never assumed), a real work
+    role and type, a bill option, and the two effort gates. Returns the values
+    to store; raises EffortRefused in a sentence."""
+    values = resolve_hours(**hours_kw)
+    if charge_method not in CHARGE_METHODS:
+        raise EffortRefused("say how the time is charged; it is never assumed")
+    ensure_time_vocabulary(conn)
+    # ConnectWise fills the work role and type from the member's own defaults;
+    # the desk's default is the first of each in Setup › Time. A named one must
+    # exist and be in use.
+    if work_role_id:
+        role = conn.execute("SELECT work_role_id FROM work_role WHERE work_role_id = ? AND inactive = 0",
+                            (work_role_id,)).fetchone()
+        if role is None:
+            raise EffortRefused("choose a work role that is in use")
+    else:
+        role = conn.execute("SELECT work_role_id FROM work_role WHERE inactive = 0"
+                            " ORDER BY sort_order, name LIMIT 1").fetchone()
+        if role is None:
+            raise EffortRefused("no work role is set up (Setup › Time)")
+    if work_type_id:
+        wtype = conn.execute("SELECT work_type_id FROM work_type WHERE work_type_id = ? AND inactive = 0",
+                             (work_type_id,)).fetchone()
+        if wtype is None:
+            raise EffortRefused("choose a work type that is in use")
+    else:
+        wtype = conn.execute("SELECT work_type_id FROM work_type WHERE inactive = 0"
+                             " ORDER BY sort_order, name LIMIT 1").fetchone()
+        if wtype is None:
+            raise EffortRefused("no work type is set up (Setup › Time)")
+    bill = billable_option or "NO_DEFAULT"
+    if bill not in BILL_OPTIONS:
+        raise EffortRefused("the bill option is Billable, Do not bill, No charge or No default")
+    ok, why = may_book_effort(conn, work_item_id)
+    if not ok:
+        raise EffortRefused(why)
+    ticket = conn.execute(
+        "SELECT w.entity_id FROM ticket t JOIN work_item w ON w.work_item_id = t.work_item_id"
+        " WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
+    if ticket is None:
+        raise LookupError(f"no ticket {work_item_id!r}")
+    if not ticket["entity_id"]:
+        raise EffortRefused("set the ticket's company before booking time against it")
+    values.update(charge_method=charge_method, work_role_id=role["work_role_id"],
+                  work_type_id=wtype["work_type_id"], billable_option=bill,
+                  entity_id=ticket["entity_id"])
+    return values
+
+
+def add_time(conn: sqlite3.Connection, work_item_id: str, *, at: datetime, actor: str,
+             charge_method, performed_by: str | None = None, worked_on: str | None = None,
+             ticket_event_id: int | None = None, note: str | None = None,
+             authority_source: str = "ticket time entry", counts_to_capacity: bool = True,
+             values: dict | None = None, **kw) -> int:
+    """One time entry, as ConnectWise records one: who, when (a start and end,
+    or actual hours, less a deduction), the work role and type, the bill
+    option, and the spine's own charge method. band_hours is derived. Returns
+    the entry's id. `values` is prepare_time's answer when the caller checked
+    first; otherwise the checks run here."""
+    v = values or prepare_time(conn, work_item_id, charge_method=charge_method, **kw)
+    who = (performed_by or actor).strip()
+    cur = conn.execute(
+        "INSERT INTO time_entry (work_item_id, entity_id, worked_on, band_hours, performed_by,"
+        " entered_by, counts_to_capacity, charge_method, authority_source, note, time_start,"
+        " time_end, hours_deduct, actual_hours, work_role_id, work_type_id, billable_option,"
+        " ticket_event_id, entry_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'OPEN')",
+        (work_item_id, v["entity_id"], worked_on or v["worked_on"] or at.date().isoformat(),
+         v["band_hours"], who, actor, 1 if counts_to_capacity else 0, v["charge_method"],
+         authority_source, (note or "")[:500] or None, v["time_start"], v["time_end"],
+         v["hours_deduct"], v["actual_hours"], v["work_role_id"], v["work_type_id"],
+         v["billable_option"], ticket_event_id))
+    stamp = at.isoformat(sep=" ", timespec="minutes")
+    span = (f"{v['time_start'][11:]}–{v['time_end'][11:]}" if v["time_start"] else "actual")
+    _event(conn, work_item_id, stamp, "TIME", actor,
+           f"{v['actual_hours']:g} h ({span}"
+           + (f", less {v['hours_deduct']:g} h" if v["hours_deduct"] else "")
+           + f") by {who}, {v['work_role_id'].lower().replace('_', ' ')} · "
+           f"{v['work_type_id'].lower().replace('_', ' ')} · {v['billable_option'].lower().replace('_', ' ')}"
+           f" · band {v['band_hours']:g} h")
+    touch(conn, work_item_id, at)
+    return cur.lastrowid
 
 
 def _event(conn, work_item_id, stamp, kind, actor, detail, flag=None):
@@ -467,13 +658,16 @@ def _event(conn, work_item_id, stamp, kind, actor, detail, flag=None):
 def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: str,
              actor: str, at: datetime, band_hours: float | None = None,
              charge_method: str | None = None, to_status_id: str | None = None,
-             resolution: bool = False) -> dict:
+             resolution: bool = False, time: dict | None = None) -> dict:
     """One note, the way ConnectWise takes one: flagged, optionally with time
     against it, optionally moving the status in the same action.
 
     Discussion and Resolution notes are the requester's to read on the portal;
-    Internal ones never leave the desk. Time goes through both effort gates
-    before anything is written, so a refused booking leaves no half-note.
+    Internal ones never leave the desk. Time is ConnectWise's time entry
+    (`time`: actual_hours or time_start/time_end, hours_deduct, work_role_id,
+    work_type_id, billable_option, performed_by); `band_hours` is the older
+    spelling and means actual hours. Every check runs before anything is
+    written, so a refused booking leaves no half-note.
     """
     if flag not in NOTE_FLAGS:
         raise ValueError(f"a note is Discussion, Internal or Resolution, not {flag!r}")
@@ -486,16 +680,14 @@ def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: st
     if ticket is None:
         raise LookupError(f"no ticket {work_item_id!r}")
 
-    if band_hours is not None:
-        if band_hours not in BANDS:
-            raise EffortRefused(f"effort is banded: one of {', '.join(f'{b:g}' for b in BANDS)} hours")
-        if charge_method not in CHARGE_METHODS:
-            raise EffortRefused("say how the time is charged; it is never assumed")
-        ok, why = may_book_effort(conn, work_item_id)
-        if not ok:
-            raise EffortRefused(why)
-        if not ticket["entity_id"]:
-            raise EffortRefused("set the ticket's company before booking time against it")
+    time = dict(time or {})
+    if band_hours is not None and not time:
+        time["actual_hours"] = band_hours
+    prepared = None
+    if time:
+        performed_by = time.pop("performed_by", None) or actor
+        prepared = prepare_time(conn, work_item_id, charge_method=charge_method, **time)
+        prepared["performed_by"] = performed_by
 
     stamp = at.isoformat(sep=" ", timespec="minutes")
     event_id = _event(conn, work_item_id, stamp, "NOTE", actor, body, flag)
@@ -507,13 +699,12 @@ def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: st
     # A fulfiller has written: the requester's reply has been seen.
     conn.execute("UPDATE ticket SET customer_updated = 0 WHERE work_item_id = ?",
                  (work_item_id,))
-    if band_hours is not None:
-        conn.execute(
-            "INSERT INTO time_entry (work_item_id, entity_id, worked_on, band_hours,"
-            " performed_by, entered_by, charge_method, authority_source, note)"
-            " VALUES (?,?,?,?,?,?,?,?,?)",
-            (work_item_id, ticket["entity_id"], at.date().isoformat(), band_hours,
-             actor, actor, charge_method, "ticket note", body[:500]))
+    booked = None
+    if prepared is not None:
+        add_time(conn, work_item_id, at=at, actor=actor, charge_method=prepared["charge_method"],
+                 performed_by=prepared.pop("performed_by"), ticket_event_id=event_id, note=body,
+                 authority_source="ticket note", values=prepared)
+        booked = prepared["band_hours"]
     status = None
     if to_status_id:
         status = change_status(conn, work_item_id, to_status_id, at=at, actor=actor)
@@ -524,7 +715,8 @@ def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: st
         # The requester can read this note on the portal: tell them it is there.
         from . import outbox
         outbox.queue_requester(conn, work_item_id, "UPDATED", at=at)
-    return {"flag": flag, "band_hours": band_hours, "status": status}
+    return {"flag": flag, "band_hours": booked, "actual_hours": prepared["actual_hours"] if prepared else None,
+            "status": status}
 
 
 def update_fields(conn: sqlite3.Connection, work_item_id: str, *, at: datetime,

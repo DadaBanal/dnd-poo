@@ -2035,6 +2035,114 @@ class ClosedLoopTest(unittest.TestCase):
             "SELECT COUNT(*) c FROM loop_reply WHERE work_item_id='ITO-2'").fetchone()["c"], 0)
 
 
+class TimeEntryTest(unittest.TestCase):
+    """033 and board.add_time: time as ConnectWise records it (start and end or
+    actual hours, a deduction, a work role and type, a bill option), with the
+    spine's band derived from it so §5.2's arithmetic stands."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = _fresh(self.tmp)
+        self.at = datetime(2026, 9, 28, 9, 0)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        self.wid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="PC slow", impact="I3",
+                                       urgency="U3", requested_by=None, at=self.at, entity_id="PMC")
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _entry(self):
+        return self.conn.execute("SELECT * FROM time_entry ORDER BY time_entry_id DESC").fetchone()
+
+    def test_start_and_end_give_the_hours_less_the_deduction_and_the_band(self):
+        board.add_time(self.conn, self.wid, at=self.at, actor="alice", charge_method="INCLUDED_IN_MONTHLY_FEE",
+                       time_start="2026-09-28 09:00", time_end="2026-09-28 12:10", hours_deduct=0.5,
+                       work_role_id="TECHNICIAN", work_type_id="ON_SITE", billable_option="BILLABLE")
+        e = self._entry()
+        self.assertEqual((e["actual_hours"], e["hours_deduct"], e["band_hours"]), (2.75, 0.5, 4))
+        self.assertEqual((e["time_start"], e["time_end"], e["worked_on"]),
+                         ("2026-09-28 09:00", "2026-09-28 12:10", "2026-09-28"))
+        self.assertEqual((e["work_role_id"], e["work_type_id"], e["billable_option"], e["entry_status"]),
+                         ("TECHNICIAN", "ON_SITE", "BILLABLE", "OPEN"))
+        self.assertEqual(e["performed_by"], "alice")
+        line = self.conn.execute("SELECT detail FROM ticket_event WHERE kind = 'TIME'").fetchone()[0]
+        self.assertIn("2.75 h (09:00–12:10, less 0.5 h)", line)
+        self.assertIn("band 4 h", line)
+
+    def test_actual_hours_are_kept_to_the_quarter_hour_and_banded_up(self):
+        for given, hours, band in (("1", 1, 2), ("0.13", 0.25, 0.5), ("1.6", 1.5, 2), ("8", 8, 8),
+                                   ("8.01", 8, 8), ("8.2", 8.25, 20)):
+            board.add_time(self.conn, self.wid, at=self.at, actor="alice",
+                           charge_method="INCLUDED_IN_MONTHLY_FEE", actual_hours=given)
+            e = self._entry()
+            self.assertEqual((e["actual_hours"], e["band_hours"]), (hours, band), given)
+            self.assertIsNone(e["time_start"])
+        # the defaults ConnectWise takes from the member: the first role and type in Setup
+        self.assertEqual((e["work_role_id"], e["work_type_id"], e["billable_option"]),
+                         ("TECHNICIAN", "REGULAR", "NO_DEFAULT"))
+
+    def test_connectwises_rules_are_refused_in_a_sentence(self):
+        cases = [
+            (dict(actual_hours="2", time_start="2026-09-28 09:00", time_end="2026-09-28 10:00"), "not both"),
+            (dict(time_start="2026-09-28 09:00"), "needs an end time"),
+            (dict(time_start="2026-09-28 10:00", time_end="2026-09-28 09:00"), "not after the start"),
+            (dict(time_start="2026-09-28 09:00", time_end="2026-09-28 09:30", hours_deduct=0.5), "comes to nothing"),
+            (dict(actual_hours="abc"), "is a number"),
+            (dict(), "or the actual hours"),
+            (dict(actual_hours="21"), "more than one entry holds"),
+            (dict(actual_hours="1", hours_deduct=-1), "cannot be negative"),
+            (dict(actual_hours="1", work_role_id="NOPE"), "work role that is in use"),
+            (dict(actual_hours="1", work_type_id="NOPE"), "work type that is in use"),
+            (dict(actual_hours="1", billable_option="MAYBE"), "bill option"),
+        ]
+        for kw, words in cases:
+            with self.assertRaises(board.EffortRefused, msg=words) as c:
+                board.add_time(self.conn, self.wid, at=self.at, actor="alice",
+                               charge_method="INCLUDED_IN_MONTHLY_FEE", **kw)
+            self.assertIn(words, str(c.exception), kw)
+        with self.assertRaises(board.EffortRefused) as c:
+            board.add_time(self.conn, self.wid, at=self.at, actor="alice", charge_method=None, actual_hours="1")
+        self.assertIn("never assumed", str(c.exception))
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM time_entry").fetchone()[0], 0)
+
+    def test_a_retired_role_stays_on_old_entries_and_is_refused_on_new_ones(self):
+        board.add_time(self.conn, self.wid, at=self.at, actor="alice", charge_method="INCLUDED_IN_MONTHLY_FEE",
+                       actual_hours="1", work_role_id="ENGINEER")
+        self.conn.execute("UPDATE work_role SET inactive = 1 WHERE work_role_id = 'ENGINEER'")
+        with self.assertRaises(board.EffortRefused):
+            board.add_time(self.conn, self.wid, at=self.at, actor="alice",
+                           charge_method="INCLUDED_IN_MONTHLY_FEE", actual_hours="1", work_role_id="ENGINEER")
+        self.assertEqual(self._entry()["work_role_id"], "ENGINEER")
+
+    def test_a_note_carries_its_time_entry_and_both_are_refused_together(self):
+        r = board.add_note(self.conn, self.wid, body="Swapped the toner.", flag="DISCUSSION", actor="alice",
+                           at=self.at, charge_method="INCLUDED_IN_MONTHLY_FEE",
+                           time={"time_start": "2026-09-28 14:00", "time_end": "2026-09-28 14:20",
+                                 "work_type_id": "REMOTE", "performed_by": "bob"})
+        self.assertEqual((r["actual_hours"], r["band_hours"]), (0.25, 0.5))
+        e = self._entry()
+        note = self.conn.execute("SELECT ticket_event_id FROM ticket_event WHERE detail = 'Swapped the toner.'").fetchone()
+        self.assertEqual(e["ticket_event_id"], note[0])
+        self.assertEqual((e["performed_by"], e["entered_by"], e["work_type_id"]), ("bob", "alice", "REMOTE"))
+        # refused whole: no note is written when the time is wrong
+        with self.assertRaises(board.EffortRefused):
+            board.add_note(self.conn, self.wid, body="Nope.", flag="DISCUSSION", actor="alice", at=self.at,
+                           charge_method="INCLUDED_IN_MONTHLY_FEE", time={"actual_hours": "x"})
+        self.assertIsNone(self.conn.execute("SELECT 1 FROM ticket_event WHERE detail = 'Nope.'").fetchone())
+        # the old spelling still works: band_hours means actual hours
+        board.add_note(self.conn, self.wid, body="Old call.", flag="INTERNAL", actor="alice", at=self.at,
+                       band_hours=2, charge_method="CAPACITY_UPLIFT")
+        self.assertEqual((self._entry()["actual_hours"], self._entry()["band_hours"]), (2, 2))
+
+    def test_the_uplift_evidence_still_reads_the_band(self):
+        from psaspine import reports
+        board.add_time(self.conn, self.wid, at=self.at, actor="alice", charge_method="CAPACITY_UPLIFT",
+                       actual_hours="2.5")
+        rows = reports.effort_by_basis(self.conn)
+        self.assertEqual([r["band_hours"] for r in rows], [4])
+
+
 class AuthTest(unittest.TestCase):
     """The two ways in: sealed break-glass, and a hand-verified Entra token."""
 
@@ -2323,6 +2431,89 @@ class WebWSGITest(unittest.TestCase):
             "SELECT band_hours, charge_method FROM time_entry WHERE work_item_id='ITO-1'"
         ).fetchone()[:], (2.0, "INCLUDED_IN_MONTHLY_FEE"))
         conn.close()
+
+    def test_the_time_pod_takes_a_connectwise_time_entry_and_lists_it_like_the_time_tab(self):
+        alice = self._cookie_for("alice")
+        _, _, page = self._call("GET", "/ticket/ITO-1", cookie=alice)
+        for field in ("name=worked_on", "name=start", "name=end", "name=hours", "name=deduct",
+                      "name=work_role", "name=work_type", "name=bill", "name=charge"):
+            self.assertIn(field, page, field)
+        self.assertIn("Add time", page)
+        self.assertNotIn("No time</option>", page)                # the band picker is gone
+        status, headers, _ = self._call("POST", "/ticket/ITO-1/time", cookie=alice, form={
+            "worked_on": "2026-09-17", "start": "09:00", "end": "11:40", "deduct": "0.25",
+            "work_role": "ENGINEER", "work_type": "ON_SITE", "bill": "BILLABLE",
+            "charge": "INCLUDED_IN_MONTHLY_FEE", "body": "Replaced the switch.", "flag": "INTERNAL"})
+        self.assertTrue(status.startswith("303"), status)
+        self.assertIn("Time+saved%3A+2.5+h", dict(headers)["Location"])
+        conn = self._db()
+        e = conn.execute("SELECT * FROM time_entry").fetchone()
+        note = conn.execute("SELECT ticket_event_id, note_flag FROM ticket_event WHERE detail = 'Replaced the switch.'").fetchone()
+        conn.close()
+        self.assertEqual((e["actual_hours"], e["hours_deduct"], e["band_hours"], e["work_role_id"],
+                          e["work_type_id"], e["billable_option"], e["time_start"], e["time_end"]),
+                         (2.5, 0.25, 4, "ENGINEER", "ON_SITE", "BILLABLE", "2026-09-17 09:00", "2026-09-17 11:40"))
+        self.assertEqual((e["ticket_event_id"], note["note_flag"]), (note["ticket_event_id"], "INTERNAL"))
+        _, _, page = self._call("GET", "/ticket/ITO-1", cookie=alice)
+        self.assertIn("Time · 2.5 h (band 4 h)", page)
+        for cell in ("<td>2026-09-17</td>", "<td>alice</td>", "<td>09:00–11:40</td>", "<td class=num>2.5</td>",
+                     "<td class=num>0.25</td>", "<td>Engineer</td>", "<td>On-site</td>", "<td>Billable</td>",
+                     "<td>Included in monthly fee</td>", "<td class=num>4</td>"):
+            self.assertIn(cell, page, cell)
+        # both ways at once is ConnectWise's refusal, in a sentence, and nothing is written
+        status, headers, _ = self._call("POST", "/ticket/ITO-1/time", cookie=alice, form={
+            "worked_on": "2026-09-17", "start": "09:00", "end": "10:00", "hours": "1",
+            "charge": "INCLUDED_IN_MONTHLY_FEE"})
+        self.assertIn("not+both", dict(headers)["Location"])
+        conn = self._db()
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM time_entry").fetchone()[0], 1)
+        conn.close()
+        # a reader cannot
+        status, _, _ = self._call("POST", "/ticket/ITO-1/time", cookie=self._cookie_for("carol"),
+                                  form={"hours": "1", "charge": "INCLUDED_IN_MONTHLY_FEE"})
+        self.assertTrue(status.startswith("404"))
+
+    def test_the_note_composer_carries_the_same_time_fields(self):
+        alice = self._cookie_for("alice")
+        status, headers, _ = self._call("POST", "/ticket/ITO-1/note", cookie=alice, form={
+            "body": "Looked at it.", "flag": "DISCUSSION", "worked_on": "2026-09-17", "hours": "0.4",
+            "work_role": "TECHNICIAN", "work_type": "REMOTE", "charge": "CAPACITY_UPLIFT"})
+        self.assertIn("Note+saved", dict(headers)["Location"])
+        conn = self._db()
+        e = conn.execute("SELECT actual_hours, band_hours, work_type_id, worked_on FROM time_entry").fetchone()
+        conn.close()
+        self.assertEqual(tuple(e), (0.5, 0.5, "REMOTE", "2026-09-17"))
+
+    def test_setup_time_adds_and_retires_work_roles_and_types(self):
+        root = self._cookie_for("root", is_sysadmin=True)
+        status, _, page = self._call("GET", "/admin/time", cookie=root)
+        self.assertTrue(status.startswith("200"))
+        for name in ("Technician", "Engineer", "Service manager", "On-call", "Regular", "Remote",
+                     "On-site", "After hours", "Internal"):
+            self.assertIn(name, page, name)
+        _, headers, _ = self._call("POST", "/admin/time/role", cookie=root, form={"name": "Biomedical engineer"})
+        self.assertIn("Added+work+role", dict(headers)["Location"])
+        _, headers, _ = self._call("POST", "/admin/time/type", cookie=root,
+                                   form={"name": "Project", "bill_time": "NO_CHARGE"})
+        self.assertIn("Added+work+type", dict(headers)["Location"])
+        _, headers, _ = self._call("POST", "/admin/time/role", cookie=root, form={"name": "biomedical engineer"})
+        self.assertIn("already", dict(headers)["Location"])
+        _, headers, _ = self._call("POST", "/admin/time/toggle", cookie=root, form={"kind": "role", "id": "ENGINEER"})
+        self.assertIn("Retired", dict(headers)["Location"])
+        conn = self._db()
+        self.assertEqual(conn.execute("SELECT inactive FROM work_role WHERE work_role_id = 'ENGINEER'").fetchone()[0], 1)
+        self.assertEqual(conn.execute("SELECT bill_time FROM work_type WHERE work_type_id = 'PROJECT'").fetchone()[0],
+                         "NO_CHARGE")
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_event WHERE action LIKE 'WORK_%'").fetchone()[0], 3)
+        conn.close()
+        # a retired role is no longer offered on the ticket, and a board admin is not a sysadmin
+        _, _, page = self._call("GET", "/ticket/ITO-1", cookie=self._cookie_for("alice"))
+        self.assertNotIn(">Engineer<", page)
+        self.assertIn(">Biomedical engineer<", page)
+        status, _, _ = self._call("GET", "/admin/time", cookie=self._cookie_for("alice"))
+        self.assertTrue(status.startswith("403"))
+        _, _, setup_page = self._call("GET", "/admin", cookie=root)
+        self.assertIn("/admin/time", setup_page)
 
     def test_time_with_no_charge_method_is_refused_and_nothing_is_written(self):
         """The charge method is never assumed (the numerator of an uplift claim)."""

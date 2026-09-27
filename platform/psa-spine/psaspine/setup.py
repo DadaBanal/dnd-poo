@@ -109,6 +109,13 @@ def ensure_calendars(conn: sqlite3.Connection) -> None:
 
 def apply_starter(conn: sqlite3.Connection, board_id: str, *, actor: str,
                   at: datetime, profile: str | None = None) -> dict:
+    from . import board as _board
+    _board.ensure_time_vocabulary(conn)
+    return _apply_starter(conn, board_id, actor=actor, at=at, profile=profile)
+
+
+def _apply_starter(conn: sqlite3.Connection, board_id: str, *, actor: str,
+                   at: datetime, profile: str | None = None) -> dict:
     """Give a board the statuses, calendar and SLA targets it needs to run.
 
     `profile` is SERVICE (the default), CHANGE or PROJECT (itil.PROFILES): which

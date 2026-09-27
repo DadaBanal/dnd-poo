@@ -164,6 +164,8 @@ BEGIN
     PRINT N'    psa.standard_note';
     PRINT N'    psa.ticket_schedule';
     PRINT N'    psa.survey_response';
+    PRINT N'    psa.work_role';
+    PRINT N'    psa.work_type';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -190,13 +192,14 @@ BEGIN
     PRINT N'    psa.ix_ticket_merged';
     PRINT N'    psa.ix_ticket_schedule_day';
     PRINT N'    psa.ix_ticket_schedule_ticket';
+    PRINT N'    psa.ix_time_entry_ticket';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  73 tables, 25 indexes, 4 triggers.';
+    PRINT N'  75 tables, 26 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -2021,6 +2024,34 @@ CREATE TABLE psa.[survey_response] (
 END;
 
 -- --------------------------------------------------------------------------
+-- work_role   (from schema/033_time_entry.sql)
+-- ConnectWise's WorkRole and WorkType, as the desk needs them: a name, whether
+-- it is still offered, and for a type the bill default ConnectWise gives it
+-- (WorkType.billTime: Billable, DoNotBill, NoCharge). Setup › Time edits both.
+IF OBJECT_ID(N'psa.[work_role]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[work_role] (
+    [work_role_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_work_role] PRIMARY KEY,
+    [name] NVARCHAR(400) NOT NULL,
+    [inactive] INT NOT NULL CONSTRAINT [DF_work_role_inactive] DEFAULT (0) CONSTRAINT [CK_work_role_01] CHECK (inactive IN (0, 1)),
+    [sort_order] INT NOT NULL CONSTRAINT [DF_work_role_sort_order] DEFAULT (0)
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- work_type   (from schema/033_time_entry.sql)
+IF OBJECT_ID(N'psa.[work_type]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[work_type] (
+    [work_type_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_work_type] PRIMARY KEY,
+    [name] NVARCHAR(400) NOT NULL,
+    [bill_time] NVARCHAR(32) NOT NULL CONSTRAINT [DF_work_type_bill_time] DEFAULT ('BILLABLE') CONSTRAINT [CK_work_type_01] CHECK (bill_time IN ('BILLABLE', 'DO_NOT_BILL', 'NO_CHARGE')),
+    [inactive] INT NOT NULL CONSTRAINT [DF_work_type_inactive] DEFAULT (0) CONSTRAINT [CK_work_type_02] CHECK (inactive IN (0, 1)),
+    [sort_order] INT NOT NULL CONSTRAINT [DF_work_type_sort_order] DEFAULT (0)
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -2227,6 +2258,38 @@ ALTER TABLE psa.[ticket] ADD [parent_id] NVARCHAR(64) NULL CONSTRAINT [FK_ticket
 IF COL_LENGTH(N'psa.[ticket]', N'merged_into') IS NULL
 ALTER TABLE psa.[ticket] ADD [merged_into] NVARCHAR(64) NULL CONSTRAINT [FK_ticket_merged_into] REFERENCES psa.[ticket]([work_item_id]);
 
+IF COL_LENGTH(N'psa.[time_entry]', N'time_start') IS NULL
+ALTER TABLE psa.[time_entry] ADD [time_start] NVARCHAR(64) NULL;
+
+IF COL_LENGTH(N'psa.[time_entry]', N'time_end') IS NULL
+ALTER TABLE psa.[time_entry] ADD [time_end] NVARCHAR(64) NULL;
+
+-- Added columns are NULL-able by the port's rule (a migration invents no data);
+-- the engine writes every one of them on every new row.
+IF COL_LENGTH(N'psa.[time_entry]', N'hours_deduct') IS NULL
+ALTER TABLE psa.[time_entry] ADD [hours_deduct] DECIMAL(9,2) NULL CONSTRAINT [DF_time_entry_hours_deduct] DEFAULT (0);
+
+IF COL_LENGTH(N'psa.[time_entry]', N'actual_hours') IS NULL
+ALTER TABLE psa.[time_entry] ADD [actual_hours] DECIMAL(9,2) NULL;
+
+IF COL_LENGTH(N'psa.[time_entry]', N'work_role_id') IS NULL
+ALTER TABLE psa.[time_entry] ADD [work_role_id] NVARCHAR(64) NULL CONSTRAINT [FK_time_entry_work_role_id] REFERENCES psa.[work_role]([work_role_id]);
+
+IF COL_LENGTH(N'psa.[time_entry]', N'work_type_id') IS NULL
+ALTER TABLE psa.[time_entry] ADD [work_type_id] NVARCHAR(64) NULL CONSTRAINT [FK_time_entry_work_type_id] REFERENCES psa.[work_type]([work_type_id]);
+
+IF COL_LENGTH(N'psa.[time_entry]', N'billable_option') IS NULL
+ALTER TABLE psa.[time_entry] ADD [billable_option] NVARCHAR(32) NULL CONSTRAINT [DF_time_entry_billable_option] DEFAULT ('NO_DEFAULT') CONSTRAINT [CK_time_entry_billable_option_01] CHECK (billable_option IN ('BILLABLE', 'DO_NOT_BILL', 'NO_CHARGE', 'NO_DEFAULT'));
+
+-- The note the entry was written with, when it was (ConnectWise's time entry
+-- carries its notes; here the note is the ticket_event and this points at it).
+IF COL_LENGTH(N'psa.[time_entry]', N'ticket_event_id') IS NULL
+ALTER TABLE psa.[time_entry] ADD [ticket_event_id] INT NULL CONSTRAINT [FK_time_entry_ticket_event_id] REFERENCES psa.[ticket_event]([ticket_event_id]);
+
+-- ConnectWise's TimeEntry.status, the part of it the desk has a use for.
+IF COL_LENGTH(N'psa.[time_entry]', N'entry_status') IS NULL
+ALTER TABLE psa.[time_entry] ADD [entry_status] NVARCHAR(32) NULL CONSTRAINT [DF_time_entry_entry_status] DEFAULT ('OPEN') CONSTRAINT [CK_time_entry_entry_status_01] CHECK (entry_status IN ('OPEN', 'READY_TO_BILL', 'BILLED', 'WRITTEN_OFF', 'BILLED_AGREEMENT'));
+
 -- --------------------------------------------------------------------------
 -- indexes
 
@@ -2308,6 +2371,9 @@ CREATE INDEX [ix_ticket_schedule_day] ON psa.[ticket_schedule] ([starts_at]);
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ticket_schedule_ticket' AND object_id = OBJECT_ID(N'psa.[ticket_schedule]'))
 CREATE INDEX [ix_ticket_schedule_ticket] ON psa.[ticket_schedule] ([work_item_id]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_time_entry_ticket' AND object_id = OBJECT_ID(N'psa.[time_entry]'))
+CREATE INDEX [ix_time_entry_ticket] ON psa.[time_entry] ([work_item_id], [worked_on]);
 
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
@@ -2444,10 +2510,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 73 OR @Triggers <> 4 OR @Indexes < 25
+IF @Tables <> 75 OR @Triggers <> 4 OR @Indexes < 26
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 73), %d triggers (expected 4), %d indexes (expected at least 25). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 75), %d triggers (expected 4), %d indexes (expected at least 26). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -2475,6 +2541,9 @@ PRINT N'target is enforced until somebody with the authority says so.';
     DROP TRIGGER IF EXISTS psa.[ticket_close_requires_a_variation];
     DROP TRIGGER IF EXISTS psa.[patient_reference_needs_a_restricted_board];
     DROP TRIGGER IF EXISTS psa.[patient_reference_stays_on_a_restricted_board];
+    ALTER TABLE psa.[time_entry] DROP CONSTRAINT IF EXISTS [FK_time_entry_ticket_event_id];
+    ALTER TABLE psa.[time_entry] DROP CONSTRAINT IF EXISTS [FK_time_entry_work_type_id];
+    ALTER TABLE psa.[time_entry] DROP CONSTRAINT IF EXISTS [FK_time_entry_work_role_id];
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_merged_into];
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_parent_id];
     ALTER TABLE psa.[workflow_action] DROP CONSTRAINT IF EXISTS [FK_workflow_action_target_template_id];
@@ -2485,6 +2554,8 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[work_type];
+    DROP TABLE IF EXISTS psa.[work_role];
     DROP TABLE IF EXISTS psa.[survey_response];
     DROP TABLE IF EXISTS psa.[ticket_schedule];
     DROP TABLE IF EXISTS psa.[standard_note];

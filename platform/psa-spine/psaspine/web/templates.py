@@ -144,6 +144,10 @@ dialog#pal::backdrop{background:rgb(10 12 18/.35);-webkit-backdrop-filter:blur(3
 .pods .card.collapsed{padding-bottom:12px} .pods .card.collapsed h3{margin-bottom:0}
 .pods .card.collapsed .podctl .fold .ic{transform:rotate(-90deg)}
 .pods .card.dragging{opacity:.5} .pods .card.over{box-shadow:0 -2px 0 0 var(--accent)}
+.timefields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 10px;margin-top:8px}
+.timefields.compact{grid-template-columns:repeat(3,minmax(0,1fr))} @container (min-width:640px){.timefields{grid-template-columns:repeat(5,minmax(0,1fr))}}
+.timefields label{display:block} details.timeblock{margin-top:10px} details.timeblock>summary{cursor:pointer;font-weight:600;color:var(--ink-2);display:flex;align-items:center;gap:6px}
+table.compact td,table.compact th{padding:4px 8px;font-size:12px} td.num{text-align:right;font-variant-numeric:tabular-nums}
 .pods{min-height:56px;border-radius:var(--r-lg)} .pods.over-col{outline:2px dashed var(--accent);outline-offset:4px}
 .pods .card[data-pod] h3{padding-right:112px}
 .pods:empty::after,.pods.blank::after{content:"Drop a card here";display:block;color:var(--ink-3);font-size:12px;text-align:center;padding:14px;border:1px dashed var(--line-2);border-radius:var(--r-lg)}

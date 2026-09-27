@@ -81,6 +81,15 @@ def index(ctx):
             "IT Change board and an IT Projects board. His Request-board SLA numbers become "
             "Request targets on IT Help. Items for boards that do not exist yet wait until those "
             "boards are created. It adds what is missing and never overwrites.</p></div>")
+    if ctx.user.is_sysadmin:
+        from ... import board as _board
+        _board.ensure_time_vocabulary(ctx.conn)
+        n_roles = ctx.conn.execute("SELECT COUNT(*) FROM work_role WHERE inactive = 0").fetchone()[0]
+        n_types = ctx.conn.execute("SELECT COUNT(*) FROM work_type WHERE inactive = 0").fetchone()[0]
+        cards.append(
+            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-clock></use></svg>Time</h3><p class=sub>"
+            "The work roles and work types a time entry is written against, as ConnectWise has them.</p>"
+            f"<a class='btn ghost' href='/admin/time'>Work roles ({n_roles}) and work types ({n_types})</a></div>")
     if rows or ctx.user.is_sysadmin:
         n_rules = ctx.conn.execute("SELECT COUNT(*) FROM workflow WHERE is_active = 1").fetchone()[0]
         cards.append(
@@ -942,3 +951,124 @@ def disable_local(ctx):
                  detail="disabled via admin surface")
         ctx.conn.commit()
     return redirect("/admin")
+
+
+# ------------------------------------------------------------ Setup › Time
+#
+# ConnectWise's Work Roles and Work Types (System › Setup Tables). A role is a
+# name; a type is a name and the bill default it carries (WorkType.billTime).
+# Neither is deleted: a role that was used stays, switched off, so old time
+# entries still say what they were.
+
+_TIME_ID = re.compile(r"[^A-Z0-9]+")
+
+
+def _time_id(name: str) -> str:
+    return _TIME_ID.sub("_", name.strip().upper()).strip("_")[:32]
+
+
+def time_setup(ctx):
+    from .. import Response
+    from ... import board as _board
+    common.require_sysadmin(ctx)
+    _board.ensure_time_vocabulary(ctx.conn)
+    ctx.conn.commit()
+    msg, err = ctx.request.query.get("msg", ""), ctx.request.query.get("err", "")
+    roles = _board.work_roles(ctx.conn, all_rows=True)
+    types = _board.work_types(ctx.conn, all_rows=True)
+    bill_words = {"BILLABLE": "Billable", "DO_NOT_BILL": "Do not bill", "NO_CHARGE": "No charge"}
+
+    def toggle(kind, key, off):
+        return (f"<form method=post action='/admin/time/toggle' class=inline>"
+                f"<input type=hidden name=kind value='{kind}'><input type=hidden name=id value='{t.esc(key)}'>"
+                f"<button class=ghost type=submit style='padding:3px 10px'>{'Use again' if off else 'Retire'}</button></form>")
+    role_rows = "".join(
+        f"<tr{' style=opacity:.55' if r['inactive'] else ''}><td>{t.esc(r['name'])}</td>"
+        f"<td class=muted>{t.esc(r['work_role_id'])}</td><td>{toggle('role', r['work_role_id'], r['inactive'])}</td></tr>"
+        for r in roles)
+    type_rows = "".join(
+        f"<tr{' style=opacity:.55' if w['inactive'] else ''}><td>{t.esc(w['name'])}</td>"
+        f"<td>{t.esc(bill_words.get(w['bill_time'], w['bill_time']))}</td>"
+        f"<td class=muted>{t.esc(w['work_type_id'])}</td><td>{toggle('type', w['work_type_id'], w['inactive'])}</td></tr>"
+        for w in types)
+    body = (
+        (f"<div class='banner ok'>{t.esc(msg)}</div>" if msg else "")
+        + (f"<div class='banner err'>{t.esc(err)}</div>" if err else "")
+        + "<h1>Time</h1><p class=sub>What a time entry is written against, as ConnectWise's setup tables "
+          "have it: a <b>work role</b> (who did the work, as a role) and a <b>work type</b> (what kind of "
+          "work, with the bill default it carries). A retired one stays on old entries. <a href='/admin'>Setup</a></p>"
+          "<div class=grid2>"
+          "<div class=card><h3>" + t.icon("users") + "Work roles</h3><div class=tablewrap><table><thead><tr><th>Name</th>"
+          f"<th>Id</th><th></th></tr></thead><tbody>{role_rows}</tbody></table></div>"
+          "<form method=post action='/admin/time/role' class=row style='margin-top:10px'>"
+          "<div><input name=name required maxlength=50 placeholder='e.g. Biomedical engineer'></div>"
+          "<div style='flex:0 0 auto'><button type=submit class=ghost>" + t.icon("plus") + " Add role</button></div></form></div>"
+          "<div class=card><h3>" + t.icon("tag") + "Work types</h3><div class=tablewrap><table><thead><tr><th>Name</th>"
+          f"<th>Bill</th><th>Id</th><th></th></tr></thead><tbody>{type_rows}</tbody></table></div>"
+          "<form method=post action='/admin/time/type' class=row style='margin-top:10px'>"
+          "<div><input name=name required maxlength=50 placeholder='e.g. Project'></div>"
+          "<div style='flex:0 0 auto'><select name=bill_time>"
+          + "".join(f"<option value='{k}'>{v}</option>" for k, v in bill_words.items()) +
+          "</select></div><div style='flex:0 0 auto'><button type=submit class=ghost>" + t.icon("plus")
+          + " Add type</button></div></form></div></div>")
+    return Response(body=t.page("Time", body, user=ctx.user, active="admin"))
+
+
+def _time_back(**q):
+    from .. import redirect
+    return redirect("/admin/time?" + urllib.parse.urlencode({k: v for k, v in q.items() if v}))
+
+
+def time_role_add(ctx):
+    common.require_sysadmin(ctx)
+    name = ctx.request.form().get("name", "").strip()[:50]
+    key = _time_id(name)
+    if not name or not key:
+        return _time_back(err="A work role needs a name.")
+    if ctx.conn.execute("SELECT 1 FROM work_role WHERE work_role_id = ?", (key,)).fetchone():
+        return _time_back(err=f"There is already a work role {name!r}.")
+    n = ctx.conn.execute("SELECT COUNT(*) FROM work_role").fetchone()[0]
+    ctx.conn.execute("INSERT INTO work_role (work_role_id, name, sort_order) VALUES (?,?,?)", (key, name, n))
+    db.audit(ctx.conn, at=ctx.now.isoformat(sep=" ", timespec="minutes"), actor=ctx.user.id,
+             action="WORK_ROLE_ADD", subject_kind="work_role", subject_id=key, detail=name)
+    ctx.conn.commit()
+    return _time_back(msg=f"Added work role {name}.")
+
+
+def time_type_add(ctx):
+    common.require_sysadmin(ctx)
+    f = ctx.request.form()
+    name = f.get("name", "").strip()[:50]
+    bill = f.get("bill_time", "BILLABLE")
+    key = _time_id(name)
+    if not name or not key:
+        return _time_back(err="A work type needs a name.")
+    if bill not in ("BILLABLE", "DO_NOT_BILL", "NO_CHARGE"):
+        return _time_back(err="The bill default is Billable, Do not bill or No charge.")
+    if ctx.conn.execute("SELECT 1 FROM work_type WHERE work_type_id = ?", (key,)).fetchone():
+        return _time_back(err=f"There is already a work type {name!r}.")
+    n = ctx.conn.execute("SELECT COUNT(*) FROM work_type").fetchone()[0]
+    ctx.conn.execute("INSERT INTO work_type (work_type_id, name, bill_time, sort_order) VALUES (?,?,?,?)",
+                     (key, name, bill, n))
+    db.audit(ctx.conn, at=ctx.now.isoformat(sep=" ", timespec="minutes"), actor=ctx.user.id,
+             action="WORK_TYPE_ADD", subject_kind="work_type", subject_id=key, detail=f"{name} ({bill})")
+    ctx.conn.commit()
+    return _time_back(msg=f"Added work type {name}.")
+
+
+def time_toggle(ctx):
+    common.require_sysadmin(ctx)
+    f = ctx.request.form()
+    kind, key = f.get("kind", ""), f.get("id", "")
+    table = {"role": "work_role", "type": "work_type"}.get(kind)
+    if table is None:
+        return _time_back(err="Nothing to change.")
+    row = ctx.conn.execute(f"SELECT inactive FROM {table} WHERE {table}_id = ?", (key,)).fetchone()
+    if row is None:
+        return _time_back(err="No such entry.")
+    ctx.conn.execute(f"UPDATE {table} SET inactive = ? WHERE {table}_id = ?", (0 if row["inactive"] else 1, key))
+    db.audit(ctx.conn, at=ctx.now.isoformat(sep=" ", timespec="minutes"), actor=ctx.user.id,
+             action=f"{table.upper()}_{'RESTORE' if row['inactive'] else 'RETIRE'}", subject_kind=table,
+             subject_id=key)
+    ctx.conn.commit()
+    return _time_back(msg=("Back in use." if row["inactive"] else "Retired; old entries keep it."))

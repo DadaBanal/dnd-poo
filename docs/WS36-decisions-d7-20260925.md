@@ -49,7 +49,7 @@ and nothing else.
 | `psaspine/mssql.py` | The backend: a pyodbc connection wearing sqlite3's surface, a statement translator that refuses what it has not decided, `apply_port()`, `wipe()` for tests. |
 | `psaspine/db.py` | `connect()` picks the store from the shape of the target (path or ODBC connection string); `init`, `close`, `table_exists`, `backup` (refuses for SQL Server, pointing at `BACKUP DATABASE`). |
 | `tools/sqlite_to_tsql.py` | Three fixes the first real run found (nested block comments, boolean-equality CHECKs, IDENTITY on a checked key); `@Database` variable; `schema/local/` now ported. |
-| `sqlserver/PMC_PSA_Spine_SqlServer.sql` | Regenerated: 73 tables, 25 indexes, 4 triggers. |
+| `sqlserver/PMC_PSA_Spine_SqlServer.sql` | Regenerated: 73 tables, 25 indexes, 4 triggers (75 tables, 26 indexes since 033, 28 Sep). |
 | `tests/test_spine.py` | `PSA_TEST_DB` runs every test against a SQL Server; nothing else in the tests changed. |
 | `README.md` | "On SQL Server (D7, 25 Sep 2026)". |
 | `docs/handoffs/HANDOFF-cloud-sql01-WS36-20260925-sqlserver.md` | The sitting that stands the database up and moves the pilot. |

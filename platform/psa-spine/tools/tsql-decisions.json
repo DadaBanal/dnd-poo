@@ -88,6 +88,14 @@
     "sla_target_type.attainment_percent": {
       "sql": "DECIMAL(5,2)",
       "why": "As sla_target.attainment_percent: a population percentile, reported not invoiced."
+    },
+    "time_entry.hours_deduct": {
+      "sql": "DECIMAL(9,2)",
+      "why": "Hours deducted from a start-to-end span (ConnectWise's hoursDeduct); exact, like band_hours."
+    },
+    "time_entry.actual_hours": {
+      "sql": "DECIMAL(9,2)",
+      "why": "ConnectWise's actualHours, rounded to the quarter hour; band_hours is derived from it and both must compare exactly."
     }
   },
   "columns": {
@@ -603,6 +611,17 @@
     "api_token.board_id": "ID",
     "api_token.created_at": "TIMESTAMP_TEXT",
     "api_token.created_by": "PERSON",
-    "api_token.last_used_at": "TIMESTAMP_TEXT"
+    "api_token.last_used_at": "TIMESTAMP_TEXT",
+    "time_entry.time_start": "TIMESTAMP_TEXT",
+    "time_entry.time_end": "TIMESTAMP_TEXT",
+    "time_entry.work_role_id": "ID",
+    "time_entry.work_type_id": "ID",
+    "time_entry.billable_option": "CODE",
+    "time_entry.entry_status": "CODE",
+    "work_role.work_role_id": "ID",
+    "work_role.name": "NAME",
+    "work_type.work_type_id": "ID",
+    "work_type.name": "NAME",
+    "work_type.bill_time": "CODE"
   }
 }

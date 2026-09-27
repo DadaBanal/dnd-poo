@@ -33,6 +33,9 @@ SOURCES = (("PHONE", "Phone"), ("WALK_UP", "Walk-up"), ("EMAIL", "Email (logged 
 CHARGE_LABEL = {"INCLUDED_IN_MONTHLY_FEE": "Included in monthly fee",
                 "CAPACITY_UPLIFT": "Capacity uplift", "SEPARATE_CHARGE": "Separate charge",
                 "PASS_THROUGH": "Pass-through", "NON_CHARGEABLE": "Non-chargeable"}
+# ConnectWise's bill options, in its words.
+BILL_LABEL = {"NO_DEFAULT": "No default (the agreement decides)", "BILLABLE": "Billable",
+              "DO_NOT_BILL": "Do not bill", "NO_CHARGE": "No charge"}
 
 
 def _load(ctx, work_item_id):
@@ -87,6 +90,8 @@ def _system_line(conn, e) -> str:
             return " · ".join(bits)
     if e["kind"] == "IMPORTED":
         return "imported from the desk export"
+    if e["kind"] == "TIME":
+        return "time entered: " + detail
     return detail
 
 
@@ -150,6 +155,53 @@ def _type_select(conn, board_id: str | None, selected: str | None, *, disabled: 
     pairs = ([("", blank)] if blank else []) + [(x, itil.LABEL[x]) for x in types]
     return (f"<label>Type</label><select name=record_type{disabled}>"
             + _options(pairs, selected or "") + "</select>")
+
+
+def _time_fields(ctx, tk, *, prefix: str = "", compact: bool = False) -> str:
+    """ConnectWise's time entry fields: date, start and end OR actual hours,
+    deduct, work role, work type, bill option, and the spine's charge method.
+    The same fields on the note composer and on the Time pod's own form."""
+    engine.ensure_time_vocabulary(ctx.conn)
+    roles = engine.work_roles(ctx.conn)
+    types = engine.work_types(ctx.conn)
+    today = ctx.now.date().isoformat()
+    # The first of each is the default, as ConnectWise defaults them from the member.
+    role_opts = _options([(r["work_role_id"], r["name"]) for r in roles],
+                         roles[0]["work_role_id"] if roles else "")
+    type_opts = _options([(w["work_type_id"], w["name"]) for w in types],
+                         types[0]["work_type_id"] if types else "")
+    bill_opts = _options(list(BILL_LABEL.items()), "NO_DEFAULT")
+    charge_opts = _options([("", "— choose —")] + list(CHARGE_LABEL.items()), "")
+    return (
+        f"<div class='timefields{' compact' if compact else ''}'>"
+        f"<div><label>Date</label><input type=date name={prefix}worked_on value='{today}'></div>"
+        f"<div><label>Start</label><input type=time name={prefix}start step=300></div>"
+        f"<div><label>End</label><input type=time name={prefix}end step=300></div>"
+        f"<div><label>Actual hours</label><input name={prefix}hours inputmode=decimal placeholder='or 1.5'></div>"
+        f"<div><label>Deduct</label><input name={prefix}deduct inputmode=decimal placeholder='0'></div>"
+        f"<div><label>Work role</label><select name={prefix}work_role>{role_opts}</select></div>"
+        f"<div><label>Work type</label><select name={prefix}work_type>{type_opts}</select></div>"
+        f"<div><label>Bill</label><select name={prefix}bill>{bill_opts}</select></div>"
+        f"<div><label>Charged as</label><select name={prefix}charge>{charge_opts}</select></div>"
+        "</div>")
+
+
+def _time_from_form(f: dict, *, prefix: str = "") -> dict | None:
+    """The time part of a posted form as add_time wants it, or None when no
+    time was entered. A date with start and end times becomes two instants."""
+    g = lambda k: (f.get(prefix + k) or "").strip()  # noqa: E731
+    if not (g("start") or g("end") or g("hours")):
+        return None
+    day = g("worked_on") or None
+    time = {"actual_hours": g("hours") or None, "hours_deduct": g("deduct") or 0,
+            "work_role_id": g("work_role") or None, "work_type_id": g("work_type") or None,
+            "billable_option": g("bill") or "NO_DEFAULT"}
+    if g("start") or g("end"):
+        if not day:
+            raise engine.EffortRefused("a start and end time need the date")
+        time["time_start"] = f"{day} {g('start')}" if g("start") else None
+        time["time_end"] = f"{day} {g('end')}" if g("end") else None
+    return time
 
 
 def _options(pairs, selected) -> str:
@@ -231,8 +283,10 @@ def detail(ctx, work_item_id):
     def is_res(e):
         return e["note_flag"] == "RESOLUTION" or bool(e["is_resolution"])
     time_rows = ctx.conn.execute(
-        "SELECT worked_on, band_hours, performed_by, charge_method, note FROM time_entry"
-        " WHERE work_item_id = ? ORDER BY time_entry_id", (work_item_id,)).fetchall()
+        "SELECT te.*, r.name AS role_name, y.name AS type_name FROM time_entry te"
+        " LEFT JOIN work_role r ON r.work_role_id = te.work_role_id"
+        " LEFT JOIN work_type y ON y.work_type_id = te.work_type_id"
+        " WHERE te.work_item_id = ? ORDER BY te.worked_on, te.time_entry_id", (work_item_id,)).fetchall()
     counts = {"ALL": len(events), "SYSTEM": sum(1 for e in events if not e["note_flag"])}
     for flag in ("DISCUSSION", "INTERNAL"):
         counts[flag] = sum(1 for e in events if e["note_flag"] == flag)
@@ -273,13 +327,12 @@ def detail(ctx, work_item_id):
 
     composer = ""
     if can_work:
-        band_opts = "<option value=''>No time</option>" + "".join(
-            f"<option value='{b:g}'>{b:g} h</option>" for b in engine.BANDS)
-        charge_opts = "<option value=''>— choose —</option>" + "".join(
-            f"<option value='{k}'>{t.esc(v)}</option>" for k, v in CHARGE_LABEL.items())
+        # ConnectWise's note carries its time entry; the fields are its.
         time_block = (
-            f"<div><label>Time</label><select name=hours>{band_opts}</select></div>"
-            f"<div><label>Charged as</label><select name=charge>{charge_opts}</select></div>"
+            "<details class=timeblock><summary>Time on this note</summary>"
+            + _time_fields(ctx, tk, compact=True)
+            + "<p class=why style='margin:6px 0 0'>Start and end, or the actual hours, not both; "
+              "a deduction comes off. Kept to the quarter hour.</p></details>"
             if may else f"<div><label>Time</label><div class=ro>{t.esc(why_not)}</div></div>")
         from ... import canned
         std = canned.notes_for(ctx.conn, tk["board_id"])
@@ -299,11 +352,12 @@ def detail(ctx, work_item_id):
             "<label class=int><input type=radio name=flag value=INTERNAL><span>Internal</span></label>"
             "</div><label style='display:block;margin-top:6px;color:var(--ink);font-weight:500'>"
             "<input type=checkbox name=resolution value=1 style='width:auto'> Also the resolution"
-            "</label></div>" + time_block +
+            "</label></div>"
             "<div><label>And set status</label><select name=to_status>"
             + _options([("", "(no change)")] + status_pairs, "") +
             "</select></div><div style='flex:0 0 auto'><button type=submit><svg class=ic aria-hidden=true><use href=#i-note></use></svg> Save note</button></div>"
-            "</div><p class=why style='margin:8px 0 0'>Discussion notes, and the resolution when it "
+            "</div>" + time_block +
+            "<p class=why style='margin:8px 0 0'>Discussion notes, and the resolution when it "
             "is a Discussion note, are shown to the requester on their portal. Internal notes never "
             "leave the desk, even when they are the resolution.</p></form></div>")
 
@@ -361,12 +415,46 @@ def detail(ctx, work_item_id):
         + ("<div style='margin-top:12px'><button type=submit><svg class=ic aria-hidden=true><use href=#i-check></use></svg> Save changes</button></div>" if can_work else "")
         + "</form></div>")
 
-    total = sum(r["band_hours"] for r in time_rows)
-    time_list = "".join(
-        f"<dt>{t.esc(r['worked_on'])}</dt><dd>{t.esc(r['performed_by'])} · {r['band_hours']:g} h · "
-        f"{t.esc(CHARGE_LABEL.get(r['charge_method'], r['charge_method']))}</dd>" for r in time_rows)
-    time_card = (f"<div class=card data-pod=time><h3><svg class=ic aria-hidden=true><use href=#i-clock></use></svg>Time · {total:g} h</h3>"
-                 + (f"<dl class=kv>{time_list}</dl>" if time_list else "<div class=muted>None booked.</div>")
+    # The Time pod is ConnectWise's Time tab: one row per entry with its date,
+    # member, start–end, hours, deduct, work role and type, bill option, the
+    # spine's charge method and the band it counts as; then its own Add time
+    # form, with the note flags a ConnectWise time entry carries.
+    actual_total = sum((r["actual_hours"] if r["actual_hours"] is not None else r["band_hours"])
+                       for r in time_rows)
+    band_total = sum(r["band_hours"] for r in time_rows)
+    trs = "".join(
+        f"<tr><td>{t.esc(r['worked_on'])}</td><td>{t.esc(r['performed_by'])}</td>"
+        f"<td>{t.esc((r['time_start'] or '')[11:] + ('–' + r['time_end'][11:] if r['time_end'] else '') or '—')}</td>"
+        f"<td class=num>{(r['actual_hours'] if r['actual_hours'] is not None else r['band_hours']):g}</td>"
+        f"<td class=num>{(r['hours_deduct'] or 0):g}</td>"
+        f"<td>{t.esc(r['role_name'] or '—')}</td><td>{t.esc(r['type_name'] or '—')}</td>"
+        f"<td>{t.esc(BILL_LABEL.get(r['billable_option'] or 'NO_DEFAULT', '').split(' (')[0])}</td>"
+        f"<td>{t.esc(CHARGE_LABEL.get(r['charge_method'], r['charge_method']))}</td>"
+        f"<td class=num>{r['band_hours']:g}</td></tr>" for r in time_rows)
+    time_table = (
+        "<div class=tablewrap><table class=compact><thead><tr><th>Date</th><th>Member</th><th>Start–End</th>"
+        "<th>Hours</th><th>Deduct</th><th>Work role</th><th>Work type</th><th>Bill</th><th>Charged as</th>"
+        f"<th>Band</th></tr></thead><tbody>{trs}</tbody></table></div>"
+        if trs else "<div class=muted>No time yet.</div>")
+    time_form = ""
+    if can_work and may:
+        time_form = (
+            f"<details class=timeblock><summary>{t.icon('plus')} Add time</summary>"
+            f"<form method=post action='/ticket/{wid}/time'>" + _time_fields(ctx, tk)
+            + "<div class=row style='margin-top:8px'><div><label>Notes</label>"
+              "<textarea name=body rows=2 placeholder='What was done. No patient names or case numbers (§6.1).'></textarea></div>"
+              "<div style='flex:0 0 auto'><label>Who can read the notes</label><div class=seg>"
+              "<label><input type=radio name=flag value=DISCUSSION checked><span>Discussion</span></label>"
+              "<label class=int><input type=radio name=flag value=INTERNAL><span>Internal</span></label>"
+              "</div><label style='display:block;margin-top:6px;color:var(--ink);font-weight:500'>"
+              "<input type=checkbox name=resolution value=1 style='width:auto'> Also the resolution</label></div>"
+              "<div style='flex:0 0 auto'><button type=submit>" + t.icon("clock") + " Save time</button></div></div>"
+              "<p class=why style='margin:6px 0 0'>Start and end, or the actual hours, not both; a deduction "
+              "comes off; kept to the quarter hour. The band is the smallest of 0.5 / 2 / 4 / 8 / 20 h the "
+              "hours fit in, and is what the capacity arithmetic counts.</p></form></details>")
+    time_card = (f"<div class=card data-pod=time><h3><svg class=ic aria-hidden=true><use href=#i-clock></use></svg>"
+                 f"Time · {actual_total:g} h" + (f" (band {band_total:g} h)" if time_rows else "") + "</h3>"
+                 + time_table + time_form
                  + (f"<p class=why>{t.esc(why_not)}</p>" if not may else "") + "</div>")
     commercial = (
         "<div class=card data-pod=commercial><h3><svg class=ic aria-hidden=true><use href=#i-briefcase></use></svg>Commercial basis</h3><dl class=kv>"
@@ -416,12 +504,11 @@ def add_note(ctx, work_item_id):
     tk = _load(ctx, work_item_id)
     common.require_board(ctx, tk["board_id"], need="WORK")
     f = ctx.request.form()
-    hours = f.get("hours", "").strip()
     try:
         engine.add_note(ctx.conn, work_item_id, body=f.get("body", ""),
                         flag=f.get("flag", "DISCUSSION") or "DISCUSSION",
                         actor=ctx.user.id, at=ctx.now,
-                        band_hours=float(hours) if hours else None,
+                        time=_time_from_form(f),
                         charge_method=f.get("charge") or None,
                         to_status_id=f.get("to_status") or None,
                         resolution=f.get("resolution") == "1")
@@ -439,6 +526,44 @@ def add_note(ctx, work_item_id):
         ctx.conn.rollback()
         return _back(work_item_id, err=f"Note not saved: {exc}")
     return _back(work_item_id, msg="Note saved")
+
+
+def add_time(ctx, work_item_id):
+    """POST /ticket/<id>/time: ConnectWise's Add time. With notes it is a note
+    that carries the time (one write, refused whole); without, a bare entry."""
+    tk = _load(ctx, work_item_id)
+    common.require_board(ctx, tk["board_id"], need="WORK")
+    f = ctx.request.form()
+    body = f.get("body", "").strip()
+    try:
+        time = _time_from_form(f)
+        if time is None:
+            raise engine.EffortRefused("enter a start and end time, or the actual hours")
+        if body:
+            r = engine.add_note(ctx.conn, work_item_id, body=body,
+                                flag=f.get("flag", "DISCUSSION") or "DISCUSSION",
+                                actor=ctx.user.id, at=ctx.now, time=time,
+                                charge_method=f.get("charge") or None,
+                                resolution=f.get("resolution") == "1")
+            hours = r["actual_hours"]
+            for code, severity, detail in phi.scan_fields({"note": body}):
+                ctx.conn.execute(
+                    "INSERT INTO data_quality (run_id, subject_kind, subject_id, code, detail,"
+                    " severity) VALUES (?,?,?,?,?,?)", ("desk", "ticket", work_item_id, code, detail, severity))
+        else:
+            values = engine.prepare_time(ctx.conn, work_item_id, charge_method=f.get("charge") or None,
+                                         **time)
+            engine.add_time(ctx.conn, work_item_id, at=ctx.now, actor=ctx.user.id,
+                            charge_method=values["charge_method"], values=values)
+            hours = values["actual_hours"]
+        ctx.conn.commit()
+    except (ValueError, LookupError, engine.EffortRefused, engine.NotOnThisBoard) as exc:
+        ctx.conn.rollback()
+        return _back(work_item_id, err=f"Time not saved: {exc}")
+    except Exception as exc:                                 # a gate trigger refused it
+        ctx.conn.rollback()
+        return _back(work_item_id, err=f"Time not saved: {exc}")
+    return _back(work_item_id, msg=f"Time saved: {hours:g} h")
 
 
 def update(ctx, work_item_id):

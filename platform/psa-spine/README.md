@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 495 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 504 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -128,8 +128,9 @@ checked against Zammad and HaloPSA:
   arrives by import. Reserved, documented, not a feature.
   One box per SLA clock. Notes flagged **Discussion / Internal / Resolution**,
   as ConnectWise flags them. The requester's portal shows Discussion and
-  Resolution only. A note can carry banded time, with a charge method the
-  technician must choose, and can move the status in the same save. The
+  Resolution only. A note can carry a time entry in ConnectWise's shape
+  (below), with a charge method the technician must choose, and can move the
+  status in the same save. The
   right-hand panel edits board, status, owner, company, contact and the two
   questions. **Every card on the ticket is a pod**, in one of two columns: drag
   a card to either column (onto another card, or onto the column's empty
@@ -432,6 +433,40 @@ IT_HELP --member <account>` (or `setup-board … --admin <account>`) or by a
 system administrator in Setup under "Boards with no administrator". A board
 that has members never takes that road again; its own administrators add the
 rest under Members & roles.
+
+## Time, as ConnectWise records it (28 Sep 2026)
+
+A technician who has used ConnectWise expects its time entry, so the desk takes
+it (the fields are ConnectWise's `TimeEntry`, VERIFIED 9 Sep 2026 from its
+OpenAPI schema in the record's extracted model):
+
+- **Start and end, or actual hours, never both.** Hours are end minus start,
+  less a **deduction**, kept to the quarter hour (INFERRED: ConnectWise rounds
+  by a per-company setting; a quarter hour is the usual one). Zero or less is
+  refused.
+- **Work role** and **work type**, from Setup › Time (ConnectWise's setup
+  tables). The first of each is the default, as ConnectWise defaults them from
+  the member; a retired one stays on old entries and is refused on new ones. A
+  work type carries its bill default (Billable, Do not bill, No charge).
+- **Bill option**: Billable, Do not bill, No charge, or No default (the
+  agreement decides), on every entry.
+- **Notes with the Internal / Discussion / Resolution flags**, on the entry
+  itself: a time entry written with notes is one note carrying the time, and
+  the two are refused together when either is wrong.
+- **The Time pod is ConnectWise's Time tab**: one row per entry (date, member,
+  start–end, hours, deduct, work role, work type, bill, charged as, band) and
+  its own *Add time* form; the note composer carries the same fields under
+  *Time on this note*.
+
+Two things are the spine's own and stay. The **charge method** (included in
+the monthly fee, capacity uplift, separate charge, pass-through,
+non-chargeable) is still chosen on every entry, because it is the commercial
+classification an uplift claim is defended on, and ConnectWise leaves that to
+the agreement. And **the band is derived**: `band_hours` is the smallest of
+0.5 / 2 / 4 / 8 / 20 h the actual hours fit in (more than 20 h is one entry
+per day), so §5.2's capacity arithmetic, the uplift evidence and every report
+read exactly what they read before. An entry over the loop (`close_loop`)
+still records its band as its hours.
 
 ## HTTPS and the organisation sign-in (26 Sep 2026)
 
@@ -739,7 +774,7 @@ PSA_TEST_DB="Driver={ODBC Driver 18 for SQL Server};Server=127.0.0.1,1433;Databa
 
 Each test empties the database and reseeds it (`db.init(…, reset=True)`, a
 test-only path) and the same assertions run unchanged. **MEASURED, 28 Sep 2026,
-SQL Server 2022 Express 16.0 in a container: 495 tests, OK, 8 skipped** (the
+SQL Server 2022 Express 16.0 in a container: 504 tests, OK, 8 skipped** (the
 eight are SQLite's own file settings: WAL, busy timeout, the escrow copy). CI
 runs the same job against a service container on every push. NOT VERIFIED on
 `DND-SQL01` itself, which no session here can reach; the handoff's step 6 is
