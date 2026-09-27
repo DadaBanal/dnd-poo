@@ -622,3 +622,64 @@ with the rule that the queue screens run over http only.
   WS36 fixes it (nothing restricted exists yet);
 - when WS36 ships `PSA_PORTAL_URL`, set it with `Set-PsaDeskEnv.ps1` (a `-PortalUrl` parameter to be
   added) and retire the IIS Origin rules.
+
+### Part 11: 2026-09-27/28 (UTC 2026-09-27 23:00). **d34e002 is live: the desk knows both public addresses, IIS no longer does its jobs; every Pass met**
+
+Everything below is MEASURED unless marked. Local times are +08:00.
+
+1. **Pull and restart.**
+   - HEAD is `d34e002`. The desk's own suite on SQLite gives **489 OK, 2 skipped**, run as SQL01's user
+     before the restart; the working tree is clean.
+   - PSA-Desk was stopped and started: a new process, listening on 8085, loopback `/login` answering 200.
+2. **Desk settings** (the operator ran it at 07:00):
+   `Set-PsaDeskEnv.ps1 -Apply -PublicUrl https://desk.pmcne.ph -PortalUrl https://help.pmcne.ph`.
+   `-PortalUrl` was added to the script; it sets `PSA_PORTAL_URL`, and `-Clear` accepts it. **RESULT: PASS.**
+   The console now says `public: desk https://desk.pmcne.ph · portal https://help.pmcne.ph · cookies Secure,
+   HSTS on`, and the Windows card still shows. The PowerShell console log wraps long lines at about 98
+   characters, so the script joins the lines before matching.
+3. **X-Forwarded-Host** (`Set-PsaIisForwarding.ps1 -Stage Forward`): **PASS**.
+   - Both proxy rules set `HTTP_X_FORWARDED_HOST = {HTTP_HOST}`, and both `<location>`s allow it.
+   - **One change to the order.** Part 10's portal path filter still stood at this step, so
+     `help.pmcne.ph/dispatch` could not reach the desk to answer 404 yet; that check moved to step 5. The step
+     proved the header arrives another way: `help.pmcne.ph/login?next=/dispatch` renders `next=/my` (the desk
+     sees the portal host), while `desk.pmcne.ph/login?next=/dispatch` keeps `/dispatch`.
+   - `help.pmcne.ph/` gets 302 to `/my`, and `desk.pmcne.ph/dispatch` still answers (signed out: 401 sign-in).
+   - A same-site POST gets 303 on each address, and the cross-site control gets 403 on each.
+4. **The Origin rewrite is gone** (`-Stage DropOrigin`): **PASS**. Both rules and both `HTTP_ORIGIN`
+   allowances were removed. A same-site POST still gets 303 on each address, and the cross-site control 403.
+5. **The portal path filter is gone** (`-Stage DropFilter`): **PASS**.
+   - `help.pmcne.ph/dispatch` gets **404 from the desk**, and `/api/v1/tickets` gets 404.
+   - `/` gets 302 to `/my`, and a signed-out `/my` gets 401 with the sign-in page.
+   - `desk.pmcne.ph/dispatch` still answers.
+   - **Kept:**
+     - both http→https redirects and both body caps;
+     - the portal's `/` → `/my` rule, a backstop (the desk does the same);
+     - both **Secure** rewrites. The desk marks the sign-in cookie Secure from config (`__init__.py:501`), but
+       its **sign-out** cookie still leaves as `psa_session=; Max-Age=0; Path=/`, measured on the loopback, so
+       IIS keeps adding `Secure`.
+   - Every stage compared all 5 other sites, every other pool, every certificate entry, the proxy section, a
+     SHA-256 of `applicationHost.config` minus the two PSA sites, and 9 probes: **unchanged** each time.
+   - Each stage saved both `web.config`s and a named backup: `PSA-Forward-before-20260928-070055`,
+     `PSA-DropOrigin-before-20260928-070115`, `PSA-DropFilter-before-20260928-070131`. Copies are in
+     `D:\psa\logs\iis-<stage>-before-*`.
+6. **Pilot script 27 Sep, the two addresses**, host side, from DND-SQL01 with no sign-in:
+
+   | Step | Check | Result |
+   |---|---|---|
+   | A1 | `desk.pmcne.ph/` signed out answers 401 with the sign-in page, Windows account first | **PASS** |
+   | A1 | TLS validates against the Windows trust store | **PASS** |
+   | A1 | `http://` redirects to `https://` | **PASS** |
+   | F3 | `help.pmcne.ph/` → `/my`; a signed-out `/my` is the sign-in page; sign-in returns to `/my` | **PASS** |
+   | F4 | `/dispatch` and `/admin` on `help.pmcne.ph` answer 404, not a sign-in page | **PASS** |
+   | F6 | `desk.pmcne.ph/dispatch` is still the whole desk | **PASS** |
+
+   **Waiting on the operator, because they need a real sign-in** (SQL01 enters no one's password):
+   - A1 from a technician's PC (no certificate warning in their browser);
+   - F3 signed in as a staff member on no board (the menu shows *Your requests* only);
+   - F5, raising a request with a screenshot, which should land on Unrouted with source Portal;
+   - F6 signed in as a technician on `help.pmcne.ph/my` (the requester's layout).
+
+**Dada decided on 28 Sep: "My requests" in the Employee Portal (`portal.pmcne.ph`), signed in by the portal.**
+The spec for the one desk door it needs is `HANDOFF-sql01-cloud-WS36-20260928-portal-link.md`. The portal side
+is prepared and **not deployed**: a proposed `PMC_Portal.html`, +41/−3 lines, with no `bridge.js` change and no
+restart. It is deployed only after the door passes on this host.
