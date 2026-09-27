@@ -3736,6 +3736,184 @@ class ProxyAndPortalTest(unittest.TestCase):
         self.assertIn(">Dispatch<", body)
 
 
+class EmployeePortalDoorTest(unittest.TestCase):
+    """POST /sso/portal (SQL01's handoff of 28 Sep 2026): an employee the payroll
+    portal has signed in opens My requests with no second sign-in. The bridge is
+    a fake on the Config; every refusal is a page in words and an audit row, and
+    the token appears in neither."""
+
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+    tearDown = WebWSGITest.tearDown
+
+    def setUp(self) -> None:
+        WebWSGITest.setUp(self)
+        conn = db.connect(self.db_path)
+        conn.execute(
+            "INSERT INTO contact (contact_id, entity_id, display_name, email, sam_account, source,"
+            " inactive, created_at) VALUES ('C_NURSE', 'PMC', 'Nurse A. Santos', 'nurse.a@pmcne.ph',"
+            " 'nurse.a', 'AD', 0, '2026-09-17 08:00')")
+        conn.execute("UPDATE ticket SET requested_by = 'nurse.a@pmcne.ph' WHERE work_item_id = 'ITO-1'")
+        conn.commit()
+        conn.close()
+        self.calls = []
+        self.answer = (200, {"employee": {"ADLogin": "Nurse.A", "FullName": "Nurse A. Santos",
+                                          "Department": "Nursing"}, "impersonated": False})
+        self.raises = None
+
+        def bridge_get(url, headers, timeout):
+            self.calls.append((url, dict(headers), timeout))
+            if self.raises:
+                raise self.raises
+            return self.answer
+
+        self.config.public_url = "https://desk.pmcne.ph"
+        self.config.portal_url = "https://help.pmcne.ph"
+        self.config.employee_portal_origins = "https://portal.pmcne.ph, https://payroll.pmcne.ph"
+        self.config.employee_portal_departments = "Nursing, Pharmacy"
+        self.config.bridge_get = bridge_get
+        self.token = "0123456789abcdef0123456789abcdef0123456789abcdef"
+
+    def _door(self, *, origin="https://portal.pmcne.ph", token=None, next_url=None, host="help.pmcne.ph",
+              method="POST"):
+        form = {"token": self.token if token is None else token}
+        if next_url is not None:
+            form["next"] = next_url
+        headers = {"Host": "127.0.0.1:8085", "X-Forwarded-Host": host}
+        if origin:
+            headers["Origin"] = origin
+        return self._call(method, "/sso/portal", form=form if method == "POST" else None,
+                          headers=headers, remote_addr="127.0.0.1")
+
+    def _audit(self, action):
+        conn = db.connect(self.db_path)
+        rows = conn.execute("SELECT actor, subject_id, detail FROM audit_event WHERE action = ?"
+                            " ORDER BY audit_id", (action,)).fetchall()
+        conn.close()
+        return [tuple(r) for r in rows]
+
+    def test_an_employee_the_portal_vouches_for_lands_on_their_requests(self):
+        status, headers, _ = self._door()
+        self.assertTrue(status.startswith("303"), status)
+        self.assertEqual(dict(headers)["Location"], "/my")
+        # the bridge was asked, server to server, with the token and nothing else of ours
+        self.assertEqual(len(self.calls), 1)
+        url, hdrs, timeout = self.calls[0]
+        self.assertEqual(url, "http://127.0.0.1:4100/api/portal/me")
+        self.assertEqual(hdrs, {"x-pmc-portal-token": self.token})
+        self.assertLessEqual(timeout, 5)
+        # a browser-session cookie: no Max-Age, Secure, HttpOnly, Lax
+        cookie = next(v for k, v in headers if k == "Set-Cookie")
+        self.assertTrue(cookie.startswith("psa_session="))
+        self.assertNotIn("Max-Age", cookie)
+        for attr in ("Secure", "HttpOnly", "SameSite=Lax", "Path=/"):
+            self.assertIn(attr, cookie)
+        # the audit names the person, not the token
+        rows = self._audit("PORTAL_SSO")
+        self.assertEqual(rows, [("nurse.a", "nurse.a", "employee portal, contact C_NURSE")])
+        self.assertEqual(self._audit("PORTAL_SSO_REFUSED"), [])
+        # the session is the same person the Windows door would sign in
+        session = cookie.split(";", 1)[0]
+        status, _, body = self._call("GET", "/my", cookie=session, headers={"Host": "help.pmcne.ph"})
+        self.assertTrue(status.startswith("200"), status)
+        self.assertIn("Printer down", body)
+        self.assertIn("Nurse A. Santos", body)
+        self.assertIn("<body data-requester>", body)
+        _, _, windows = self._call("GET", "/my", cookie=self._cookie_for("nurse.a", email="nurse.a@pmcne.ph",
+                                                                             via="windows"))
+        self.assertIn("Printer down", windows)
+
+    def test_next_is_honoured_only_under_my(self):
+        _, headers, _ = self._door(next_url="/my/ITO-1")
+        self.assertEqual(dict(headers)["Location"], "/my/ITO-1")
+        _, headers, _ = self._door(next_url="/admin")
+        self.assertEqual(dict(headers)["Location"], "/my")
+
+    def test_the_origin_must_be_a_listed_https_origin(self):
+        for origin, ok in (("https://portal.pmcne.ph", True), ("https://PAYROLL.pmcne.ph:443", True),
+                           ("http://portal.pmcne.ph", False), ("https://evil.example", False),
+                           ("https://help.pmcne.ph", False), ("", False)):
+            self.calls.clear()
+            status, _, body = self._door(origin=origin)
+            self.assertEqual(status.startswith("303"), ok, origin)
+            if not ok:
+                self.assertTrue(status.startswith("403"), (origin, status))
+                self.assertEqual(self.calls, [], origin)           # the token never left for the bridge
+                self.assertIn("not the Employee Portal", body)
+        refused = self._audit("PORTAL_SSO_REFUSED")
+        self.assertEqual(len(refused), 4)
+        self.assertTrue(any("not https" in r[2] for r in refused))
+        self.assertFalse(any(self.token in (r[2] or "") for r in refused))
+
+    def test_the_door_is_off_until_origins_are_named_and_only_on_the_portal_host(self):
+        status, _, _ = self._door(host="desk.pmcne.ph")
+        self.assertTrue(status.startswith("404"), status)
+        self.config.employee_portal_origins = None
+        status, _, _ = self._door()
+        self.assertTrue(status.startswith("404"), status)
+        self.config.employee_portal_origins = "http://portal.pmcne.ph"          # not https: not a list
+        status, _, _ = self._door()
+        self.assertTrue(status.startswith("404"), status)
+        self.assertEqual(self.calls, [])
+        self.config.employee_portal_origins = "https://portal.pmcne.ph"
+        status, _, _ = self._door(method="GET")
+        self.assertTrue(status.startswith("405"), status)
+
+    def test_each_refusal_is_a_page_in_words_and_an_audit_row_without_the_token(self):
+        cases = [
+            ("no token", dict(token=""), None, None, "401", "session has ended", "no token"),
+            ("dead token", {}, (401, None), None, "401", "session has ended", "bridge answered 401"),
+            ("preview", {}, (200, {"employee": {"ADLogin": "pmo.admin", "Department": "Nursing"},
+                                   "impersonated": True}), None, "403", "admin preview", "admin preview"),
+            ("no ADLogin", {}, (200, {"employee": {"ADLogin": "", "Department": "Nursing"},
+                                      "impersonated": False}), None, "403", "not linked", "no ADLogin"),
+            ("bad shape", {}, (200, {"employee": {"ADLogin": "Bad Login!", "Department": "Nursing"},
+                                     "impersonated": False}), None, "403", "not linked", "not shaped"),
+            ("closed", {}, (200, {"employee": {"ADLogin": "nurse.a", "Department": "Radiology"},
+                                  "impersonated": False}), None, "403", "not open for your department",
+             "department not open"),
+            ("timeout", {}, None, TimeoutError("timed out"), "503", "could not be checked", "not answering"),
+        ]
+        for label, kw, answer, raises, status_prefix, words, audit_words in cases:
+            if answer is not None:
+                self.answer = answer
+            self.raises = raises
+            status, headers, body = self._door(**kw)
+            self.assertTrue(status.startswith(status_prefix), (label, status))
+            self.assertIn(words, body, label)
+            self.assertIn("/login?next=/my", body, label)              # the way in that always works
+            self.assertIn("<body data-requester>", body, label)
+            self.assertFalse(any(k == "Set-Cookie" for k, _ in headers), label)
+            self.assertNotIn(self.token, body, label)
+        refused = self._audit("PORTAL_SSO_REFUSED")
+        self.assertEqual(len(refused), len(cases))
+        for (label, *_, audit_words), row in zip(cases, refused):
+            self.assertIn(audit_words, row[2], label)
+            self.assertNotIn(self.token, row[2] or "", label)
+        self.assertEqual(self._audit("PORTAL_SSO"), [])
+        # a department that is not open never signs in even with a good record
+        self.config.employee_portal_departments = None
+        self.answer = (200, {"employee": {"ADLogin": "nurse.a", "Department": "Nursing"}, "impersonated": False})
+        self.raises = None
+        status, _, _ = self._door()
+        self.assertTrue(status.startswith("403"), status)
+
+    def test_sign_out_on_the_portal_host_clears_a_secure_cookie(self):
+        status, headers, _ = self._call("GET", "/logout", cookie=self._cookie_for("nurse.a"),
+                                        headers={"Host": "127.0.0.1:8085", "X-Forwarded-Host": "help.pmcne.ph"},
+                                        remote_addr="127.0.0.1")
+        self.assertTrue(status.startswith("303"))
+        cookie = next(v for k, v in headers if k == "Set-Cookie")
+        self.assertTrue(cookie.startswith("psa_session=;") or cookie.startswith('psa_session="";'), cookie)
+        self.assertIn("Max-Age=0", cookie)
+        self.assertIn("Secure", cookie)
+        # and with no public https at all, the clear is plain, as the cookie it clears was
+        self.config.public_url = self.config.portal_url = None
+        _, headers, _ = self._call("GET", "/logout", cookie=self._cookie_for("nurse.a"))
+        self.assertNotIn("Secure", next(v for k, v in headers if k == "Set-Cookie"))
+
+
 class MachineApiTest(unittest.TestCase):
     """The machine API: a local token, JSON, priority computed, repeats collapsed.
 

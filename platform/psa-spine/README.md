@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 489 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 495 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -531,6 +531,58 @@ stay. A board member on `/my` keeps the whole desk.
 The desk's own TLS (`--cert/--key`, previous section) is unchanged and is the
 road when nothing fronts the desk; the two are not combined on one host.
 
+## The Employee Portal door (28 Sep 2026)
+
+Dada's decision (27 and 28 Sep): the Employee Portal (`portal.pmcne.ph`, the
+payroll bridge, Windows sign-in) gets a **My requests** link that opens
+`help.pmcne.ph` already signed in, with no second sign-in, because the
+employee has signed in to the portal already. `help.pmcne.ph` stays the
+separate staff portal with its own Windows door; this is one more way in.
+
+The portal page posts its session token, top-level in a new tab, to
+`POST /sso/portal` on the portal host. The desk (`psaspine/web/sso.py`):
+
+1. answers **404** anywhere but the portal host, and while the door is off;
+2. applies **its own Origin rule**, stricter than the desk's: exactly one of
+   the listed **https** origins. An `http://` origin is refused because the
+   token already travelled in the clear. The token never leaves for the
+   bridge on a refused origin;
+3. asks the bridge **server to server** over the loopback:
+   `GET /api/portal/me` with `x-pmc-portal-token`, five-second timeout. Only
+   a 200 JSON answer with `impersonated` false and an `ADLogin` shaped like a
+   username (`^[a-z0-9._-]{1,20}$`, lower-cased) is a person;
+4. applies the **pilot gate**: the employee's `Department` must be one Dada
+   has opened. An empty list means nobody passes; the DPO's §6.1 answer gates
+   hospital-wide use;
+5. signs them in **as the same person the Windows door would**: the
+   lower-case sAMAccountName, the AD contact's email if the import holds one,
+   `via = portal`, board roles from the database. The cookie is a
+   **browser-session cookie** (no `Max-Age`), `HttpOnly; SameSite=Lax; Secure`,
+   so closing the browser ends it on a shared ward PC. Then `303` to `/my`
+   (or to `next` when it is under `/my`);
+6. audits `PORTAL_SSO`, or `PORTAL_SSO_REFUSED` with the reason in words. The
+   token is never logged, stored or echoed, and the bridge's answer is not
+   kept beyond the request;
+7. answers every refusal with a page in the requester's layout, the reason in
+   words and *Sign in with your Windows account instead*: the portal session
+   has ended (401), an admin preview (403), a record with no Windows account
+   or one not shaped like a username (403), a department not yet open (403),
+   the bridge not answering (503).
+
+`/logout` clears the cookie with `Secure` when the world is https, so the
+portal's *Sign out* can end the desk session too.
+
+| Setting | What |
+|---|---|
+| `PSA_EMPLOYEE_PORTAL_ORIGINS` | comma list of the **https** origins the form may come from, e.g. `https://portal.pmcne.ph,https://payroll.pmcne.ph`. Unset: the door is off (404). A non-https entry is dropped, never accepted. |
+| `PSA_EMPLOYEE_PORTAL_BRIDGE` | the bridge the desk asks, default `http://127.0.0.1:4100`. |
+| `PSA_EMPLOYEE_PORTAL_DEPARTMENTS` | comma list of department names exactly as payroll holds them. Unset or empty: nobody passes. Dada's list. |
+
+The portal side (the link, the card, *Sign out* also loading `/logout`) is
+SQL01's, deployed only after this door passes on the host. NOT VERIFIED
+against the real bridge from here: the tests hand the Config a fake
+(`bridge_get`), and SQL01's Reply is the proof.
+
 ## Requester intake (Phase C)
 
 Phase C opens the desk to the ~400 staff who raise work, which is what makes the
@@ -682,8 +734,8 @@ PSA_TEST_DB="Driver={ODBC Driver 18 for SQL Server};Server=127.0.0.1,1433;Databa
 ```
 
 Each test empties the database and reseeds it (`db.init(…, reset=True)`, a
-test-only path) and the same assertions run unchanged. **MEASURED, 27 Sep 2026,
-SQL Server 2022 Express 16.0 in a container: 489 tests, OK, 8 skipped** (the
+test-only path) and the same assertions run unchanged. **MEASURED, 28 Sep 2026,
+SQL Server 2022 Express 16.0 in a container: 495 tests, OK, 8 skipped** (the
 eight are SQLite's own file settings: WAL, busy timeout, the escrow copy). CI
 runs the same job against a service container on every push. NOT VERIFIED on
 `DND-SQL01` itself, which no session here can reach; the handoff's step 6 is

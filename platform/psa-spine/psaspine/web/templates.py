@@ -708,7 +708,7 @@ def chip(text: str, cls: str = "") -> str:
     return f'<span class="{classes}">{esc(text)}</span>'
 
 
-def page(title: str, body: str, *, user=None, active: str = "") -> str:
+def page(title: str, body: str, *, user=None, active: str = "", requester: bool | None = None) -> str:
     """The shell every page shares: header, nav, the acting user, the body.
 
     A break-glass session is marked in the corner, in amber, on every page. Who
@@ -720,7 +720,8 @@ def page(title: str, body: str, *, user=None, active: str = "") -> str:
     # page), no command palette and no keyboard sheet: those are the
     # technician's tools, and their shortcuts would send a requester to desk
     # pages that answer 404 or "not a member".
-    requester = user is not None and getattr(user, "requester", False)
+    if requester is None:
+        requester = user is not None and getattr(user, "requester", False)
     nav_items = [
         ("board", "/", "Service Board"),
         ("dispatch", "/dispatch", "Dispatch"),

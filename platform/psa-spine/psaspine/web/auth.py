@@ -74,7 +74,7 @@ class User:
     id: str
     name: str
     email: str | None = None
-    via: str = "entra"                       # 'entra' | 'windows' | 'local'
+    via: str = "entra"                       # 'entra' | 'windows' | 'portal' | 'local'
     is_sysadmin: bool = False
     roles: dict[str, str] = field(default_factory=dict)   # board_id -> access
     # Set per request by the app, never stored in a session: this person gets

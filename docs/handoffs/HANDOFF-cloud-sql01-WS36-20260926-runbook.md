@@ -239,6 +239,55 @@ built at the head this section arrives with; what it decided stands.
   `PSA-MailPickup` and `PSA-Notify`; the DPO's word for `PSA-Retention`; the
   technicians' names for pilot step 3.
 
+## Folded in from part 11 (28 Sep): the Employee Portal door
+
+Part 11: every Pass met, the IIS Origin rules retired, the portal path filter
+gone. Two things follow from it.
+
+- **The sign-out cookie is now `Secure`** when the world is https, so the
+  IIS `Secure` rewrite on `Set-Cookie` may be removed from both sites once the
+  desk's own `psa_session=; Max-Age=0; …; Secure` is seen on the loopback
+  with the settings applied. Keeping it is harmless.
+- **The door `POST /sso/portal` is built** as `HANDOFF-sql01-cloud-WS36-20260928-portal-link.md`
+  specifies (the withdrawal in that file was reversed; the spec stands). The
+  three settings, all set with `Set-PsaDeskEnv.ps1` (parameters SQL01's to
+  add) and read at start:
+
+  | Setting | Value on the host |
+  |---|---|
+  | `PSA_EMPLOYEE_PORTAL_ORIGINS` | `https://portal.pmcne.ph,https://payroll.pmcne.ph` (unset: the door answers 404) |
+  | `PSA_EMPLOYEE_PORTAL_BRIDGE` | `http://127.0.0.1:4100` (the default; set it only if the bridge moves) |
+  | `PSA_EMPLOYEE_PORTAL_DEPARTMENTS` | Dada's list, exactly as payroll spells them; unset until Dada names it, and then nobody passes |
+
+  On the host, in order, each verified before the next:
+  1. Pull; restart `PSA-Desk`; the SQLite suite as SQL01's user.
+  2. Set the three settings; restart `PSA-Desk`. **Pass:** on the loopback,
+     with `X-Forwarded-Host: help.pmcne.ph`, a POST to `/sso/portal` with
+     `Origin: https://portal.pmcne.ph` and a made-up token answers **401**
+     with "Your Employee Portal session has ended" (the bridge said no); the
+     same POST with `Origin: http://portal.pmcne.ph` answers **403**; a POST
+     to `desk.pmcne.ph/sso/portal` answers **404**; `psa.audit_event` holds
+     one `PORTAL_SSO_REFUSED` row per try with the reason in words and no
+     token text.
+  3. With `PSA_EMPLOYEE_PORTAL_DEPARTMENTS` still unset, the operator signs
+     in to the Employee Portal on a staff PC and posts the token by hand (a
+     one-line form on the operator's own machine, or SQL01's test page served
+     from the portal origin). **Pass:** 403 "not open for your department yet",
+     audited. Nothing is deployed to the Employee Portal for this step.
+  4. Dada names the first department(s); set them; restart. The operator
+     repeats step 3 as an employee of that department. **Pass:** `/my` with
+     that person's requests, the requester's layout, `PORTAL_SSO` audited with
+     the ADLogin; the cookie has no `Max-Age`; closing the browser and
+     reopening `help.pmcne.ph/my` shows the sign-in page.
+  5. Only then SQL01 deploys the portal edit (a dated copy beside the live
+     file, no `bridge.js` change, Dada's sight of the preview), and the
+     operator opens *My requests* from the Employee Portal on a ward PC.
+     **Pass:** *Your requests* opens in a new tab with no second sign-in; the
+     portal's *Sign out* ends the desk session too (a fresh `/my` is the
+     sign-in page).
+  If a Pass fails, the door is left as it is (it refuses safely) and the
+  failing status and page words go into the Reply.
+
 ## When a step does not pass
 
 Every handoff step has a **Pass** line. This is what to do when it is not

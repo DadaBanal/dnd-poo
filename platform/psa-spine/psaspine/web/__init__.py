@@ -69,15 +69,38 @@ class Config:
     # The two network calls the browser sign-in makes; tests hand in their own.
     http_get: "Callable[[str], dict]" = None
     http_post: "Callable[[str, dict], dict]" = None
+    # The Employee Portal door (sso.py): the https origins its form may come
+    # from (unset: the door is off), the bridge that vouches for a token, and
+    # the departments the pilot has opened (unset: nobody passes). Comma lists.
+    employee_portal_origins: str | None = None
+    employee_portal_bridge: str = "http://127.0.0.1:4100"
+    employee_portal_departments: str | None = None
+    bridge_get: "Callable[[str, dict, float], tuple[int, dict | None]]" = None
     # The Windows sign-in: the domain to check against (PSA_WINDOWS_DOMAIN,
     # e.g. the NetBIOS name the host is joined to). Unset, the door is not shown.
     windows_domain: str | None = None
     windows_logon: "Callable[[str, str, str], tuple[bool, int]]" = None
 
     def __post_init__(self):
-        from . import entra
+        from . import entra, sso
         self.http_get = self.http_get or entra.http_get_json
         self.http_post = self.http_post or entra.http_post_form
+        self.bridge_get = self.bridge_get or sso.bridge_get
+
+    @property
+    def employee_portal_origin_set(self) -> set[str]:
+        """The https origins the Employee Portal's form may be posted from,
+        normalised. Anything not https in the list is dropped, not accepted."""
+        out = set()
+        for item in (self.employee_portal_origins or "").split(","):
+            parts = _public_parts(item)
+            if parts and parts[0] == "https":
+                out.add("https://" + parts[1])
+        return out
+
+    @property
+    def employee_portal_department_set(self) -> set[str]:
+        return {d.strip() for d in (self.employee_portal_departments or "").split(",") if d.strip()}
 
     @property
     def entra_configured(self) -> bool:
@@ -126,6 +149,10 @@ class Config:
                    entra_client=os.environ.get("PSA_ENTRA_CLIENT"),
                    public_url=os.environ.get("PSA_PUBLIC_URL"),
                    portal_url=os.environ.get("PSA_PORTAL_URL"),
+                   employee_portal_origins=os.environ.get("PSA_EMPLOYEE_PORTAL_ORIGINS"),
+                   employee_portal_bridge=os.environ.get("PSA_EMPLOYEE_PORTAL_BRIDGE")
+                   or "http://127.0.0.1:4100",
+                   employee_portal_departments=os.environ.get("PSA_EMPLOYEE_PORTAL_DEPARTMENTS"),
                    windows_domain=os.environ.get("PSA_WINDOWS_DOMAIN"))
 
 
@@ -303,14 +330,17 @@ class Ctx:
     now: datetime
 
 
-def _session_cookie_value(token: str, *, secure: bool = False) -> str:
+def _session_cookie_value(token: str, *, secure: bool = False, persistent: bool = True) -> str:
     c = http.cookies.SimpleCookie()
     c[SESSION_COOKIE] = token
     m = c[SESSION_COOKIE]
     m["path"] = "/"
     m["httponly"] = True
     m["samesite"] = "Lax"
-    m["max-age"] = str(auth.SESSION_SECONDS)
+    if persistent:
+        m["max-age"] = str(auth.SESSION_SECONDS)
+    # else: no Max-Age, so the browser drops it when it closes (the Employee
+    # Portal door, on a shared ward PC). The token inside still expires.
     if secure:
         # Over HTTPS the cookie is never sent in the clear; over the pilot's
         # plain LAN it cannot be marked so, or the browser would drop it.
@@ -318,12 +348,16 @@ def _session_cookie_value(token: str, *, secure: bool = False) -> str:
     return m.OutputString()
 
 
-def _cleared_cookie() -> str:
+def _cleared_cookie(*, secure: bool = False) -> str:
     c = http.cookies.SimpleCookie()
     c[SESSION_COOKIE] = ""
     m = c[SESSION_COOKIE]
     m["path"] = "/"
     m["max-age"] = "0"
+    if secure:
+        # A clear with different attributes is a different cookie to some
+        # browsers; the one being cleared was Secure, so this one is too.
+        m["secure"] = True
     return m.OutputString()
 
 
@@ -393,6 +427,13 @@ def _route(conn, request: Request, config: Config, now: datetime) -> Response:
         if not _portal_path(request.path):
             return Response("404 Not Found", "<h1>404 Not Found</h1><p>No such page.</p>")
 
+    # The Employee Portal door has its own Origin rule and its own answers; it
+    # is routed before the desk's Origin check, like the API, and answers 404
+    # anywhere but the portal host, or while it is off.
+    if request.path == "/sso/portal":
+        from . import sso
+        return sso.portal_login(conn, request, config, now)
+
     if request.path.startswith("/api/"):
         from . import api
         return api.handle(conn, request, now=now)
@@ -419,7 +460,7 @@ def _route(conn, request: Request, config: Config, now: datetime) -> Response:
     if request.path == "/login" and request.method == "POST":
         return _do_login(conn, request, config, now, portal=portal)
     if request.path == "/logout":
-        return redirect("/login", set_cookie=_cleared_cookie())
+        return redirect("/login", set_cookie=_cleared_cookie(secure=config.secure_cookie(request)))
     if request.path in ("/entra/start", "/entra/callback") and request.method == "GET":
         from . import entra
         if not config.entra_configured:
@@ -455,7 +496,8 @@ def _route(conn, request: Request, config: Config, now: datetime) -> Response:
 # What the portal host answers. Everything else there is a 404 before identity
 # is even looked at. `/my` and below is the requester's surface; the rest is
 # the way in and out.
-_PORTAL_EXACT = frozenset({"/my", "/login", "/logout", "/entra/start", "/entra/callback"})
+_PORTAL_EXACT = frozenset({"/my", "/login", "/logout", "/entra/start", "/entra/callback",
+                           "/sso/portal"})
 
 
 def _portal_path(path: str) -> bool:

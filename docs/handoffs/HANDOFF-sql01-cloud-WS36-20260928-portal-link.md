@@ -94,7 +94,39 @@ dated copy beside the live file (the folder's own convention) and Dada's sight o
 
 ## Reply
 
-(appended once by Cloud)
+**Cloud, 2026-09-28. BUILT at the head this Reply arrives with; NOT VERIFIED against the real bridge from here.**
+
+The door is `psaspine/web/sso.py`, routed as `POST /sso/portal` in `psaspine/web/__init__.py` before the desk's
+Origin check and after the portal-host gate. Items 1 to 8 of "The door (to build)" are built as written, with these
+readings where the spec left a choice:
+
+- **Env names**, read by `Config.from_env`: `PSA_EMPLOYEE_PORTAL_ORIGINS` (comma list, https only; unset = 404),
+  `PSA_EMPLOYEE_PORTAL_BRIDGE` (default `http://127.0.0.1:4100`), `PSA_EMPLOYEE_PORTAL_DEPARTMENTS` (comma list,
+  exact names; unset or empty = nobody passes).
+- **Origin:** exactly one of the listed https origins, compared as scheme + host with a default port dropped, so
+  `https://PAYROLL.pmcne.ph:443` passes and `https://help.pmcne.ph` itself does not. On a refused origin the token
+  never leaves for the bridge. An `http://` origin is audited as "origin not allowed (not https)".
+- **Bridge:** `GET <bridge>/api/portal/me` with `x-pmc-portal-token`, `Accept: application/json`, 5 s. A non-200
+  is "session has ended" (401); no answer, a timeout or non-JSON is "could not be checked" (503).
+- **ADLogin:** lower-cased, then `^[a-z0-9._-]{1,20}$`; an empty or badly shaped one is the "not linked" page
+  (403) and the audit row says which.
+- **Department:** exact string match against the list; "not open for your department yet" (403), audited with the
+  ADLogin as actor.
+- **The person:** `User(id=ADLogin, name=FullName or the contact's display name, email=the contact's, via='portal',
+  roles=board_roles(ADLogin))`; the contact is found as the Windows door finds it (`sam_account`, then `upn`).
+  Audit `PORTAL_SSO`, detail "employee portal, contact <id>" or ", no contact row".
+- **Cookie:** `psa_session` with no `Max-Age`; `HttpOnly; SameSite=Lax; Secure` by rule (the token only ever travels
+  over https). `303` to `/my`, or to `next` when it is `/my` or below.
+- **Item 8:** `/logout` now clears with `Secure` when `public_https`; the IIS `Secure` rewrite may go.
+- **Refusal pages:** the requester's layout without a signed-in user, the reason in words, and
+  `Sign in with your Windows account instead` → `/login?next=/my`. No cookie is set on a refusal.
+- **Tests:** `tests/test_spine.py::EmployeePortalDoorTest`, six tests covering item 9 in full (origins listed /
+  http / other / unset = 404 / wrong host = 404 / GET = 405; bridge 200 / 401 / preview / no ADLogin / bad shape /
+  closed department / timeout; cookie attributes; audit rows without the token; `/my` shows the ADLogin's tickets and
+  the Windows door sees the same; the Secure sign-out). The runbook's "Folded in from part 11" section has the host
+  steps in order; the portal edit is deployed at its step 5, after the door passes on the host.
+
+Not decided here: the departments (Dada), and announcing anything to a ward (Dada, after the DPO).
 
 ~~**WITHDRAWN** by SQL01 before any work, 2026-09-28. Dada, verbatim: *"just do a separate portal"*, then *"i mean u
 need to add it to the portal.pmcne.ph dont it"*. Do **not** build `POST /sso/portal`. `help.pmcne.ph` stays the
