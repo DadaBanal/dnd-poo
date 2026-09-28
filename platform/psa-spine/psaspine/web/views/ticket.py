@@ -361,7 +361,7 @@ def detail(ctx, work_item_id):
         composer = (
             "<div class=card data-pod=composer><h3><svg class=ic aria-hidden=true><use href=#i-note></use></svg>Add a note</h3>"
             f"<form method=post action='/ticket/{wid}/note'>" + picker +
-            "<textarea name=body required placeholder='No patient names or case numbers (§6.1).'></textarea>"
+            "<textarea name=body required placeholder='What you found, what you did, what is next. The ward, room and machine say it best; a patient never needs naming (§6.1).'></textarea>"
             "<div class=row style='margin-top:10px'>"
             "<div style='flex:0 0 auto'><label>Who can read it</label><div class=seg>"
             "<label><input type=radio name=flag value=DISCUSSION checked><span>Discussion</span></label>"
@@ -458,7 +458,7 @@ def detail(ctx, work_item_id):
             f"<details class=timeblock><summary>{t.icon('plus')} Add time</summary>"
             f"<form method=post action='/ticket/{wid}/time'>" + _time_fields(ctx, tk)
             + "<div class=row style='margin-top:8px'><div><label>Notes</label>"
-              "<textarea name=body rows=2 placeholder='What was done. No patient names or case numbers (§6.1).'></textarea></div>"
+              "<textarea name=body rows=2 placeholder='What was done. The ward, room and machine say it best; a patient never needs naming (§6.1).'></textarea></div>"
               "<div style='flex:0 0 auto'><label>Who can read the notes</label><div class=seg>"
               "<label><input type=radio name=flag value=DISCUSSION checked><span>Discussion</span></label>"
               "<label class=int><input type=radio name=flag value=INTERNAL><span>Internal</span></label>"
@@ -688,7 +688,7 @@ def new_form(ctx, *, error: str = "", values: dict | None = None):
         "<div class=radiorow><label style='color:var(--muted);font-weight:600'>Is a patient waiting?</label>"
         f"{radios('urgency', PATIENT_WAITING, v.get('urgency', ''))}</div>"
         "<div style='grid-column:1/-1'><label>Description</label><textarea name=description "
-        f"placeholder='No patient names or case numbers.'>{t.esc(v.get('description', ''))}</textarea></div>"
+        f"placeholder='The ward or office, the room, the machine, and since when.'>{t.esc(v.get('description', ''))}</textarea></div>"
         f"<div><label>Owner</label><input name=owner value='{t.esc(v.get('owner', ''))}' placeholder='leave blank for the board queue'></div>"
         "</div><div style='margin-top:14px'><button type=submit>Create ticket</button> "
         "<a class='btn ghost' href='/'>Cancel</a></div></form></div>")

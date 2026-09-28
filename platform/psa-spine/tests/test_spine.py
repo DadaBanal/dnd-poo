@@ -3933,6 +3933,22 @@ class PortalTest(unittest.TestCase):
         self.assertTrue(status.startswith("400"))
         self.assertIn("Tell us what you need", body)
 
+    def test_every_requester_box_has_a_help_pop_out_with_a_sample_and_no_rule(self):
+        """Dada, 28 Sep 2026: help them nicely, a "?" pop-out or a sample, never a rule."""
+        _, _, body = self._call("GET", "/my", cookie=self.nurse_a)
+        self.assertGreaterEqual(body.count("<details class=tip>"), 2)     # the text box and the file box
+        self.assertIn("What helps us most", body)
+        self.assertIn("Ward 3, room 302", body)                             # a worked sample
+        self.assertIn("since when", body)
+        self.assertIn("crop them out if you can", body)
+        for words in ("Please do not", "not allowed", "must not", "prohibited"):
+            self.assertNotIn(words, body)
+        self.assertNotIn("<script", body.split("<main", 1)[-1].split("</main>", 1)[0])   # plain <details>, no script
+        _, _, page = self._call("GET", "/my/PMC-000901", cookie=self.nurse_a)
+        self.assertIn("<details class=tip>", page)
+        self.assertIn("printed once after a restart", page)
+        self.assertNotIn("Please do not", page)
+
     def test_phi_is_flagged_the_ticket_is_still_created_and_the_requester_told(self):
         """Refusing sends the identifier to the telephone, where nothing records it."""
         status, _, body = self._call(
@@ -3941,7 +3957,9 @@ class PortalTest(unittest.TestCase):
                   "description": "PhilHealth 12-345678901-2 Case No: 44812",
                   "impact": "I3", "urgency": "U3"})
         self.assertTrue(status.startswith("200"))
-        self.assertIn("patient details", body)
+        self.assertIn("One tip for next time", body)                  # a tip, never a telling-off
+        self.assertNotIn("Please do not", body)
+        self.assertNotIn("flagged", body)
         conn = self._conn()
         created = conn.execute(
             "SELECT COUNT(*) c FROM ticket WHERE requested_by='nurse.a@pmcne.ph'"
@@ -6941,7 +6959,7 @@ class MergeScheduleSurveyWebTest(unittest.TestCase):
         status, _, page = self._call("POST", "/my/ITO-1/survey", cookie=bob,
                                      form={"score": "5", "comment": "Sorted, case no. 4471 done quickly"})
         self.assertTrue(status.startswith("200"))
-        self.assertIn("flagged", page)
+        self.assertIn("we will tidy this one", page)            # a friendly tip, the flag is written
         _, _, page = self._call("GET", "/my/ITO-1", cookie=bob)
         self.assertNotIn("How did we do?", page)
         self.assertIn("5 out of 5", page)

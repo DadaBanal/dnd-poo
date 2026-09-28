@@ -157,8 +157,8 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
                      else "the PMC Requests portal, under Your requests")
             body = (f"{n['body'] or ''}\n\nYour reference: {n['work_item_id']}\n"
                     f"See it here: {where}\n\nTo add something, reply to this email "
-                    "and keep the reference in the subject. Please do not send patient "
-                    "details by email.")
+                    "and keep the reference in the subject. The ward, the room or the "
+                    "machine is all we need; a patient's details never are.")
         else:
             body = (n["body"] or "") + f"\n\nOpen the ticket on the desk: {n['work_item_id']}"
         out.append({"id": n["notification_id"], "to": to, "subject": n["subject"],

@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 522 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 523 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -323,6 +323,11 @@ whatever the case; ids are made from the name and never collide.
 - **Survey:** when a ticket closes (and the board sends requester emails) the
   requester is told and, on the portal, asked once: one to five and a
   sentence, scanned for patient details like every other requester text.
+- **Patient details are helped, not policed** (Dada, 28 Sep 2026): every
+  requester box has a small "?" that pops out what helps most (ward, room,
+  machine, since when) with a worked sample, and the placeholders show an
+  example instead of a rule. Nothing is refused; the scan still flags what it
+  finds for the desk to tidy, and the thank-you carries one friendly tip.
 
 ### Search, saved views, standard notes (031)
 

@@ -251,7 +251,7 @@ def board_setup(ctx, board_id):
             f"<div><label>Type</label><select name=record_type><option value=''>(board default)</option>{opt(types)}</select></div>"
             f"<div><label>Subtype › Item</label><select name=catalogue_item_id><option value=''>(not classified)</option>{opt(items)}</select></div>"
             "<div style='grid-column:1/-1'><label>Description</label><textarea name=description "
-            "placeholder='No patient names or case numbers.'></textarea></div>"
+            "placeholder='What the technician should check first. The ward, room and machine, never a patient.'></textarea></div>"
             "<div style='grid-column:1/-1'><label>Tasks, one per line</label><textarea name=tasks "
             "placeholder='Create the AD account&#10;Add to HIS roles&#10;Issue the badge'></textarea></div>"
             "</div><div style='margin-top:12px'><button type=submit>Save template</button></div></form></div>")

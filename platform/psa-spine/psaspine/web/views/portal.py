@@ -17,11 +17,14 @@ Two things it does that the fulfiller views deliberately do not:
     board has not written one, the portal says the lifecycle state rather than
     inventing a sentence.
 
-  * **It warns about PHI before it is submitted, and still accepts it.** §6.1
-    says a ticket references a patient record and never carries one. Refusing
-    the submission would send the requester to the phone, where the same
-    identifier travels with no record at all; so the detection flags it, the
-    ticket is created, and the requester is told plainly what happened.
+  * **It helps with patient details instead of policing them.** §6.1 says a
+    ticket references a patient record and never carries one, and Dada's
+    direction (28 Sep 2026) is that nothing is refused for it: the hospital
+    cannot go that deep into limiting what staff type, yet. So every requester
+    box carries a small "?" that pops out a worked sample of a good request
+    (ward, room, machine, since when), the detection flags what it finds for the
+    desk to tidy, the ticket is created, and the thank-you carries one friendly
+    tip rather than a telling-off.
 """
 from __future__ import annotations
 
@@ -125,6 +128,26 @@ def _my_boards(ctx):
     return departments.boards_for(ctx.conn, getattr(ctx.user, "department", None))
 
 
+SAMPLE = ("Ward 3, room 302. The printer by the nurses' station has printed nothing since "
+          "7 this morning; its light is orange. Two nurses are waiting to print discharge papers.")
+
+
+def _help(what: str, *, sample: str = SAMPLE, files: bool = False) -> str:
+    """A small "?" beside a box that pops out a worked sample. Plain <details>,
+    so it works with no script on a ward PC. It helps rather than forbids: the
+    ward, the room and the machine are what find a problem fastest, and that is
+    said as a tip, with a sample, not as a rule."""
+    extra = ("<p>A photo of the screen, the error or the machine is ideal. If a screenshot "
+             "shows a patient's details, crop them out if you can; if you cannot, send it "
+             "anyway and we will tidy it.</p>" if files else "")
+    return (f"<details class=tip><summary aria-label='Help: {t.esc(what)}' title='What helps?'>?</summary>"
+            f"<div class=tipbody><b>What helps us most</b>"
+            "<p>The <b>ward or office</b>, the <b>room</b>, the <b>machine</b> (its name or the sticker on "
+            "it), and <b>since when</b>. That is all we need to find it; you do not need to type a "
+            "patient's name or number.</p>"
+            f"<p class=sample>“{t.esc(sample)}”</p>{extra}</div></details>")
+
+
 def _raise_form(error: str = "", notice: str = "", *, boards=()) -> str:
     err = f"<div class='banner err'>{t.esc(error)}</div>" if error else ""
     note = f"<div class='banner ok'>{t.esc(notice)}</div>" if notice else ""
@@ -148,18 +171,17 @@ def _raise_form(error: str = "", notice: str = "", *, boards=()) -> str:
                            KIND_CHOICES, required=False)
             + _radio_group("impact", "Who is affected?", WHO_IS_AFFECTED) +
             _radio_group("urgency", "Is a patient waiting?", PATIENT_WAITING) +
-            "<label>Anything that would help us"
-            "<textarea name='description' placeholder='Please do not include "
-            "patient names, case numbers or record numbers. Tell us the ward, the "
-            "room or the machine and we will take it from there.'></textarea></label>"
+            "<label>Anything that would help us " + _help("what to write")
+            + "<textarea name='description' placeholder='The ward or office, the room, the machine, "
+            "and since when. For example: " + t.esc(SAMPLE) + "'></textarea></label>"
             + _FILE_FIELD +
             "<div><button type='submit'>Send it</button></div></form></div>")
 
 
-_FILE_FIELD = ("<label>A screenshot or file, if it helps "
-               "<input type='file' name='file' multiple></label>"
-               "<p class='why' style='margin:0'>Up to 10 MB each. Please do not send "
-               "screenshots that show a patient's details.</p>")
+_FILE_FIELD = ("<label>A screenshot or file, if it helps " + _help("files", files=True)
+               + "<input type='file' name='file' multiple></label>"
+               "<p class='why' style='margin:0'>Up to 10 MB each. A photo of the screen, the error "
+               "or the machine helps most.</p>")
 
 
 def _attach(ctx, work_item_id: str, requester: str) -> list[str]:
@@ -268,8 +290,11 @@ def detail(ctx, work_item_id):
         "<div class='card'><h3><svg class=ic aria-hidden=true><use href=#i-note></use></svg>Add something</h3>"
         f"<form class='stack' method='post' action='/my/{t.esc(work_item_id)}/reply' "
         "style='max-width:none' enctype='multipart/form-data'>"
-        "<textarea name='body' placeholder='No patient names or case "
-        "numbers, please.'></textarea>" + _FILE_FIELD +
+        "<label>What has happened since, or anything else that helps "
+        + _help("what to write", sample="It printed once after a restart and then stopped again; "
+                                        "the orange light is back.")
+        + "<textarea name='body' placeholder='For example: it printed once after a restart and "
+        "then stopped again.'></textarea></label>" + _FILE_FIELD +
         "<div><button type='submit'>Send</button></div></form></div>"
         "<p><a href='/my'>All your requests</a></p>")
     from ... import survey as _survey
@@ -284,8 +309,8 @@ def detail(ctx, work_item_id):
         extra = ("<div class='card'><h3>" + t.icon("star") + "How did we do?</h3>"
                  f"<form class='stack' method='post' action='/my/{t.esc(work_item_id)}/survey' style='max-width:none'>"
                  f"<div class=stars>{stars}</div>"
-                 "<textarea name='comment' placeholder='A sentence if you like. No patient names or case "
-                 "numbers, please.'></textarea><div><button type='submit'>Send</button></div></form></div>")
+                 "<textarea name='comment' placeholder='A sentence if you like: what went well, or what "
+                 "we could do better.'></textarea><div><button type='submit'>Send</button></div></form></div>")
     elif row["closed_at"] or row["state"] in ("RESOLVED", "CLOSED", "CANCELLED"):
         ans = ctx.conn.execute("SELECT score FROM survey_response WHERE work_item_id = ?",
                                (work_item_id,)).fetchone()
@@ -344,8 +369,9 @@ def create(ctx):
         record_type=itil.fit(ctx.conn, board["board_id"], form.get("kind")
                              if form.get("kind") in dict(KIND_CHOICES) else None))
 
-    # §6.1: flagged, counted, and the requester is told -- not refused. Refusing
-    # sends the same identifier to the telephone, where nothing records it.
+    # §6.1: flagged and counted for the desk to tidy, never refused (refusing
+    # sends the same identifier to the telephone, where nothing records it), and
+    # the requester gets one friendly tip, not a telling-off (Dada, 28 Sep 2026).
     findings = phi.scan_fields({"summary": summary, "description": description})
     for code, severity, detail in findings:
         ctx.conn.execute(
@@ -356,13 +382,12 @@ def create(ctx):
     ctx.conn.commit()
 
     if findings or refused:
-        notice = f"Raised as {ticket_id}."
+        notice = f"Raised as {ticket_id}. Thank you."
         mine = _my_boards(ctx)
         if findings:
-            notice += (" It looks like your message may contain "
-                       "patient details. We have flagged it so it can be removed -- next "
-                       "time, please tell us the ward, the room or the machine instead of "
-                       "the patient's details.")
+            notice += (" One tip for next time: the ward, the room or the machine is all we "
+                       "need to find it, so there is no need to type a patient's name or number. "
+                       "We will tidy this one.")
         if refused:
             notice += " " + " ".join(refused)
         return Response(body=t.page("Your requests", (
@@ -433,7 +458,7 @@ def survey_answer(ctx, work_item_id):
             f"<p><a href='/my/{t.esc(work_item_id)}'>Back to your request</a></p>"), user=ctx.user))
     if findings:
         return Response(body=t.page(work_item_id, (
-            "<h1>Thank you</h1><div class='banner ok'>Your answer is recorded. It looks like your "
-            "sentence may contain patient details; we have flagged it so it can be removed.</div>"
+            "<h1>Thank you</h1><div class='banner ok'>Your answer is recorded. One tip: a rating "
+            "never needs a patient's name or number, so we will tidy this one.</div>"
             f"<p><a href='/my/{t.esc(work_item_id)}'>Back to your request</a></p>"), user=ctx.user))
     return redirect(f"/my/{work_item_id}")
