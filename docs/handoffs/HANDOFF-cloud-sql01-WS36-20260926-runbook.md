@@ -1281,3 +1281,36 @@ Section "Folded in from part 15". Everything below is MEASURED unless marked.
      default ("0 -> 0" is no change) so that it drops out.
    - The live board was not renamed for the test: it is still **"PMO Helpdesk"**. Its next real rename will show
      the new wording.
+
+### Part 17: 2026-09-28, evening +08:00. **5163812 live; schemas 037 and 038 PASS; init as the task account and Dada's checks are theirs**
+
+Section "Folded in from part 16". Everything below is MEASURED unless marked.
+
+1. **The suite first, in a separate worktree.**
+   - `git worktree add --detach` of `5163812` in SQL01's scratchpad. The live tree stayed at `7a1a6ba` while the
+     suite ran, so PSA-Rules (which runs from the live tree every minute) never ran new code against the old schema.
+   - **537 run, OK, 2 skipped, 0 errors.**
+   - The worktree was removed after the apply.
+2. **Schemas 037 and 038 by the sitting-1 road.**
+   - A COPY_ONLY backup, `D:\PMC\backup\PMC_PSA\PMC_PSA_pre037-038-20260928.bak`, 11.6 MB, `RESTORE VERIFYONLY`
+     "valid".
+   - The preview, from the worktree's port: 80 tables, 29 indexes, 4 triggers; 81 existing objects.
+   - PSA-Desk stopped, then the baseline taken with nothing writing: 77 tables, 4 triggers, 716 columns, 430 rows.
+   - The port applied as SQL01's sysadmin, `@Apply = 1` and `@AllowExisting = 1` set in memory: "Created: 80
+     tables, 4 triggers, 29 indexes", its gate passed, "Seeded: nothing".
+   - **Tables 77 → 80** (new: `schedule_block`, `schedule_status`, `service_location`), **columns 716 → 745**,
+     triggers 4 → 4, **no existing row count changed**. All 10 added columns are present: `holiday.all_day /
+     time_start / time_end`, `calendar.inactive`, `ticket_schedule.status_id / location_id / is_lead /
+     conflict_allowed / done_at / acknowledged_at`.
+3. **Then the live tree pulled to `5163812`, and PSA-Desk started.** 8085 listening, `/login` 200, no error in the
+   console. Signed out, `/schedule` and `/admin/calendars` answer 401 (they exist, sign-in first), and
+   `help.pmcne.ph/my` answers 401 with its sign-in page. PSA-Rules' next run: `0x0`, "0 errors".
+4. **`init` as the task account waits on the operator.** `D:\psa\bin\Part17-AsDesk.ps1` runs `init` twice; it wants
+   the same "ready" line both times and no `psa.board` row changed (every column). It parses, and it refuses any
+   other account (tested).
+5. **Dada's checks:**
+   - Setup › Calendars: a holiday list with Bonifacio Day and a part-day Christmas Eve, attached to *Business day*,
+     with two `CALENDAR_CONFIG` rows;
+   - `/schedule`: a meeting and a booked visit.
+
+   SQL01 will read the audit rows back after.
