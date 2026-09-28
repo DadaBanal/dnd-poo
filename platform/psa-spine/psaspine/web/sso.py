@@ -97,7 +97,7 @@ REFUSALS = {
     "not_linked": ("403 Forbidden", "Your employee record is not linked to a Windows account yet. "
                                     "Sign in here with your Windows account, or ask PMO to link it."),
     "disabled": ("403 Forbidden", "Your Windows account is disabled, so My requests cannot open. "
-                                  "Ask IT."),
+                                  "Ask the service desk."),
     "closed": ("403 Forbidden", "My requests is not open for your department yet."),
     "unchecked": ("503 Service Unavailable", "The Employee Portal could not be checked just now. Go "
                                              "back to the Employee Portal and open My requests again, "

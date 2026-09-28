@@ -641,7 +641,7 @@ def new_form(ctx, *, error: str = "", values: dict | None = None):
         (ctx.user.id,)).fetchall()
     if not boards:
         body = ("<h1>New ticket</h1><div class=card><div class=empty>You are not a working "
-                "member of any board. To ask IT for something, use "
+                "member of any board. To ask for something, use "
                 "<a href='/my'>My requests</a>.</div></div>")
         return Response(body=t.page("New ticket", body, user=ctx.user, active="board"))
     entities = ctx.conn.execute("SELECT entity_id, name FROM entity ORDER BY is_covered DESC, name").fetchall()

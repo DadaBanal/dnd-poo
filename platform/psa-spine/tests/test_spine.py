@@ -2643,7 +2643,7 @@ class WebWSGITest(unittest.TestCase):
         _, _, mine = self._call("GET", "/my/ITO-1", cookie=self._cookie_for(
             "nurse", email="nurse@pmcne.ph"))
         self.assertIn("Swapped the toner", mine)
-        self.assertIn("IT — resolution", mine)
+        self.assertIn("IT Help — resolution", mine)          # signed with the board, never "IT"
         self.assertNotIn("counterfeit", mine)             # an internal resolution stays internal
         _, _, desk = self._call("GET", "/ticket/ITO-1", cookie=self._cookie_for("alice"),
                                 query="tab=RESOLUTION")
@@ -3802,6 +3802,31 @@ class PortalTest(unittest.TestCase):
         return db.connect(self.db_path)
 
     # --------------------------------------------------------------- the filter
+
+    def test_requester_wording_never_says_it_and_names_the_owning_board(self):
+        """A request may be for any department: the desk's notes are signed with
+        the board's name, the emails name the board, and no requester page says IT."""
+        conn = self._conn()
+        conn.execute("INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail, note_flag)"
+                     " VALUES ('PMC-000901', '2026-09-22 09:00', 'NOTE', 'cadano', 'Parts ordered.', 'DISCUSSION')")
+        conn.execute("INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail, note_flag)"
+                     " VALUES ('PMC-000901', '2026-09-22 09:30', 'NOTE', 'cadano', 'Fitted.', 'RESOLUTION')")
+        conn.execute("UPDATE board SET notify_requester = 1 WHERE board_id = 'UNROUTED'")
+        conn.commit()
+        from psaspine import outbox
+        outbox.queue_requester(conn, "PMC-000901", "UPDATED", at=datetime(2026, 9, 22, 10))
+        conn.commit()
+        body = conn.execute("SELECT body FROM notification WHERE recipient_role = 'REQUESTER'").fetchone()[0]
+        board_name = conn.execute("SELECT display_name FROM board WHERE board_id = 'UNROUTED'").fetchone()[0]
+        conn.close()
+        self.assertIn(f"{board_name} has added an update", body)
+        for path in ("/my", "/my/PMC-000901"):
+            _, _, page = self._call("GET", path, cookie=self.nurse_a)
+            main = page.split("<main>")[1].split("</main>")[0]
+            self.assertNotRegex(main, r"\bIT\b", path)
+        _, _, page = self._call("GET", "/my/PMC-000901", cookie=self.nurse_a)
+        self.assertIn(f"{board_name} &middot;", page)
+        self.assertIn(f"{board_name} — resolution", page)
 
     def test_a_requester_sees_their_own_tickets(self):
         status, _, body = self._call("GET", "/my", cookie=self.nurse_a)
@@ -7045,7 +7070,7 @@ class RequesterMailTest(unittest.TestCase):
             self.outbox.pending(self.conn, allowed_domains=("pmcne.ph",), dry_run=True,
                                 portal_url="http://imaging.pmcne.ph")
         [item] = self.outbox.pending(self.conn, allowed_domains=("pmcne.ph",), dry_run=True)
-        self.assertIn("the IT portal, under Your requests", item["body"])
+        self.assertIn("the PMC Requests portal, under Your requests", item["body"])
 
 
 class ContactsTest(unittest.TestCase):

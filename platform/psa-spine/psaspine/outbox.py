@@ -40,10 +40,12 @@ REQUESTER_WORDS = {
     "OPENED": ("We have your request",
                "We have your request and it is in the queue. You do not need to do "
                "anything; we will update you here as it moves."),
+    # {board} is the name of the board that owns the request: a request may be
+    # for any department, so the email never says "IT".
     "UPDATED": ("Your request has been updated",
-                "IT has added an update to your request. Sign in to the portal to read it."),
+                "{board} has added an update to your request. Sign in to the portal to read it."),
     "CLOSED": ("Your request is closed",
-               "IT has closed your request. If it is not fixed, reply to this email and it "
+               "{board} has closed your request. If it is not fixed, reply to this email and it "
                "reopens. On the portal you can tell us how we did, one to five."),
 }
 
@@ -54,7 +56,7 @@ def queue_requester(conn: sqlite3.Connection, work_item_id: str, reason: str, *,
     from .board import _event
     from .intake import subject_token
     row = conn.execute(
-        "SELECT t.requested_by, t.intake_source, b.notify_requester FROM ticket t"
+        "SELECT t.requested_by, t.intake_source, b.notify_requester, b.display_name FROM ticket t"
         " JOIN board b ON b.board_id = t.board_id WHERE t.work_item_id = ?",
         (work_item_id,)).fetchone()
     if row is None or not row["notify_requester"] or not row["requested_by"]:
@@ -64,6 +66,7 @@ def queue_requester(conn: sqlite3.Connection, work_item_id: str, reason: str, *,
     if not address_for(conn, row["requested_by"]):
         return False                          # only an address we can resolve now
     headline, said = REQUESTER_WORDS[reason]
+    said = said.format(board=row["display_name"])
     stamp = at.isoformat(sep=" ", timespec="minutes")
     pending = conn.execute("SELECT notification_id FROM notification WHERE work_item_id = ? AND"
                            " recipient = ? AND recipient_role = ? AND status = 'PENDING'",
@@ -151,7 +154,7 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
             continue
         if n["recipient_role"] == REQUESTER:
             where = (f"{portal_url}/my/{n['work_item_id']}" if portal_url
-                     else "the IT portal, under Your requests")
+                     else "the PMC Requests portal, under Your requests")
             body = (f"{n['body'] or ''}\n\nYour reference: {n['work_item_id']}\n"
                     f"See it here: {where}\n\nTo add something, reply to this email "
                     "and keep the reference in the subject. Please do not send patient "

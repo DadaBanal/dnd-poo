@@ -32,9 +32,11 @@ from .. import templates as t
 # the whole row: no internal status name, no owner, no commercial basis.
 MINE = (
     "SELECT t.work_item_id, t.priority, t.state, t.opened_at, t.closed_at, t.merged_into,"
-    "       w.name AS summary, s.customer_description, s.name AS status_name"
+    "       w.name AS summary, s.customer_description, s.name AS status_name,"
+    "       b.display_name AS board_name"
     "  FROM ticket t"
     "  JOIN work_item w ON w.work_item_id = t.work_item_id"
+    "  JOIN board b ON b.board_id = t.board_id"
     "  LEFT JOIN board_status s ON s.board_status_id = t.board_status_id")
 
 # The two plain questions (§9: "it asks two questions -- who is affected and is
@@ -237,11 +239,15 @@ def detail(ctx, work_item_id):
         "         OR note_flag IN ('DISCUSSION','RESOLUTION'))"
         "    AND (note_flag IS NULL OR note_flag <> 'INTERNAL')"
         "  ORDER BY ticket_event_id", (work_item_id,)).fetchall()
+    # A request may be for any department: the desk's notes are signed with
+    # the name of the board that owns the request, never "IT".
+    team = row["board_name"]
+
     def who(e):
         if e["kind"] in ("INTAKE", "INTAKE_REPLY", "PORTAL_REPLY"):
             return "You"
-        return ("IT — resolution" if e["note_flag"] == "RESOLUTION" or e["is_resolution"]
-                else "IT")
+        return (f"{t.esc(team)} — resolution" if e["note_flag"] == "RESOLUTION" or e["is_resolution"]
+                else t.esc(team))
     stream = "".join(
         f"<li><div style='white-space:pre-wrap'>{t.esc(e['detail'])}</div>"
         f"<div class='meta'>{who(e)} &middot; {t.esc(e['occurred_at'])}</div></li>"
