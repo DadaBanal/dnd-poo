@@ -622,6 +622,14 @@
     "work_role.name": "NAME",
     "work_type.work_type_id": "ID",
     "work_type.name": "NAME",
-    "work_type.bill_time": "CODE"
+    "work_type.bill_time": "CODE",
+    "department.name": "NAME",
+    "department.source": "CODE",
+    "department.created_at": "TIMESTAMP_TEXT",
+    "department.last_seen_at": "TIMESTAMP_TEXT",
+    "department_board.department": "NAME",
+    "department_board.board_id": "ID",
+    "department_board.ticked_at": "TIMESTAMP_TEXT",
+    "department_board.ticked_by": "PERSON"
   }
 }

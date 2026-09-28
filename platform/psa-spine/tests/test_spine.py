@@ -3106,7 +3106,7 @@ class WebWSGITest(unittest.TestCase):
             "act0": "ADD_NOTE", "detail0": "noted"})
         _, headers, _ = self._call("POST", f"/admin/rules/{wid}/test", cookie=root,
                                    form={"event_id": f"{wid}_E1"})
-        loc = _urlparse.unquote(dict(headers)["Location"]).replace("+", " ")
+        loc = _urlparse.unquote_plus(dict(headers)["Location"])
         # both P1s exist (ITO-1, ITO-9); root is on neither board, so neither is named
         self.assertIn("0 open ticket(s) match now on the boards you are a member of", loc)
         self.assertNotIn("ITO-9", loc)
@@ -3115,7 +3115,7 @@ class WebWSGITest(unittest.TestCase):
         alice = self._cookie_for("alice", is_sysadmin=True)
         _, headers, _ = self._call("POST", f"/admin/rules/{wid}/test", cookie=alice,
                                    form={"event_id": f"{wid}_E1"})
-        loc = _urlparse.unquote(dict(headers)["Location"]).replace("+", " ")
+        loc = _urlparse.unquote_plus(dict(headers)["Location"])
         self.assertIn("2 open ticket(s) match now on the boards you are a member of", loc)
         rows = self._audit_rows()
         self.assertEqual([(r["subject_kind"], r["subject_id"]) for r in rows], [("board", "PHI")])
@@ -3881,7 +3881,7 @@ class ProxyAndPortalTest(unittest.TestCase):
     def test_on_the_portal_host_even_a_technician_gets_the_requesters_shell(self):
         _, _, body = self._portal("GET", "/my", cookie=self.alice)
         self.assertIn("<body data-requester>", body)
-        self.assertIn("PMC IT help", body)
+        self.assertIn("PMC Requests", body)
         for gone in (">Dispatch<", ">Service Board<", ">Setup<", 'id="pal"', "⌘K", 'class="newbtn"',
                      'popovertarget="keys"'):
             self.assertNotIn(gone, body, gone)
@@ -3928,29 +3928,31 @@ class ProxyAndPortalTest(unittest.TestCase):
 
 
 class EmployeePortalDoorTest(unittest.TestCase):
-    """POST /sso/portal (SQL01's handoff of 28 Sep 2026): an employee the payroll
-    portal has signed in opens My requests with no second sign-in. The bridge is
-    a fake on the Config; every refusal is a page in words and an audit row, and
-    the token appears in neither."""
+    """POST /sso/portal (SQL01's handoff of 28 Sep 2026, hardened per its review
+    the same day): an employee the payroll portal has signed in opens My
+    requests with no second sign-in. The bridge is a fake on the Config here
+    (the real one is tried below against a loopback server); every refusal is
+    audited and then a redirect to a fixed page, and the token appears nowhere."""
 
     _environ = WebWSGITest._environ
     _call = WebWSGITest._call
     _cookie_for = WebWSGITest._cookie_for
     tearDown = WebWSGITest.tearDown
+    TOKEN = "0123456789abcdef0123456789abcdef0123456789abcdef"
 
     def setUp(self) -> None:
         WebWSGITest.setUp(self)
         conn = db.connect(self.db_path)
         conn.execute(
-            "INSERT INTO contact (contact_id, entity_id, display_name, email, sam_account, source,"
+            "INSERT INTO contact (contact_id, entity_id, display_name, email, sam_account, department, source,"
             " inactive, created_at) VALUES ('C_NURSE', 'PMC', 'Nurse A. Santos', 'nurse.a@pmcne.ph',"
-            " 'nurse.a', 'AD', 0, '2026-09-17 08:00')")
+            " 'nurse.a', 'Nursing', 'AD', 0, '2026-09-17 08:00')")
         conn.execute("UPDATE ticket SET requested_by = 'nurse.a@pmcne.ph' WHERE work_item_id = 'ITO-1'")
         conn.commit()
         conn.close()
         self.calls = []
         self.answer = (200, {"employee": {"ADLogin": "Nurse.A", "FullName": "Nurse A. Santos",
-                                          "Department": "Nursing"}, "impersonated": False})
+                                          "Department": "Nursing", "EmpKey": 4471}, "impersonated": False})
         self.raises = None
 
         def bridge_get(url, headers, timeout):
@@ -3964,18 +3966,25 @@ class EmployeePortalDoorTest(unittest.TestCase):
         self.config.employee_portal_origins = "https://portal.pmcne.ph, https://payroll.pmcne.ph"
         self.config.employee_portal_departments = "Nursing, Pharmacy"
         self.config.bridge_get = bridge_get
-        self.token = "0123456789abcdef0123456789abcdef0123456789abcdef"
 
-    def _door(self, *, origin="https://portal.pmcne.ph", token=None, next_url=None, host="help.pmcne.ph",
-              method="POST"):
-        form = {"token": self.token if token is None else token}
-        if next_url is not None:
-            form["next"] = next_url
+    def _door(self, *, origin="https://portal.pmcne.ph", token=None, host="help.pmcne.ph", method="POST",
+              extra=None):
+        form = {"token": self.TOKEN if token is None else token, **(extra or {})}
         headers = {"Host": "127.0.0.1:8085", "X-Forwarded-Host": host}
         if origin:
             headers["Origin"] = origin
         return self._call(method, "/sso/portal", form=form if method == "POST" else None,
                           headers=headers, remote_addr="127.0.0.1")
+
+    def _refusal(self, headers):
+        """Follow the post-redirect-get to the refusal page: (code, status, body)."""
+        loc = dict(headers)["Location"]
+        self.assertTrue(loc.startswith("/sso/portal?refused="), loc)
+        code = loc.split("=", 1)[1]
+        status, _, body = self._call("GET", "/sso/portal", query="refused=" + code,
+                                     headers={"Host": "127.0.0.1:8085", "X-Forwarded-Host": "help.pmcne.ph"},
+                                     remote_addr="127.0.0.1")
+        return code, status, body
 
     def _audit(self, action):
         conn = db.connect(self.db_path)
@@ -3988,37 +3997,44 @@ class EmployeePortalDoorTest(unittest.TestCase):
         status, headers, _ = self._door()
         self.assertTrue(status.startswith("303"), status)
         self.assertEqual(dict(headers)["Location"], "/my")
-        # the bridge was asked, server to server, with the token and nothing else of ours
-        self.assertEqual(len(self.calls), 1)
         url, hdrs, timeout = self.calls[0]
         self.assertEqual(url, "http://127.0.0.1:4100/api/portal/me")
-        self.assertEqual(hdrs, {"x-pmc-portal-token": self.token})
+        self.assertEqual(hdrs, {"x-pmc-portal-token": self.TOKEN})
         self.assertLessEqual(timeout, 5)
-        # a browser-session cookie: no Max-Age, Secure, HttpOnly, Lax
         cookie = next(v for k, v in headers if k == "Set-Cookie")
         self.assertTrue(cookie.startswith("psa_session="))
         self.assertNotIn("Max-Age", cookie)
         for attr in ("Secure", "HttpOnly", "SameSite=Lax", "Path=/"):
             self.assertIn(attr, cookie)
-        # the audit names the person, not the token
-        rows = self._audit("PORTAL_SSO")
-        self.assertEqual(rows, [("nurse.a", "nurse.a", "employee portal, contact C_NURSE")])
+        # two hours, not the desk's twelve; and the department rides on the session
+        payload = webauth.read_session(cookie.split(";", 1)[0].split("=", 1)[1], self.config.session_secret)
+        self.assertEqual(payload["exp"] - payload["iat"], 2 * 3600)
+        self.assertEqual((payload["via"], payload["dept"]), ("portal", "Nursing"))
+        self.assertEqual(self._audit("PORTAL_SSO"),
+                         [("nurse.a", "nurse.a", "employee portal, contact C_NURSE, department Nursing")])
         self.assertEqual(self._audit("PORTAL_SSO_REFUSED"), [])
-        # the session is the same person the Windows door would sign in
         session = cookie.split(";", 1)[0]
         status, _, body = self._call("GET", "/my", cookie=session, headers={"Host": "help.pmcne.ph"})
         self.assertTrue(status.startswith("200"), status)
         self.assertIn("Printer down", body)
         self.assertIn("Nurse A. Santos", body)
         self.assertIn("<body data-requester>", body)
-        _, _, windows = self._call("GET", "/my", cookie=self._cookie_for("nurse.a", email="nurse.a@pmcne.ph",
-                                                                             via="windows"))
+        self.assertIn("PMC Requests", body)
+        self.assertNotIn("IT help", body)
+        self.assertNotIn("Dada IT only", body)
+        # the same person through the Windows door sees the same tickets
+        self.config.windows_domain = "PMCNE"
+        self.config.windows_logon = lambda domain, user, pw: (user == "nurse.a" and pw == "pw", 0)
+        _, headers, _ = self._call("POST", "/login", form={"door": "windows", "username": "PMCNE\\Nurse.A",
+                                                            "password": "pw", "next": "/my"})
+        win = next(v for k, v in headers if k == "Set-Cookie").split(";", 1)[0]
+        _, _, windows = self._call("GET", "/my", cookie=win)
         self.assertIn("Printer down", windows)
 
-    def test_next_is_honoured_only_under_my(self):
-        _, headers, _ = self._door(next_url="/my/ITO-1")
-        self.assertEqual(dict(headers)["Location"], "/my/ITO-1")
-        _, headers, _ = self._door(next_url="/admin")
+    def test_next_is_ignored_and_the_landing_is_always_my_requests(self):
+        _, headers, _ = self._door(extra={"next": "/admin"})
+        self.assertEqual(dict(headers)["Location"], "/my")
+        _, headers, _ = self._door(extra={"next": "/my/ITO-1%0D%0AX-Injected: 1"})
         self.assertEqual(dict(headers)["Location"], "/my")
 
     def test_the_origin_must_be_a_listed_https_origin(self):
@@ -4026,16 +4042,20 @@ class EmployeePortalDoorTest(unittest.TestCase):
                            ("http://portal.pmcne.ph", False), ("https://evil.example", False),
                            ("https://help.pmcne.ph", False), ("", False)):
             self.calls.clear()
-            status, _, body = self._door(origin=origin)
-            self.assertEqual(status.startswith("303"), ok, origin)
-            if not ok:
+            status, headers, _ = self._door(origin=origin)
+            self.assertEqual(status.startswith("303"), True, origin)
+            if ok:
+                self.assertEqual(dict(headers)["Location"], "/my", origin)
+            else:
+                code, status, body = self._refusal(headers)
+                self.assertEqual(code, "origin")
                 self.assertTrue(status.startswith("403"), (origin, status))
                 self.assertEqual(self.calls, [], origin)           # the token never left for the bridge
                 self.assertIn("not the Employee Portal", body)
         refused = self._audit("PORTAL_SSO_REFUSED")
         self.assertEqual(len(refused), 4)
         self.assertTrue(any("not https" in r[2] for r in refused))
-        self.assertFalse(any(self.token in (r[2] or "") for r in refused))
+        self.assertFalse(any(self.TOKEN in (r[2] or "") for r in refused))
 
     def test_the_door_is_off_until_origins_are_named_and_only_on_the_portal_host(self):
         status, _, _ = self._door(host="desk.pmcne.ph")
@@ -4048,47 +4068,112 @@ class EmployeePortalDoorTest(unittest.TestCase):
         self.assertTrue(status.startswith("404"), status)
         self.assertEqual(self.calls, [])
         self.config.employee_portal_origins = "https://portal.pmcne.ph"
-        status, _, _ = self._door(method="GET")
+        status, _, _ = self._door(method="PUT")
         self.assertTrue(status.startswith("405"), status)
+        # the refusal page itself is a GET on the portal host, with fixed words
+        status, _, body = self._call("GET", "/sso/portal", query="refused=closed",
+                                     headers={"Host": "127.0.0.1:8085", "X-Forwarded-Host": "help.pmcne.ph"},
+                                     remote_addr="127.0.0.1")
+        self.assertTrue(status.startswith("403"))
+        self.assertIn("not open for your department", body)
+        status, _, body = self._call("GET", "/sso/portal", query="refused=<script>",
+                                     headers={"Host": "127.0.0.1:8085", "X-Forwarded-Host": "help.pmcne.ph"},
+                                     remote_addr="127.0.0.1")
+        self.assertTrue(status.startswith("503"))
+        self.assertNotIn("<script>", body.split("<main>")[1].split("</main>")[0])    # never reflected
 
-    def test_each_refusal_is_a_page_in_words_and_an_audit_row_without_the_token(self):
+    def test_each_refusal_is_a_redirect_to_a_page_in_words_and_an_audit_row_without_the_token(self):
         cases = [
-            ("no token", dict(token=""), None, None, "401", "session has ended", "no token"),
-            ("dead token", {}, (401, None), None, "401", "session has ended", "bridge answered 401"),
+            ("no token", dict(token=""), None, None, "ended", "401", "session has ended", "no token"),
+            ("bad shape", dict(token="abc\r\nX: 1"), None, None, "ended", "401", "session has ended", "not shaped"),
+            ("dead token", {}, (401, None), None, "ended", "401", "session has ended", "bridge answered 401"),
+            ("forbidden", {}, (403, None), None, "ended", "401", "session has ended", "bridge answered 403"),
+            ("bridge fault", {}, (500, None), None, "unchecked", "503", "could not be checked", "bridge answered 500"),
+            ("redirect", {}, (302, None), None, "unchecked", "503", "could not be checked", "bridge answered 302"),
+            ("not json", {}, (200, None), None, "unchecked", "503", "could not be checked", "bridge answered 200"),
             ("preview", {}, (200, {"employee": {"ADLogin": "pmo.admin", "Department": "Nursing"},
-                                   "impersonated": True}), None, "403", "admin preview", "admin preview"),
-            ("no ADLogin", {}, (200, {"employee": {"ADLogin": "", "Department": "Nursing"},
-                                      "impersonated": False}), None, "403", "not linked", "no ADLogin"),
-            ("bad shape", {}, (200, {"employee": {"ADLogin": "Bad Login!", "Department": "Nursing"},
-                                     "impersonated": False}), None, "403", "not linked", "not shaped"),
+                                   "impersonated": True}), None, "preview", "403", "admin preview", "admin preview"),
+            ("no flag", {}, (200, {"employee": {"ADLogin": "nurse.a", "Department": "Nursing"}}), None,
+             "preview", "403", "admin preview", "no impersonated flag"),
+            ("no ADLogin", {}, (200, {"employee": {"ADLogin": "", "Department": "Nursing", "EmpKey": 9},
+                                      "impersonated": False}), None, "not_linked", "403", "not linked", "no ADLogin"),
+            ("ADLogin true", {}, (200, {"employee": {"ADLogin": True, "Department": "Nursing"},
+                                        "impersonated": False}), None, "not_linked", "403", "not linked", "no ADLogin"),
+            ("bad shape login", {}, (200, {"employee": {"ADLogin": "Bad Login!", "Department": "Nursing"},
+                                           "impersonated": False}), None, "not_linked", "403", "not linked", "not shaped"),
             ("closed", {}, (200, {"employee": {"ADLogin": "nurse.a", "Department": "Radiology"},
-                                  "impersonated": False}), None, "403", "not open for your department",
-             "department not open"),
-            ("timeout", {}, None, TimeoutError("timed out"), "503", "could not be checked", "not answering"),
+                                  "impersonated": False}), None, "closed", "403", "not open for your department",
+             "department not open (Radiology)"),
+            ("timeout", {}, None, TimeoutError("timed out"), "unchecked", "503", "could not be checked", "not answering"),
         ]
-        for label, kw, answer, raises, status_prefix, words, audit_words in cases:
+        for label, kw, answer, raises, code, status_prefix, words, audit_words in cases:
             if answer is not None:
                 self.answer = answer
             self.raises = raises
             status, headers, body = self._door(**kw)
+            self.assertTrue(status.startswith("303"), (label, status))            # never the page itself
+            self.assertFalse(any(k == "Set-Cookie" for k, _ in headers), label)
+            got, status, body = self._refusal(headers)
+            self.assertEqual(got, code, label)
             self.assertTrue(status.startswith(status_prefix), (label, status))
             self.assertIn(words, body, label)
-            self.assertIn("/login?next=/my", body, label)              # the way in that always works
+            self.assertIn("/login?next=/my", body, label)
             self.assertIn("<body data-requester>", body, label)
-            self.assertFalse(any(k == "Set-Cookie" for k, _ in headers), label)
-            self.assertNotIn(self.token, body, label)
+            self.assertNotIn(self.TOKEN, body, label)
         refused = self._audit("PORTAL_SSO_REFUSED")
         self.assertEqual(len(refused), len(cases))
         for (label, *_, audit_words), row in zip(cases, refused):
             self.assertIn(audit_words, row[2], label)
-            self.assertNotIn(self.token, row[2] or "", label)
+            self.assertNotIn(self.TOKEN, row[2] or "", label)
+        self.assertEqual([r[1] for r in refused if "EmpKey" in str(r) or r[2].startswith("no ADLogin")][:1], ["9"])
         self.assertEqual(self._audit("PORTAL_SSO"), [])
-        # a department that is not open never signs in even with a good record
+
+    def test_a_disabled_windows_account_is_refused_and_a_department_with_no_list_is_closed(self):
+        conn = db.connect(self.db_path)
+        conn.execute("UPDATE contact SET inactive = 1 WHERE contact_id = 'C_NURSE'")
+        conn.commit()
+        conn.close()
+        _, headers, _ = self._door()
+        code, status, body = self._refusal(headers)
+        self.assertEqual((code, status[:3]), ("disabled", "403"))
+        self.assertIn("disabled", body)
+        self.assertEqual(self._audit("PORTAL_SSO_REFUSED")[-1], ("nurse.a", "nurse.a", "AD account disabled"))
+        conn = db.connect(self.db_path)
+        conn.execute("UPDATE contact SET inactive = 0 WHERE contact_id = 'C_NURSE'")
+        conn.commit()
+        conn.close()
         self.config.employee_portal_departments = None
-        self.answer = (200, {"employee": {"ADLogin": "nurse.a", "Department": "Nursing"}, "impersonated": False})
-        self.raises = None
-        status, _, _ = self._door()
-        self.assertTrue(status.startswith("403"), status)
+        _, headers, _ = self._door()
+        self.assertEqual(self._refusal(headers)[0], "closed")
+
+    def test_the_checklist_decides_once_a_box_is_ticked(self):
+        from psaspine import departments
+        conn = db.connect(self.db_path)
+        departments.add(conn, "Nursing", at=datetime(2026, 9, 28), actor="root")
+        departments.add(conn, "Radiology", at=datetime(2026, 9, 28), actor="root")
+        departments.save_grid(conn, {"Radiology": {"IT_HELP"}}, at=datetime(2026, 9, 28), actor="root")
+        conn.commit()
+        conn.close()
+        # the env var names Nursing, but the grid is in charge now and Nursing has no tick
+        _, headers, _ = self._door()
+        self.assertEqual(self._refusal(headers)[0], "closed")
+        self.answer = (200, {"employee": {"ADLogin": "rad.b", "Department": "Radiology"}, "impersonated": False})
+        _, headers, _ = self._door()
+        self.assertEqual(dict(headers)["Location"], "/my")
+
+    def test_a_username_with_an_underscore_never_binds_to_another_persons_email(self):
+        conn = db.connect(self.db_path)
+        conn.execute("INSERT INTO contact (contact_id, entity_id, display_name, email, upn, source, inactive,"
+                     " created_at) VALUES ('C_JA', 'PMC', 'Ja Cruz', 'jacruz@pmcne.ph', 'jacruz@pmcne.ph',"
+                     " 'AD', 0, '2026-09-17 08:00')")
+        conn.commit()
+        conn.close()
+        self.answer = (200, {"employee": {"ADLogin": "j_cruz", "Department": "Nursing"}, "impersonated": False})
+        _, headers, _ = self._door()
+        cookie = next(v for k, v in headers if k == "Set-Cookie").split(";", 1)[0]
+        payload = webauth.read_session(cookie.split("=", 1)[1], self.config.session_secret)
+        self.assertIsNone(payload["email"])                     # not jacruz's
+        self.assertEqual(self._audit("PORTAL_SSO")[-1][2], "employee portal, no contact row, department Nursing")
 
     def test_sign_out_on_the_portal_host_clears_a_secure_cookie(self):
         status, headers, _ = self._call("GET", "/logout", cookie=self._cookie_for("nurse.a"),
@@ -4099,10 +4184,259 @@ class EmployeePortalDoorTest(unittest.TestCase):
         self.assertTrue(cookie.startswith("psa_session=;") or cookie.startswith('psa_session="";'), cookie)
         self.assertIn("Max-Age=0", cookie)
         self.assertIn("Secure", cookie)
-        # and with no public https at all, the clear is plain, as the cookie it clears was
         self.config.public_url = self.config.portal_url = None
         _, headers, _ = self._call("GET", "/logout", cookie=self._cookie_for("nurse.a"))
         self.assertNotIn("Secure", next(v for k, v in headers if k == "Set-Cookie"))
+
+
+class RealBridgeTest(unittest.TestCase):
+    """sso.bridge_get against a loopback http.server: what the bridge answers is
+    a status, a redirect is refused before the token goes anywhere, a slow
+    bridge is an exception, and nothing is read past 64 KB."""
+
+    def setUp(self) -> None:
+        import http.server
+        import threading
+        seen = self.seen = []
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                seen.append((self.path, self.headers.get("x-pmc-portal-token")))
+                if self.path == "/slow/api/portal/me":
+                    import time as _t
+                    _t.sleep(1.2)
+                    self.send_response(200)
+                    self.end_headers()
+                    return
+                if self.path == "/redirect/api/portal/me":
+                    self.send_response(302)
+                    self.send_header("Location", "http://127.0.0.1:1/elsewhere")
+                    self.end_headers()
+                    return
+                if self.path == "/html/api/portal/me":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html")
+                    self.end_headers()
+                    self.wfile.write(b"<html>not json</html>")
+                    return
+                if self.path == "/big/api/portal/me":
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(b'{"pad":"' + b"x" * (70 * 1024) + b'"}')
+                    return
+                code = {"/ok/api/portal/me": 200, "/dead/api/portal/me": 401, "/fault/api/portal/me": 500}[self.path]
+                body = b'{"employee": {"ADLogin": "nurse.a"}, "impersonated": false}' if code == 200 else b'{"error":"x"}'
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(body)
+
+        self.httpd = http.server.HTTPServer(("127.0.0.1", 0), H)
+        self.base = f"http://127.0.0.1:{self.httpd.server_address[1]}"
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def tearDown(self) -> None:
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+    def test_statuses_come_back_as_statuses_and_the_rest_as_the_door_expects(self):
+        from psaspine.web import sso
+        h = {"x-pmc-portal-token": "ab" * 24}
+        self.assertEqual(sso.bridge_get(self.base + "/ok/api/portal/me", h, 2),
+                         (200, {"employee": {"ADLogin": "nurse.a"}, "impersonated": False}))
+        self.assertEqual(sso.bridge_get(self.base + "/dead/api/portal/me", h, 2), (401, None))
+        self.assertEqual(sso.bridge_get(self.base + "/fault/api/portal/me", h, 2), (500, None))
+        self.assertEqual(sso.bridge_get(self.base + "/html/api/portal/me", h, 2), (200, None))
+        self.assertEqual(sso.bridge_get(self.base + "/big/api/portal/me", h, 2), (200, None))
+        # a redirect is a status of its own and the token was sent once, to the bridge only
+        self.assertEqual(sso.bridge_get(self.base + "/redirect/api/portal/me", h, 2), (302, None))
+        self.assertTrue(all(tok == "ab" * 24 for _, tok in self.seen))
+        self.assertFalse(any("elsewhere" in path for path, _ in self.seen))
+        with self.assertRaises(Exception):
+            sso.bridge_get(self.base + "/slow/api/portal/me", h, 0.3)
+
+    def test_the_environments_proxy_is_never_used(self):
+        import os
+        from psaspine.web import sso
+        old = {k: os.environ.get(k) for k in ("HTTP_PROXY", "http_proxy")}
+        os.environ["HTTP_PROXY"] = os.environ["http_proxy"] = "http://127.0.0.1:1"
+        try:
+            self.assertEqual(sso.bridge_get(self.base + "/dead/api/portal/me", {"x-pmc-portal-token": "a" * 48}, 2),
+                             (401, None))
+        finally:
+            for k, v in old.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+
+class DepartmentsTest(unittest.TestCase):
+    """034 and psaspine.departments: the list from payroll, the grid, and what
+    obeys it (the portal's raise form; the door is tried above)."""
+
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+    tearDown = WebWSGITest.tearDown
+
+    def setUp(self) -> None:
+        WebWSGITest.setUp(self)
+        conn = db.connect(self.db_path)
+        conn.executescript(
+            "INSERT OR REPLACE INTO board (board_id,display_name,phase,fulfiller_group,owner,deputy,is_live,is_unrouted)"
+            " VALUES ('MAINT','Maintenance','2','Facilities','m','n',1,0);"
+            "INSERT OR REPLACE INTO board_status (board_status_id,board_id,name,escalation_status,is_default)"
+            " VALUES ('MAINT.NEW','MAINT','New','NOT_RESPONDED',1);"
+            "INSERT INTO contact (contact_id, entity_id, display_name, email, sam_account, department, source,"
+            " inactive, created_at) VALUES ('C_WARD', 'PMC', 'Ward B', 'ward.b@pmcne.ph', 'ward.b', 'Ward B',"
+            " 'AD', 0, '2026-09-17 08:00');")
+        conn.commit()
+        conn.close()
+        self.root = self._cookie_for("root", is_sysadmin=True)
+        self.at = datetime(2026, 9, 28, 9)
+
+    def _csv(self, *names):
+        path = Path(self.tmp.name) / "departments.csv"
+        path.write_text("\ufeffDepartment\r\n" + "".join(n + "\r\n" for n in names), encoding="utf-8")
+        return path
+
+    def test_the_list_imports_retires_and_never_deletes(self):
+        from psaspine import departments
+        conn = db.connect(self.db_path)
+        r = departments.import_csv(conn, self._csv("Ward A", "Ward B", "Ward A", "Pharmacy"), at=self.at)
+        self.assertEqual((r["rows"], r["new"]), (3, 3))
+        departments.add(conn, "Biomedical", at=self.at, actor="root")
+        departments.save_grid(conn, {"Ward A": {"IT_HELP"}, "Pharmacy": {"IT_HELP", "MAINT"}}, at=self.at, actor="root")
+        r = departments.import_csv(conn, self._csv("Ward A", "Ward B"), at=self.at)
+        self.assertEqual((r["new"], r["seen"], r["retired"]), (0, 2, 1))
+        rows = {d["name"]: (d["retired"], d["source"]) for d in departments.all_departments(conn)}
+        self.assertEqual(rows["Pharmacy"], (1, "PAYROLL"))          # retired, not deleted
+        self.assertEqual(rows["Biomedical"], (0, "MANUAL"))         # a manual one is left alone
+        self.assertEqual([b["board_id"] for b in departments.boards_for(conn, "Pharmacy")], ["IT_HELP", "MAINT"])
+        r = departments.import_csv(conn, self._csv("Ward A", "Ward B", "Pharmacy"), at=self.at)
+        self.assertEqual(r["restored"], 1)
+        with self.assertRaises(ValueError):
+            departments.import_csv(conn, Path(self.tmp.name) / "nope.csv" if False else self._nocol(), at=self.at)
+        conn.close()
+
+    def _nocol(self):
+        path = Path(self.tmp.name) / "wrong.csv"
+        path.write_text("Name\r\nWard A\r\n")
+        return path
+
+    def test_the_grid_saves_once_and_audits_what_changed(self):
+        from psaspine import departments
+        conn = db.connect(self.db_path)
+        departments.import_csv(conn, self._csv("Ward A", "Ward B"), at=self.at)
+        conn.commit()
+        conn.close()
+        status, _, page = self._call("GET", "/admin/departments", cookie=self.root)
+        self.assertTrue(status.startswith("200"))
+        self.assertIn("Ward A", page)
+        self.assertIn("Maintenance", page)
+        self.assertNotIn("Unrouted", page.split("<thead>")[1].split("</thead>")[0])
+        _, headers, _ = self._call("POST", "/admin/departments/save", cookie=self.root,
+                                   form=None, query="")
+        self.assertIn("Nothing+changed", dict(headers)["Location"])
+        body = _urlparse.urlencode([("tick", "Ward A|IT_HELP"), ("tick", "Ward A|MAINT"), ("tick", "Ward B|MAINT"),
+                                    ("tick", "Ward B|UNROUTED"), ("tick", "Nobody|IT_HELP")]).encode()
+        status, headers, _ = self._call_raw("POST", "/admin/departments/save", body)
+        loc = _urlparse.unquote_plus(dict(headers)["Location"])
+        self.assertIn("Ward A: + IT Help, + Maintenance; Ward B: + Maintenance", loc)
+        conn = db.connect(self.db_path)
+        self.assertEqual(sorted((r[0], r[1]) for r in conn.execute("SELECT department, board_id FROM department_board")),
+                         [("Ward A", "IT_HELP"), ("Ward A", "MAINT"), ("Ward B", "MAINT")])
+        audit = conn.execute("SELECT detail FROM audit_event WHERE action = 'DEPARTMENT_BOARDS'").fetchall()
+        self.assertEqual(len(audit), 1)
+        conn.close()
+        body = _urlparse.urlencode([("tick", "Ward A|MAINT")]).encode()
+        _, headers, _ = self._call_raw("POST", "/admin/departments/save", body)
+        loc = _urlparse.unquote_plus(dict(headers)["Location"])
+        self.assertIn("Ward A: − IT Help; Ward B: − Maintenance", loc)
+        _, _, page = self._call("GET", "/admin/departments", cookie=self.root)
+        self.assertIn(">open<", page)
+        self.assertIn(">closed<", page)
+        _, headers, _ = self._call("POST", "/admin/departments/add", cookie=self.root, form={"name": "Ward B"})
+        self.assertIn("already", dict(headers)["Location"])
+        status, _, _ = self._call("GET", "/admin/departments", cookie=self._cookie_for("alice"))
+        self.assertTrue(status.startswith("403"))
+
+    def _call_raw(self, method, path, body):
+        import io as _io
+        env = self._environ(method, path, cookie=self.root, body=body)
+        app = _validator(self.raw)
+        captured = {}
+
+        def start_response(status, headers, exc_info=None):
+            captured["status"], captured["headers"] = status, headers
+        it = app(env, start_response)
+        try:
+            payload = b"".join(it).decode()
+        finally:
+            it.close()
+        return captured["status"], captured["headers"], payload
+
+    def test_the_raise_form_offers_the_ticked_boards_and_the_ticket_lands_there(self):
+        from psaspine import departments
+        conn = db.connect(self.db_path)
+        departments.import_csv(conn, self._csv("Ward B"), at=self.at)
+        conn.commit()
+        conn.close()
+        ward = self._cookie_for("ward.b", email="ward.b@pmcne.ph", department="Ward B")
+        # nothing ticked: no choice, Unrouted as today
+        _, _, page = self._call("GET", "/my", cookie=ward)
+        self.assertNotIn("Who is this for?", page)
+        _, headers, _ = self._call("POST", "/my/new", cookie=ward, form={
+            "summary": "Bed 3 monitor", "impact": "I3", "urgency": "U3"})
+        wid = dict(headers)["Location"].rsplit("/", 1)[1]
+        conn = db.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT board_id FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()[0], "UNROUTED")
+        departments.save_grid(conn, {"Ward B": {"MAINT"}}, at=self.at, actor="root")
+        conn.commit()
+        conn.close()
+        # one tick: it goes there, said on the form
+        _, _, page = self._call("GET", "/my", cookie=ward)
+        self.assertIn("This goes to <b>Maintenance</b>", page)
+        _, headers, _ = self._call("POST", "/my/new", cookie=ward, form={
+            "summary": "Leaking tap", "impact": "I3", "urgency": "U3"})
+        wid = dict(headers)["Location"].rsplit("/", 1)[1]
+        conn = db.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT board_id, intake_source FROM ticket WHERE work_item_id = ?",
+                                      (wid,)).fetchone()[:], ("MAINT", "PORTAL"))
+        departments.save_grid(conn, {"Ward B": {"MAINT", "IT_HELP"}}, at=self.at, actor="root")
+        conn.commit()
+        conn.close()
+        # two ticks: a choice, checked on the server
+        _, _, page = self._call("GET", "/my", cookie=ward)
+        self.assertIn("Who is this for?", page)
+        self.assertIn("IT Help", page)
+        status, _, page = self._call("POST", "/my/new", cookie=ward, form={
+            "summary": "Which one", "impact": "I3", "urgency": "U3"})
+        self.assertTrue(status.startswith("400"))
+        self.assertIn("who this is for", page)
+        status, _, page = self._call("POST", "/my/new", cookie=ward, form={
+            "summary": "Sneaky", "impact": "I3", "urgency": "U3", "board_id": "PHI"})
+        self.assertTrue(status.startswith("400"))
+        self.assertIn("not one of the places", page)
+        _, headers, _ = self._call("POST", "/my/new", cookie=ward, form={
+            "summary": "Printer", "impact": "I3", "urgency": "U3", "board_id": "IT_HELP"})
+        wid = dict(headers)["Location"].rsplit("/", 1)[1]
+        conn = db.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT board_id FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()[0], "IT_HELP")
+        conn.close()
+        # the Windows door learns the department from the AD contact
+        self.config.windows_domain = "PMCNE"
+        self.config.windows_logon = lambda d, u, p: (True, 0)
+        _, headers, _ = self._call("POST", "/login", form={"door": "windows", "username": "ward.b", "password": "x"})
+        cookie = next(v for k, v in headers if k == "Set-Cookie").split(";", 1)[0]
+        payload = webauth.read_session(cookie.split("=", 1)[1], self.config.session_secret)
+        self.assertEqual(payload["dept"], "Ward B")
+        _, _, page = self._call("GET", "/my", cookie=cookie)
+        self.assertIn("Who is this for?", page)
 
 
 class MachineApiTest(unittest.TestCase):

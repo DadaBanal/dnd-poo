@@ -82,6 +82,14 @@ def index(ctx):
             "Request targets on IT Help. Items for boards that do not exist yet wait until those "
             "boards are created. It adds what is missing and never overwrites.</p></div>")
     if ctx.user.is_sysadmin:
+        from ... import departments as _departments
+        n_dept = ctx.conn.execute("SELECT COUNT(*) FROM department WHERE retired = 0").fetchone()[0]
+        n_open = ctx.conn.execute("SELECT COUNT(DISTINCT department) FROM department_board").fetchone()[0]
+        cards.append(
+            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-building></use></svg>Departments</h3><p class=sub>"
+            "Which departments may send requests to which boards: the checklist the Employee Portal door "
+            "and the portal's form obey.</p>"
+            f"<a class='btn ghost' href='/admin/departments'>Departments ({n_open} of {n_dept} open)</a></div>")
         from ... import board as _board
         _board.ensure_time_vocabulary(ctx.conn)
         n_roles = ctx.conn.execute("SELECT COUNT(*) FROM work_role WHERE inactive = 0").fetchone()[0]
@@ -1072,3 +1080,100 @@ def time_toggle(ctx):
              subject_id=key)
     ctx.conn.commit()
     return _time_back(msg=("Back in use." if row["inactive"] else "Retired; old entries keep it."))
+
+
+# ------------------------------------------------------ Setup › Departments
+#
+# Dada's checklist (28 Sep 2026): rows are departments, columns are the live
+# service boards, each cell a tick. A tick lets that department's staff SEND
+# requests to that board; it never makes them members. One Save for the grid,
+# audited as one line per department that changed.
+
+def departments(ctx):
+    from .. import Response
+    from ... import departments as dept
+    common.require_sysadmin(ctx)
+    msg, err = ctx.request.query.get("msg", ""), ctx.request.query.get("err", "")
+    q = ctx.request.query.get("q", "").strip().lower()
+    rows = dept.all_departments(ctx.conn)
+    boards = dept.live_boards(ctx.conn)
+    have = dept.ticks(ctx.conn)
+    shown = [r for r in rows if not q or q in r["name"].lower()]
+    fallback = ""
+    if not dept.any_configured(ctx.conn) and ctx.config.employee_portal_department_set:
+        fallback = ("<div class='banner ok'>No box is ticked yet, so the Employee Portal door is still going by "
+                    "the setting PSA_EMPLOYEE_PORTAL_DEPARTMENTS (" + t.esc(", ".join(sorted(
+                        ctx.config.employee_portal_department_set))) + "). The first Save here takes over.</div>")
+    head = "".join(
+        f"<th class=colhead><label title='All departments'><input type=checkbox data-col='{t.esc(b['board_id'])}'"
+        f" aria-label='All departments on {t.esc(b['display_name'])}'> {t.esc(b['display_name'])}</label></th>"
+        for b in boards)
+    trs = []
+    for r in shown:
+        on = have.get(r["name"], set())
+        cells = "".join(
+            f"<td class=center><input type=checkbox name='tick' value='{t.esc(r['name'])}|{t.esc(b['board_id'])}'"
+            f"{' checked' if b['board_id'] in on else ''} aria-label='{t.esc(r['name'])} to {t.esc(b['display_name'])}'></td>"
+            for b in boards)
+        trs.append(
+            f"<tr data-dept='{t.esc(r['name'].lower())}'{' style=opacity:.55' if r['retired'] else ''}>"
+            f"<td><label><input type=checkbox data-row='{t.esc(r['name'])}' aria-label='All boards for {t.esc(r['name'])}'>"
+            f" <b>{t.esc(r['name'])}</b></label>"
+            + (" <span class=chip>retired</span>" if r["retired"] else "")
+            + (" <span class=muted>by hand</span>" if r["source"] == "MANUAL" else "") + "</td>"
+            f"<td class=center>{'<span class=chip>open</span>' if on & {b['board_id'] for b in boards} else '<span class=muted>closed</span>'}</td>"
+            + cells + "</tr>")
+    # every known department is submitted, shown or not, so a filtered Save
+    # never unticks what is off screen
+    hidden = "".join(
+        f"<input type=hidden name=tick value='{t.esc(r['name'])}|{t.esc(b)}'>"
+        for r in rows if r not in shown for b in have.get(r["name"], set()))
+    body = (
+        (f"<div class='banner ok'>{t.esc(msg)}</div>" if msg else "")
+        + (f"<div class='banner err'>{t.esc(err)}</div>" if err else "") + fallback
+        + "<h1>Departments</h1><p class=sub>Tick which departments may <b>send requests to</b> which boards. "
+          "A tick opens My requests on the Employee Portal for that department and offers the board on the "
+          "portal's form; it never makes anyone a board member. Unticked, a department's requests land on "
+          "Unrouted. Names are exact, as payroll spells them. <a href='/admin'>Setup</a></p>"
+          "<div class=card><form method=get class=row><div><input name=q value='" + t.esc(q) + "' placeholder='filter departments'></div>"
+          "<div style='flex:0 0 auto'><button type=submit class=ghost>Filter</button></div></form>"
+          f"<p class=why>{len(rows)} department(s); {len(boards)} live board(s). Import the list from payroll with "
+          "<code>psaspine import-departments &lt;db&gt; departments.csv</code> (one column, Department); a re-run adds and "
+          "retires, never deletes.</p></div>"
+          "<div class=card><form method=post action='/admin/departments/save' id=deptgrid>" + hidden
+        + "<div class=tablewrap><table class=grid><thead><tr><th>Department</th><th>My requests</th>" + head
+        + "</tr></thead><tbody>" + "".join(trs) + "</tbody></table></div>"
+          "<div style='margin-top:12px'><button type=submit>Save the grid</button></div></form></div>"
+          "<div class=card><h3>" + t.icon("plus") + "Add a department</h3><form method=post action='/admin/departments/add' class=row>"
+          "<div><input name=name required maxlength=100 placeholder='exactly as payroll will spell it'></div>"
+          "<div style='flex:0 0 auto'><button type=submit class=ghost>Add</button></div></form></div>")
+    return Response(body=t.page("Departments", body, user=ctx.user, active="admin"))
+
+
+def _dept_back(**q):
+    from .. import redirect
+    return redirect("/admin/departments?" + urllib.parse.urlencode({k: v for k, v in q.items() if v}))
+
+
+def departments_save(ctx):
+    from ... import departments as dept
+    common.require_sysadmin(ctx)
+    wanted: dict[str, set[str]] = {}
+    for value in ctx.request.form_list("tick"):
+        name, _, board_id = value.partition("|")
+        if name and board_id:
+            wanted.setdefault(name, set()).add(board_id)
+    lines = dept.save_grid(ctx.conn, wanted, at=ctx.now, actor=ctx.user.id)
+    ctx.conn.commit()
+    return _dept_back(msg=("Saved: " + "; ".join(lines)) if lines else "Nothing changed.")
+
+
+def departments_add(ctx):
+    from ... import departments as dept
+    common.require_sysadmin(ctx)
+    try:
+        name = dept.add(ctx.conn, ctx.request.form().get("name", ""), at=ctx.now, actor=ctx.user.id)
+    except ValueError as exc:
+        return _dept_back(err=str(exc))
+    ctx.conn.commit()
+    return _dept_back(msg=f"Added {name}. Tick its boards and save.")

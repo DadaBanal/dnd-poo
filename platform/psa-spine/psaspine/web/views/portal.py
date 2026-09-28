@@ -111,21 +111,37 @@ def index(ctx):
                  "anything yet.</div></div>")
 
     body = ("<h1>Your requests</h1>"
-            "<p class='sub'>Everything you have asked IT for, and where each one "
-            "has got to.</p>" + _raise_form() + table)
+            "<p class='sub'>Everything you have asked for, and where each one "
+            "has got to.</p>" + _raise_form(boards=_my_boards(ctx)) + table)
     return Response(body=t.page("Your requests", body, user=ctx.user))
 
 
-def _raise_form(error: str = "", notice: str = "") -> str:
+def _my_boards(ctx):
+    """The boards this requester's department may raise onto (Setup ›
+    Departments). Empty: the request lands on Unrouted, as always."""
+    from ... import departments
+    return departments.boards_for(ctx.conn, getattr(ctx.user, "department", None))
+
+
+def _raise_form(error: str = "", notice: str = "", *, boards=()) -> str:
     err = f"<div class='banner err'>{t.esc(error)}</div>" if error else ""
     note = f"<div class='banner ok'>{t.esc(notice)}</div>" if notice else ""
+    boards = list(boards)
+    if len(boards) > 1:
+        who = _radio_group("board_id", "Who is this for?",
+                           [(b["board_id"], b["display_name"]) for b in boards])
+    elif len(boards) == 1:
+        who = (f"<input type='hidden' name='board_id' value='{t.esc(boards[0]['board_id'])}'>"
+               f"<p class='why' style='margin:0'>This goes to <b>{t.esc(boards[0]['display_name'])}</b>.</p>")
+    else:
+        who = ""
     return (err + note +
             "<div class='card'><h3><svg class=ic aria-hidden=true><use href=#i-plus></use></svg>Raise a request</h3>"
             "<form class='stack' method='post' action='/my/new' style='max-width:none'"
             " enctype='multipart/form-data'>"
             "<label>What do you need? "
             "<input name='summary' required maxlength='200' "
-            "placeholder='Printer in ward 3 is offline'></label>"
+            "placeholder='Printer in ward 3 is offline'></label>" + who
             + _radio_group("kind", "Is something broken, or do you need something?",
                            KIND_CHOICES, required=False)
             + _radio_group("impact", "Who is affected?", WHO_IS_AFFECTED) +
@@ -279,25 +295,33 @@ def create(ctx):
     form = ctx.request.form()
     summary = form.get("summary", "").strip()
     description = form.get("description", "").strip()
-    if not summary:
+    mine = _my_boards(ctx)
+
+    def again(error):
         return Response("400 Bad Request", t.page(
-            "Your requests",
-            "<h1>Your requests</h1>" + _raise_form(error="Tell us what you need."),
-            user=ctx.user))
+            "Your requests", "<h1>Your requests</h1>" + _raise_form(error=error, boards=mine), user=ctx.user))
+    if not summary:
+        return again("Tell us what you need.")
     impact = form.get("impact", "")
     urgency = form.get("urgency", "")
     if impact not in dict(WHO_IS_AFFECTED) or urgency not in dict(PATIENT_WAITING):
-        return Response("400 Bad Request", t.page(
-            "Your requests",
-            "<h1>Your requests</h1>" + _raise_form(
-                error="Please answer both questions: who is affected, and whether "
-                      "a patient is waiting."),
-            user=ctx.user))
+        return again("Please answer both questions: who is affected, and whether a patient is waiting.")
     # Computed, never chosen: the requester answered two questions and the
     # matrix decides (inside tickets.open_ticket). There is no priority field.
 
-    board = ctx.conn.execute(
-        "SELECT board_id FROM board WHERE is_unrouted = 1").fetchone()
+    # Where it lands: a board the requester's department is ticked for (Setup
+    # › Departments), checked here and not only in the form; else Unrouted,
+    # where Dispatch routes it, as always.
+    chosen = form.get("board_id", "")
+    allowed = {b["board_id"] for b in mine}
+    if chosen and chosen not in allowed:
+        return again("That is not one of the places your department can send a request to.")
+    if not chosen and len(allowed) == 1:
+        chosen = next(iter(allowed))
+    if not chosen and len(allowed) > 1:
+        return again("Tell us who this is for.")
+    board = (ctx.conn.execute("SELECT board_id FROM board WHERE board_id = ?", (chosen,)).fetchone()
+             if chosen else ctx.conn.execute("SELECT board_id FROM board WHERE is_unrouted = 1").fetchone())
     if board is None:
         return Response("503 Service Unavailable", t.page(
             "Your requests",
@@ -327,6 +351,7 @@ def create(ctx):
 
     if findings or refused:
         notice = f"Raised as {ticket_id}."
+        mine = _my_boards(ctx)
         if findings:
             notice += (" It looks like your message may contain "
                        "patient details. We have flagged it so it can be removed -- next "
@@ -335,7 +360,7 @@ def create(ctx):
         if refused:
             notice += " " + " ".join(refused)
         return Response(body=t.page("Your requests", (
-            "<h1>Your requests</h1>" + _raise_form(notice=notice)), user=ctx.user))
+            "<h1>Your requests</h1>" + _raise_form(notice=notice, boards=mine)), user=ctx.user))
     return redirect(f"/my/{ticket_id}")
 
 

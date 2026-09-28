@@ -77,6 +77,10 @@ class User:
     via: str = "entra"                       # 'entra' | 'windows' | 'portal' | 'local'
     is_sysadmin: bool = False
     roles: dict[str, str] = field(default_factory=dict)   # board_id -> access
+    # The requester's department, when a door learned it (the Employee Portal
+    # door from payroll, the Windows door from the AD contact). It decides
+    # which boards the portal's raise form offers (Setup › Departments).
+    department: str | None = None
     # Set per request by the app, never stored in a session: this person gets
     # the requester's shell (My requests only) because they are on no board,
     # or because the request came to the portal's own address.
@@ -248,17 +252,31 @@ def authenticate_windows(conn: sqlite3.Connection, username: str, password: str,
                  subject_kind="windows_account", subject_id=name, detail=reason)
         conn.commit()
         raise Unauthenticated(f"Windows sign-in refused: {reason}")
-    contact = conn.execute(
-        "SELECT contact_id, display_name, email FROM contact"
-        " WHERE (LOWER(sam_account) = ? OR LOWER(upn) LIKE ?) AND inactive = 0"
-        " ORDER BY CASE WHEN LOWER(sam_account) = ? THEN 0 ELSE 1 END LIMIT 1",
-        (name, name + "@%", name)).fetchone()
+    contact = contact_for_account(conn, name)
     db.audit(conn, at=stamp, actor=name, action="WINDOWS_LOGIN", subject_kind="windows_account",
              subject_id=name, detail=("contact " + contact["contact_id"]) if contact else "no contact row")
     conn.commit()
     return User(id=name, name=contact["display_name"] if contact else name,
                 email=(contact["email"] or "").lower() or None if contact else None,
-                via="windows", roles=board_roles(conn, name))
+                via="windows", roles=board_roles(conn, name),
+                department=(contact["department"] or None) if contact else None)
+
+
+def _like_literal(text: str) -> str:
+    """`text` as a LIKE prefix that means itself: `_` and `%` are wildcards."""
+    return text.replace("\\", "\\\\").replace("_", "\\_").replace("%", "\\%")
+
+
+def contact_for_account(conn: sqlite3.Connection, account: str):
+    """The active AD contact for a lower-case sAMAccountName: the exact account
+    first, else the UPN that starts with it. The UPN match escapes `_` and `%`
+    so `j_cruz` never binds to `jacruz`'s email (SQL01's review, 28 Sep 2026).
+    Shared by the Windows door and the Employee Portal door."""
+    return conn.execute(
+        "SELECT contact_id, display_name, email, department FROM contact"
+        " WHERE (LOWER(sam_account) = ? OR LOWER(upn) LIKE ? ESCAPE '\\') AND inactive = 0"
+        " ORDER BY CASE WHEN LOWER(sam_account) = ? THEN 0 ELSE 1 END LIMIT 1",
+        (account, _like_literal(account) + "@%", account)).fetchone()
 
 
 def board_roles(conn: sqlite3.Connection, member: str) -> dict[str, str]:
@@ -315,12 +333,14 @@ def read_session(token: str, secret: bytes, *, now: float | None = None) -> dict
     return payload
 
 
-def open_session(user: User, secret: bytes, *, now: float | None = None) -> str:
+def open_session(user: User, secret: bytes, *, now: float | None = None,
+                 lifetime: int = SESSION_SECONDS) -> str:
     now = time.time() if now is None else now
-    return sign_session(
-        {"sub": user.id, "name": user.name, "email": user.email, "via": user.via,
-         "sysadmin": user.is_sysadmin, "iat": int(now),
-         "exp": int(now) + SESSION_SECONDS}, secret)
+    payload = {"sub": user.id, "name": user.name, "email": user.email, "via": user.via,
+               "sysadmin": user.is_sysadmin, "iat": int(now), "exp": int(now) + lifetime}
+    if user.department:
+        payload["dept"] = user.department
+    return sign_session(payload, secret)
 
 
 def user_from_session(conn: sqlite3.Connection, payload: dict) -> User:
@@ -330,7 +350,7 @@ def user_from_session(conn: sqlite3.Connection, payload: dict) -> User:
     return User(id=payload["sub"], name=payload.get("name", payload["sub"]),
                 email=payload.get("email"), via=payload.get("via", "entra"),
                 is_sysadmin=bool(payload.get("sysadmin")),
-                roles=board_roles(conn, payload["sub"]))
+                roles=board_roles(conn, payload["sub"]), department=payload.get("dept"))
 
 
 # ----------------------------------------------------------------- Entra JWT

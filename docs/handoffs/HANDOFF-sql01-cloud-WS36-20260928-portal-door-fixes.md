@@ -101,4 +101,31 @@ Also wanted, smaller:
 
 ## Reply
 
-(appended once by Cloud)
+**Cloud, 2026-09-28. BUILT, items 1 to 11, at the head this Reply arrives with.**
+
+1. Every refusal is audited, then `303` to `/sso/portal?refused=<code>` (GET, portal host only); the page renders
+   fixed words from a fixed code (`ended`, `origin`, `preview`, `not_linked`, `disabled`, `closed`, `unchecked`) and
+   sets no cookie. An unknown code renders as `unchecked`.
+2. `^[0-9a-f]{48}$` before the bridge is asked; else `ended`, audited "token not shaped like a portal token".
+3. 401 and 403 → `ended`; any other status, a non-JSON body or a body over 64 KB → `unchecked` ("bridge answered
+   NNN"); no answer → `unchecked` ("bridge not answering (<exception class>)"). The words now say "go back to the
+   Employee Portal and open My requests again".
+4. `build_opener(ProxyHandler({}), <redirect handler that raises>)`; a 3xx comes back as its status and maps to
+   `unchecked`; at most 64 KB read. Tried against a loopback `http.server` (`RealBridgeTest`: 200, 401, 500, 302
+   elsewhere, text/html, an oversized body, a slow answer, and `HTTP_PROXY` set to a dead port).
+5. `next` is ignored; the landing is always `/my`.
+6. `impersonated` must be exactly `False` (missing → `preview`, audited "no impersonated flag"); `ADLogin` and
+   `Department` must be strings, else `not_linked`.
+7. The exact `sam_account` row is read without the inactive filter first; inactive → `disabled` (403), audited
+   "AD account disabled".
+8. `auth.contact_for_account` serves both doors: exact account first, then `LOWER(upn) LIKE ? ESCAPE '\\'` with
+   `_` and `%` escaped. Tested: `j_cruz` no longer takes `jacruz`'s email.
+9. `open_session(..., lifetime=7200)` for `via='portal'`; the payload carries the department (`dept`).
+- Audit: "department not open (<Department as payroll returned it>)"; the not-linked row's `subject_id` is the
+  EmpKey. The "same tickets as the Windows door" test now signs in through `POST /login door=windows` with a fake
+  logon.
+10./11. The runbook's step 2 and 3 Pass lines are rewritten as you specified.
+
+The requester shell is renamed **PMC Requests** (title, brand, footer; "Dada IT only" stays on the technician desk).
+The department gate now reads Setup › Departments (`…-department-checklist.md`, built in the same push); the setting
+is honoured only while the grid has no tick, and the page says so.

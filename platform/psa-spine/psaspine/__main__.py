@@ -107,6 +107,12 @@ def main(argv: list[str] | None = None) -> int:
     pac.add_argument("--company", required=True, dest="entity_id",
                      help="the company these people belong to, e.g. PMC")
 
+    pdp = sub.add_parser("import-departments",
+                         help="upsert the department list from a one-column CSV (Department); "
+                              "a re-run adds and retires, never deletes")
+    pdp.add_argument("database", help=DB_HELP)
+    pdp.add_argument("export_csv")
+
     pcf = sub.add_parser("import-computers",
                          help="upsert configurations under one company from an AD "
                               "computers export (scripts/Export-PmcAdComputers.ps1)")
@@ -270,6 +276,18 @@ def _run(conn, a) -> int:
         if placed != c["files"]:
             print("REFUSED: a message was neither placed nor counted", file=sys.stderr)
             return 1
+        return 0
+
+    if a.cmd == "import-departments":
+        from . import departments
+        try:
+            c = departments.import_csv(conn, a.export_csv, at=datetime.now())
+        except (LookupError, ValueError) as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        conn.commit()
+        print(f"{c['rows']} names: {c['new']} new, {c['seen']} seen, {c['restored']} restored, "
+              f"{c['retired']} retired")
         return 0
 
     if a.cmd == "import-contacts":

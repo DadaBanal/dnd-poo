@@ -148,6 +148,7 @@ dialog#pal::backdrop{background:rgb(10 12 18/.35);-webkit-backdrop-filter:blur(3
 .timefields.compact{grid-template-columns:repeat(3,minmax(0,1fr))} @container (min-width:640px){.timefields{grid-template-columns:repeat(5,minmax(0,1fr))}}
 .timefields label{display:block} details.timeblock{margin-top:10px} details.timeblock>summary{cursor:pointer;font-weight:600;color:var(--ink-2);display:flex;align-items:center;gap:6px}
 table.compact td,table.compact th{padding:4px 8px;font-size:12px} td.num{text-align:right;font-variant-numeric:tabular-nums}
+td.center{text-align:center} th.colhead label{font-weight:600;white-space:nowrap} th.colhead input,td.center input{width:auto}
 .pods{min-height:56px;border-radius:var(--r-lg)} .pods.over-col{outline:2px dashed var(--accent);outline-offset:4px}
 .pods .card[data-pod] h3{padding-right:112px}
 .pods:empty::after,.pods.blank::after{content:"Drop a card here";display:block;color:var(--ink-3);font-size:12px;text-align:center;padding:14px;border:1px dashed var(--line-2);border-radius:var(--r-lg)}
@@ -499,6 +500,10 @@ addEventListener("pageshow",function(){if(np)np.className=""});
   $("button",reset).addEventListener("click",function(){save({});all().forEach(function(c){c.classList.remove("collapsed")});
     cols.forEach(function(c){(c.dataset.order||"").split(",").forEach(function(k){var p=byKey(k);if(p)c.appendChild(p)})});apply()});
   apply()})();
+/* the departments grid: a row or column box ticks its line */
+var dg=$("#deptgrid");if(dg){dg.addEventListener("change",function(e){var b=e.target;
+  if(b.dataset.row!==undefined){$$("input[name=tick]",dg).forEach(function(c){if(c.value.split("|")[0]===b.dataset.row)c.checked=b.checked})}
+  if(b.dataset.col!==undefined){$$("input[name=tick]",dg).forEach(function(c){if(c.value.split("|")[1]===b.dataset.col)c.checked=b.checked})}})}
 /* a standard note fills the note box and sets its flag; the words stay editable */
 var sn=$("#stdnote");if(sn)sn.addEventListener("change",function(){var o=sn.options[sn.selectedIndex];if(!o||!o.value)return;
   var f=sn.closest("form"),ta=$("textarea[name=body]",f),fl=$("input[name=flag][value='"+o.dataset.flag+"']",f);
@@ -807,15 +812,17 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         '<meta name=theme-color media="(prefers-color-scheme: light)" content="#f4f5f8">'
         '<meta name=theme-color media="(prefers-color-scheme: dark)" content="#0f1115">'
         f'<link rel=icon href="{FAVICON}">'
-        f"<title>{esc(title)} · {'PMC IT help' if requester else 'PSA desk'}</title>{THEME_BOOT}"
+        f"<title>{esc(title)} · {'PMC Requests' if requester else 'PSA desk'}</title>{THEME_BOOT}"
         f"<style>{STYLE}</style></head><body{' data-requester' if requester else ''}>"
         f'<div id="nprog" aria-hidden="true"></div>{SPRITE}'
         f'<header class="top"><a class="brand" href="{"/my" if requester else "/"}"><i></i>'
-        f'{"PMC IT help" if requester else "PSA desk"}</a>'
+        f'{"PMC Requests" if requester else "PSA desk"}</a>'
         f"<nav>{nav}</nav>{who}</header>"
         f"<main>{body}</main>"
-        "<footer>PMC PSA spine — Phase B pilot. LAN only, Dada IT only. "
-        "Kitameraki remains the system of record until dual-run ends.</footer>"
+        + ("<footer>PMC Requests — a request reaches the department it is for.</footer>" if requester else
+           "<footer>PMC PSA spine — Phase B pilot. LAN only, Dada IT only. "
+           "Kitameraki remains the system of record until dual-run ends.</footer>")
+        +
         f"{palette}<script>{SCRIPT}</script></body></html>")
 
 

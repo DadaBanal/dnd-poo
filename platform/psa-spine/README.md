@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 504 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 512 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -611,16 +611,47 @@ The portal page posts its session token, top-level in a new tab, to
 `/logout` clears the cookie with `Secure` when the world is https, so the
 portal's *Sign out* can end the desk session too.
 
+Hardened before it reached ward PCs (SQL01's review, 28 Sep): every refusal
+is audited and then a **redirect to a GET page** with fixed words
+(`/sso/portal?refused=<code>`), so a refused tab reloaded by the next person
+on a shared PC cannot re-send a token; a token must look like one (48 hex)
+before the bridge is asked; only a bridge 401 or 403 means "session has
+ended", anything else is "could not be checked"; the bridge is called with
+no proxy and no redirect followed, 64 KB at most; the answer is read
+strictly; a Windows account the AD import marks inactive is refused; the
+UPN lookup escapes `_` and `%` in both doors; a portal session lasts two
+hours. The requester shell is branded **PMC Requests**: a request may be for
+any department.
+
 | Setting | What |
 |---|---|
 | `PSA_EMPLOYEE_PORTAL_ORIGINS` | comma list of the **https** origins the form may come from, e.g. `https://portal.pmcne.ph,https://payroll.pmcne.ph`. Unset: the door is off (404). A non-https entry is dropped, never accepted. |
 | `PSA_EMPLOYEE_PORTAL_BRIDGE` | the bridge the desk asks, default `http://127.0.0.1:4100`. |
-| `PSA_EMPLOYEE_PORTAL_DEPARTMENTS` | comma list of department names exactly as payroll holds them. Unset or empty: nobody passes. Dada's list. |
+| `PSA_EMPLOYEE_PORTAL_DEPARTMENTS` | a migration only: comma list of department names, honoured while Setup › Departments has no tick. After the first Save the grid decides and this may go. |
 
 The portal side (the link, the card, *Sign out* also loading `/logout`) is
 SQL01's, deployed only after this door passes on the host. NOT VERIFIED
 against the real bridge from here: the tests hand the Config a fake
 (`bridge_get`), and SQL01's Reply is the proof.
+
+## Departments and boards (28 Sep 2026)
+
+Dada's checklist: **Setup › Departments**, a grid where a system administrator
+ticks which departments may **send requests to** which boards. A tick never
+makes anyone a board member; it opens *My requests* on the Employee Portal
+for that department and offers the board on the portal's raise form. Unticked,
+a department's requests land on Unrouted, where Dispatch routes them, as
+always.
+
+The list comes from payroll as a one-column CSV (`Department`, exact names,
+no people): `psaspine import-departments <db> departments.csv`. A re-run adds
+new names, retires names that have gone (their ticks kept) and restores a
+name that returns; a department payroll does not have yet is added by hand.
+One Save for the grid, audited as one line per department that changed. The
+requester's department rides on the session: from payroll for the Employee
+Portal door, from the AD contact's `department` attribute for the Windows
+door. On `/my`: one ticked board says where the request goes; several ask
+"Who is this for?"; the choice is checked on the server.
 
 ## Requester intake (Phase C)
 
@@ -774,7 +805,7 @@ PSA_TEST_DB="Driver={ODBC Driver 18 for SQL Server};Server=127.0.0.1,1433;Databa
 
 Each test empties the database and reseeds it (`db.init(…, reset=True)`, a
 test-only path) and the same assertions run unchanged. **MEASURED, 28 Sep 2026,
-SQL Server 2022 Express 16.0 in a container: 504 tests, OK, 8 skipped** (the
+SQL Server 2022 Express 16.0 in a container: 512 tests, OK, 8 skipped** (the
 eight are SQLite's own file settings: WAL, busy timeout, the escrow copy). CI
 runs the same job against a service container on every push. NOT VERIFIED on
 `DND-SQL01` itself, which no session here can reach; the handoff's step 6 is

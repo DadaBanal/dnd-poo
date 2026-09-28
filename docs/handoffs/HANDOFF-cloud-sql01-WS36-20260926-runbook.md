@@ -263,22 +263,39 @@ gone. Two things follow from it.
   1. Pull; restart `PSA-Desk`; the SQLite suite as SQL01's user.
   2. Set the three settings; restart `PSA-Desk`. **Pass:** on the loopback,
      with `X-Forwarded-Host: help.pmcne.ph`, a POST to `/sso/portal` with
-     `Origin: https://portal.pmcne.ph` and a made-up token answers **401**
-     with "Your Employee Portal session has ended" (the bridge said no); the
-     same POST with `Origin: http://portal.pmcne.ph` answers **403**; a POST
-     to `desk.pmcne.ph/sso/portal` answers **404**; `psa.audit_event` holds
-     one `PORTAL_SSO_REFUSED` row per try with the reason in words and no
-     token text.
-  3. With `PSA_EMPLOYEE_PORTAL_DEPARTMENTS` still unset, the operator signs
-     in to the Employee Portal on a staff PC and posts the token by hand (a
-     one-line form on the operator's own machine, or SQL01's test page served
-     from the portal origin). **Pass:** 403 "not open for your department yet",
-     audited. Nothing is deployed to the Employee Portal for this step.
-  4. Dada names the first department(s); set them; restart. The operator
-     repeats step 3 as an employee of that department. **Pass:** `/my` with
-     that person's requests, the requester's layout, `PORTAL_SSO` audited with
-     the ADLogin; the cookie has no `Max-Age`; closing the browser and
-     reopening `help.pmcne.ph/my` shows the sign-in page.
+     `Origin: https://portal.pmcne.ph` and a made-up token answers **303 to
+     `/sso/portal?refused=ended`**, and that page **401** "Your Employee
+     Portal session has ended" (the bridge said no); the same POST with
+     `Origin: http://portal.pmcne.ph` answers 303 to `?refused=origin`, a
+     **403**; a POST to `desk.pmcne.ph/sso/portal` answers **404** and writes
+     nothing. (Corrected per part 12, item 10: since the door was hardened
+     every refusal is a redirect first, and the desk-host 404 writes no
+     row.) `psa.audit_event` holds one `PORTAL_SSO_REFUSED` row for each
+     refused try on the portal host ("bridge answered 401", "origin not
+     allowed (not https)", "origin not allowed"), none for the 404, and no
+     token text in any row. SQL01's `Test-PsaPortalDoor.ps1` makes 5 refused
+     tries plus the 404 and expects exactly 5 rows.
+  3. With no department open (the Setup › Departments grid empty and
+     `PSA_EMPLOYEE_PORTAL_DEPARTMENTS` unset), the operator signs in to the
+     Employee Portal and posts the token **one of the two ways that pass the
+     Origin rule** (corrected per part 12, item 11): a form submitted from
+     DevTools on the signed-in `portal.pmcne.ph` tab (the token never leaves
+     the page or lands on disk), or a loopback POST with
+     `Origin: https://portal.pmcne.ph` and `X-Forwarded-Host: help.pmcne.ph`,
+     the token taken with `Read-Host` into a variable and never pasted on a
+     command line. A local file posts `Origin: null` and a localhost page
+     `Origin: http://localhost`; both are refused for the origin, not the
+     department, and do not count. **Pass:** 303 to `?refused=closed`, then
+     403 "not open for your department yet", audited "department not open
+     (<the Department payroll returned>)". Nothing is deployed to the
+     Employee Portal for this step. (Part 12: PASS, 28 Sep 07:48.)
+  4. Dada names the first department(s) **in Setup › Departments** (below),
+     not in the setting: import the list, tick the board(s), Save. The
+     operator repeats step 3 as an employee of that department. **Pass:**
+     `/my` with that person's requests, the requester's layout, `PORTAL_SSO`
+     audited with the ADLogin and the department; the cookie has no
+     `Max-Age` and the session inside it is good for two hours; closing the
+     browser and reopening `help.pmcne.ph/my` shows the sign-in page.
   5. Only then SQL01 deploys the portal edit (a dated copy beside the live
      file, no `bridge.js` change, Dada's sight of the preview), and the
      operator opens *My requests* from the Employee Portal on a ward PC.
@@ -287,6 +304,56 @@ gone. Two things follow from it.
      sign-in page).
   If a Pass fails, the door is left as it is (it refuses safely) and the
   failing status and page words go into the Reply.
+
+## Folded in from part 12 (28 Sep): the door hardened, the department checklist
+
+Part 12: steps 1 to 3 PASS, the real token accepted and refused only by the
+department gate; SQL01's three-lens review of `e2e4bc8`; Dada's checklist.
+Both handoffs are built at the head this section arrives with, and each has
+its Reply appended.
+
+- **The nine fixes before ward PCs are in.** Every refusal is audited and
+  then a **303 to `/sso/portal?refused=<code>`**, a GET page with fixed
+  words, so a refused tab reloaded by the next person on a shared PC cannot
+  re-send a token. A token must look like one (48 hex) before the bridge is
+  asked. Only a bridge 401/403 means "session has ended"; any other answer
+  is "could not be checked" with the words "go back to the Employee Portal
+  and open My requests again". `bridge_get` uses no proxy and follows no
+  redirect, and reads at most 64 KB. `next` is ignored: the landing is `/my`.
+  The bridge's answer is read strictly (`impersonated` must be exactly
+  false; ADLogin and Department must be strings). A Windows account the AD
+  import marks inactive is refused ("Your Windows account is disabled")
+  and audited "AD account disabled". The UPN lookup escapes `_` and `%` in
+  both doors. A portal session is good for **two hours**. The audit says
+  which department was refused, and a not-linked row carries the EmpKey.
+  Step 2's and step 3's Pass lines above are corrected (items 10 and 11).
+- **The requester shell is "PMC Requests"** (title, brand, footer), not
+  "PMC IT help", per Dada's rule that requests may be for any department;
+  the "Dada IT only" footer stays on the technician desk only.
+- **Setup › Departments replaces `PSA_EMPLOYEE_PORTAL_DEPARTMENTS`.** On the
+  host, in order:
+  1. Produce `departments.csv` from payroll (read-only, one column,
+     `Department`, the 52 distinct `Employee.Department` names, no people)
+     and run `psaspine import-departments $db D:\psa\departments.csv` as
+     `psa_desk`. **Pass:** "52 names: 52 new, 0 seen, 0 restored, 0
+     retired"; a second run says "0 new, 52 seen". Re-run it whenever payroll
+     changes; a name gone from payroll is retired and keeps its ticks.
+  2. Dada opens Setup › Departments on `desk.pmcne.ph`, ticks which boards
+     each department may send requests to (Unrouted is not a column; an
+     unticked department's requests land there as today), and saves. One
+     `DEPARTMENT_BOARDS` audit row per Save, as "Ward A: + IT Help".
+  3. Until the first Save, the door still honours the setting as a
+     migration and the page says so; after it, clear the setting with
+     `Set-PsaDeskEnv.ps1` (its `-EmployeePortalDepartments` may go) and
+     restart `PSA-Desk`. **Pass:** the page no longer shows the banner about
+     the setting.
+  4. Step 4 above then runs against the grid: an employee of a ticked
+     department reaches `/my`, sees "This goes to <board>" (one tick) or
+     "Who is this for?" (several), and the request lands on that board with
+     source Portal; a department with no tick is "not open".
+  A Windows-door requester's department is the AD contact's `department`
+  attribute from the contact import; unknown, their request lands on
+  Unrouted.
 
 ## When a step does not pass
 

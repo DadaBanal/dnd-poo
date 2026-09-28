@@ -166,6 +166,8 @@ BEGIN
     PRINT N'    psa.survey_response';
     PRINT N'    psa.work_role';
     PRINT N'    psa.work_type';
+    PRINT N'    psa.department';
+    PRINT N'    psa.department_board';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -193,13 +195,14 @@ BEGIN
     PRINT N'    psa.ix_ticket_schedule_day';
     PRINT N'    psa.ix_ticket_schedule_ticket';
     PRINT N'    psa.ix_time_entry_ticket';
+    PRINT N'    psa.ix_department_board_board';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  75 tables, 26 indexes, 4 triggers.';
+    PRINT N'  77 tables, 27 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -2052,6 +2055,41 @@ CREATE TABLE psa.[work_type] (
 END;
 
 -- --------------------------------------------------------------------------
+-- department   (from schema/034_departments.sql)
+IF OBJECT_ID(N'psa.[department]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[department] (
+    [name] NVARCHAR(400) NOT NULL CONSTRAINT [PK_department] PRIMARY KEY,
+    [source] NVARCHAR(32) NOT NULL CONSTRAINT [DF_department_source] DEFAULT ('MANUAL') CONSTRAINT [CK_department_01] CHECK (source IN ('PAYROLL', 'MANUAL')),
+    [retired] INT NOT NULL CONSTRAINT [DF_department_retired] DEFAULT (0) CONSTRAINT [CK_department_02] CHECK (retired IN (0, 1)),
+    [created_at] NVARCHAR(64) NOT NULL,
+    [last_seen_at] NVARCHAR(64) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END)),
+    [last_seen_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [last_seen_at], 126), CASE WHEN [last_seen_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [last_seen_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- department_board   (from schema/034_departments.sql)
+IF OBJECT_ID(N'psa.[department_board]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[department_board] (
+    [department] NVARCHAR(400) NOT NULL CONSTRAINT [FK_department_board_department] REFERENCES psa.[department]([name]),
+    [board_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_department_board_board_id] REFERENCES psa.[board]([board_id]),
+    [ticked_at] NVARCHAR(64) NOT NULL,
+    [ticked_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [ticked_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [ticked_at], 126), CASE WHEN [ticked_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [ticked_at], 112) END)),
+    CONSTRAINT [PK_department_board] PRIMARY KEY ([department], [board_id])
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -2375,6 +2413,9 @@ CREATE INDEX [ix_ticket_schedule_ticket] ON psa.[ticket_schedule] ([work_item_id
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_time_entry_ticket' AND object_id = OBJECT_ID(N'psa.[time_entry]'))
 CREATE INDEX [ix_time_entry_ticket] ON psa.[time_entry] ([work_item_id], [worked_on]);
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_department_board_board' AND object_id = OBJECT_ID(N'psa.[department_board]'))
+CREATE INDEX [ix_department_board_board] ON psa.[department_board] ([board_id]);
+
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
@@ -2510,10 +2551,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 75 OR @Triggers <> 4 OR @Indexes < 26
+IF @Tables <> 77 OR @Triggers <> 4 OR @Indexes < 27
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 75), %d triggers (expected 4), %d indexes (expected at least 26). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 77), %d triggers (expected 4), %d indexes (expected at least 27). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -2554,6 +2595,8 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[department_board];
+    DROP TABLE IF EXISTS psa.[department];
     DROP TABLE IF EXISTS psa.[work_type];
     DROP TABLE IF EXISTS psa.[work_role];
     DROP TABLE IF EXISTS psa.[survey_response];

@@ -78,4 +78,26 @@ The desk holds no department list today, and the desk's SQL login should not rea
 
 ## Reply
 
-(appended once by Cloud)
+**Cloud, 2026-09-28. BUILT at the head this Reply arrives with.**
+
+- **Tables (034):** `department` (name is the key, exact, case included; `source` PAYROLL or MANUAL; `retired`,
+  never deleted) and `department_board` (one row per tick, who and when). In the T-SQL port.
+- **The list:** `psaspine import-departments <db> <csv>`, one column `Department`; a re-run adds new names, marks
+  names gone from payroll retired (ticks kept), restores a name that comes back, and leaves a by-hand name alone.
+  Audited `DEPARTMENT_IMPORT` with the counts. Setup › Departments also has *Add a department*.
+- **The page:** `Setup › Departments`, system administrator only. Rows are departments (retired ones dimmed),
+  columns the live service boards (never Unrouted), a filter box, "all boards" per row and "all departments" per
+  column, an *My requests* column derived from the ticks (open / closed), and **one Save** for the grid. A
+  filtered view still submits the off-screen ticks, so a filtered Save unticks nothing it did not show. Audit:
+  one `DEPARTMENT_BOARDS` row per Save, "Ward A: + IT Help, − Maintenance; …".
+- **What obeys it:** the door's gate is "the employee's Department has at least one ticked board"; while no box
+  is ticked, `PSA_EMPLOYEE_PORTAL_DEPARTMENTS` is honoured and the page shows a banner saying so. The department
+  rides on the session (`dept`), from payroll for the portal door and from the AD contact's `department` for the
+  Windows door. The raise form on `/my`: no tick → no question, Unrouted as today; one tick → "This goes to
+  <board>"; several → "Who is this for?"; the chosen board is checked on the server, a board not ticked for the
+  department is refused, and the ticket lands on the board with source Portal. Dispatch is unchanged.
+- **Tests:** `DepartmentsTest` (import/retire/restore, the grid and its audit, the form and the server-side
+  check, the Windows door's department) and `EmployeePortalDoorTest` (the grid decides once a box is ticked; the
+  setting only before). The runbook's "Folded in from part 12" section has the host steps.
+
+Not decided here: which departments get which boards (Dada ticks them).

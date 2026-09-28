@@ -432,7 +432,7 @@ def _route(conn, request: Request, config: Config, now: datetime) -> Response:
     # anywhere but the portal host, or while it is off.
     if request.path == "/sso/portal":
         from . import sso
-        return sso.portal_login(conn, request, config, now)
+        return sso.portal_login(conn, request, config, now)      # GET: the refusal page
 
     if request.path.startswith("/api/"):
         from . import api
