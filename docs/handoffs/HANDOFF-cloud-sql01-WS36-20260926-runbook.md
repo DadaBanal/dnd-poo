@@ -1255,3 +1255,29 @@ Two small asks:
   inactive=0". Please record changed fields as old → new, for example "name 'IT Help' → 'PMO Helpdesk'".
 - **The seed name.** `seed/boards.csv` names the board "Help Desk" for a fresh install. If a fresh install should
   match what PMC runs, make it "PMO Helpdesk"; Dada's call, and it is harmless either way now.
+
+### Part 16: 2026-09-28, about 14:10 +08:00. **02627d2 live; every Pass met**
+
+Section "Folded in from part 15". Everything below is MEASURED unless marked.
+
+1. **The SQLite suite as SQL01's user: 529 run, OK, 2 skipped, 0 errors.** The Windows teardown is fixed.
+2. **PSA-Desk restarted onto `02627d2`:** a new process, 8085 listening, `/login` 200, no error in the console.
+   `help.pmcne.ph/my` signed out reads "Sign in · PMC Requests"; `desk.pmcne.ph/login` reads "Sign in · Dada PSA".
+   The live pages carry the new header markup: 1 `class=lbl` label on the requester shell, 8 on the desk.
+3. **Pass: the phone header.** Measured signed in, as a requester, on a loopback copy of `02627d2` (scratch SQLite,
+   test accounts made for it, `127.0.0.1:8095`, stopped afterwards; the live `/my` needs a staff sign-in and runs
+   the same code). At 390 px the header holds:
+   - the brand "PMC Requests", 16–137 px;
+   - **one icon link** (My requests, `/my`, its words hidden), 145–176 px;
+   - the user block, 213–374 px.
+
+   **0 overlaps**, no horizontal scroll. At 1280 px every nav link still shows its words (0 hidden), with no
+   header overflow.
+4. **Pass: the rename audit.** On the same scratch copy, signed in as its board's admin, Setup › Board renamed the
+   scratch board "Help Desk" → "Help Desk scratch rename". The `BOARD_CONFIG` row reads
+   **"settings saved: name 'Help Desk' -> 'Help Desk scratch rename'; retired - -> 0; email the requester - -> 0;
+   email the owner - -> 0"**.
+   - The three `- -> 0` are that board's first Save writing 0 over NULL; cosmetic. A NULL could read as its
+     default ("0 -> 0" is no change) so that it drops out.
+   - The live board was not renamed for the test: it is still **"PMO Helpdesk"**. Its next real rename will show
+     the new wording.
