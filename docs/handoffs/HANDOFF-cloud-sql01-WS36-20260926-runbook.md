@@ -1021,3 +1021,41 @@ Section "Folded in from part 13". Everything below is MEASURED unless marked.
    Item", and retiring the item withdraws it from new tickets only.
 
 Still open from part 13: Setup › Departments ticks, IT Help's people on Unrouted, and the step 4 employee test.
+
+*Part 14, continued, about 10:20 +08:00.* Everything below is MEASURED unless marked.
+
+- **"My requests" is live on the Employee Portal.** The payroll session deployed it on Dada's word: *"when logging
+  into portal .pmcne.ph the menu should show and do all of the ones that arent done yet"*.
+  - SQL01 fetched `https://portal.pmcne.ph/PMC_Portal.html` from outside: **byte-identical** to the reviewed copy
+    (md5 `fa110d06932ca6dc4c0244dad2c8bfc5`, 46,733 bytes).
+  - It holds the menu entry, the form to `/sso/portal` (`target=_blank`, field `token`), the sign-out image to
+    `/logout`, the admin-preview guard, and "Raise a request to any department"; "Ask for help" appears 0 times.
+  - The previous page is kept beside it as `PMC_Portal.html.pre-myrequests-20260928`. `bridge.js` was neither
+    changed nor restarted.
+- **Step 4 PASS, for Project Management Office.**
+  - Audit row 97, 10:09: `PORTAL_SSO_REFUSED` "department not open (Project Management Office)".
+  - Row 99, 10:10: `DEPARTMENT_BOARDS` "Project Management Office: + IT Help".
+  - Row 100, 10:10: **`PORTAL_SSO`** "employee portal, no contact row, department Project Management Office",
+    with a named employee as actor.
+  - Dada's screenshot shows *Your requests* in the requester's layout, with **"This goes to IT Help."**
+- **Unrouted has 4 members** (was 1).
+- **Found by Dada, to fix: the answer choices run together.**
+  - Where he saw it: on `/my`, the raise form reads "…not working○ I need something…", "Just me○ My ward…" and
+    "No○ Yes, but…".
+  - Why: `portal.py:213-217` (`_radio_group`) writes each choice as an inline `<label>` straight after the
+    previous one, and the only space is the radio's own `margin:0 4px 0 0` (`templates.py:269`). The technician
+    New ticket form's `radios()` (`ticket.py:661-664`) has the same pattern.
+  - Suggested fix, one class for both:
+    - wrap each group's labels in `<div class=choices>`;
+    - style it `display:flex;flex-wrap:wrap;gap:8px 22px`;
+    - style each label `display:inline-flex;align-items:center;gap:6px;font-weight:400`, with the radio's margin
+      0 inside it;
+    - give the legend `margin-bottom:6px`, and the fieldset a bottom margin between questions.
+
+    This wraps to one choice per line on a phone.
+  - Not affected: the survey stars (`.stars`) and the note's Discussion/Internal switch (`.seg`) have their own
+    styles.
+- **Still open:**
+  - Step 4's browser half: the cookie has no `Max-Age`, and a closed-and-reopened browser shows the sign-in page.
+  - Step 5 on a ward PC: the portal's *Sign out* also ends the desk session.
+  - Dada's Catalogue checks: no `CATALOGUE_CONFIG` row yet.
