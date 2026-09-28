@@ -8,3 +8,5 @@ __pycache__/
 *.db.attachments/
 *.db-wal
 *.db-shm
+# Per-machine Claude Code allow-rules; SQL01 found conflict markers in its copy after 2f18bf5.
+.claude/settings.local.json
