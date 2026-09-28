@@ -355,6 +355,48 @@ its Reply appended.
   attribute from the contact import; unknown, their request lands on
   Unrouted.
 
+## Folded in from part 13 (28 Sep): the product is Dada PSA; schema 036; the catalogue setup tables
+
+Part 13: c9a0506 live, 033–035 applied by the sitting-1 road, the hardened door
+PASS, 52 departments imported. Two asks from it are done here, and Dada gave two
+more.
+
+- **`.claude/settings.local.json` is untracked and ignored** (your first
+  "found on the host"). Nothing else in `.claude/` changed. Pull and keep the
+  host's copy.
+- **The 900-byte key warning on `PK_department_board`** is noted and left:
+  payroll's longest name is 44, the key is already applied, and narrowing a live
+  key's column is a migration, not a decision-file edit. Nothing to do.
+- **The product is called Dada PSA.** Every "ConnectWise" in the code, the
+  schema comments, the pages, the CLI banner and the scripts now reads "Dada
+  PSA" where it named the desk's own shape, and "the reference PSA" where a
+  sentence is about the source a design was checked against (its docs, its
+  OpenAPI schema, its University workbook); the citation URLs stay, because a
+  VERIFIED label needs its source. The technician shell's brand "PSA desk" is
+  "Dada PSA" (title and header); the requester shell stays "PMC Requests". The
+  audit action for loading the template is now `CATALOGUE_TEMPLATE` (rows
+  written before this say `CW_TEMPLATE`; history, unchanged). The dated record
+  documents (`docs/WS36-connectwise-*`) and `tools/connectwise_model.py` keep
+  their names: they are about the reference PSA and are not the product.
+- **Schema 036, one more by the sitting-1 road.** Two NULL-able columns:
+  `service_family.inactive` and `service_action.inactive`. Same steps as 033–035
+  (COPY_ONLY backup, preview, stop PSA-Desk, apply as sysadmin with `@Apply = 1`
+  and `@AllowExisting = 1`, start). **Pass:** tables **77 → 77**, columns
+  **714 → 716**, triggers 4, no row count changes, the desk answers `/login`.
+- **Setup › Catalogue** (`/admin/catalogue`, sysadmin) is now the reference PSA's
+  Types / Subtypes / Items setup tables on the desk's tree: Types (the six ITIL
+  kinds, which boards take each, linking to the board's Types tab), Areas,
+  Subtypes and Items each add / rename / retire, and an *Associate* form makes a
+  Subtype › Item pair land on a board. Retiring hides from every picker and
+  leaves every ticket as it was; a ticket carrying a retired pair shows it marked
+  "(retired)" and a save does not clear it. One `CATALOGUE_CONFIG` audit row per
+  change. **Pass, for Dada:** add an area, a subtype under it and an item, pair
+  them onto IT Help, open a new ticket and see the pair under "Subtype › Item";
+  retire the item and a new ticket no longer offers it.
+- **Counts:** the suite is **522 tests** (SQLite OK, 1 skipped; SQL Server OK, 8
+  skipped) at the head this section arrives with; the drift gate and
+  `tests/smoke.py` (7 of 7) pass.
+
 ## When a step does not pass
 
 Every handoff step has a **Pass** line. This is what to do when it is not

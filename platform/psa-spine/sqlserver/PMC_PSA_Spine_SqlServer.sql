@@ -1085,7 +1085,7 @@ END;
 -- somebody codes by hand.
 --
 -- The design drafted three booleans -- stops_respond, stops_resolve, and one
--- more for the plan. ConnectWise carries ONE field instead, and it is better:
+-- more for the plan. The reference PSA carries ONE field instead, and it is better:
 -- the status declares WHICH SLA MILESTONE IT REPRESENTS and the clock engine
 -- derives the rest. NO_ESCALATION is the pause. Taken as-is, because inventing
 -- a worse version of a solved problem is not craft.
@@ -1115,7 +1115,7 @@ CREATE TABLE psa.[board_status] (
     [display_on_board] INT NOT NULL CONSTRAINT [DF_board_status_display_on_board] DEFAULT (1) CONSTRAINT [CK_board_status_05] CHECK (display_on_board IN (0, 1)),
     [sort_order] INT NOT NULL CONSTRAINT [DF_board_status_sort_order] DEFAULT (0),
 
-    -- Retired, never deleted. ConnectWise refuses to delete a board once anything
+    -- Retired, never deleted. The reference PSA refuses to delete a board once anything
     -- references it, and the same is true of a status: the tickets that sat in it
     -- are evidence.
     [inactive] INT NOT NULL CONSTRAINT [DF_board_status_inactive] DEFAULT (0) CONSTRAINT [CK_board_status_06] CHECK (inactive IN (0, 1)),
@@ -1133,7 +1133,7 @@ END;
 -- CIO in another country [MEASURED]. Two names cannot express "who answers at
 -- 02:00, and who answers when they do not".
 --
--- ConnectWise carries four per board -- dispatchMember, dutyManagerMember,
+-- The reference PSA carries four per board -- dispatchMember, dutyManagerMember,
 -- oncallMember, serviceManagerMember -- and documents the duty manager as
 -- "backup for the on-call member ... if the on-call member does not respond to
 -- the ticket within the specified time." That is the escalation chain a hospital
@@ -1195,7 +1195,7 @@ END;
 --
 -- The design said two calendars, CLINICAL_24x7 and MANILA_BUSINESS, as fixed
 -- values. That breaks the first time a board needs a ward roster or a supplier's
--- support window. ConnectWise lets an SLA run on a company calendar, a customer
+-- support window. The reference PSA lets an SLA run on a company calendar, a customer
 -- site calendar, 24x7, or a custom one -- so a calendar is a TABLE.
 --
 -- Philippine public holidays are rows, not code. PMC's holidays are not
@@ -1677,7 +1677,7 @@ END;
 
 -- --------------------------------------------------------------------------
 -- ticket_configuration   (from schema/021_configurations.sql)
--- Which configurations a ticket concerns, as ConnectWise's Configurations tab.
+-- Which configurations a ticket concerns, as Dada PSA's Configurations tab.
 IF OBJECT_ID(N'psa.[ticket_configuration]', N'U') IS NULL
 BEGIN
 CREATE TABLE psa.[ticket_configuration] (
@@ -1719,8 +1719,8 @@ END;
 
 -- --------------------------------------------------------------------------
 -- board_record_type   (from schema/022_record_type.sql)
--- The board's Types: ConnectWise's Types tab. On a service board they are
--- Incident, Request, Problem and Event, the four of ConnectWise's ITIL example
+-- The board's Types: Dada PSA's Types tab. On a service board they are
+-- Incident, Request, Problem and Event, the four of the reference PSA's ITIL example
 -- and Dada's column A, and a ticket reads Type > Subtype > Item (Incident >
 -- Printers > Fix). A board with no rows takes every Type, so a board set up
 -- before this migration behaves as it did. ticket.record_type holds the Type.
@@ -1785,7 +1785,7 @@ END;
 -- ------------------------------------------------ incident -> problem -> change
 --
 -- ITIL's chain: incidents are linked to the problem that causes them, and a
--- problem (or anything else) to the change that fixes it. ConnectWise does this
+-- problem (or anything else) to the change that fixes it. The reference PSA does this
 -- by bundling child tickets under a parent, which stops workflow and billing on
 -- the children and is a known cause of SLA reports running for years on open
 -- children (VERIFIED, visionary360.com/the-hidden-sla-killer-in-connectwise-psa-
@@ -2028,8 +2028,8 @@ END;
 
 -- --------------------------------------------------------------------------
 -- work_role   (from schema/033_time_entry.sql)
--- ConnectWise's WorkRole and WorkType, as the desk needs them: a name, whether
--- it is still offered, and for a type the bill default ConnectWise gives it
+-- Dada PSA's WorkRole and WorkType, as the desk needs them: a name, whether
+-- it is still offered, and for a type the bill default Dada PSA gives it
 -- (WorkType.billTime: Billable, DoNotBill, NoCharge). Setup › Time edits both.
 IF OBJECT_ID(N'psa.[work_role]', N'U') IS NULL
 BEGIN
@@ -2170,13 +2170,13 @@ ALTER TABLE psa.[ticket] ADD [patient_reference] NVARCHAR(64) NULL;
 IF COL_LENGTH(N'psa.[board]', N'calendar_id') IS NULL
 ALTER TABLE psa.[board] ADD [calendar_id] NVARCHAR(64) NULL CONSTRAINT [FK_board_calendar_id] REFERENCES psa.[calendar]([calendar_id]);
 
--- ConnectWise flags every note: Discussion (the requester sees it), Internal
+-- Dada PSA flags every note: Discussion (the requester sees it), Internal
 -- (fulfillers only) and Resolution (the answer, which the requester sees).
 -- NULL is a system event: a status change, an import, a routing.
 IF COL_LENGTH(N'psa.[ticket_event]', N'note_flag') IS NULL
 ALTER TABLE psa.[ticket_event] ADD [note_flag] NVARCHAR(32) NULL CONSTRAINT [CK_ticket_event_note_flag_01] CHECK (note_flag IN ('DISCUSSION', 'INTERNAL', 'RESOLUTION'));
 
--- Who the ticket is for, in ConnectWise's words the contact. requested_by
+-- Who the ticket is for, in Dada PSA's words the contact. requested_by
 -- already carries it; this is the time of the last touch, for the board's
 -- "Updated" column and for sorting by it.
 IF COL_LENGTH(N'psa.[ticket]', N'updated_at') IS NULL
@@ -2209,7 +2209,7 @@ ALTER TABLE psa.[catalogue_item] ADD [record_type] NVARCHAR(32) NULL CONSTRAINT 
 -- The board's kind (Dada, 23 Sep 2026: "those are board types"). A SERVICE board
 -- is the front door for incidents, requests, problems and events; a CHANGE board
 -- runs the change lifecycle and its approval gate; a PROJECT board runs projects
--- and no SLA clocks (ConnectWise's projectFlag: "SLA timers do not run on project
+-- and no SLA clocks (the reference PSA's projectFlag: "SLA timers do not run on project
 -- tickets", VERIFIED, docs.connectwise.com/ConnectWise_Documentation/090/020/140/
 -- 010/020). NULL reads as SERVICE, so every board made before this is one.
 IF COL_LENGTH(N'psa.[board]', N'kind') IS NULL
@@ -2217,11 +2217,11 @@ ALTER TABLE psa.[board] ADD [kind] NVARCHAR(32) NULL CONSTRAINT [CK_board_kind_0
 
 -- ------------------------------------------------------------ change enablement
 --
--- ITIL 4 names three types of change, and ConnectWise's Service Transition page
+-- ITIL 4 names three types of change, and the reference PSA's Service Transition page
 -- uses the same three (VERIFIED, docs.connectwise.com/ConnectWise_Business_
 -- Knowledge/110/030): STANDARD is pre-authorised and needs no approval; NORMAL
 -- is authorised by a change authority before it is built; EMERGENCY goes ahead
--- at once and is authorised as soon as it can be, afterwards. ConnectWise's
+-- at once and is authorised as soon as it can be, afterwards. Dada PSA's
 -- ticket has no change fields (only Ticket.approved), so these are the spine's
 -- own, named as such.
 IF COL_LENGTH(N'psa.[ticket]', N'change_type') IS NULL
@@ -2257,7 +2257,7 @@ ALTER TABLE psa.[board] ADD [reopen_within_days] INT NULL CONSTRAINT [CK_board_r
 IF COL_LENGTH(N'psa.[board]', N'reopen_status_id') IS NULL
 ALTER TABLE psa.[board] ADD [reopen_status_id] NVARCHAR(64) NULL CONSTRAINT [FK_board_reopen_status_id] REFERENCES psa.[board_status]([board_status_id]);
 
--- ConnectWise's "customer updated": the requester has written since a fulfiller
+-- Dada PSA's "customer updated": the requester has written since a fulfiller
 -- last did. Set by every inbound reply (mail or portal), cleared by a fulfiller's
 -- note, shown on the board so a reply is never missed. NULL reads as 0.
 IF COL_LENGTH(N'psa.[ticket]', N'customer_updated') IS NULL
@@ -2276,7 +2276,7 @@ ALTER TABLE psa.[ticket_event] ADD [is_resolution] INT NULL CONSTRAINT [CK_ticke
 IF COL_LENGTH(N'psa.[workflow_action]', N'target_template_id') IS NULL
 ALTER TABLE psa.[workflow_action] ADD [target_template_id] NVARCHAR(64) NULL CONSTRAINT [FK_workflow_action_target_template_id] REFERENCES psa.[ticket_template]([template_id]);
 
--- Emailing the requester: ConnectWise mails the contact on a new ticket and on a
+-- Emailing the requester: the reference PSA mails the contact on a new ticket and on a
 -- Discussion note, per board. Here the mail says only that the ticket moved and
 -- links to the portal; the note's words never leave the desk (§6.1). NULL reads
 -- as off: no email leaves until a board turns it on, once the portal is
@@ -2319,12 +2319,12 @@ ALTER TABLE psa.[time_entry] ADD [work_type_id] NVARCHAR(64) NULL CONSTRAINT [FK
 IF COL_LENGTH(N'psa.[time_entry]', N'billable_option') IS NULL
 ALTER TABLE psa.[time_entry] ADD [billable_option] NVARCHAR(32) NULL CONSTRAINT [DF_time_entry_billable_option] DEFAULT ('NO_DEFAULT') CONSTRAINT [CK_time_entry_billable_option_01] CHECK (billable_option IN ('BILLABLE', 'DO_NOT_BILL', 'NO_CHARGE', 'NO_DEFAULT'));
 
--- The note the entry was written with, when it was (ConnectWise's time entry
+-- The note the entry was written with, when it was (Dada PSA's time entry
 -- carries its notes; here the note is the ticket_event and this points at it).
 IF COL_LENGTH(N'psa.[time_entry]', N'ticket_event_id') IS NULL
 ALTER TABLE psa.[time_entry] ADD [ticket_event_id] INT NULL CONSTRAINT [FK_time_entry_ticket_event_id] REFERENCES psa.[ticket_event]([ticket_event_id]);
 
--- ConnectWise's TimeEntry.status, the part of it the desk has a use for.
+-- Dada PSA's TimeEntry.status, the part of it the desk has a use for.
 IF COL_LENGTH(N'psa.[time_entry]', N'entry_status') IS NULL
 ALTER TABLE psa.[time_entry] ADD [entry_status] NVARCHAR(32) NULL CONSTRAINT [DF_time_entry_entry_status] DEFAULT ('OPEN') CONSTRAINT [CK_time_entry_entry_status_01] CHECK (entry_status IN ('OPEN', 'READY_TO_BILL', 'BILLED', 'WRITTEN_OFF', 'BILLED_AGREEMENT'));
 
@@ -2336,6 +2336,12 @@ ALTER TABLE psa.[board] ADD [default_work_type_id] NVARCHAR(64) NULL CONSTRAINT 
 
 IF COL_LENGTH(N'psa.[board]', N'notify_owner') IS NULL
 ALTER TABLE psa.[board] ADD [notify_owner] INT NULL CONSTRAINT [CK_board_notify_owner_01] CHECK (notify_owner IN (0, 1));
+
+IF COL_LENGTH(N'psa.[service_family]', N'inactive') IS NULL
+ALTER TABLE psa.[service_family] ADD [inactive] INT NULL CONSTRAINT [DF_service_family_inactive] DEFAULT (0) CONSTRAINT [CK_service_family_inactive_01] CHECK (inactive IN (0, 1));
+
+IF COL_LENGTH(N'psa.[service_action]', N'inactive') IS NULL
+ALTER TABLE psa.[service_action] ADD [inactive] INT NULL CONSTRAINT [DF_service_action_inactive] DEFAULT (0) CONSTRAINT [CK_service_action_inactive_01] CHECK (inactive IN (0, 1));
 
 -- --------------------------------------------------------------------------
 -- indexes

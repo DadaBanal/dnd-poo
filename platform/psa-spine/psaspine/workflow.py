@@ -1,18 +1,18 @@
 """Running the rules: 008 decides, this acts.
 
 `rules.evaluate` decides whether an event fires and records the decision. This
-module is the caller its docstring asks for. It is ConnectWise's workflow rules
+module is the caller its docstring asks for. It is the reference PSA's workflow rules
 (VERIFIED 23 Sep 2026, docs.connectwise.com/ConnectWise_Documentation/090/020/
 070/130, archived 2025-08-30), with three things done better:
 
-  * **At the moment, not on a sweep.** ConnectWise evaluates rules at most every
+  * **At the moment, not on a sweep.** the reference PSA evaluates rules at most every
     ten minutes. Here every engine seam fires its event as it happens: a ticket
     created, a status changed, a note added, an owner changed, a board move.
     Only time-based events (ON_SCHEDULE, ON_SLA_THRESHOLD) wait for `sweep`,
     which the server runs every minute.
   * **Age is SLA time.** `sla_percent_used` is the largest share of a running
     clock's target used so far, from clocks.state_of, so it follows the board's
-    calendar and time in a waiting status does not count. ConnectWise ages
+    calendar and time in a waiting status does not count. the reference PSA ages
     tickets the same way.
   * **Every action says which rule did it.** Each action writes a ticket event
     naming the workflow and event, and every NOTIFY or ESCALATE goes to the
@@ -272,7 +272,7 @@ def _act(conn, event, action, row, *, at: datetime) -> None:
 
 def test_event(conn: sqlite3.Connection, event_id: str, *, at: datetime,
                limit: int = 1000, boards=None) -> dict:
-    """How many open tickets this event's conditions match now (ConnectWise
+    """How many open tickets this event's conditions match now (the reference PSA
     shows the count and at most 1,000 records). Records the test; acts on
     nothing.
 

@@ -1,12 +1,12 @@
-"""Setup › Workflow rules: build, test, switch on. ConnectWise's shape.
+"""Setup › Workflow rules: build, test, switch on. Dada PSA's shape.
 
 A rule is scoped to a board (or every board), and holds events. Each event
 fires on a moment (created, status changed, note added, owner changed, moved) or
 on time (schedule, SLA threshold), has conditions read left to right, a run mode
 (once, N times every T, continuously every T) and actions. Escalation levels are
-successive events, as ConnectWise's own guidance builds them.
+successive events, as the reference PSA's own guidance builds them.
 
-The ConnectWise rules this copies (VERIFIED, docs.connectwise.com/
+The reference PSA's rules this copies (VERIFIED, docs.connectwise.com/
 ConnectWise_Documentation/090/020/070/130, archived 2025-08-30): a rule is
 created off; every event is tested before it can be switched on, and the test
 shows how many open tickets match now; any edit switches it off again.
@@ -148,7 +148,7 @@ def index(ctx):
     if ctx.user.is_sysadmin:
         boards = [("", "Every board")] + boards
     body = (
-        "<h1>Workflow rules</h1><p class=sub>ConnectWise's workflow rules: an event, conditions, "
+        "<h1>Workflow rules</h1><p class=sub>Dada PSA's workflow rules: an event, conditions, "
         "actions. They run the moment a ticket changes, and every minute for time-based events. "
         "A rule is created off; test each event, then switch it on. <a href='/admin'>Setup</a></p>"
         "<div class=card><div class=tablewrap><table><thead><tr><th>Rule</th><th>Board</th>"

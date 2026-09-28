@@ -713,7 +713,7 @@ def badge(priority) -> str:
     return f'<span class="badge {p}">{esc(priority or "—")}</span>'
 
 
-# One chip per ConnectWise clock: Respond, resolution Plan, reSolve.
+# One chip per Dada PSA clock: Respond, resolution Plan, reSolve.
 CLOCK_LETTER = {"RESPOND": "R", "RESOLUTION_PLAN": "P", "RESOLVE": "S",
                 "ACKNOWLEDGE": "A", "DECISION": "D"}
 _CHIP = {"MET": "m", "OK": "o", "WARN": "w", "BAD": "b", "PAUSED": "d", "MISSED": "b"}
@@ -812,11 +812,11 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         '<meta name=theme-color media="(prefers-color-scheme: light)" content="#f4f5f8">'
         '<meta name=theme-color media="(prefers-color-scheme: dark)" content="#0f1115">'
         f'<link rel=icon href="{FAVICON}">'
-        f"<title>{esc(title)} · {'PMC Requests' if requester else 'PSA desk'}</title>{THEME_BOOT}"
+        f"<title>{esc(title)} · {'PMC Requests' if requester else 'Dada PSA'}</title>{THEME_BOOT}"
         f"<style>{STYLE}</style></head><body{' data-requester' if requester else ''}>"
         f'<div id="nprog" aria-hidden="true"></div>{SPRITE}'
         f'<header class="top"><a class="brand" href="{"/my" if requester else "/"}"><i></i>'
-        f'{"PMC Requests" if requester else "PSA desk"}</a>'
+        f'{"PMC Requests" if requester else "Dada PSA"}</a>'
         f"<nav>{nav}</nav>{who}</header>"
         f"<main>{body}</main>"
         + ("<footer>PMC Requests — a request reaches the department it is for.</footer>" if requester else

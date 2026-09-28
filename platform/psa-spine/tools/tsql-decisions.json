@@ -91,11 +91,11 @@
     },
     "time_entry.hours_deduct": {
       "sql": "DECIMAL(9,2)",
-      "why": "Hours deducted from a start-to-end span (ConnectWise's hoursDeduct); exact, like band_hours."
+      "why": "Hours deducted from a start-to-end span (Dada PSA's hoursDeduct); exact, like band_hours."
     },
     "time_entry.actual_hours": {
       "sql": "DECIMAL(9,2)",
-      "why": "ConnectWise's actualHours, rounded to the quarter hour; band_hours is derived from it and both must compare exactly."
+      "why": "Dada PSA's actualHours, rounded to the quarter hour; band_hours is derived from it and both must compare exactly."
     }
   },
   "columns": {

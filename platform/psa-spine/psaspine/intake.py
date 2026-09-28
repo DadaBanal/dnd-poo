@@ -215,11 +215,11 @@ def _keep_files(conn: sqlite3.Connection, message, work_item_id: str, *, sender:
 
 # ---------------------------------------------------------- loop guards
 #
-# ConnectWise ignores mail from mailer-daemon, postmaster and MicrosoftExchange
+# The reference PSA ignores mail from mailer-daemon, postmaster and MicrosoftExchange
 # (VERIFIED, docs.connectwise.com/ConnectWise_Documentation/090/020/170/040,
 # archived 2024-07-15). Here also RFC 3834 auto-replies (out-of-office), and the
 # desk's own addresses. An auto-GENERATED message (a backup or monitoring alert)
-# is not dropped: ConnectWise ships parsing presets for exactly those.
+# is not dropped: the reference PSA ships parsing presets for exactly those.
 LOOP_SENDERS = ("mailer-daemon", "postmaster", "microsoftexchange")
 
 
@@ -240,7 +240,7 @@ def loop_guard(message, sender: str, own_addresses=()) -> str | None:
 
 
 # A ticket number anywhere in the subject: the second way a reply finds its
-# ticket, for a client that dropped the thread headers. ConnectWise needs the
+# ticket, for a client that dropped the thread headers. Dada PSA needs the
 # token in one exact shape; any position works here.
 _TOKEN = re.compile(r"\b([A-Z]{2,10}-\d{4,})\b")
 

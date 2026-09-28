@@ -2036,7 +2036,7 @@ class ClosedLoopTest(unittest.TestCase):
 
 
 class TimeEntryTest(unittest.TestCase):
-    """033 and board.add_time: time as ConnectWise records it (start and end or
+    """033 and board.add_time: time as Dada PSA records it (start and end or
     actual hours, a deduction, a work role and type, a bill option), with the
     spine's band derived from it so §5.2's arithmetic stands."""
 
@@ -2078,7 +2078,7 @@ class TimeEntryTest(unittest.TestCase):
             e = self._entry()
             self.assertEqual((e["actual_hours"], e["band_hours"]), (hours, band), given)
             self.assertIsNone(e["time_start"])
-        # the defaults ConnectWise takes from the member: the first role and type in Setup
+        # the defaults the reference PSA takes from the member: the first role and type in Setup
         self.assertEqual((e["work_role_id"], e["work_type_id"], e["billable_option"]),
                          ("TECHNICIAN", "REGULAR", "NO_DEFAULT"))
 
@@ -2143,8 +2143,8 @@ class TimeEntryTest(unittest.TestCase):
         self.assertEqual([r["band_hours"] for r in rows], [4])
 
 
-class ConnectWiseParityTest(unittest.TestCase):
-    """Three board behaviours ConnectWise has that a technician expects (the
+class DeskParityTest(unittest.TestCase):
+    """Three board behaviours the reference PSA has that a technician expects (the
     parity pass of 28 Sep 2026): the owner is emailed on assignment when the
     board says so; a note's "Contact" tick decides the requester's email; and
     a board's own default work role and type start a time entry."""
@@ -2490,7 +2490,7 @@ class WebWSGITest(unittest.TestCase):
             self.assertTrue(status.startswith("200"), f"{path} -> {status}")
             self.assertIn(needle, body)
 
-    # ------------------------------------------------ the ConnectWise-style desk
+    # ------------------------------------------------ the Dada PSA-style desk
 
     def _db(self):
         return db.connect(self.db_path)
@@ -2538,7 +2538,7 @@ class WebWSGITest(unittest.TestCase):
                      "<td class=num>0.25</td>", "<td>Engineer</td>", "<td>On-site</td>", "<td>Billable</td>",
                      "<td>Included in monthly fee</td>", "<td class=num>4</td>"):
             self.assertIn(cell, page, cell)
-        # both ways at once is ConnectWise's refusal, in a sentence, and nothing is written
+        # both ways at once is Dada PSA's refusal, in a sentence, and nothing is written
         status, headers, _ = self._call("POST", "/ticket/ITO-1/time", cookie=alice, form={
             "worked_on": "2026-09-17", "start": "09:00", "end": "10:00", "hours": "1",
             "charge": "INCLUDED_IN_MONTHLY_FEE"})
@@ -2629,7 +2629,7 @@ class WebWSGITest(unittest.TestCase):
         self.assertNotIn("Vendor contract lapsed", body)
 
     def test_a_note_can_also_be_the_resolution_and_internal_stays_internal(self):
-        """ConnectWise lets one note carry more than one flag (025)."""
+        """Dada PSA lets one note carry more than one flag (025)."""
         conn = self._db()
         conn.execute("UPDATE ticket SET requested_by = 'nurse@pmcne.ph' WHERE work_item_id='ITO-1'")
         board.add_note(conn, "ITO-1", body="Swapped the toner; printing again.",
@@ -4646,6 +4646,140 @@ class DepartmentsTest(unittest.TestCase):
         self.assertIn("Who is this for?", page)
 
 
+class CatalogueSetupTest(unittest.TestCase):
+    """036 and psaspine.catalogue: the setup tables for Areas, Subtypes and
+    Items, and the Subtype › Item pairs a ticket offers (Setup › Catalogue)."""
+
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+    tearDown = WebWSGITest.tearDown
+
+    def setUp(self) -> None:
+        WebWSGITest.setUp(self)
+        self.root = self._cookie_for("root", is_sysadmin=True)
+        self.at = datetime(2026, 9, 28, 10)
+
+    def _audits(self, conn):
+        return [r["detail"] for r in conn.execute(
+            "SELECT detail FROM audit_event WHERE action = 'CATALOGUE_CONFIG' ORDER BY audit_id")]
+
+    def test_add_rename_retire_never_delete_and_every_change_is_audited(self):
+        from psaspine import catalogue as cat, setup
+        conn = db.connect(self.db_path)
+        fid = cat.add_area(conn, "  Clinical   apps ", at=self.at, actor="root")
+        self.assertEqual(fid, "CLINICAL_APPS")
+        with self.assertRaises(cat.Refused):
+            cat.add_area(conn, "clinical APPS", at=self.at, actor="root")      # names are unique, any case
+        with self.assertRaises(cat.Refused):
+            cat.add_area(conn, "   ", at=self.at, actor="root")
+        cid = cat.add_subtype(conn, fid, "Label printer", at=self.at, actor="root")
+        with self.assertRaises(cat.Refused):
+            cat.add_subtype(conn, fid, "label printer", at=self.at, actor="root")
+        with self.assertRaises(cat.Refused):
+            cat.add_subtype(conn, "NOPE", "x", at=self.at, actor="root")
+        aid = cat.add_item(conn, "Relocate", kind="REQUEST", at=self.at, actor="root")
+        aid2 = cat.add_item(conn, "Relocate!", kind="FAULT", implies_impact="I3", at=self.at, actor="root")
+        self.assertEqual(aid2, "RELOCATE_2")                                   # a fresh id, never a clash
+        with self.assertRaises(cat.Refused):
+            cat.add_item(conn, "Break", kind="MAYBE", at=self.at, actor="root")
+        with self.assertRaises(cat.Refused):
+            cat.add_item(conn, "Break", kind="FAULT", implies_impact="I9", at=self.at, actor="root")
+        with self.assertRaises(cat.Refused):                                    # baseline needs its scope item
+            cat.associate(conn, cid, aid, "IT_HELP", basis="BASELINE", at=self.at, actor="root")
+        pair = cat.associate(conn, cid, aid, "IT_HELP", basis="VARIATION", min_priority="P3", at=self.at, actor="root")
+        with self.assertRaises(cat.Refused):
+            cat.associate(conn, cid, aid, "IT_HELP", at=self.at, actor="root")  # one pair once
+        with self.assertRaises(cat.Refused):
+            cat.associate(conn, cid, aid2, "NO_BOARD", at=self.at, actor="root")
+        labels = [c["label"] for c in setup.catalogue_choices(conn)]
+        self.assertIn("Clinical apps › Label printer › Relocate", labels)
+
+        self.assertIn("renamed Label printer -> Labels printer",
+                      cat.save_subtype(conn, cid, name="Labels printer", at=self.at, actor="root"))
+        self.assertEqual(cat.save_item(conn, aid, kind="FAULT", implies_impact="I1", at=self.at, actor="root"),
+                         "kind REQUEST -> FAULT; impact - -> I1")
+        self.assertEqual(cat.save_area(conn, fid, name="Clinical apps", at=self.at, actor="root"), "nothing changed")
+        cat.save_area(conn, fid, inactive=True, at=self.at, actor="root")
+        self.assertEqual(setup.catalogue_choices(conn), [])                   # a retired area leaves the picker
+        cat.save_area(conn, fid, inactive=False, at=self.at, actor="root")
+        cat.save_item(conn, aid, inactive=True, at=self.at, actor="root")
+        self.assertEqual(setup.catalogue_choices(conn), [])                   # so does a retired item
+        cat.save_item(conn, aid, inactive=False, at=self.at, actor="root")
+        cat.save_subtype(conn, cid, inactive=True, at=self.at, actor="root")
+        self.assertEqual(setup.catalogue_choices(conn), [])                   # and a retired subtype
+        cat.save_subtype(conn, cid, inactive=False, at=self.at, actor="root")
+        self.assertEqual(len(setup.catalogue_choices(conn)), 1)
+        # nothing was deleted
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM service_family").fetchone()[0], 1)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM service_action").fetchone()[0], 2)
+        self.assertEqual(conn.execute("SELECT catalogue_item_id FROM catalogue_item").fetchone()[0], pair)
+        details = self._audits(conn)
+        self.assertEqual(details[:4], ["area added: Clinical apps", "subtype added: Clinical apps › Label printer",
+                                       "item added: Relocate (REQUEST)", "item added: Relocate! (FAULT, I3)"])
+        self.assertIn("pair added: Clinical apps › Label printer › Relocate -> IT Help, VARIATION", details)
+        self.assertEqual(details.count("retired"), 3)
+        self.assertEqual(details.count("restored"), 3)
+        self.assertNotIn("nothing changed", details)                           # a no-op writes no row
+
+    def test_the_setup_pages_build_a_pair_the_ticket_offers_and_a_retired_pair_stays_on_its_ticket(self):
+        from psaspine import tickets
+        for tab in ("pairs", "types", "areas", "subtypes", "items"):
+            status, _, body = self._call("GET", "/admin/catalogue", cookie=self.root, query=f"tab={tab}")
+            self.assertEqual(status, "200 OK", tab)
+            self.assertNotIn("ConnectWise", body)
+        _, _, body = self._call("GET", "/admin/catalogue", cookie=self.root, query="tab=types")
+        self.assertIn("Incident", body)
+        self.assertIn("/admin/board/IT_HELP?tab=types", body)                 # the board's own Types tab
+        _, h, _ = self._call("POST", "/admin/catalogue/area", cookie=self.root, form={"name": "Clinical apps"})
+        self.assertIn("msg=Added+Clinical+apps&tab=areas", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/admin/catalogue/area", cookie=self.root, form={"name": "clinical apps"})
+        self.assertIn("err=There+is+already+an+area", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/admin/catalogue/subtype", cookie=self.root,
+                             form={"family_id": "CLINICAL_APPS", "name": "Label printer"})
+        self.assertIn("tab=subtypes", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/admin/catalogue/item", cookie=self.root,
+                             form={"name": "Relocate", "kind": "REQUEST", "implies_impact": ""})
+        self.assertIn("tab=items", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/admin/catalogue/associate", cookie=self.root,
+                             form={"component_id": "LABEL_PRINTER", "action_id": "RELOCATE",
+                                   "default_board_id": "IT_HELP", "basis": "BASELINE", "scope_item_id": ""})
+        self.assertIn("err=A+baseline+pair+must+name", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/admin/catalogue/associate", cookie=self.root,
+                             form={"component_id": "LABEL_PRINTER", "action_id": "RELOCATE",
+                                   "default_board_id": "IT_HELP", "basis": "UNKNOWN", "min_priority": "P4"})
+        self.assertIn("msg=Pair+added", dict(h)["Location"])
+        _, _, body = self._call("GET", "/admin/catalogue", cookie=self.root)
+        self.assertIn("Label printer</td><td>Relocate</td>", body)
+        alice = self._cookie_for("alice")                                      # IT Help's administrator
+        _, _, body = self._call("GET", "/ticket/new", cookie=alice)
+        self.assertIn("Label printer › Relocate", body)
+
+        conn = db.connect(self.db_path)
+        pair = conn.execute("SELECT catalogue_item_id FROM catalogue_item").fetchone()[0]
+        wid = tickets.open_ticket(conn, board_id="IT_HELP", summary="move the label printer", impact="I3",
+                                  urgency="U3", requested_by=None, at=self.at, catalogue_item_id=pair)
+        conn.commit()
+        _, h, _ = self._call("POST", "/admin/catalogue/item/save", cookie=self.root,
+                             form={"action_id": "RELOCATE", "act": "retire"})
+        self.assertIn("msg=Item%3A+retired", dict(h)["Location"])
+        _, _, body = self._call("GET", "/ticket/new", cookie=alice)
+        self.assertNotIn("Label printer › Relocate", body)                    # not offered to a new ticket
+        _, _, body = self._call("GET", f"/ticket/{wid}", cookie=alice)
+        self.assertIn(f"<option value='{pair}' selected>Label printer › Relocate (retired)</option>", body)
+        _, h, _ = self._call("POST", "/admin/catalogue/subtype/save", cookie=self.root,
+                             form={"component_id": "LABEL_PRINTER", "name": "Label printers",
+                                   "family_id": "CLINICAL_APPS", "act": "rename"})
+        self.assertIn("renamed+Label+printer+-%3E+Label+printers", dict(h)["Location"])
+        # a technician cannot reach the setup tables
+        tech = self._cookie_for("tech1")
+        status, _, _ = self._call("GET", "/admin/catalogue", cookie=tech)
+        self.assertNotEqual(status, "200 OK")
+        status, _, _ = self._call("POST", "/admin/catalogue/area", cookie=tech, form={"name": "x"})
+        self.assertNotEqual(status, "200 OK")
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM service_family").fetchone()[0], 1)
+
+
 class MachineApiTest(unittest.TestCase):
     """The machine API: a local token, JSON, priority computed, repeats collapsed.
 
@@ -4978,7 +5112,7 @@ class DatabaseSettingsTest(unittest.TestCase):
 
 
 class BoardSetupTest(unittest.TestCase):
-    """017 and psaspine.setup — a board runs the way a ConnectWise board does.
+    """017 and psaspine.setup — a board runs the way a Dada PSA board does.
 
     The gap these close is the one the first preview showed: every ticket read
     "no clock" because nothing that opened a ticket ever started one, and a fresh
@@ -5069,7 +5203,7 @@ class BoardSetupTest(unittest.TestCase):
             "DISCUSSION")
 
     def test_moving_boards_keeps_the_id_the_clocks_and_the_milestone(self):
-        """ConnectWise's Auto Assign does not follow a moved ticket; ours keeps
+        """The reference PSA's Auto Assign does not follow a moved ticket; ours keeps
         everything, because one id across a handover is the point."""
         for bid in ("IT_HELP", "UNROUTED"):
             setup.apply_starter(self.conn, bid, actor="t", at=self.at)
@@ -5090,7 +5224,7 @@ class BoardSetupTest(unittest.TestCase):
             "SELECT COUNT(*) c FROM ticket_handover WHERE work_item_id = ?", (tid,)).fetchone()[0], 1)
 
     def test_every_door_records_where_the_ticket_came_from(self):
-        """018: ConnectWise's Source, and the build scope's intake_source."""
+        """018: Dada PSA's Source, and the build scope's intake_source."""
         tid = self._open(source="PHONE")
         self.assertEqual(self.conn.execute(
             "SELECT intake_source FROM ticket WHERE work_item_id = ?", (tid,)).fetchone()[0],
@@ -5144,8 +5278,8 @@ class BoardSetupTest(unittest.TestCase):
 
 
 class ManyBoardsTest(unittest.TestCase):
-    """019 and setup.create_board / apply_cw_template — many boards, the way an
-    MSP runs ConnectWise: a service board, a change board and a project board to
+    """019 and setup.create_board / apply_template — many boards, the way an
+    MSP runs the reference PSA: a service board, a change board and a project board to
     start, then one per group that runs its own queue, each with its own
     statuses, SLA and people."""
 
@@ -5191,7 +5325,7 @@ class ManyBoardsTest(unittest.TestCase):
         """23 Sep direction: no Help/Request split. One service board takes the
         four ITIL service-desk types; changes and projects get their own boards."""
         from psaspine import itil
-        r = setup.apply_cw_template(self.conn, actor="dada", at=self.at)
+        r = setup.apply_template(self.conn, actor="dada", at=self.at)
         self.assertEqual(r["created"], ["IT_CHANGE", "IT_PROJECTS"])
         self.assertEqual(r["items"], 31)                 # all of Dada's items, on IT Help
         self.assertIn("BIOMEDICAL", r["waiting"])        # waits for its board
@@ -5206,17 +5340,17 @@ class ManyBoardsTest(unittest.TestCase):
         self.assertEqual(self.conn.execute(
             "SELECT target_minutes FROM sla_target_type WHERE board_id='IT_HELP' AND"
             " record_type='SERVICE_REQUEST' AND priority='P4' AND clock='RESPOND'").fetchone()[0], 960)
-        again = setup.apply_cw_template(self.conn, actor="dada", at=self.at)
+        again = setup.apply_template(self.conn, actor="dada", at=self.at)
         self.assertEqual((again["created"], again["items"]), ([], 0))
         setup.create_board(self.conn, display_name="Biomedical", board_id="BIOMEDICAL",
                            fulfiller_group="Biomed", creator="dada", at=self.at)
-        self.assertEqual(setup.apply_cw_template(self.conn, actor="dada", at=self.at)["items"], 4)
+        self.assertEqual(setup.apply_template(self.conn, actor="dada", at=self.at)["items"], 4)
 
     def test_the_template_replaces_placeholders_but_never_a_saved_target(self):
         setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
         self.conn.execute("UPDATE sla_target SET target_minutes = 7, note = 'set on the Setup page'"
                           " WHERE board_id='IT_HELP' AND priority='P1' AND clock='RESPOND'")
-        setup.apply_cw_template(self.conn, actor="dada", at=self.at)
+        setup.apply_template(self.conn, actor="dada", at=self.at)
         t = {(r[0], r[1]): r[2] for r in self.conn.execute(
             "SELECT priority, clock, target_minutes FROM sla_target WHERE board_id='IT_HELP'")}
         self.assertEqual(t[("P1", "RESPOND")], 7)        # kept
@@ -5224,7 +5358,7 @@ class ManyBoardsTest(unittest.TestCase):
         self.assertNotIn(("P3", "RESOLUTION_PLAN"), t)   # placeholder gone
 
     def test_an_items_floor_takes_part_in_priority(self):
-        setup.apply_cw_template(self.conn, actor="dada", at=self.at)
+        setup.apply_template(self.conn, actor="dada", at=self.at)
         self.conn.execute("UPDATE catalogue_item SET min_priority = 'P2' WHERE catalogue_item_id ="
                           " (SELECT catalogue_item_id FROM catalogue_item WHERE default_board_id="
                           "'IT_HELP' LIMIT 1)")
@@ -5437,7 +5571,7 @@ class BoardKindAndTypeTest(unittest.TestCase):
 
 class MailPolicyTest(unittest.TestCase):
     """023 and intake: loop guards, a ticket number in the subject, and each
-    board's answer to a reply on a closed ticket (ConnectWise's email connector)."""
+    board's answer to a reply on a closed ticket (Dada PSA's email connector)."""
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -5633,7 +5767,7 @@ class WorkflowRunnerTest(unittest.TestCase):
             " AND actor = 'workflow:W_P1/E_P1'", (p1,)).fetchone())
 
     def test_escalation_is_successive_events_on_sla_time(self):
-        """ConnectWise's own pattern: New too long tells dispatch; later still,
+        """The reference PSA's own pattern: New too long tells dispatch; later still,
         the service manager."""
         self._rule("W_ESC", [
             ("E_50", "ON_SLA_THRESHOLD", [("TICKET.ESCALATION", "EQ", "NOT_RESPONDED"),
@@ -7190,7 +7324,7 @@ class ContactsTest(unittest.TestCase):
         self.assertEqual(row["entity_id"], "PMC")
 
     def test_a_domain_names_a_company_only_when_it_is_one_companys(self):
-        """ConnectWise's third match: exact address, unique name, then a domain
+        """The reference PSA's third match: exact address, unique name, then a domain
         owned by exactly one company. Public mail domains never match."""
         self.contacts.import_csv(self.conn, self._export(self._row(self.G1)),
                                  entity_id="PMC", at=self.at)

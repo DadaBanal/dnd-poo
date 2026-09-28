@@ -3,7 +3,7 @@
     Export the people in Active Directory as PSA contacts. Reads AD; changes nothing in it.
 
 .DESCRIPTION
-    ConnectWise keeps a contact under each company, and every ticket names one.
+    Dada PSA keeps a contact under each company, and every ticket names one.
     PMC's staff are already in Active Directory, so the desk's contacts are
     exported from there rather than typed in again.
 

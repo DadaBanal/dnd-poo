@@ -1,23 +1,23 @@
-"""Setting a board up, the way a ConnectWise service board is set up.
+"""Setting a board up, the way a Dada PSA service board is set up.
 
 A PSA does not arrive with boards in it (Dada's direction, 9 Sep 2026 — see
 `db.seed_catalogue`), so nothing here runs on `init`. A board administrator
 applies it to a board they have created, from the board's setup screen or with
 `psaspine setup-board`, and then edits every value it wrote. That is how
-ConnectWise does it too: the Service Board setup table is where the statuses,
+the reference PSA does it too: the Service Board setup table is where the statuses,
 the SLA and the calendar are chosen, per board, by a person.
 
 What it writes is a STARTER, not a decision:
 
-- **Statuses** in ConnectWise's shape — each declares the SLA milestone it
+- **Statuses** in Dada PSA's shape — each declares the SLA milestone it
   represents (`escalationStatus`), whether it closes the ticket, whether time
   may be entered in it, and what the requester is shown instead of the internal
-  name. The names follow the common ConnectWise convention (New, In Progress,
-  Waiting…, Resolved, >Closed) **[INFERRED — ConnectWise's own documentation is
+  name. The names follow the reference PSA's common convention (New, In Progress,
+  Waiting…, Resolved, >Closed) **[INFERRED — its own documentation is
   behind its University login and was not read]**.
 - **Two calendars**: all hours, and a Monday-to-Saturday business day.
 - **Three clocks per priority** — respond, resolution plan, resolve — the three
-  timestamps ConnectWise stores on a ticket. Every target is written with
+  timestamps the reference PSA stores on a ticket. Every target is written with
   `enforced = 0`: measured, reported, never promised. The minutes are
   placeholders for the Service Manager to replace **[INFERRED]**; they are the
   same shape as `seed/sample/sla_targets.csv` and nobody at PMC has signed them.
@@ -53,7 +53,7 @@ STARTER_STATUSES = (
     (">Closed", "RESOLVED", 0, 1, 0, 0, "Closed"),
 )
 
-# A change board's lifecycle (ITIL 4 change enablement; ConnectWise's Change
+# A change board's lifecycle (ITIL 4 change enablement; Dada PSA's Change
 # Approvals module uses the same shape: pending approval, approved, scheduled,
 # completed, rejected). The last column is requires_approval: a NORMAL change
 # enters those statuses only once approved (itil.check_status_move).
@@ -69,7 +69,7 @@ CHANGE_STATUSES = (
     ("Declined", "RESOLVED", 0, 0, 0, 1, "Not approved", 0),
     (">Closed", "RESOLVED", 0, 1, 0, 0, "Closed", 0),
 )
-# A project board. ConnectWise: "SLA timers do not run on project tickets"
+# A project board. The reference PSA: "SLA timers do not run on project tickets"
 # (VERIFIED 23 Sep 2026, docs.connectwise.com/ConnectWise_Documentation/090/020/
 # 140/010/020), so neither profile below gets SLA targets.
 PROJECT_STATUSES = (
@@ -234,7 +234,7 @@ def create_board(conn: sqlite3.Connection, *, display_name: str, fulfiller_group
                  restricted: bool = False, closed_loop_required: bool = False,
                  description: str | None = None, copy_from: str | None = "starter",
                  profile: str = "SERVICE") -> str:
-    """A new board, the way ConnectWise adds one to the Service Board setup table.
+    """A new board, the way Dada PSA adds one to the Service Board setup table.
 
     `copy_from` is "starter" (the starter statuses, calendar and targets), the id
     of an existing board (its statuses, calendar and targets are copied, so a
@@ -308,7 +308,7 @@ def copy_setup(conn: sqlite3.Connection, from_board: str, to_board: str) -> None
                  " WHERE board_id = ? AND calendar_id IS NULL", (from_board, to_board))
 
 
-# ---------------------------------------------------- the ConnectWise template
+# ---------------------------------------------------- the Dada PSA template
 
 def _sample(name: str) -> list[dict]:
     import csv
@@ -316,12 +316,12 @@ def _sample(name: str) -> list[dict]:
         return list(csv.DictReader(fh))
 
 
-def apply_cw_template(conn: sqlite3.Connection, *, actor: str, at: datetime) -> dict:
-    """Dada's ConnectWise design, on the ITIL model (direction of 23 Sep 2026):
+def apply_template(conn: sqlite3.Connection, *, actor: str, at: datetime) -> dict:
+    """Dada's design, on the ITIL model (direction of 23 Sep 2026):
 
     - **IT Help (IT_HELP) is the service board** and takes incidents, service
       requests, problems and events: ITIL's service desk is the one front door
-      for incidents and requests, and ConnectWise's own ITIL example puts those
+      for incidents and requests, and the reference PSA's own ITIL example puts those
       four as Types on one board (schema/022). No Help/Request split.
     - **IT Change (IT_CHANGE)**, created if missing: changes, with the change
       lifecycle and approval gate (setup.CHANGE_STATUSES, itil.check_status_move).
@@ -399,7 +399,7 @@ def apply_cw_template(conn: sqlite3.Connection, *, actor: str, at: datetime) -> 
             " attainment_percent, enforced, note) VALUES (?,?,?,?,?,?,0,?)",
             (r["board_id"], r["priority"], r["clock"], int(r["target_minutes"]), r["calendar"],
              float(r["attainment_percent"]) if r["attainment_percent"] else None,
-             blank(r["note"]) or "from Dada's ConnectWise workbook"))
+             blank(r["note"]) or "from Dada's design workbook"))
         targets += cur.rowcount
     for r in _sample("sla_targets_by_type.csv"):
         if r["board_id"] not in boards:
@@ -411,17 +411,18 @@ def apply_cw_template(conn: sqlite3.Connection, *, actor: str, at: datetime) -> 
             (r["board_id"], r["record_type"], r["priority"], r["clock"],
              int(r["target_minutes"]), r["calendar"],
              float(r["attainment_percent"]) if r["attainment_percent"] else None,
-             blank(r["note"]) or "from Dada's ConnectWise workbook"))
+             blank(r["note"]) or "from Dada's design workbook"))
         targets += cur.rowcount
     db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor,
-             action="CW_TEMPLATE", subject_kind="catalogue", subject_id="ConnectWise",
+             action="CATALOGUE_TEMPLATE", subject_kind="catalogue", subject_id="Dada PSA",
              detail=f"boards created {created or '-'}; {loaded} items loaded; waiting {waiting or '-'}")
     return {"created": created, "items": loaded, "targets": targets, "waiting": waiting}
 
 
 def catalogue_choices(conn: sqlite3.Connection, board_id: str | None = None) -> list[dict]:
-    """Every live catalogue item as Type › Subtype › Item, for the pickers.
-    With a board, its own items first; ConnectWise scopes types per board,
+    """Every live catalogue item as Type › Subtype › Item, for the pickers: a
+    retired area, subtype, item or pair (Setup › Catalogue) is not offered.
+    With a board, its own items first; the reference PSA scopes types per board,
     the record keeps one tree (§2.4), so every item is offered and the board's
     are marked."""
     rows = conn.execute(
@@ -432,7 +433,9 @@ def catalogue_choices(conn: sqlite3.Connection, board_id: str | None = None) -> 
         "  JOIN service_component c ON c.component_id = i.component_id"
         "  JOIN service_family f ON f.family_id = c.family_id"
         "  JOIN service_action a ON a.action_id = i.action_id"
-        " WHERE i.is_draft = 0 ORDER BY f.display_name, c.display_name, a.display_name").fetchall()
+        " WHERE i.is_draft = 0 AND c.is_draft = 0 AND COALESCE(f.inactive, 0) = 0"
+        "   AND COALESCE(a.inactive, 0) = 0"
+        " ORDER BY f.display_name, c.display_name, a.display_name").fetchall()
     out = [dict(r) | {"label": f"{r['type']} › {r['subtype']} › {r['item']}",
                       "on_board": r["default_board_id"] == board_id} for r in rows]
     return sorted(out, key=lambda x: (not x["on_board"], x["label"])) if board_id else out

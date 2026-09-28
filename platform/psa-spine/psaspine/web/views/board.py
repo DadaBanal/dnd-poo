@@ -1,4 +1,4 @@
-"""The Service Board — the list a fulfiller lives in, laid out as ConnectWise's.
+"""The Service Board — the list a fulfiller lives in, laid out as Dada PSA's.
 
 Every ticket on the boards the user belongs to. Counters across the top (open,
 breached, due within the hour, unassigned, mine) that are also one-click
@@ -266,7 +266,7 @@ def _link(f, **over) -> str:
 
 
 def _views(ctx, f) -> str:
-    """ConnectWise's My views: the person's own named filters, as chips above
+    """Dada PSA's My views: the person's own named filters, as chips above
     the counters, with the current filter savable in one field."""
     from ... import canned
     # The query as typed or clicked, not the board's defaults, so a view saved

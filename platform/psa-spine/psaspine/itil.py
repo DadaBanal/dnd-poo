@@ -1,13 +1,13 @@
 """Board kinds and board Types (ITIL), change approval and ticket links.
 
 A board is one of three kinds: SERVICE, CHANGE or PROJECT (board.kind). A
-board's Types are ConnectWise's Types tab, and on a service board they are the
+board's Types are Dada PSA's Types tab, and on a service board they are the
 ITIL four: Incident, Request, Problem, Event. A ticket reads Type > Subtype >
 Item. The Type is stored as ticket.record_type; "record type" in this module
 means the board Type.
 
 One vocabulary, six words: INCIDENT, SERVICE_REQUEST, PROBLEM, EVENT, CHANGE,
-PROJECT. The first four are ConnectWise's own ITIL example Types for a service
+PROJECT. The first four are Dada PSA's own ITIL example Types for a service
 board, and Dada's workbook column A (see schema/022). CHANGE and PROJECT are the
 work whose workflow differs enough to run on a board of its own.
 
@@ -15,7 +15,7 @@ Everything that decides a ticket's record type, whether a board takes it, which
 SLA targets it runs on, and what its commercial path is lives here, so that the
 four intake doors, the desk, a board move and a field edit cannot disagree.
 
-Change enablement follows ITIL 4 (and ConnectWise's Service Transition page,
+Change enablement follows ITIL 4 (and the reference PSA's Service Transition page,
 which uses the same three words): a STANDARD change is pre-authorised; a NORMAL
 change may not enter an "authorised" status (board_status.requires_approval)
 until a change authority has approved it; an EMERGENCY change goes ahead and may
@@ -30,7 +30,7 @@ from datetime import datetime
 RECORD_TYPES = ("INCIDENT", "SERVICE_REQUEST", "PROBLEM", "EVENT", "CHANGE", "PROJECT")
 LABEL = {"INCIDENT": "Incident", "SERVICE_REQUEST": "Request", "PROBLEM": "Problem",
          "EVENT": "Event", "CHANGE": "Change", "PROJECT": "Project"}
-# ConnectWise's Type category: Reactive or Proactive. The commercial path in 005
+# Dada PSA's Type category: Reactive or Proactive. The commercial path in 005
 # predates this and uses INCIDENT / SERVICE_REQUEST for the same split.
 PROACTIVE = frozenset({"SERVICE_REQUEST", "CHANGE", "PROJECT"})
 

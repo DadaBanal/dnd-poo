@@ -1,8 +1,8 @@
 -- 031 — saved board views, and standard notes.
 --
--- A saved view is a person's own filter on the board (ConnectWise's "My
+-- A saved view is a person's own filter on the board (Dada PSA's "My
 -- views"): a name and the query it stands for, theirs alone. A standard note
--- is a board's canned reply (ConnectWise's standard notes): the words a
+-- is a board's canned reply (Dada PSA's standard notes): the words a
 -- technician pastes twenty times a week, kept once, edited by the board's
 -- administrators, never carrying patient details because they are written
 -- before any ticket exists.

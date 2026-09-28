@@ -1,6 +1,6 @@
 """Configurations, the ticket's Configurations card, and Setup › Integrations.
 
-ConnectWise's Configurations: the machines under a company, each opening its
+Dada PSA's Configurations: the machines under a company, each opening its
 remote-support session in one click, and listed on the tickets that concern
 them. The link targets are data an administrator writes in Setup; see
 psaspine/configurations.py for the rules a template must meet.
@@ -93,7 +93,7 @@ def _opts(pairs, sel):
 
 
 def index(ctx):
-    """ConnectWise's Configurations list: counts by type that filter, status
+    """Dada PSA's Configurations list: counts by type that filter, status
     and company filters, a search box, every column sorts, and how many open
     tickets each machine has. Below it, the form for a machine typed in by
     hand (AD's own arrive by import)."""
@@ -180,7 +180,7 @@ def index(ctx):
     body = (
         (f"<div class='banner ok'>{t.esc(msg)}</div>" if msg else "")
         + (f"<div class='banner err'>{t.esc(err)}</div>" if err else "")
-        + "<h1>Configurations</h1><p class=sub>The machines and devices the desk supports, as ConnectWise's "
+        + "<h1>Configurations</h1><p class=sub>The machines and devices the desk supports, as Dada PSA's "
           "Configurations: from Active Directory, or typed in by hand. Open one to launch its remote session, "
           "see its tickets and its history, or raise a ticket for it.</p>"
         + f"<div class='tiles' style='grid-template-columns:repeat(8,1fr)'>{tiles}</div>"

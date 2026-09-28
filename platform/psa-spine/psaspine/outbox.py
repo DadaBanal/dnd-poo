@@ -19,7 +19,7 @@ updated, and a link to the portal. Never the summary, never the note: a note is
 written for the portal, where sign-in and the §6.1 controls apply, and mail
 leaves the building. A second update before the first has gone adds nothing,
 Internal notes never send, and a board can switch it off
-(`board.notify_requester`; unset means OFF, as ConnectWise leaves contact
+(`board.notify_requester`; unset means OFF, as Dada PSA leaves contact
 emails off until a board turns them on). The portal's address is deployment
 config (`PSA_PORTAL_URL` or `--portal-url`), never the repository.
 """
@@ -94,7 +94,7 @@ OWNER = "OWNER"
 
 
 def queue_owner(conn: sqlite3.Connection, work_item_id: str, *, at: datetime, actor: str) -> bool:
-    """ConnectWise's "send to resource": the owner is emailed when a ticket is
+    """Dada PSA's "send to resource": the owner is emailed when a ticket is
     assigned to them, when the board says so (board.notify_owner). One unsent
     email per ticket and owner; the person who assigned it to themselves gets
     none. No summary in the subject: a subject leaves the desk (§6.1)."""

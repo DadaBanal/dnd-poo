@@ -6,7 +6,7 @@
 -- name somebody typed into the board once. This table is the shift, so a page at
 -- 02:00 reaches the person actually awake for it.
 --
--- ConnectWise documents the duty manager as "backup for the on-call member ...
+-- The reference PSA documents the duty manager as "backup for the on-call member ...
 -- if the on-call member does not respond", so the two roles that rotate are
 -- ON_CALL and DUTY_MANAGER — the same vocabulary board_role already carries, on
 -- purpose, so the dispatch view can show the rota's answer over the board's.

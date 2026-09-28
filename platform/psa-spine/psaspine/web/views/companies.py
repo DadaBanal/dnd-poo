@@ -1,9 +1,9 @@
-"""Companies and contacts, as ConnectWise lays them out.
+"""Companies and contacts, as Dada PSA lays them out.
 
 Companies lists every company the desk serves. A company page shows its
 contacts and its open tickets, and a contact page shows one person and the
 tickets that name them. A fulfiller starts from "who is this?" as often as from
-"what is broken?", and in ConnectWise both are one click from anywhere.
+"what is broken?", and in Dada PSA both are one click from anywhere.
 
 Two fences:
 

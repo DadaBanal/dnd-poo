@@ -1,6 +1,6 @@
 -- 021 — configurations: the machines and devices a ticket is about.
 --
--- ConnectWise calls them Configurations: each belongs to a company, may have a
+-- Dada PSA calls them Configurations: each belongs to a company, may have a
 -- primary contact, and a ticket lists the ones it concerns. Here they are read
 -- from what already knows them, starting with Active Directory's computer
 -- objects, never typed in.
@@ -44,7 +44,7 @@ CREATE INDEX ix_configuration_entity ON configuration (entity_id);
 CREATE UNIQUE INDEX ux_configuration_ad_guid ON configuration (ad_object_guid)
   WHERE ad_object_guid IS NOT NULL;
 
--- Which configurations a ticket concerns, as ConnectWise's Configurations tab.
+-- Which configurations a ticket concerns, as Dada PSA's Configurations tab.
 CREATE TABLE ticket_configuration (
   work_item_id     TEXT NOT NULL REFERENCES ticket(work_item_id),
   configuration_id TEXT NOT NULL REFERENCES configuration(configuration_id),

@@ -287,7 +287,7 @@ def close_loop(conn: sqlite3.Connection, work_item_id: str, to_status_id: str, *
 
 
 # The catch-all a ticket's company falls to when intake cannot tell who it is
-# for — ConnectWise's email connector does the same with a "catch-all" company.
+# for — the reference PSA's email connector does the same with a "catch-all" company.
 # It is a seeded entity that is flagged, never a guess that it is PMC.
 UNKNOWN_ENTITY = "UNCLASSIFIED"
 
@@ -384,7 +384,7 @@ def move(conn: sqlite3.Connection, work_item_id: str, to_board_id: str, *,
          reason: str = "moved", record_type: str | None = None) -> dict:
     """Move a ticket to another board. One ticket, one id, its clocks intact.
 
-    ConnectWise documents that Auto Assign does not follow a ticket moved from
+    The reference PSA documents that Auto Assign does not follow a ticket moved from
     another board (§5.2 of the build scope); cross-board handover on one id is
     the thing this desk must do better, so the move keeps the ticket's clocks
     running and lands it on the new board's status for the same SLA milestone.
@@ -456,20 +456,20 @@ NOTE_FLAGS = ("DISCUSSION", "INTERNAL", "RESOLUTION")
 CHARGE_METHODS = ("INCLUDED_IN_MONTHLY_FEE", "CAPACITY_UPLIFT", "SEPARATE_CHARGE",
                   "PASS_THROUGH", "NON_CHARGEABLE")
 # The bands effort is recorded in (003_delivery: time_entry.band_hours). Since
-# 033 a band is DERIVED from the actual hours ConnectWise-style time entry
+# 033 a band is DERIVED from the actual hours Dada PSA-style time entry
 # records: the smallest band the hours fit in. §5.2's arithmetic stays in bands.
 BANDS = (0.5, 2, 4, 8, 20)
-# ConnectWise's TimeEntry.billableOption (the record's model, VERIFIED 9 Sep
-# 2026 from ConnectWise's OpenAPI schema). NO_DEFAULT: the agreement decides.
+# The reference PSA's TimeEntry.billableOption (the record's model, VERIFIED
+# 9 Sep 2026 from its OpenAPI schema). NO_DEFAULT: the agreement decides.
 BILL_OPTIONS = ("BILLABLE", "DO_NOT_BILL", "NO_CHARGE", "NO_DEFAULT")
-# Time is kept to the quarter hour. INFERRED: ConnectWise rounds time entries
+# Time is kept to the quarter hour. INFERRED: the reference PSA rounds time entries
 # by a per-company setting; a quarter hour is the usual choice and is what the
 # desk applies. Half up, so 0.13 h is a quarter, never nothing.
 ROUND_HOURS = 0.25
 MAX_HOURS = BANDS[-1]
 
 # The starter work roles and work types, as data: Setup › Time edits them.
-# ConnectWise ships its own list; these are the ones a hospital IT desk uses.
+# The reference PSA ships its own list; these are the ones a hospital IT desk uses.
 STARTER_WORK_ROLES = (("TECHNICIAN", "Technician"), ("ENGINEER", "Engineer"),
                       ("SERVICE_MANAGER", "Service manager"), ("ON_CALL", "On-call"))
 STARTER_WORK_TYPES = (("REGULAR", "Regular", "BILLABLE"), ("REMOTE", "Remote", "BILLABLE"),
@@ -500,7 +500,7 @@ def work_types(conn: sqlite3.Connection, *, all_rows: bool = False) -> list[sqli
 def time_defaults(conn: sqlite3.Connection, *, work_item_id: str | None = None,
                   board_id: str | None = None) -> dict:
     """The work role and type a time entry starts with: the board's own
-    (Board.workRole / workType in ConnectWise, Setup › the board), else the
+    (Board.workRole / workType in Dada PSA, Setup › the board), else the
     first active of each in Setup › Time. Either may be None when nothing is
     set up at all."""
     ensure_time_vocabulary(conn)
@@ -550,7 +550,7 @@ def _parse_when(value, label: str) -> datetime:
 
 def resolve_hours(*, actual_hours=None, time_start=None, time_end=None,
                   hours_deduct=None) -> dict:
-    """ConnectWise's rule: start and end, OR actual hours, never both. Hours
+    """Dada PSA's rule: start and end, OR actual hours, never both. Hours
     are end minus start minus the deduction, rounded to the quarter hour, and
     must come out above zero. Returns what to store."""
     deduct = float(hours_deduct or 0)
@@ -590,14 +590,14 @@ def prepare_time(conn: sqlite3.Connection, work_item_id: str, *, charge_method,
                  work_role_id=None, work_type_id=None, billable_option=None,
                  **hours_kw) -> dict:
     """Everything a time entry needs, checked before a byte is written: the
-    hours (ConnectWise's rule), the charge method (never assumed), a real work
+    hours (Dada PSA's rule), the charge method (never assumed), a real work
     role and type, a bill option, and the two effort gates. Returns the values
     to store; raises EffortRefused in a sentence."""
     values = resolve_hours(**hours_kw)
     if charge_method not in CHARGE_METHODS:
         raise EffortRefused("say how the time is charged; it is never assumed")
     ensure_time_vocabulary(conn)
-    # ConnectWise fills the work role and type from the member's own defaults;
+    # The reference PSA fills the work role and type from the member's own defaults;
     # the desk's default is the first of each in Setup › Time. A named one must
     # exist and be in use.
     defaults = time_defaults(conn, work_item_id=work_item_id)
@@ -643,7 +643,7 @@ def add_time(conn: sqlite3.Connection, work_item_id: str, *, at: datetime, actor
              ticket_event_id: int | None = None, note: str | None = None,
              authority_source: str = "ticket time entry", counts_to_capacity: bool = True,
              values: dict | None = None, **kw) -> int:
-    """One time entry, as ConnectWise records one: who, when (a start and end,
+    """One time entry, as Dada PSA records one: who, when (a start and end,
     or actual hours, less a deduction), the work role and type, the bill
     option, and the spine's own charge method. band_hours is derived. Returns
     the entry's id. `values` is prepare_time's answer when the caller checked
@@ -685,13 +685,13 @@ def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: st
              charge_method: str | None = None, to_status_id: str | None = None,
              resolution: bool = False, time: dict | None = None,
              notify_requester: bool = True) -> dict:
-    """One note, the way ConnectWise takes one: flagged, optionally with time
+    """One note, the way Dada PSA takes one: flagged, optionally with time
     against it, optionally moving the status in the same action.
-    `notify_requester` is ConnectWise's "Contact" tick on the note: a
+    `notify_requester` is Dada PSA's "Contact" tick on the note: a
     Discussion note emails the requester unless the technician unticks it.
 
     Discussion and Resolution notes are the requester's to read on the portal;
-    Internal ones never leave the desk. Time is ConnectWise's time entry
+    Internal ones never leave the desk. Time is Dada PSA's time entry
     (`time`: actual_hours or time_start/time_end, hours_deduct, work_role_id,
     work_type_id, billable_option, performed_by); `band_hours` is the older
     spelling and means actual hours. Every check runs before anything is
@@ -720,7 +720,7 @@ def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: st
     stamp = at.isoformat(sep=" ", timespec="minutes")
     event_id = _event(conn, work_item_id, stamp, "NOTE", actor, body, flag)
     if resolution and flag != "RESOLUTION":
-        # ConnectWise's second flag on one note (025): who reads it is still
+        # Dada PSA's second flag on one note (025): who reads it is still
         # the note's own flag; an Internal resolution stays internal.
         conn.execute("UPDATE ticket_event SET is_resolution = 1 WHERE ticket_event_id = ?",
                      (event_id,))
@@ -765,7 +765,7 @@ def update_fields(conn: sqlite3.Connection, work_item_id: str, *, at: datetime,
     variation path is a commercial decision, not a field edit.
 
     Priority is never set here. Changing impact or urgency re-runs the matrix,
-    as ConnectWise's SLA matrix does, and the running clocks take the new
+    as Dada PSA's SLA matrix does, and the running clocks take the new
     priority's targets. A priority someone OVERRODE (with a named role and a
     reason, 005) is not undone by a field edit: the override stands and only
     the axes are recorded.

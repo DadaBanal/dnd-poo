@@ -4,10 +4,10 @@
 -- in the sense the whole design rests on OWNS ITS VOCABULARY: its statuses, its
 -- teams, who may see it, and the working week its clocks run against.
 --
--- Shapes here follow ConnectWise's own entity model where it is better than what
+-- Shapes here follow the reference PSA's entity model where it is better than what
 -- was drafted, and the places it is better are recorded rather than quietly
 -- copied. See docs/WS36-connectwise-model-20260909.md, extracted from
--- ConnectWise's published OpenAPI schemas.
+-- its published OpenAPI schemas.
 
 PRAGMA foreign_keys = ON;
 
@@ -18,7 +18,7 @@ PRAGMA foreign_keys = ON;
 -- somebody codes by hand.
 --
 -- The design drafted three booleans -- stops_respond, stops_resolve, and one
--- more for the plan. ConnectWise carries ONE field instead, and it is better:
+-- more for the plan. The reference PSA carries ONE field instead, and it is better:
 -- the status declares WHICH SLA MILESTONE IT REPRESENTS and the clock engine
 -- derives the rest. NO_ESCALATION is the pause. Taken as-is, because inventing
 -- a worse version of a solved problem is not craft.
@@ -43,7 +43,7 @@ CREATE TABLE board_status (
   time_entry_allowed INTEGER NOT NULL DEFAULT 1 CHECK (time_entry_allowed IN (0, 1)),
   display_on_board  INTEGER NOT NULL DEFAULT 1 CHECK (display_on_board IN (0, 1)),
   sort_order        INTEGER NOT NULL DEFAULT 0,
-  -- Retired, never deleted. ConnectWise refuses to delete a board once anything
+  -- Retired, never deleted. The reference PSA refuses to delete a board once anything
   -- references it, and the same is true of a status: the tickets that sat in it
   -- are evidence.
   inactive          INTEGER NOT NULL DEFAULT 0 CHECK (inactive IN (0, 1)),
@@ -60,7 +60,7 @@ CREATE TABLE board_status (
 -- CIO in another country [MEASURED]. Two names cannot express "who answers at
 -- 02:00, and who answers when they do not".
 --
--- ConnectWise carries four per board -- dispatchMember, dutyManagerMember,
+-- The reference PSA carries four per board -- dispatchMember, dutyManagerMember,
 -- oncallMember, serviceManagerMember -- and documents the duty manager as
 -- "backup for the on-call member ... if the on-call member does not respond to
 -- the ticket within the specified time." That is the escalation chain a hospital
@@ -106,7 +106,7 @@ CREATE TABLE board_member (
 --
 -- The design said two calendars, CLINICAL_24x7 and MANILA_BUSINESS, as fixed
 -- values. That breaks the first time a board needs a ward roster or a supplier's
--- support window. ConnectWise lets an SLA run on a company calendar, a customer
+-- support window. The reference PSA lets an SLA run on a company calendar, a customer
 -- site calendar, 24x7, or a custom one -- so a calendar is a TABLE.
 --
 -- Philippine public holidays are rows, not code. PMC's holidays are not

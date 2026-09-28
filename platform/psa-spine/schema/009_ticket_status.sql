@@ -5,7 +5,7 @@
 -- gate triggers depend on it.
 --
 -- 006 made statuses per-board rows. So there are now two levels, and they are
--- not duplication -- ConnectWise has exactly the same pair, and for the same
+-- not duplication -- the reference PSA has exactly the same pair, and for the same
 -- reason:
 --
 --   * `state` is the UNIVERSAL lifecycle. Eight values, the same on every board,

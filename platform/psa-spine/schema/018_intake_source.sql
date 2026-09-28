@@ -1,6 +1,6 @@
 -- 018 — where a ticket came from.
 --
--- ConnectWise keeps a global Source table (call, email, website) and the build
+-- The reference PSA keeps a global Source table (call, email, website) and the build
 -- scope (§5.8) asked for the same: `ticket.intake_source`. It is a different
 -- axis from work_item.source, which says register versus desk versus manual.
 -- For PMC the phone and walk-up counts are the interesting ones, because that

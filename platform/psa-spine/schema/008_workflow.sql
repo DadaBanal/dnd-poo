@@ -7,7 +7,7 @@
 --
 -- So a rule is DATA. PMC edits it; nobody ships a release.
 --
--- The shape follows ConnectWise's, which splits across four entities, because
+-- The shape follows the reference PSA's, which splits across four entities, because
 -- two of the parts are ones the draft design did not have and both are load
 -- bearing:
 --
@@ -24,7 +24,7 @@
 --     language here, and nothing is ever passed to eval -- while PMC can still
 --     build a condition without a developer. That is decision D5, answered.
 --
--- `workflow_run` is ours, not ConnectWise's. A rules engine you cannot audit is
+-- `workflow_run` is ours, not Dada PSA's. A rules engine you cannot audit is
 -- a system nobody can explain, and in a hospital that is the whole ballgame.
 
 PRAGMA foreign_keys = ON;

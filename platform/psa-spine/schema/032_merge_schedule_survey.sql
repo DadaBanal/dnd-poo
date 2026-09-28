@@ -1,8 +1,8 @@
 -- 032 — merged duplicates, scheduled visits, and the satisfaction survey.
 --
--- merged_into: ConnectWise's Merge. The duplicate is closed on its own board
+-- merged_into: Dada PSA's Merge. The duplicate is closed on its own board
 -- and says where its words went; the row stays, so its number still answers.
--- ticket_schedule: a visit, as ConnectWise's schedule entry -- who, when, on
+-- ticket_schedule: a visit, as Dada PSA's schedule entry -- who, when, on
 -- which ticket -- so Dispatch can show a day. survey_response: one answer per
 -- ticket from its requester after it closes, one to five and a sentence,
 -- scanned for patient details like every other requester text.

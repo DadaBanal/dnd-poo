@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Pull new mail from the helpdesk mailbox into the PSA desk, about every 30 seconds.
+    Pull new mail from the helpdesk mailbox into Dada PSA, about every 30 seconds.
 
 .DESCRIPTION
     Runs on DND-SQL01. Nothing reaches in: the server polls Microsoft Graph for

@@ -3,7 +3,7 @@
     Export AD computer objects as PSA configurations. Reads AD; changes nothing in it.
 
 .DESCRIPTION
-    ConnectWise lists the configurations (machines) a ticket concerns, and a
+    Dada PSA lists the configurations (machines) a ticket concerns, and a
     technician launches the remote session from there. The machines are already
     in Active Directory, so the desk reads them from there.
 

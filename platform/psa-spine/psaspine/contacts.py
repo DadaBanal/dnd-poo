@@ -1,6 +1,6 @@
 """Contacts: who asks, under which company, read from what AD already knows.
 
-ConnectWise keeps a contact under each company, and every ticket names one. Here
+Dada PSA keeps a contact under each company, and every ticket names one. Here
 the people asking are almost all PMC staff, and PMC's Active Directory already
 holds them, so contacts are **imported from an export of AD**, not typed in.
 
@@ -189,7 +189,7 @@ PUBLIC_DOMAINS = frozenset({
 def company_for_domain(conn: sqlite3.Connection, requested_by: str | None) -> str | None:
     """The one company whose active contacts use this address's domain, or None.
 
-    ConnectWise's third match, after exact address and unique name: an email
+    The reference PSA's third match, after exact address and unique name: an email
     domain that belongs to exactly one company (VERIFIED, docs.connectwise.com/
     ConnectWise_Documentation/090/020/170/040, archived 2024-07-15). A name is
     never matched here (see resolve). Public mail domains never match, and a

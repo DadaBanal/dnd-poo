@@ -1,10 +1,10 @@
-"""The ticket — one screen, laid out the way a ConnectWise technician expects.
+"""The ticket — one screen, laid out the way a Dada PSA technician expects.
 
 Header: id, summary, board, status, priority and WHY it is that priority (the
 matrix computed it; nobody typed it). Under it, one box per SLA clock —
 Respond, Resolution plan, Resolve — with its target, where it stands, and a bar.
 
-Left: the notes, each flagged the ConnectWise way — Discussion (the requester
+Left: the notes, each flagged the Dada PSA way — Discussion (the requester
 reads it on the portal), Internal (shaded; never leaves the desk), Resolution
 (the answer; the requester reads it) — with system events as quiet lines
 between them, and tabs to filter by flag. Below: the note box, which also
@@ -33,7 +33,7 @@ SOURCES = (("PHONE", "Phone"), ("WALK_UP", "Walk-up"), ("EMAIL", "Email (logged 
 CHARGE_LABEL = {"INCLUDED_IN_MONTHLY_FEE": "Included in monthly fee",
                 "CAPACITY_UPLIFT": "Capacity uplift", "SEPARATE_CHARGE": "Separate charge",
                 "PASS_THROUGH": "Pass-through", "NON_CHARGEABLE": "Non-chargeable"}
-# ConnectWise's bill options, in its words.
+# Dada PSA's bill options, in its words.
 BILL_LABEL = {"NO_DEFAULT": "No default (the agreement decides)", "BILLABLE": "Billable",
               "DO_NOT_BILL": "Do not bill", "NO_CHARGE": "No charge"}
 
@@ -122,10 +122,22 @@ def _contact_list(conn, list_id: str, entity_id: str | None = None) -> str:
 
 
 def _catalogue_select(conn, board_id, selected, *, disabled="") -> str:
-    """Type › Subtype › Item, grouped by Type (ConnectWise's three levels). The
+    """Type › Subtype › Item, grouped by Type (Dada PSA's three levels). The
     board's own items are listed first within each group."""
     from ... import setup
     choices = setup.catalogue_choices(conn, board_id)
+    if selected and all(c["catalogue_item_id"] != selected for c in choices):
+        # A pair retired in Setup › Catalogue stays on the ticket that carries
+        # it: offered here as itself, marked, so a save does not silently clear it.
+        kept = conn.execute(
+            "SELECT i.catalogue_item_id, f.display_name AS type, c.display_name AS subtype,"
+            "       a.display_name || ' (retired)' AS item, a.kind, i.default_board_id"
+            "  FROM catalogue_item i JOIN service_component c ON c.component_id = i.component_id"
+            "  JOIN service_family f ON f.family_id = c.family_id"
+            "  JOIN service_action a ON a.action_id = i.action_id WHERE i.catalogue_item_id = ?",
+            (selected,)).fetchone()
+        if kept is not None:
+            choices = choices + [dict(kept) | {"on_board": kept["default_board_id"] == board_id}]
     if not choices:
         return ""
     groups: dict[str, list] = {}
@@ -145,7 +157,7 @@ def _catalogue_select(conn, board_id, selected, *, disabled="") -> str:
 
 def _type_select(conn, board_id: str | None, selected: str | None, *, disabled: str = "",
                  blank: str | None = None) -> str:
-    """The board's Types (ConnectWise's Types tab): Incident, Request, Problem,
+    """The board's Types (Dada PSA's Types tab): Incident, Request, Problem,
     Event on a service board. With no board, every Type."""
     from ... import itil
     rows = [r["record_type"] for r in itil.boards_types(conn, board_id)] if board_id else []
@@ -158,14 +170,14 @@ def _type_select(conn, board_id: str | None, selected: str | None, *, disabled: 
 
 
 def _time_fields(ctx, tk, *, prefix: str = "", compact: bool = False) -> str:
-    """ConnectWise's time entry fields: date, start and end OR actual hours,
+    """Dada PSA's time entry fields: date, start and end OR actual hours,
     deduct, work role, work type, bill option, and the spine's charge method.
     The same fields on the note composer and on the Time pod's own form."""
     defaults = engine.time_defaults(ctx.conn, board_id=tk["board_id"])
     roles = engine.work_roles(ctx.conn)
     types = engine.work_types(ctx.conn)
     today = ctx.now.date().isoformat()
-    # The board's own default, else the first of each, as ConnectWise defaults them.
+    # The board's own default, else the first of each, as Dada PSA defaults them.
     role_opts = _options([(r["work_role_id"], r["name"]) for r in roles], defaults["work_role_id"] or "")
     type_opts = _options([(w["work_type_id"], w["name"]) for w in types], defaults["work_type_id"] or "")
     bill_opts = _options(list(BILL_LABEL.items()), "NO_DEFAULT")
@@ -324,14 +336,14 @@ def detail(ctx, work_item_id):
     may, why_not = engine.may_book_effort(ctx.conn, work_item_id)
 
     composer = ""
-    # ConnectWise's "Contact" tick on a note: a Discussion note emails the
+    # Dada PSA's "Contact" tick on a note: a Discussion note emails the
     # requester unless the technician says not this one. Drawn only where the
     # board emails requesters at all.
     notify_tick = ("<label style='display:block;margin-top:6px;color:var(--ink);font-weight:500'>"
                    "<input type=checkbox name=notify value=1 checked style='width:auto'> Email the requester</label>"
                    if tk["notify_requester"] else "")
     if can_work:
-        # ConnectWise's note carries its time entry; the fields are its.
+        # Dada PSA's note carries its time entry; the fields are its.
         time_block = (
             "<details class=timeblock><summary>Time on this note</summary>"
             + _time_fields(ctx, tk, compact=True)
@@ -419,10 +431,10 @@ def detail(ctx, work_item_id):
         + ("<div style='margin-top:12px'><button type=submit><svg class=ic aria-hidden=true><use href=#i-check></use></svg> Save changes</button></div>" if can_work else "")
         + "</form></div>")
 
-    # The Time pod is ConnectWise's Time tab: one row per entry with its date,
+    # The Time pod is Dada PSA's Time tab: one row per entry with its date,
     # member, start–end, hours, deduct, work role and type, bill option, the
     # spine's charge method and the band it counts as; then its own Add time
-    # form, with the note flags a ConnectWise time entry carries.
+    # form, with the note flags a Dada PSA time entry carries.
     actual_total = sum((r["actual_hours"] if r["actual_hours"] is not None else r["band_hours"])
                        for r in time_rows)
     band_total = sum(r["band_hours"] for r in time_rows)
@@ -535,7 +547,7 @@ def add_note(ctx, work_item_id):
 
 
 def add_time(ctx, work_item_id):
-    """POST /ticket/<id>/time: ConnectWise's Add time. With notes it is a note
+    """POST /ticket/<id>/time: Dada PSA's Add time. With notes it is a note
     that carries the time (one write, refused whole); without, a bare entry."""
     tk = _load(ctx, work_item_id)
     common.require_board(ctx, tk["board_id"], need="WORK")
@@ -840,7 +852,7 @@ def _links_card(ctx, tk, *, can_work: bool) -> str:
 
 
 def _family_card(ctx, tk, *, can_work: bool) -> str:
-    """ConnectWise's parent/child. A child shows its parent; a parent lists its
+    """Dada PSA's parent/child. A child shows its parent; a parent lists its
     children with their status. Tickets on boards this user cannot see are
     counted, never named."""
     from ... import family
@@ -1094,7 +1106,7 @@ def unlink(ctx, work_item_id):
 # ------------------------------------------------------------------ tasks
 
 def _tasks_card(ctx, tk, *, can_work: bool) -> str:
-    """ConnectWise's Tasks tab: the ticket's checklist, and templates to fill it."""
+    """Dada PSA's Tasks tab: the ticket's checklist, and templates to fill it."""
     from ... import tasks
     wid = t.esc(tk["work_item_id"])
     rows = tasks.tasks_of(ctx.conn, tk["work_item_id"])
@@ -1172,7 +1184,7 @@ def template_apply(ctx, work_item_id):
 
 
 def _template_picker(ctx, selected: str) -> str:
-    """ConnectWise's "new ticket from template": a plain GET, so it works with no script."""
+    """Dada PSA's "new ticket from template": a plain GET, so it works with no script."""
     rows = ctx.conn.execute(
         "SELECT tt.template_id, tt.name, b.display_name FROM ticket_template tt"
         "  JOIN board b ON b.board_id = tt.board_id JOIN board_member m ON m.board_id = tt.board_id"

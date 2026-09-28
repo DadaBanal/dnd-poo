@@ -1,4 +1,4 @@
--- 020 — contacts: who asks, as ConnectWise keeps them under each company.
+-- 020 — contacts: who asks, as Dada PSA keeps them under each company.
 --
 -- entity is the company (PMC, JRBY-CI, ...). A contact is a person at one,
 -- almost always a member of staff synced from PMC's Active Directory. These

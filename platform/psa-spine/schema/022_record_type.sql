@@ -3,15 +3,15 @@
 -- Dada's direction (23 Sep 2026): boards are not split into "issues" and
 -- "requests"; the model follows ITIL. The evidence for how:
 --
---   * ConnectWise's own "Service Type Examples" workbook (ConnectWise University
+--   * The reference PSA's own "Service Type Examples" workbook (its University
 --     content, ITIL Example sheet) uses exactly four Types on a service board:
 --     Event, Incident, Problem, Request. Dada's workbook column A is the same
---     four. In ConnectWise the ITIL class is a per-board Type, not a board, and
+--     four. In the reference PSA the ITIL class is a per-board Type, not a board, and
 --     change is a "Request for Change" flag on a Type (VERIFIED 23 Sep 2026,
 --     cw-www.s3.us-east-1.amazonaws.com/university/content/User_Documents/
 --     ServiceTypeExamplesPSA.xlsx; docs.connectwise.com/ConnectWise_Documentation/
 --     090/020/170/100/020).
---   * ConnectWise's service board guidance divides boards by team and workflow,
+--   * The reference PSA's service board guidance divides boards by team and workflow,
 --     not by ITIL class (VERIFIED, docs.connectwise.com/ConnectWise_Documentation/
 --     090/020/170/100). Projects run on project boards (projectFlag).
 --
@@ -22,7 +22,7 @@
 --
 -- ticket.path keeps its meaning from 005 and its gate triggers are unchanged:
 -- 'VARIATION' when the work is a fee-bearing variation, and otherwise the
--- record type's side of ConnectWise's Reactive/Proactive split (INCIDENT,
+-- record type's side of Dada PSA's Reactive/Proactive split (INCIDENT,
 -- PROBLEM, EVENT -> 'INCIDENT'; SERVICE_REQUEST, CHANGE, PROJECT ->
 -- 'SERVICE_REQUEST'). It is derived in one place (tickets.derive_path), never
 -- passed in. An ITIL change is NOT a commercial variation: a change can be in
@@ -45,14 +45,14 @@ ALTER TABLE catalogue_item ADD COLUMN record_type TEXT
 -- The board's kind (Dada, 23 Sep 2026: "those are board types"). A SERVICE board
 -- is the front door for incidents, requests, problems and events; a CHANGE board
 -- runs the change lifecycle and its approval gate; a PROJECT board runs projects
--- and no SLA clocks (ConnectWise's projectFlag: "SLA timers do not run on project
+-- and no SLA clocks (the reference PSA's projectFlag: "SLA timers do not run on project
 -- tickets", VERIFIED, docs.connectwise.com/ConnectWise_Documentation/090/020/140/
 -- 010/020). NULL reads as SERVICE, so every board made before this is one.
 ALTER TABLE board ADD COLUMN kind TEXT
   CHECK (kind IN ('SERVICE', 'CHANGE', 'PROJECT'));
 
--- The board's Types: ConnectWise's Types tab. On a service board they are
--- Incident, Request, Problem and Event, the four of ConnectWise's ITIL example
+-- The board's Types: Dada PSA's Types tab. On a service board they are
+-- Incident, Request, Problem and Event, the four of the reference PSA's ITIL example
 -- and Dada's column A, and a ticket reads Type > Subtype > Item (Incident >
 -- Printers > Fix). A board with no rows takes every Type, so a board set up
 -- before this migration behaves as it did. ticket.record_type holds the Type.
@@ -87,11 +87,11 @@ CREATE TABLE sla_target_type (
 
 -- ------------------------------------------------------------ change enablement
 --
--- ITIL 4 names three types of change, and ConnectWise's Service Transition page
+-- ITIL 4 names three types of change, and the reference PSA's Service Transition page
 -- uses the same three (VERIFIED, docs.connectwise.com/ConnectWise_Business_
 -- Knowledge/110/030): STANDARD is pre-authorised and needs no approval; NORMAL
 -- is authorised by a change authority before it is built; EMERGENCY goes ahead
--- at once and is authorised as soon as it can be, afterwards. ConnectWise's
+-- at once and is authorised as soon as it can be, afterwards. Dada PSA's
 -- ticket has no change fields (only Ticket.approved), so these are the spine's
 -- own, named as such.
 ALTER TABLE ticket ADD COLUMN change_type TEXT
@@ -125,7 +125,7 @@ CREATE INDEX ix_change_approval_ticket ON change_approval (work_item_id);
 -- ------------------------------------------------ incident -> problem -> change
 --
 -- ITIL's chain: incidents are linked to the problem that causes them, and a
--- problem (or anything else) to the change that fixes it. ConnectWise does this
+-- problem (or anything else) to the change that fixes it. The reference PSA does this
 -- by bundling child tickets under a parent, which stops workflow and billing on
 -- the children and is a known cause of SLA reports running for years on open
 -- children (VERIFIED, visionary360.com/the-hidden-sla-killer-in-connectwise-psa-

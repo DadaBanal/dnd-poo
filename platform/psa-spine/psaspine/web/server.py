@@ -116,7 +116,7 @@ def serve(db_path: str, *, host: str = "127.0.0.1", port: int = 8085,
                              ("Entra", config.entra_configured)) if on]
     posture = " + ".join(doors + ["break-glass"]) if doors else \
         "break-glass only (no Windows domain and no Entra tenant configured)"
-    print(f"PSA desk (Phase B pilot) on {scheme}://{host}:{port}", file=sys.stderr)
+    print(f"Dada PSA (Phase B pilot) on {scheme}://{host}:{port}", file=sys.stderr)
     print(f"  database: {db.describe(db_path)}", file=sys.stderr)
     print(f"  sign-in:  {posture}", file=sys.stderr)
     if config.public_url or config.portal_url:

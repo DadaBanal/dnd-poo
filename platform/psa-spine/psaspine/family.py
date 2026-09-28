@@ -1,6 +1,6 @@
 """Child tickets (030): one parent, many children, one level, close together.
 
-ConnectWise's parent/child, as a fulfiller uses it: a ward reports the same
+Dada PSA's parent/child, as a fulfiller uses it: a ward reports the same
 outage five times; the first ticket becomes the parent and the rest are attached
 as children, so one person works one ticket and every requester still has their
 own. When the parent closes, each child closes on its own board's closed status
@@ -141,7 +141,7 @@ def close_with_parent(conn: sqlite3.Connection, parent_id: str, *, at: datetime,
 
 def merge(conn: sqlite3.Connection, dup_id: str, into_id: str, *, actor: str,
           at: datetime) -> dict:
-    """ConnectWise's Merge: the duplicate's notes are copied onto the ticket
+    """Dada PSA's Merge: the duplicate's notes are copied onto the ticket
     that stays, its files and links move, its children move, and it closes on
     its own board with merged_into set so its number still answers.
 

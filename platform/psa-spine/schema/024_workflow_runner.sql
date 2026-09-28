@@ -2,7 +2,7 @@
 --
 -- 008 made rules data; nothing ran them outside the walkthrough. psaspine.workflow
 -- now runs them at every engine seam (create, status, note, owner, move) and on a
--- sweep for time-based events, and two things ConnectWise does are copied
+-- sweep for time-based events, and two things the reference PSA does are copied
 -- (VERIFIED 23 Sep 2026, docs.connectwise.com/ConnectWise_Documentation/090/020/
 -- 070/130, archived 2025-08-30):
 --

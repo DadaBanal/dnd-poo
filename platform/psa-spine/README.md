@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 519 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 522 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -108,9 +108,9 @@ cross-board configuration, never a restricted board's contents. This is §11 tes
 5, the acceptance test the record wrote and never ran: a non-member is *provably*
 excluded, and a test asserts a non-member gets a 404, not a leak.
 
-## The desk, laid out like ConnectWise
+## The desk: Dada PSA's layout
 
-What a technician uses every day, built to ConnectWise PSA's shape and
+What a technician uses every day, built to the shape a technician from the reference PSA knows, and
 checked against Zammad and HaloPSA:
 
 - **Service Board** (`/`): five counters that also filter (open, SLA breached,
@@ -127,8 +127,8 @@ checked against Zammad and HaloPSA:
   sets it, and the engine leaves an `OVERRIDE` priority alone if one ever
   arrives by import. Reserved, documented, not a feature.
   One box per SLA clock. Notes flagged **Discussion / Internal / Resolution**,
-  as ConnectWise flags them. The requester's portal shows Discussion and
-  Resolution only. A note can carry a time entry in ConnectWise's shape
+  as Dada PSA flags them. The requester's portal shows Discussion and
+  Resolution only. A note can carry a time entry in Dada PSA's shape
   (below), with a charge method the technician must choose, and can move the
   status in the same save. The
   right-hand panel edits board, status, owner, company, contact and the two
@@ -140,8 +140,8 @@ checked against Zammad and HaloPSA:
 - **New ticket** (`/ticket/new`): for phone calls and walk-ups. It records its
   source.
 - **Setup** (`/admin/board/<id>`): Board, Statuses, SLA, and Members & roles
-  tabs, as ConnectWise's Service Board setup table. The Board tab also holds
-  ConnectWise's *send to resource* (**Email the owner when a ticket is
+  tabs, as Dada PSA's Service Board setup table. The Board tab also holds
+  Dada PSA's *send to resource* (**Email the owner when a ticket is
   assigned to them**: one unsent email per ticket and owner, none when you
   assign it to yourself, no summary in the subject) and the board's default
   work role and type for time entries. The starter setup
@@ -193,7 +193,7 @@ keyboard-first rows) and checked against current UI-trend and CSS references
 - **Every page works with the script off.** It only adds.
 
 - **Companies and contacts** (`/companies`, `/company/<id>`, `/contacts`,
-  `/contact/<id>`): ConnectWise's Company › Contacts. Contacts come from Active
+  `/contact/<id>`): Dada PSA's Company › Contacts. Contacts come from Active
   Directory, not typing: `scripts/Export-PmcAdContacts.ps1` reads AD as an
   ordinary user and changes nothing in it; `psaspine import-contacts` loads the CSV,
   keyed by the AD objectGUID so a renamed person stays one contact. A disabled
@@ -233,13 +233,13 @@ keyboard-first rows) and checked against current UI-trend and CSS references
 
 Boards are split by who does the work and how it flows, never by incident
 versus request. The evidence: ITIL 4's service desk takes both incidents and
-requests through one front door. ConnectWise's own "ITIL Example" Types are
+requests through one front door. The reference PSA's own "ITIL Example" Types are
 **Event, Incident, Problem, Request**, as Types on one board. That is Dada's
 workbook column A. (Sources are in `schema/022_record_type.sql`.)
 
 - **Board kind** (`board.kind`): **Service**, **Change** or **Project**, chosen on
   *New board*. It sets the starter statuses. Only a service board gets SLA
-  targets; ConnectWise: "SLA timers do not run on project tickets".
+  targets; the reference PSA: "SLA timers do not run on project tickets".
 - **The board's Types** (Setup › *Types* tab): a service board takes Incident,
   Request, Problem and Event. A ticket reads **Type › Subtype › Item**
   (*Incident › Printer › Fix*). Ticking Change on a service board is Dada's
@@ -256,15 +256,45 @@ workbook column A. (Sources are in `schema/022_record_type.sql`.)
   backout plan, and every decision is append-only.
 - **Links:** incident *caused by* problem, anything *fixed by* change, or
   *related*. A link closes nothing and moves no clock. That avoids the
-  ConnectWise child-ticket SLA trap. It is not handover: one fault stays one
+  reference PSA's child-ticket SLA trap. It is not handover: one fault stays one
   ticket that moves.
 - The commercial path (VARIATION) is derived, never passed in. This closes a
   bypass where a variation item opened as INCIDENT could have time booked
   against it.
 
+### The catalogue setup tables (Setup › Catalogue, 28 Sep 2026)
+
+The reference PSA's Service Board setup table has a Types tab, a Subtypes tab
+and an Items tab, each a list a person adds to, renames and inactivates. Dada
+PSA has the same three actions on its own tree, at `/admin/catalogue`, for a
+sysadmin, with no script:
+
+- **Types** stay the board's ITIL kind (Incident, Request, Problem, Event,
+  Change, Project). The tab lists the six, their category (reactive or
+  proactive) and which boards take each, linking to that board's own *Types*
+  tab where the ticks and the default are set. The six are a closed set because
+  the change approval gate and the SLA-by-type targets key on them.
+- **Areas** (`service_family`) group subtypes in the picker: add, rename, retire.
+- **Subtypes** (`service_component`): add under an area, rename, move to
+  another area, retire.
+- **Items** (`service_action`): add with a kind (request or fault) and an
+  implied impact, rename, change either, retire.
+- **Subtype › Item pairs** (`catalogue_item`): the existing list, now with an
+  *Associate* form: a subtype, an item, the board it lands on, its contract
+  basis (a baseline pair must name its scope item), a priority floor and the
+  clinical flag. Only a pair is offered on a ticket.
+
+Nothing is deleted. Retiring an area, subtype, item or pair takes it out of
+every picker and leaves every ticket that carries it as it was: the ticket
+screen still shows the pair, marked *(retired)*, and a save does not clear it.
+Every change is one `CATALOGUE_CONFIG` audit row saying what changed; a save
+that changes nothing writes none. Schema `036` adds the retire flag to areas and
+items (a subtype already had `is_draft`). Names are unique within their scope,
+whatever the case; ids are made from the name and never collide.
+
 ### Tasks and templates
 
-- **Tasks:** a ticket has a checklist, as ConnectWise's Tasks tab does.
+- **Tasks:** a ticket has a checklist, as Dada PSA's Tasks tab does.
   Ticking a task records who and when, and unticking it is recorded too.
 - **Templates:** each board has templates (Setup › *Templates*). A template
   holds a summary, a Type, a Subtype › Item, a description and tasks.
@@ -308,7 +338,7 @@ workbook column A. (Sources are in `schema/022_record_type.sql`.)
 
 ### Child tickets (030)
 
-- **What:** ConnectWise's parent/child. Five people report the same
+- **What:** Dada PSA's parent/child. Five people report the same
   printer; the first ticket is the parent and the rest are attached as
   children (on the ticket's *Children* pod, or tick rows on the board and
   *Attach to parent*). One person works one ticket; every requester keeps
@@ -393,7 +423,7 @@ workbook column A. (Sources are in `schema/022_record_type.sql`.)
 - **Not twice:** while one requester email for a ticket is still unsent, a
   further update adds none. Only an address that resolves is queued.
 - **Off until turned on:** per board, *Email the requester…* on the board's
-  settings. Unset means off, as ConnectWise leaves contact emails until a
+  settings. Unset means off, as Dada PSA leaves contact emails until a
   board enables them; turn it on once the portal is reachable over https.
 - **The link** is deployment config: `outbox-pending --portal-url https://…`
   or `PSA_PORTAL_URL` (`Send-PmcNotifications.ps1 -PortalUrl`). It must be
@@ -401,7 +431,7 @@ workbook column A. (Sources are in `schema/022_record_type.sql`.)
 
 ### Workflow rules (Setup › Workflow rules)
 
-This is ConnectWise's shape, from its archived workflow-rules page:
+This is the reference PSA's shape, from its archived workflow-rules page:
 - **Shape:** a rule is scoped to a board, or to every board. It holds
   events. Each event has conditions read left to right, a run mode (once, N
   times every T, or continuously every T) and actions: notify, escalate, set
@@ -412,10 +442,10 @@ This is ConnectWise's shape, from its archived workflow-rules page:
   shows how many open tickets match now, before it can be switched on. Any
   edit switches it off again.
 
-Where this desk differs from ConnectWise:
+Where Dada PSA differs from the reference PSA:
 - **Timing:** rules fire the moment a ticket is created, changes status,
   gets a note, changes owner or moves board. Only time-based events wait for
-  `psaspine run-rules`, which the server runs every minute; ConnectWise waits
+  `psaspine run-rules`, which the server runs every minute; the reference PSA waits
   up to ten.
 - **SLA time:** "SLA used (%)" follows the board's calendar and leaves out
   time in waiting statuses.
@@ -448,19 +478,19 @@ system administrator in Setup under "Boards with no administrator". A board
 that has members never takes that road again; its own administrators add the
 rest under Members & roles.
 
-## Time, as ConnectWise records it (28 Sep 2026)
+## Time, as Dada PSA records it (28 Sep 2026)
 
-A technician who has used ConnectWise expects its time entry, so the desk takes
-it (the fields are ConnectWise's `TimeEntry`, VERIFIED 9 Sep 2026 from its
+A technician who has used the reference PSA expects its time entry, so Dada PSA takes
+it (the fields are its `TimeEntry`, VERIFIED 9 Sep 2026 from its
 OpenAPI schema in the record's extracted model):
 
 - **Start and end, or actual hours, never both.** Hours are end minus start,
-  less a **deduction**, kept to the quarter hour (INFERRED: ConnectWise rounds
+  less a **deduction**, kept to the quarter hour (INFERRED: the reference PSA rounds
   by a per-company setting; a quarter hour is the usual one). Zero or less is
   refused.
-- **Work role** and **work type**, from Setup › Time (ConnectWise's setup
+- **Work role** and **work type**, from Setup › Time (Dada PSA's setup
   tables). A board names its own default of each on its Board tab
-  (ConnectWise's `Board.workRole` / `workType`); otherwise the first of each
+  (Dada PSA's `Board.workRole` / `workType`); otherwise the first of each
   in Setup › Time; a retired one stays on old entries and is refused on new
   ones. A work type carries its bill default (Billable, Do not bill, No
   charge).
@@ -472,7 +502,7 @@ OpenAPI schema in the record's extracted model):
 - **The "Contact" tick.** On a board that emails requesters, a Discussion
   note (and a time entry with notes) carries *Email the requester*, on by
   default; untick it for the one note that is not news.
-- **The Time pod is ConnectWise's Time tab**: one row per entry (date, member,
+- **The Time pod is Dada PSA's Time tab**: one row per entry (date, member,
   start–end, hours, deduct, work role, work type, bill, charged as, band) and
   its own *Add time* form; the note composer carries the same fields under
   *Time on this note*.
@@ -480,7 +510,7 @@ OpenAPI schema in the record's extracted model):
 Two things are the spine's own and stay. The **charge method** (included in
 the monthly fee, capacity uplift, separate charge, pass-through,
 non-chargeable) is still chosen on every entry, because it is the commercial
-classification an uplift claim is defended on, and ConnectWise leaves that to
+classification an uplift claim is defended on, and the reference PSA leaves that to
 the agreement. And **the band is derived**: `band_hours` is the smallest of
 0.5 / 2 / 4 / 8 / 20 h the actual hours fit in (more than 20 h is one entry
 per day), so §5.2's capacity arithmetic, the uplift evidence and every report
@@ -725,7 +755,7 @@ folder and runs `import-mail`. It signs in with a certificate in the Windows
 store, never a secret, and is scoped by Exchange RBAC for Applications to that
 one mailbox. It polls rather than listens, so no inbound port is opened.
 Preview unless `-Apply`. Setup: `docs/handoffs/HANDOFF-cloud-sql01-WS36-20260923-mail.md`.
-Mail follows ConnectWise's email connector rules (VERIFIED from its archived
+Mail follows the reference PSA's email connector rules (VERIFIED from its archived
 setup page):
 - **Finding the ticket:** a reply finds its ticket by its thread headers first,
   then by a ticket number anywhere in the subject (`[PMC-000123]`).
@@ -884,12 +914,12 @@ predicates, and an IDENTITY key refuses the one value a CHECK allows.
 **NOT VERIFIED on `DND-SQL01`**, which no environment on this account can reach;
 the handoff runs it with `@Apply = 0` first and reads the plan.
 
-## Against ConnectWise
+## Against the reference PSA
 
 [`docs/WS36-connectwise-parity-20260928.md`](../../docs/WS36-connectwise-parity-20260928.md)
-is the function-by-function comparison with ConnectWise PSA (superseding the
+is the function-by-function comparison with the reference PSA (superseding the
 23 Sep one): what is built the same, what was changed on 28 Sep because a
-technician who knows ConnectWise would notice, what stays deliberately
+technician who knows the reference PSA would notice, what stays deliberately
 stricter, and what is not built and why.
 
 ## Design notes
@@ -926,7 +956,7 @@ none is started:
 
 - **CMDB / configurations** — needed for the per-asset maintenance export a DOH
   inspection would ask for, and for medical devices as configuration items.
-- **Service catalogue tables** — the ConnectWise Type/Subtype/Item taxonomy.
+- **Service catalogue tables** — the Dada PSA Type/Subtype/Item taxonomy.
 - **Contacts, companies, boards** — the desk holds these today.
 - **Invoicing** — the spine produces the evidence for an invoice, not the invoice.
 - **Effort capture from the desk.** `import-tickets` writes work items and

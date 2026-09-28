@@ -1,6 +1,6 @@
 """Scheduled visits (032): who goes where, when, on which ticket.
 
-ConnectWise's schedule entry, kept to what a hospital desk needs: a member, a
+Dada PSA's schedule entry, kept to what a hospital desk needs: a member, a
 start and an end, a note, on a ticket. The ticket records the visit as an
 event; Dispatch shows a day by member so two people are not sent to the same
 ward at the same hour. Times are the desk's own local timestamps, entered from

@@ -64,8 +64,8 @@ def index(ctx):
         n_items = ctx.conn.execute("SELECT COUNT(*) FROM catalogue_item").fetchone()[0]
         cards.append(
             "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-layers></use></svg>Boards and the service catalogue</h3>"
-            "<p class=sub>Boards are split by who does the work and how it flows, as ConnectWise "
-            "advises, never by incident versus request. A <b>service</b> board's Types are "
+            "<p class=sub>Boards are split by who does the work and how it flows, "
+            "never by incident versus request. A <b>service</b> board's Types are "
             "Incident, Request, Problem and Event (ITIL's service desk takes both incidents and "
             "requests); a <b>change</b> board runs assessment, approval and scheduling; a "
             "<b>project</b> board runs projects with no SLA clocks. A person can be on as many "
@@ -73,10 +73,10 @@ def index(ctx):
             "<div class=row><div style='flex:0 0 auto'><a class=btn href='/admin/board/new'>"
             "+ New board</a></div>"
             "<div style='flex:0 0 auto'><form method=post action='/admin/catalogue/template'>"
-            "<button class=ghost type=submit>Load the ConnectWise template</button></form></div>"
-            f"<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/catalogue'>Type / Subtype / "
+            "<button class=ghost type=submit>Load the Dada PSA template</button></form></div>"
+            f"<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/catalogue'>Catalogue: Type / Subtype / "
             f"Item ({n_items})</a></div></div>"
-            "<p class=why style='margin-top:10px'>The template is Dada's ConnectWise design on the "
+            "<p class=why style='margin-top:10px'>The template is Dada's design on the "
             "ITIL model: IT Help as the service board with his Subtype › Item catalogue, plus an "
             "IT Change board and an IT Projects board. His Request-board SLA numbers become "
             "Request targets on IT Help. Items for boards that do not exist yet wait until those "
@@ -96,7 +96,7 @@ def index(ctx):
         n_types = ctx.conn.execute("SELECT COUNT(*) FROM work_type WHERE inactive = 0").fetchone()[0]
         cards.append(
             "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-clock></use></svg>Time</h3><p class=sub>"
-            "The work roles and work types a time entry is written against, as ConnectWise has them.</p>"
+            "The work roles and work types a time entry is written against, as Dada PSA has them.</p>"
             f"<a class='btn ghost' href='/admin/time'>Work roles ({n_roles}) and work types ({n_types})</a></div>")
     if rows or ctx.user.is_sysadmin:
         n_rules = ctx.conn.execute("SELECT COUNT(*) FROM workflow WHERE is_active = 1").fetchone()[0]
@@ -240,7 +240,7 @@ def board_setup(ctx, board_id):
         opt = lambda pairs: "".join(f"<option value='{t.esc(k)}'>{t.esc(v)}</option>" for k, v in pairs)  # noqa: E731
         content = (
             "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-checks></use></svg>Ticket templates</h3><p class=sub>Recipes for repeatable work on this "
-            "board, as ConnectWise's service templates: a summary, a Type, a Subtype › Item, a description "
+            "board, as Dada PSA's service templates: a summary, a Type, a Subtype › Item, a description "
             "and a checklist. Start a ticket from one (New ticket › Use template), apply one to an open "
             "ticket, or have a workflow rule apply one.</p><div class=tablewrap><table><thead><tr>"
             "<th>Template</th><th>Type</th><th>Tasks</th><th></th></tr></thead>"
@@ -269,7 +269,7 @@ def board_setup(ctx, board_id):
             "<tr><td colspan=4 class=muted>No standard notes yet.</td></tr>"
         content = (
             "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-note></use></svg>Standard notes</h3>"
-            "<p class=sub>Canned replies for this board, as ConnectWise's standard notes: a technician picks "
+            "<p class=sub>Canned replies for this board, as Dada PSA's standard notes: a technician picks "
             "one in the note box and it fills in, flagged the way it was written. Written before any ticket "
             "exists, so never with a patient's details.</p><div class=tablewrap><table><thead><tr>"
             "<th>Name</th><th>Flag</th><th>Text</th><th></th></tr></thead>"
@@ -295,7 +295,7 @@ def board_setup(ctx, board_id):
             f"<td class=muted>{t.esc(TYPE_HELP[k])}</td></tr>" for k in itil.RECORD_TYPES)
         content = (
             f"<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-tag></use></svg>Types</h3><p class=sub>This is a <b>{t.esc(kind.lower())}</b> "
-            "board. Its Types are ConnectWise's Types tab: a ticket here reads Type › Subtype › "
+            "board. Its Types tab: a ticket here reads Type › Subtype › "
             "Item. None ticked means the board takes every Type. The default is what a ticket "
             "gets when nothing else says (an email, say).</p>"
             f"<form method=post action='/admin/board/{bid}/types'><div class=tablewrap><table>"
@@ -360,7 +360,7 @@ def board_setup(ctx, board_id):
             "<div style='flex:0 0 auto'><label>Default</label><select name=is_default><option value=0>no"
             "</option><option value=1>yes</option></select></div>"
             "<div style='flex:0 0 auto'><button type=submit>Add team</button></div></form></div>"
-            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-users></use></svg>The four board roles</h3><p class=sub>ConnectWise's own: Service "
+            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-users></use></svg>The four board roles</h3><p class=sub>Service "
             "Manager, Dispatch, On-Call and Duty Manager (who is told when On-Call does not "
             "answer). The rota on the On-call page overrides the named On-Call.</p>"
             f"<form method=post action='/admin/board/{bid}/roles'><div class=grid2>{role_rows}</div>"
@@ -411,7 +411,7 @@ def board_setup(ctx, board_id):
 
     body = ((f"<div class='banner ok'>{t.esc(msg)}</div>" if msg else "") +
             f"<h1>Setup · {t.esc(b['display_name'])}</h1><p class=sub>The board's own vocabulary, "
-            "as a ConnectWise service board setup table. <a href='/admin'>All boards</a></p>"
+            "as a Dada PSA service board setup table. <a href='/admin'>All boards</a></p>"
             + ready + tabs + content)
     return Response(body=t.page("Setup", body, user=ctx.user, active="admin"))
 
@@ -437,7 +437,7 @@ def apply_starter(ctx, board_id):
 
 
 def _reply_policy_form(ctx, b) -> str:
-    """ConnectWise's per-board answer to a reply on a closed ticket."""
+    """Dada PSA's per-board answer to a reply on a closed ticket."""
     bid = t.esc(b["board_id"])
     statuses = ctx.conn.execute(
         "SELECT board_status_id, name FROM board_status WHERE board_id = ? AND is_closed = 0"
@@ -794,43 +794,188 @@ def add_team(ctx, board_id):
     return _done(board_id, "members", f"Team {name} added")
 
 
+# ---------------------------------------------------- Setup › Catalogue
+#
+# The reference PSA's setup tables for Types, Subtypes and Items, on the desk's
+# own tree (psaspine/catalogue.py): the Type stays the board's ITIL kind; Areas,
+# Subtypes and Items are added, renamed and retired here; a Subtype › Item pair
+# is associated with the board it lands on. Server-rendered forms, no script.
+
+CATALOGUE_TABS = (("pairs", "Subtype › Item pairs"), ("types", "Types"), ("areas", "Areas"),
+                  ("subtypes", "Subtypes"), ("items", "Items"))
+
+
+def _cat_back(tab: str, **q):
+    from .. import redirect
+    q = {k: v for k, v in q.items() if v}
+    q["tab"] = tab
+    return redirect("/admin/catalogue?" + urllib.parse.urlencode(q))
+
+
+def _cat_options(pairs, selected="") -> str:
+    return "".join(f"<option value='{t.esc(k)}'{' selected' if k == selected else ''}>{t.esc(v)}</option>"
+                   for k, v in pairs)
+
+
+def _retire_button(action: str, key: str, value: str, inactive: int) -> str:
+    return (f"<form method=post action='{action}' class=inline>"
+            f"<input type=hidden name={key} value='{t.esc(value)}'>"
+            f"<input type=hidden name=act value='{'restore' if inactive else 'retire'}'>"
+            f"<button class=ghost type=submit style='padding:3px 10px'>{'Restore' if inactive else 'Retire'}"
+            "</button></form>")
+
+
 def catalogue(ctx):
     from .. import Response
+    from ... import catalogue as cat
     common.require_sysadmin(ctx)
-    msg = ctx.request.query.get("msg", "")
-    rows = ctx.conn.execute(
-        "SELECT i.catalogue_item_id, f.display_name AS type, c.display_name AS subtype,"
-        "       a.display_name AS item, a.kind, b.display_name AS board, i.default_contract_basis,"
-        "       i.min_priority, i.clinical_impact, i.is_draft, i.record_type"
-        "  FROM catalogue_item i JOIN service_component c ON c.component_id = i.component_id"
-        "  JOIN service_family f ON f.family_id = c.family_id"
-        "  JOIN service_action a ON a.action_id = i.action_id"
-        "  JOIN board b ON b.board_id = i.default_board_id"
-        " ORDER BY f.display_name, c.display_name, a.display_name").fetchall()
-    trs = "".join(
-        f"<tr{' style=opacity:.55' if r['is_draft'] else ''}><td>{t.esc(r['type'])}</td>"
-        f"<td>{t.esc(r['subtype'])}</td><td>{t.esc(r['item'])}</td>"
-        f"<td>{t.esc(itil.LABEL.get(r['record_type']) or ('Incident' if r['kind'] == 'FAULT' else 'Request'))}</td>"
-        f"<td>{t.esc(r['board'])}</td><td>{t.esc(r['default_contract_basis'])}</td>"
-        f"<td>{t.esc(r['min_priority'] or '')}{' · clinical' if r['clinical_impact'] else ''}</td>"
-        f"<td><form method=post action='/admin/catalogue/toggle' class=inline>"
-        f"<input type=hidden name=catalogue_item_id value='{t.esc(r['catalogue_item_id'])}'>"
-        f"<button class=ghost type=submit style='padding:3px 10px'>{'Use' if r['is_draft'] else 'Retire'}"
-        "</button></form></td></tr>" for r in rows)
-    body = ((f"<div class='banner ok'>{t.esc(msg)}</div>" if msg else "") +
-            "<h1>Type · Subtype · Item</h1><p class=sub>ConnectWise's three-level ticket "
-            "classification. The Type is the board's (Incident, Request, Problem, Event on a "
-            "service board; set on each board's Types tab). Subtype and Item are one tree across "
-            "boards (build scope §2.4), grouped here by area: each item gives the Type it "
-            "defaults to, the board it lands on, its contract basis and any priority floor. "
-            "<a href='/admin'>Setup</a></p>"
+    msg, err = ctx.request.query.get("msg", ""), ctx.request.query.get("err", "")
+    tab = ctx.request.query.get("tab", "pairs")
+    if tab not in dict(CATALOGUE_TABS):
+        tab = "pairs"
+    tabs = "<div class=stabs>" + "".join(
+        f"<a class='{'on' if tab == k else ''}' href='/admin/catalogue?tab={k}'>{v}</a>"
+        for k, v in CATALOGUE_TABS) + "</div>"
+    dim = " style=opacity:.55"
+    if tab == "pairs":
+        rows = ctx.conn.execute(
+            "SELECT i.catalogue_item_id, f.display_name AS type, c.display_name AS subtype,"
+            "       a.display_name AS item, a.kind, b.display_name AS board, i.default_contract_basis,"
+            "       i.min_priority, i.clinical_impact, i.is_draft, i.record_type"
+            "  FROM catalogue_item i JOIN service_component c ON c.component_id = i.component_id"
+            "  JOIN service_family f ON f.family_id = c.family_id"
+            "  JOIN service_action a ON a.action_id = i.action_id"
+            "  JOIN board b ON b.board_id = i.default_board_id"
+            " ORDER BY f.display_name, c.display_name, a.display_name").fetchall()
+        trs = "".join(
+            f"<tr{dim if r['is_draft'] else ''}><td>{t.esc(r['type'])}</td>"
+            f"<td>{t.esc(r['subtype'])}</td><td>{t.esc(r['item'])}</td>"
+            f"<td>{t.esc(itil.LABEL.get(r['record_type']) or ('Incident' if r['kind'] == 'FAULT' else 'Request'))}</td>"
+            f"<td>{t.esc(r['board'])}</td><td>{t.esc(r['default_contract_basis'])}</td>"
+            f"<td>{t.esc(r['min_priority'] or '')}{' · clinical' if r['clinical_impact'] else ''}</td>"
+            f"<td><form method=post action='/admin/catalogue/toggle' class=inline>"
+            f"<input type=hidden name=catalogue_item_id value='{t.esc(r['catalogue_item_id'])}'>"
+            f"<button class=ghost type=submit style='padding:3px 10px'>{'Use' if r['is_draft'] else 'Retire'}"
+            "</button></form></td></tr>" for r in rows)
+        subs = [(c["component_id"], f"{c['area']} › {c['display_name']}") for c in cat.subtypes(ctx.conn)
+                if not c["inactive"]]
+        its = [(a["action_id"], f"{a['display_name']} ({'fault' if a['kind'] == 'FAULT' else 'request'})")
+               for a in cat.items(ctx.conn) if not a["inactive"]]
+        boards = [(b["board_id"], b["display_name"]) for b in ctx.conn.execute(
+            "SELECT board_id, display_name FROM board WHERE COALESCE(inactive, 0) = 0 ORDER BY display_name")]
+        scope = [("", "(none)")] + [(str(r["scope_item_id"]), f"{r['scope_item_id']} {r['heading']}")
+                                    for r in ctx.conn.execute(
+                                        "SELECT scope_item_id, heading FROM scope_item ORDER BY scope_item_id")]
+        content = (
             "<div class=card><form method=post action='/admin/catalogue/template' class=inline>"
-            "<button type=submit>Load the ConnectWise template</button></form> "
-            f"<span class=why>{len(rows)} item(s) loaded.</span></div>"
+            "<button type=submit>Load the Dada PSA template</button></form> "
+            f"<span class=why>{len(rows)} pair(s). Only a pair is offered on a ticket; retire a pair to "
+            "withdraw it and keep every ticket that carries it.</span></div>"
             "<div class=card><div class=tablewrap><table><thead><tr><th>Area</th><th>Subtype</th>"
             "<th>Item</th><th>Default Type</th><th>Board</th><th>Basis</th><th>Floor</th><th></th></tr></thead>"
-            f"<tbody>{trs or '<tr><td colspan=8 class=muted>Empty. Load the template, or add items by CLI.</td></tr>'}"
-            "</tbody></table></div></div>")
+            f"<tbody>{trs or '<tr><td colspan=8 class=muted>Empty. Load the template, or add areas, subtypes and items on the tabs, then pair them here.</td></tr>'}"
+            "</tbody></table></div></div>"
+            "<div class=card><h3>" + t.icon("plus") + "Associate a subtype with an item</h3>"
+            "<form method=post action='/admin/catalogue/associate' class=row>"
+            f"<div><label>Subtype</label><select name=component_id required>{_cat_options(subs)}</select></div>"
+            f"<div><label>Item</label><select name=action_id required>{_cat_options(its)}</select></div>"
+            f"<div><label>Lands on</label><select name=default_board_id required>{_cat_options(boards)}</select></div>"
+            "<div><label>Contract basis</label><select name=basis>"
+            + _cat_options([("UNKNOWN", "Unknown"), ("BASELINE", "Baseline"), ("VARIATION", "Variation")]) + "</select></div>"
+            f"<div><label>Baseline item</label><select name=scope_item_id>{_cat_options(scope)}</select></div>"
+            "<div><label>Priority floor</label><select name=min_priority>"
+            + _cat_options([("", "(none)"), ("P1", "P1"), ("P2", "P2"), ("P3", "P3"), ("P4", "P4")]) + "</select></div>"
+            "<div style='flex:0 0 auto'><label><input type=checkbox name=clinical_impact value=1> Clinical impact</label></div>"
+            "<div style='flex:0 0 auto'><button type=submit class=ghost>Associate</button></div></form></div>")
+    elif tab == "types":
+        takes: dict[str, list] = {}
+        for b in ctx.conn.execute("SELECT board_id, display_name FROM board WHERE COALESCE(inactive, 0) = 0"
+                                  " ORDER BY display_name"):
+            # no rows means the board takes every Type (itil.accepts)
+            kinds = [r["record_type"] for r in itil.boards_types(ctx.conn, b["board_id"])] or list(itil.RECORD_TYPES)
+            for k in kinds:
+                takes.setdefault(k, []).append((b["board_id"], b["display_name"]))
+        trs = "".join(
+            f"<tr><td><b>{t.esc(itil.LABEL[k])}</b></td>"
+            f"<td>{'Proactive' if k in itil.PROACTIVE else 'Reactive'}</td>"
+            f"<td>{', '.join(f'<a href=/admin/board/{t.esc(bid)}?tab=types>{t.esc(name)}</a>' for bid, name in takes.get(k, [])) or '<span class=muted>no board yet</span>'}</td></tr>"
+            for k in itil.RECORD_TYPES)
+        content = (
+            "<div class=card><p class=sub>The Type is the board's ITIL kind. A service board takes Incident, "
+            "Request, Problem and Event; a change board takes Change; a project board takes Project. Which of "
+            "them a board offers, and its default, is set on that board's <b>Types</b> tab. The six are a fixed "
+            "set because the change approval gate and the SLA-by-type targets key on them.</p>"
+            "<div class=tablewrap><table><thead><tr><th>Type</th><th>Category</th><th>Boards that take it</th>"
+            f"</tr></thead><tbody>{trs}</tbody></table></div></div>")
+    elif tab == "areas":
+        trs = "".join(
+            f"<tr{dim if r['inactive'] else ''}><td><form method=post action='/admin/catalogue/area/save' class=row style='margin:0'>"
+            f"<input type=hidden name=family_id value='{t.esc(r['family_id'])}'>"
+            f"<div><input name=name value='{t.esc(r['display_name'])}' maxlength=80 required aria-label='Area name'></div>"
+            "<div style='flex:0 0 auto'><button type=submit class=ghost style='padding:3px 10px' name=act value=rename>Rename</button></div>"
+            f"</form></td><td class=muted>{t.esc(r['family_id'])}</td><td class=center>{r['subtypes']}</td>"
+            f"<td>{_retire_button('/admin/catalogue/area/save', 'family_id', r['family_id'], r['inactive'])}</td></tr>"
+            for r in cat.areas(ctx.conn))
+        content = (
+            "<div class=card><p class=sub>An area groups subtypes in the picker (Networking, Servers and storage, "
+            "Clinical applications). Retiring an area hides its subtypes from every new ticket and changes no "
+            "existing one.</p><div class=tablewrap><table><thead><tr><th>Area</th><th>Id</th><th>Subtypes</th><th></th>"
+            f"</tr></thead><tbody>{trs or '<tr><td colspan=4 class=muted>No areas yet.</td></tr>'}</tbody></table></div></div>"
+            "<div class=card><h3>" + t.icon("plus") + "Add an area</h3><form method=post action='/admin/catalogue/area' class=row>"
+            "<div><input name=name required maxlength=80 placeholder='Clinical applications'></div>"
+            "<div><input name=note maxlength=200 placeholder='note (optional)'></div>"
+            "<div style='flex:0 0 auto'><button type=submit class=ghost>Add</button></div></form></div>")
+    elif tab == "subtypes":
+        area_opts = [(a["family_id"], a["display_name"]) for a in cat.areas(ctx.conn) if not a["inactive"]]
+        trs = "".join(
+            f"<tr{dim if r['inactive'] else ''}><td><form method=post action='/admin/catalogue/subtype/save' class=row style='margin:0'>"
+            f"<input type=hidden name=component_id value='{t.esc(r['component_id'])}'>"
+            f"<div><input name=name value='{t.esc(r['display_name'])}' maxlength=80 required aria-label='Subtype name'></div>"
+            f"<div><select name=family_id aria-label='Area'>{_cat_options(area_opts + ([(r['family_id'], r['area'])] if r['family_id'] not in dict(area_opts) else []), r['family_id'])}</select></div>"
+            "<div style='flex:0 0 auto'><button type=submit class=ghost style='padding:3px 10px' name=act value=rename>Save</button></div>"
+            f"</form></td><td class=muted>{t.esc(r['component_id'])}</td><td class=center>{r['pairs']}</td>"
+            f"<td>{_retire_button('/admin/catalogue/subtype/save', 'component_id', r['component_id'], r['inactive'])}</td></tr>"
+            for r in cat.subtypes(ctx.conn))
+        content = (
+            "<div class=card><p class=sub>A subtype is the thing a ticket is about: Printer, Hyper-V host, "
+            "Voicemail. It belongs to one area and is offered on a ticket only through its pairs. Retiring one "
+            "withdraws its pairs from new tickets.</p><div class=tablewrap><table><thead><tr><th>Subtype · Area</th>"
+            f"<th>Id</th><th>Pairs</th><th></th></tr></thead><tbody>{trs or '<tr><td colspan=4 class=muted>No subtypes yet.</td></tr>'}</tbody></table></div></div>"
+            "<div class=card><h3>" + t.icon("plus") + "Add a subtype</h3><form method=post action='/admin/catalogue/subtype' class=row>"
+            f"<div><label>Area</label><select name=family_id required>{_cat_options(area_opts)}</select></div>"
+            "<div><label>Name</label><input name=name required maxlength=80 placeholder='Label printer'></div>"
+            "<div style='flex:0 0 auto'><button type=submit class=ghost>Add</button></div></form></div>")
+    else:
+        kinds = [("REQUEST", "Request"), ("FAULT", "Fault")]
+        impacts = [("", "(none)"), ("I1", "I1 — shared or clinical service down"), ("I2", "I2"), ("I3", "I3 — one device or one user")]
+        trs = "".join(
+            f"<tr{dim if r['inactive'] else ''}><td><form method=post action='/admin/catalogue/item/save' class=row style='margin:0'>"
+            f"<input type=hidden name=action_id value='{t.esc(r['action_id'])}'>"
+            f"<div><input name=name value='{t.esc(r['display_name'])}' maxlength=80 required aria-label='Item name'></div>"
+            f"<div><select name=kind aria-label='Kind'>{_cat_options(kinds, r['kind'])}</select></div>"
+            f"<div><select name=implies_impact aria-label='Implied impact'>{_cat_options(impacts, r['implies_impact'] or '')}</select></div>"
+            "<div style='flex:0 0 auto'><button type=submit class=ghost style='padding:3px 10px' name=act value=rename>Save</button></div>"
+            f"</form></td><td class=muted>{t.esc(r['action_id'])}</td><td class=center>{r['pairs']}</td>"
+            f"<td>{_retire_button('/admin/catalogue/item/save', 'action_id', r['action_id'], r['inactive'])}</td></tr>"
+            for r in cat.items(ctx.conn))
+        content = (
+            "<div class=card><p class=sub>An item is the verb: Install, Modify, Outage, Failure. Its kind decides "
+            "whether a fresh ticket is a request or a fault, and an implied impact sets the impact a ticket starts "
+            "with (outage = a shared or clinical service is down, I1; failure = one device or one user, I3).</p>"
+            "<div class=tablewrap><table><thead><tr><th>Item · kind · impact</th><th>Id</th><th>Pairs</th><th></th>"
+            f"</tr></thead><tbody>{trs or '<tr><td colspan=4 class=muted>No items yet.</td></tr>'}</tbody></table></div></div>"
+            "<div class=card><h3>" + t.icon("plus") + "Add an item</h3><form method=post action='/admin/catalogue/item' class=row>"
+            "<div><label>Name</label><input name=name required maxlength=80 placeholder='Relocate'></div>"
+            f"<div><label>Kind</label><select name=kind>{_cat_options(kinds)}</select></div>"
+            f"<div><label>Implied impact</label><select name=implies_impact>{_cat_options(impacts)}</select></div>"
+            "<div style='flex:0 0 auto'><button type=submit class=ghost>Add</button></div></form></div>")
+    body = ((f"<div class='banner ok'>{t.esc(msg)}</div>" if msg else "")
+            + (f"<div class='banner err'>{t.esc(err)}</div>" if err else "")
+            + "<h1>Catalogue</h1><p class=sub>Dada PSA's setup tables for how a ticket is classified: "
+              "Type › Subtype › Item. The Type is the board's (its Types tab); Areas, Subtypes and Items are one "
+              "tree across boards (build scope §2.4), edited here; a Subtype › Item pair is what a ticket offers. "
+              "Nothing is deleted: retire it and it leaves the pickers, and every ticket keeps what it had. "
+              "<a href='/admin'>Setup</a></p>" + tabs + content)
     return Response(body=t.page("Catalogue", body, user=ctx.user, active="admin"))
 
 
@@ -839,7 +984,7 @@ def catalogue_template(ctx):
     from ... import setup
     import urllib.parse
     common.require_sysadmin(ctx)
-    r = setup.apply_cw_template(ctx.conn, actor=ctx.user.id, at=ctx.now)
+    r = setup.apply_template(ctx.conn, actor=ctx.user.id, at=ctx.now)
     ctx.conn.commit()
     waiting = sum(r["waiting"].values())
     msg = (f"Template applied: {r['items']} item(s) loaded, {r['targets']} SLA target(s)"
@@ -860,6 +1005,117 @@ def catalogue_toggle(ctx):
              detail="retired/used toggled")
     ctx.conn.commit()
     return redirect("/admin/catalogue")
+
+
+def _cat_flag(form) -> bool | None:
+    act = form.get("act", "")
+    return True if act == "retire" else False if act == "restore" else None
+
+
+def catalogue_area_add(ctx):
+    from ... import catalogue as cat
+    common.require_sysadmin(ctx)
+    f = ctx.request.form()
+    try:
+        cat.add_area(ctx.conn, f.get("name", ""), note=f.get("note"), at=ctx.now, actor=ctx.user.id)
+    except cat.Refused as exc:
+        ctx.conn.rollback()
+        return _cat_back("areas", err=str(exc))
+    ctx.conn.commit()
+    return _cat_back("areas", msg=f"Added {' '.join(f.get('name', '').split())}")
+
+
+def catalogue_area_save(ctx):
+    from ... import catalogue as cat
+    common.require_sysadmin(ctx)
+    f = ctx.request.form()
+    flag = _cat_flag(f)
+    try:
+        what = cat.save_area(ctx.conn, f.get("family_id", ""), name=f.get("name") if flag is None else None,
+                             inactive=flag, at=ctx.now, actor=ctx.user.id)
+    except cat.Refused as exc:
+        ctx.conn.rollback()
+        return _cat_back("areas", err=str(exc))
+    ctx.conn.commit()
+    return _cat_back("areas", msg=f"Area: {what}")
+
+
+def catalogue_subtype_add(ctx):
+    from ... import catalogue as cat
+    common.require_sysadmin(ctx)
+    f = ctx.request.form()
+    try:
+        cat.add_subtype(ctx.conn, f.get("family_id", ""), f.get("name", ""), at=ctx.now, actor=ctx.user.id)
+    except cat.Refused as exc:
+        ctx.conn.rollback()
+        return _cat_back("subtypes", err=str(exc))
+    ctx.conn.commit()
+    return _cat_back("subtypes", msg=f"Added {' '.join(f.get('name', '').split())}")
+
+
+def catalogue_subtype_save(ctx):
+    from ... import catalogue as cat
+    common.require_sysadmin(ctx)
+    f = ctx.request.form()
+    flag = _cat_flag(f)
+    try:
+        what = cat.save_subtype(ctx.conn, f.get("component_id", ""),
+                                name=f.get("name") if flag is None else None,
+                                family_id=f.get("family_id") if flag is None else None,
+                                inactive=flag, at=ctx.now, actor=ctx.user.id)
+    except cat.Refused as exc:
+        ctx.conn.rollback()
+        return _cat_back("subtypes", err=str(exc))
+    ctx.conn.commit()
+    return _cat_back("subtypes", msg=f"Subtype: {what}")
+
+
+def catalogue_item_add(ctx):
+    from ... import catalogue as cat
+    common.require_sysadmin(ctx)
+    f = ctx.request.form()
+    try:
+        cat.add_item(ctx.conn, f.get("name", ""), kind=f.get("kind", ""), implies_impact=f.get("implies_impact") or None,
+                     at=ctx.now, actor=ctx.user.id)
+    except cat.Refused as exc:
+        ctx.conn.rollback()
+        return _cat_back("items", err=str(exc))
+    ctx.conn.commit()
+    return _cat_back("items", msg=f"Added {' '.join(f.get('name', '').split())}")
+
+
+def catalogue_item_save(ctx):
+    from ... import catalogue as cat
+    common.require_sysadmin(ctx)
+    f = ctx.request.form()
+    flag = _cat_flag(f)
+    try:
+        what = cat.save_item(ctx.conn, f.get("action_id", ""),
+                             name=f.get("name") if flag is None else None,
+                             kind=f.get("kind") if flag is None else None,
+                             implies_impact=(f.get("implies_impact") or "") if flag is None else None,
+                             inactive=flag, at=ctx.now, actor=ctx.user.id)
+    except cat.Refused as exc:
+        ctx.conn.rollback()
+        return _cat_back("items", err=str(exc))
+    ctx.conn.commit()
+    return _cat_back("items", msg=f"Item: {what}")
+
+
+def catalogue_associate(ctx):
+    from ... import catalogue as cat
+    common.require_sysadmin(ctx)
+    f = ctx.request.form()
+    try:
+        cat.associate(ctx.conn, f.get("component_id", ""), f.get("action_id", ""), f.get("default_board_id", ""),
+                      basis=f.get("basis", "UNKNOWN"), scope_item_id=f.get("scope_item_id") or None,
+                      min_priority=f.get("min_priority") or None, clinical_impact=f.get("clinical_impact") == "1",
+                      at=ctx.now, actor=ctx.user.id)
+    except cat.Refused as exc:
+        ctx.conn.rollback()
+        return _cat_back("pairs", err=str(exc))
+    ctx.conn.commit()
+    return _cat_back("pairs", msg="Pair added; it is offered on tickets now.")
 
 
 def _local_accounts_card(ctx) -> str:
@@ -986,7 +1242,7 @@ def disable_local(ctx):
 
 # ------------------------------------------------------------ Setup › Time
 #
-# ConnectWise's Work Roles and Work Types (System › Setup Tables). A role is a
+# Dada PSA's Work Roles and Work Types (System › Setup Tables). A role is a
 # name; a type is a name and the bill default it carries (WorkType.billTime).
 # Neither is deleted: a role that was used stays, switched off, so old time
 # entries still say what they were.
@@ -1025,7 +1281,7 @@ def time_setup(ctx):
     body = (
         (f"<div class='banner ok'>{t.esc(msg)}</div>" if msg else "")
         + (f"<div class='banner err'>{t.esc(err)}</div>" if err else "")
-        + "<h1>Time</h1><p class=sub>What a time entry is written against, as ConnectWise's setup tables "
+        + "<h1>Time</h1><p class=sub>What a time entry is written against, as Dada PSA's setup tables "
           "have it: a <b>work role</b> (who did the work, as a role) and a <b>work type</b> (what kind of "
           "work, with the bill default it carries). A retired one stays on old entries. <a href='/admin'>Setup</a></p>"
           "<div class=grid2>"

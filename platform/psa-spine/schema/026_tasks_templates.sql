@@ -1,4 +1,4 @@
--- 026 — ticket tasks and ticket templates, as ConnectWise keeps them.
+-- 026 — ticket tasks and ticket templates, as Dada PSA keeps them.
 --
 -- A task is one line of a ticket's checklist ("create the AD account", "issue
 -- the badge"). A template is a board's recipe for repeatable work: a summary, a
@@ -6,8 +6,8 @@
 -- ticket from one, or applies one to a ticket already open, and a workflow rule
 -- can apply one (008's APPLY_TEMPLATE action, now carried out).
 --
--- ConnectWise: a ticket has a Tasks tab, and service templates carry Tasks
--- (VERIFIED 23 Sep 2026, the Ticket tasks sub-resource in ConnectWise's public
+-- Dada PSA: a ticket has a Tasks tab, and service templates carry Tasks
+-- (VERIFIED 23 Sep 2026, the Ticket tasks sub-resource in the reference PSA's public
 -- OpenAPI, Service.json v2026.13; visionary360.com/cw-manage-service-ticket-templates/).
 PRAGMA foreign_keys = ON;
 

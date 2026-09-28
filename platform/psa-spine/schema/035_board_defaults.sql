@@ -1,4 +1,4 @@
--- 035 — three board settings ConnectWise has and a technician expects.
+-- 035 — three board settings the reference PSA has and a technician expects.
 --
 -- Board.workRole and Board.workType (the record's extracted model): the work
 -- role and type a time entry on this board starts with, before the member's

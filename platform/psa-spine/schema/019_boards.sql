@@ -1,6 +1,6 @@
 -- 019 — many boards, created and retired by the people who run them.
 --
--- ConnectWise: "A service board cannot be deleted once any items are tied to it
+-- The reference PSA: "A service board cannot be deleted once any items are tied to it
 -- ... your best option is to mark it as inactive" (build scope §5.2). So a board
 -- is retired, never deleted, and `inactive` is a different state from `is_live`
 -- (not started yet vs closed down).

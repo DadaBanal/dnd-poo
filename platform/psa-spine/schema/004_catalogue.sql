@@ -1,6 +1,6 @@
 -- PSA spine 004 — the service catalogue
 --
--- Five tables, not a per-board tree. ConnectWise scopes Types and SubTypes per
+-- Five tables, not a per-board tree. The reference PSA scopes Types and SubTypes per
 -- board [VERIFIED, docs.connectwise.com: System > Setup Tables > Service Boards >
 -- [board] > Types]; at fourteen hospital boards that is fourteen maintenance
 -- surfaces for one tree. A defect to avoid, not a pattern to copy. So the verb

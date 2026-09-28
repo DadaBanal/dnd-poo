@@ -2,7 +2,7 @@
 --
 -- Files are kept outside the database (psaspine/attachments.py); this row says
 -- what the file is, how it was stored and whether anyone has checked it for
--- patient information. Every file starts PENDING: ConnectWise keeps documents on
+-- patient information. Every file starts PENDING: the reference PSA keeps documents on
 -- a ticket with no such check, and a screenshot of a patient list is the
 -- commonest way a hospital leaks data into a ticket system (§6.1).
 PRAGMA foreign_keys = ON;
@@ -28,7 +28,7 @@ CREATE TABLE attachment (
 
 CREATE INDEX ix_attachment_ticket ON attachment (work_item_id);
 
--- Emailing the requester: ConnectWise mails the contact on a new ticket and on a
+-- Emailing the requester: the reference PSA mails the contact on a new ticket and on a
 -- Discussion note, per board. Here the mail says only that the ticket moved and
 -- links to the portal; the note's words never leave the desk (§6.1). NULL reads
 -- as off: no email leaves until a board turns it on, once the portal is

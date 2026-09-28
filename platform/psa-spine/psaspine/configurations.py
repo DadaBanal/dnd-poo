@@ -1,6 +1,6 @@
 """Configurations: the machines a ticket is about, and the links out to reach them.
 
-ConnectWise keeps Configurations under each company; a ticket lists the ones it
+Dada PSA keeps Configurations under each company; a ticket lists the ones it
 concerns, and from a configuration a technician launches the remote-support
 session in one click. Here:
 
