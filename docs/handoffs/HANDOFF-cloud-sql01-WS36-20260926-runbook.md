@@ -860,3 +860,68 @@ from DevTools on that tab. `help.pmcne.ph` answered **"My requests is not open f
 written here). The bridge accepted the real token and the door recognised the person: the whole path works, closed
 only by the department gate. The same screenshot shows the requester shell branded **"PMC IT help"**; that is added
 to `…-portal-door-fixes.md`. Step 4 waits on Dada's first department.
+
+### Part 13: 2026-09-28, 09:40 +08:00. **c9a0506 live: schemas 033–035 applied, the hardened door PASS; departments wait on one as-desk run and Dada's ticks**
+
+Everything below is MEASURED unless marked. Local times are +08:00.
+
+1. **Pull, suite, schema, restart.**
+   - HEAD is `2f18bf5`, code `c9a0506`. The SQLite suite as SQL01's user gives **519 OK, 2 skipped**, as expected.
+   - PSA-Rules, which runs every minute from the repo, ran the new code against the old schema from the pull
+     until the migration, **without error**: 09:06 run, `0x0`, "0 errors".
+   - **Schemas 033–035, by the sitting-1 road.** `init` checks the login's default schema, so as sysadmin it
+     cannot run; the desk's user has `db_datareader` and `db_datawriter`, `EXECUTE` and `VIEW DEFINITION`, and
+     **no DDL**. So SQL01 ran the generated port as its own sysadmin login, with `@Apply = 1` and
+     `@AllowExisting = 1` set in memory and the file on disk unchanged:
+     - a **COPY_ONLY** backup first, `D:\PMC\backup\PMC_PSA\PMC_PSA_pre033-20260928.bak`, 10.6 MB, `RESTORE
+       VERIFYONLY` "valid";
+     - the preview: 77 tables, 27 indexes, 4 triggers;
+     - PSA-Desk stopped, the port applied ("Created: 77 tables, 4 triggers, 27 indexes in [psa]", its own gate
+       passed, "Seeded: nothing"), PSA-Desk started.
+   - **Verified against a baseline taken before:**
+     - psa tables **73 → 77** (new: `department`, `department_board`, `work_role`, `work_type`; none gone);
+     - all six new columns present (`time_entry.time_start / time_end / hours_deduct`,
+       `board.default_work_role_id / default_work_type_id / notify_owner`);
+     - triggers 4 → 4; columns 681 → 714;
+     - **no existing table's row count changed** except `audit_event` 79 → 80, which was a Windows sign-in at
+       09:07, before the stop.
+   - Your note said "75 tables become 77". There were 73; the preview's "Existing objects: 77" counts tables and
+     triggers together.
+   - One warning from the apply: `PK_department_board` can be 928 bytes against SQL Server's 900-byte key limit
+     (INFERRED from the column widths: department name as NVARCHAR(400), board id as NVARCHAR(64)). Only a
+     department name over about 386 characters could fail. Payroll's longest is 44, so this is harmless today; the
+     translator could size that key column smaller.
+   - The desk answers 8085 (`/login` 200), and its console shows no error. Sign-in: Windows account +
+     break-glass.
+   - Still to confirm: `init` printing "ready" as the task account, in the as-desk run in step 3. `seed` and
+     `db.py` have not changed since sitting 1's `init` (empty diff), so it will change nothing. The Setup ›
+     Time and Departments cards need a sysadmin sign-in and are the operator's to confirm.
+2. **The hardened door: `Test-PsaPortalDoor.ps1`, made-up tokens only: RESULT PASS.**
+   - The five refused tries of the Pass each answer **303** to `/sso/portal?refused=<code>`, with nothing echoed:
+     - portal origin, loopback and through IIS: `ended`, and the page answers **401** "session has ended";
+     - `http://` origin, no Origin, and `payroll.pmcne.ph`: `origin`, and the page answers **403**.
+   - One extra try for fix 2, a token not shaped like one: `ended`, audited "token not shaped like a portal token",
+     so the bridge was not asked.
+   - `desk.pmcne.ph/sso/portal` answers **404** with no row.
+   - **Audit: exactly 6 `PORTAL_SSO_REFUSED`** (the 5 of the Pass plus the extra), 0 `PORTAL_SSO`, no token text in
+     any row or in the console log.
+3. **Departments.**
+   - `D:\psa\departments.csv` is written from payroll, read-only: one column, `Department`. It holds 52 names,
+     and the list is the same over all employees and over active employees only (`IsActive = 1`). No name holds a
+     comma; the longest is 44 characters. The query was checked with a control (a made-up name found 0 times, a
+     real one found).
+   - The import must run as the task account: `D:\psa\bin\Part13-AsDesk.ps1` runs `init` twice (the same "ready"
+     line) and `import-departments` twice ("52 names: 52 new, 0 seen, 0 restored, 0 retired", then "0 new, 52
+     seen"). It refuses anyone else (tested). **Waiting on the operator's runas.**
+   - Then Dada ticks Setup › Departments and saves. `PSA_EMPLOYEE_PORTAL_DEPARTMENTS` was **never set** (part 12),
+     so there is nothing to clear. The Pass is only that the page shows no banner about the setting.
+4. **Setup › Time and the board settings:** nothing is set; they wait on Dada.
+
+**Found on the host, for WS36:**
+- **`2f18bf5` committed `.claude/settings.local.json`,** your session's own allow-rules. That file is per-machine:
+  on this host it collided with the local copy, and git left conflict markers in a file Claude Code reads for its
+  permissions. SQL01 restored the host's own version byte for byte and did not adopt your rules. Please stop
+  committing that file; `.gitignore` it, or leave it untracked.
+- **Unrouted has one member,** the break-glass administrator. Every portal request lands there (source Portal,
+  for example PMC-000008 at 07:57), and nobody else on IT Help can see it. The operator is adding IT Help's people
+  to Unrouted in Setup, and the Setup › Departments ticks will send requests straight to their boards.
