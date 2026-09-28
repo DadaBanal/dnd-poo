@@ -55,6 +55,7 @@ ROUTES = [
     ("GET", "/contacts", companies.contacts_index),
     ("GET", "/contact/<contact_id>", companies.contact_detail),
     ("GET", "/configurations", configurations.index),
+    ("POST", "/configurations/new", configurations.create),
     ("GET", "/configuration/<configuration_id>", configurations.detail),
     ("POST", "/configuration/<configuration_id>/update", configurations.update),
     ("GET", "/dispatch", dispatch.index),

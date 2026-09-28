@@ -610,8 +610,14 @@ def update(ctx, work_item_id):
 def new_form(ctx, *, error: str = "", values: dict | None = None):
     from .. import Response
     # From a company or contact page the link carries who is asking.
-    v = values or {k: ctx.request.query[k] for k in ("board_id", "entity_id", "requested_by")
+    v = values or {k: ctx.request.query[k] for k in ("board_id", "entity_id", "requested_by", "configuration_id")
                    if ctx.request.query.get(k)}
+    machine = None
+    if v.get("configuration_id"):
+        machine = ctx.conn.execute("SELECT configuration_id, name FROM configuration WHERE configuration_id = ?",
+                                   (v["configuration_id"],)).fetchone()
+        if machine is None:
+            v.pop("configuration_id")
     # Starting from a template fills the form; its tasks are added on create.
     tpl_id = (values or {}).get("template_id") or ctx.request.query.get("template", "")
     tpl = ctx.conn.execute("SELECT * FROM ticket_template WHERE template_id = ? AND inactive = 0",
@@ -645,7 +651,10 @@ def new_form(ctx, *, error: str = "", values: dict | None = None):
         "Priority is computed from the two questions, never chosen.</p>"
         "<div class=card><form method=post action='/ticket/new'>"
         + (f"<input type=hidden name=template_id value='{t.esc(v.get('template_id', ''))}'>"
-           if v.get("template_id") else "") + "<div class=grid2>"
+           if v.get("template_id") else "")
+        + (f"<input type=hidden name=configuration_id value='{t.esc(machine['configuration_id'])}'>"
+           f"<p class=why style='margin:0 0 8px'>{t.icon('monitor')} For the machine <b>{t.esc(machine['name'])}</b>; "
+           "it is attached when the ticket is created.</p>" if machine else "") + "<div class=grid2>"
         f"<div><label>Board</label><select name=board_id>{_options([(b['board_id'], b['display_name']) for b in boards], v.get('board_id', ''))}</select></div>"
         f"<div><label>Source</label><select name=source>{_options(SOURCES, v.get('source', 'PHONE'))}</select></div>"
         f"<div><label>Company</label><select name=entity_id>{_options([(e['entity_id'], e['name']) for e in entities], v.get('entity_id', 'PMC'))}</select></div>"
@@ -707,6 +716,12 @@ def new_create(ctx):
             ctx.conn.execute(
                 "INSERT INTO data_quality (run_id, subject_kind, subject_id, code, detail,"
                 " severity) VALUES (?,?,?,?,?,?)", ("desk", "ticket", wid, code, detail, severity))
+        if f.get("configuration_id"):
+            from ... import configurations as cmdb
+            try:
+                cmdb.attach(ctx.conn, wid, f["configuration_id"], at=ctx.now, actor=ctx.user.id)
+            except LookupError:
+                pass                               # a machine that vanished is not a reason to lose the ticket
         ctx.conn.commit()
     except Exception as exc:                                 # noqa: BLE001
         ctx.conn.rollback()

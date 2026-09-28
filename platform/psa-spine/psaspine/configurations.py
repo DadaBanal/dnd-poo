@@ -140,21 +140,100 @@ def import_ad_computers(conn: sqlite3.Connection, path: str | Path, *, entity_id
     return counts
 
 
+def create(conn: sqlite3.Connection, *, name: str, entity_id: str, config_type: str,
+           at: datetime, actor: str, contact_id: str | None = None, serial_number: str | None = None,
+           manufacturer: str | None = None, model: str | None = None, description: str | None = None,
+           site_id: str | None = None, remote_session_id: str | None = None) -> str:
+    """A configuration typed in by hand (source MANUAL): a printer, a network
+    device, a machine AD does not know. AD's own machines arrive by import and
+    are never typed. The name must be new on the company."""
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("a configuration needs a name")
+    if len(name) > 100:
+        raise ValueError("a name is at most 100 characters")
+    if config_type not in TYPES:
+        raise ValueError(f"unknown type {config_type!r}")
+    if conn.execute("SELECT 1 FROM entity WHERE entity_id = ?", (entity_id,)).fetchone() is None:
+        raise LookupError(f"no company {entity_id!r}")
+    if conn.execute("SELECT 1 FROM configuration WHERE entity_id = ? AND LOWER(name) = LOWER(?)",
+                    (entity_id, name)).fetchone():
+        raise ValueError(f"there is already a configuration named {name!r} at this company")
+    if contact_id and conn.execute("SELECT 1 FROM contact WHERE contact_id = ? AND entity_id = ?",
+                                   (contact_id, entity_id)).fetchone() is None:
+        raise LookupError("that contact is not at this company")
+    if site_id and conn.execute("SELECT 1 FROM site WHERE site_id = ? AND entity_id = ?",
+                                (site_id, entity_id)).fetchone() is None:
+        raise LookupError("that site is not this company's")
+    session = None
+    if remote_session_id and remote_session_id.strip():
+        session = _guid(remote_session_id)
+        if session is None:
+            raise ValueError("a ScreenConnect session id is a GUID")
+    cid = "CF-" + uuid.uuid4().hex[:12].upper()
+    stamp = at.isoformat(sep=" ", timespec="seconds")
+    conn.execute(
+        "INSERT INTO configuration (configuration_id, entity_id, name, config_type, status, contact_id,"
+        " site_id, manufacturer, model, serial_number, description, remote_session_id, source, created_at)"
+        " VALUES (?,?,?,?,'ACTIVE',?,?,?,?,?,?,?,'MANUAL',?)",
+        (cid, entity_id, name, config_type, contact_id or None, site_id or None,
+         (manufacturer or "").strip() or None, (model or "").strip() or None,
+         (serial_number or "").strip() or None, (description or "").strip() or None, session, stamp))
+    db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor,
+             action="CONFIGURATION_CREATE", subject_kind="configuration", subject_id=cid,
+             detail=f"{name} ({config_type.lower()}) at {entity_id}, by hand")
+    return cid
+
+
+# What the desk may change. AD owns name, dns_name, os_name, os_version and
+# description on an imported machine (a re-import refreshes them); on a
+# machine typed in by hand the desk owns the name and the description too.
+DESK_FIELDS = ("config_type", "status", "contact_id", "site_id", "remote_session_id",
+               "serial_number", "manufacturer", "model")
+MANUAL_FIELDS = ("name", "description")
+
+
 def update(conn: sqlite3.Connection, configuration_id: str, *, at: datetime, actor: str,
            config_type: str | None = None, status: str | None = None,
            contact_id: str | None = None, remote_session_id: str | None = None,
-           serial_number: str | None = None) -> list[str]:
+           serial_number: str | None = None, manufacturer: str | None = None,
+           model: str | None = None, site_id: str | None = None, name: str | None = None,
+           description: str | None = None) -> list[str]:
     """Change what the desk owns about a configuration, and audit it.
 
     `contact_id=""` clears the contact; `None` leaves any field as it is. A
     remote session id must be a GUID: that is what ScreenConnect uses, and it is
-    what keeps a pasted URL or note from becoming part of a launch link.
+    what keeps a pasted URL or note from becoming part of a launch link. The
+    name and description are the desk's only on a machine typed in by hand.
     """
     row = conn.execute("SELECT * FROM configuration WHERE configuration_id = ?",
                        (configuration_id,)).fetchone()
     if row is None:
         raise LookupError(f"no configuration {configuration_id!r}")
     changes: dict[str, object] = {}
+    for key, value in (("manufacturer", manufacturer), ("model", model)):
+        if value is not None and (value.strip()[:100] or None) != row[key]:
+            changes[key] = value.strip()[:100] or None
+    if site_id is not None and (site_id or None) != row["site_id"]:
+        if site_id and conn.execute("SELECT 1 FROM site WHERE site_id = ? AND entity_id = ?",
+                                    (site_id, row["entity_id"])).fetchone() is None:
+            raise LookupError("that site is not this configuration's company's")
+        changes["site_id"] = site_id or None
+    if name is not None or description is not None:
+        if row["source"] != "MANUAL":
+            if (name is not None and name.strip() != row["name"]) or \
+                    (description is not None and (description.strip() or None) != row["description"]):
+                raise ValueError("the name and description of an imported machine are Active Directory's; "
+                                 "change them there and re-import")
+        else:
+            if name is not None:
+                new_name = name.strip()
+                if not new_name:
+                    raise ValueError("a configuration needs a name")
+                if new_name != row["name"]:
+                    changes["name"] = new_name[:100]
+            if description is not None and (description.strip() or None) != row["description"]:
+                changes["description"] = description.strip() or None
     if config_type is not None and config_type != row["config_type"]:
         if config_type not in TYPES:
             raise ValueError(f"unknown type {config_type!r}")

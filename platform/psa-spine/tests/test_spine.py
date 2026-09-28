@@ -2966,6 +2966,82 @@ class WebWSGITest(unittest.TestCase):
                                   form={"configuration_id": "CF-1"})
         self.assertFalse(status.startswith("303"))
 
+    def test_the_configurations_page_counts_filters_sorts_and_adds_by_hand(self):
+        self._add_configuration()
+        alice = self._cookie_for("alice")
+        status, headers, _ = self._call("POST", "/configurations/new", cookie=alice, form={
+            "name": "PRN-WARD3-01", "entity_id": "PMC", "config_type": "PRINTER", "serial_number": "SN123",
+            "manufacturer": "HP", "model": "M479", "description": "Nurses' station, ward 3"})
+        self.assertTrue(status.startswith("303"), status)
+        cid = dict(headers)["Location"].split("/configuration/")[1].split("?")[0]
+        _, headers, _ = self._call("POST", "/configurations/new", cookie=alice, form={
+            "name": "prn-ward3-01", "entity_id": "PMC", "config_type": "PRINTER"})
+        self.assertIn("already", dict(headers)["Location"])
+        status, _, _ = self._call("POST", "/configurations/new", cookie=self._cookie_for("carol"),
+                                  form={"name": "X", "entity_id": "PMC", "config_type": "PRINTER"})
+        self.assertTrue(status.startswith("403"))
+        # the index: counts by type that filter, a status filter, a search, sorting
+        _, _, page = self._call("GET", "/configurations", cookie=alice)
+        self.assertIn("<div class=n>2</div><div class=l>Active, all types</div>", page)
+        self.assertIn("<div class=n>1</div><div class=l>Printers</div>", page)
+        self.assertIn("PRN-WARD3-01", page)
+        self.assertIn("WARD3-PC01", page)
+        self.assertIn("by hand", page)
+        _, _, page = self._call("GET", "/configurations", cookie=alice, query="type=PRINTER")
+        self.assertIn("PRN-WARD3-01", page)
+        self.assertNotIn("WARD3-PC01", page)
+        _, _, page = self._call("GET", "/configurations", cookie=alice, query="q=SN123")
+        self.assertIn("PRN-WARD3-01", page)
+        self.assertNotIn("WARD3-PC01", page)
+        _, _, page = self._call("GET", "/configurations", cookie=alice, query="sort=type")
+        self.assertLess(page.index("PRN-WARD3-01"), page.index("WARD3-PC01"))       # printer before workstation
+        conn = db.connect(self.db_path)
+        conn.execute("UPDATE configuration SET status = 'RETIRED' WHERE configuration_id = 'CF-1'")
+        conn.commit()
+        conn.close()
+        _, _, page = self._call("GET", "/configurations", cookie=alice)
+        self.assertNotIn("WARD3-PC01", page)
+        _, _, page = self._call("GET", "/configurations", cookie=alice, query="status=ALL")
+        self.assertIn("WARD3-PC01", page)
+        # the detail: every field, the edit that the desk owns, and the history
+        _, _, page = self._call("GET", f"/configuration/{cid}", cookie=alice)
+        for needle in ("<dt>Manufacturer</dt><dd>HP</dd>", "<dt>Model</dt><dd>M479</dd>", "typed in by hand",
+                       "Raise a ticket for this machine", "name=name", "name=description", "History",
+                       "create: PRN-WARD3-01 (printer) at PMC, by hand"):
+            self.assertIn(needle, page, needle)
+        _, headers, _ = self._call("POST", f"/configuration/{cid}/update", cookie=alice, form={
+            "config_type": "PRINTER", "status": "ACTIVE", "contact_id": "", "manufacturer": "HP",
+            "model": "M479dw", "serial_number": "SN123", "name": "PRN-WARD3-01", "description": "Ward 3, by the lift",
+            "remote_session_id": ""})
+        self.assertIn("Saved%3A+model%2C+description", dict(headers)["Location"])
+        # an imported machine's name is AD's
+        _, _, page = self._call("GET", "/configuration/CF-1", cookie=alice)
+        self.assertNotIn("name=name", page.split("<form")[1] if "<form" in page else "")
+        self.assertIn("Active Directory's", page)
+        _, headers, _ = self._call("POST", "/configuration/CF-1/update", cookie=alice, form={
+            "config_type": "WORKSTATION", "status": "RETIRED", "contact_id": "", "name": "RENAMED",
+            "manufacturer": "", "model": "", "serial_number": "", "remote_session_id": ""})
+        self.assertIn("err=", dict(headers)["Location"])
+
+    def test_a_ticket_raised_for_a_machine_is_attached_on_creation(self):
+        self._add_configuration()
+        alice = self._cookie_for("alice")
+        _, _, page = self._call("GET", "/ticket/new", cookie=alice, query="configuration_id=CF-1&entity_id=PMC")
+        self.assertIn("For the machine <b>WARD3-PC01</b>", page)
+        self.assertIn("name=configuration_id value='CF-1'", page)
+        status, headers, _ = self._call("POST", "/ticket/new", cookie=alice, form={
+            "board_id": "IT_HELP", "summary": "PC slow", "impact": "I3", "urgency": "U3", "source": "PHONE",
+            "entity_id": "PMC", "configuration_id": "CF-1"})
+        self.assertTrue(status.startswith("303"), status)
+        wid = dict(headers)["Location"].split("/ticket/")[1].split("?")[0]
+        conn = db.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT configuration_id FROM ticket_configuration WHERE work_item_id = ?",
+                                      (wid,)).fetchone()[0], "CF-1")
+        conn.close()
+        _, _, page = self._call("GET", "/configuration/CF-1", cookie=alice)
+        self.assertIn(wid, page)                     # under Open tickets and in the history
+        self.assertIn("attached", page)
+
     def test_a_configuration_page_never_lists_a_restricted_ticket(self):
         self._add_configuration()
         conn = db.connect(self.db_path)
@@ -7133,6 +7209,25 @@ class ConfigurationsTest(unittest.TestCase):
                          "https://x.screenconnect.com/Host#Access/All%20Machines//"
                          + self.SESSION + "/Join")
         self.assertEqual(links["Search"]["url"], "https://kb.example/q/a%20b%2Fc%3Fd")
+
+    def test_a_machine_typed_in_by_hand_is_the_desks_and_an_imported_ones_name_is_ads(self):
+        cid = self.cmdb.create(self.conn, name="PRN-01", entity_id="PMC", config_type="PRINTER", at=self.at,
+                               actor="t", manufacturer="HP", description="Ward 3")
+        row = self.conn.execute("SELECT * FROM configuration WHERE configuration_id = ?", (cid,)).fetchone()
+        self.assertEqual((row["source"], row["status"], row["manufacturer"], row["description"]),
+                         ("MANUAL", "ACTIVE", "HP", "Ward 3"))
+        self.assertEqual(self.cmdb.update(self.conn, cid, at=self.at, actor="t", name="PRN-02", model="M479"),
+                         ["model", "name"])
+        with self.assertRaises(ValueError):
+            self.cmdb.create(self.conn, name="prn-02", entity_id="PMC", config_type="PRINTER", at=self.at, actor="t")
+        with self.assertRaises(ValueError):
+            self.cmdb.create(self.conn, name="X", entity_id="PMC", config_type="TOASTER", at=self.at, actor="t")
+        self.cmdb.import_ad_computers(self.conn, self._export(self._row(self.G1)), entity_id="PMC", at=self.at)
+        ad = self.conn.execute("SELECT configuration_id FROM configuration WHERE source = 'AD'").fetchone()[0]
+        with self.assertRaises(ValueError):
+            self.cmdb.update(self.conn, ad, at=self.at, actor="t", name="RENAMED")
+        self.assertEqual(self.cmdb.update(self.conn, ad, at=self.at, actor="t", name="WARD3-PC01",
+                                          manufacturer="Dell"), ["manufacturer"])
 
     def test_attach_and_detach_are_recorded_on_the_ticket(self):
         self.cmdb.import_ad_computers(self.conn, self._export(self._row(self.G1)),

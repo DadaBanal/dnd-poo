@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 512 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 515 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -203,9 +203,19 @@ keyboard-first rows) and checked against current UI-trend and CSS references
   every ticket, company and contact): the machines a ticket is about.
   `scripts/Export-PmcAdComputers.ps1` reads AD's computer objects (no IP
   address, no LAPS or BitLocker attribute, nothing written to AD) and
-  `psaspine import-computers` loads them by objectGUID. The desk owns a
-  configuration's type, contact and retirement; a re-import refreshes only
-  what AD knows.
+  `psaspine import-computers` loads them by objectGUID. A printer, a network
+  device or anything AD does not know is **typed in by hand** on the
+  Configurations page (source MANUAL). The desk owns a configuration's type,
+  status, contact, site, manufacturer, model, serial and session id; a
+  re-import refreshes only what AD knows, and an imported machine's name,
+  DNS name, OS and description are AD's (changed there, re-imported). The
+  list (28 Sep) counts by type (each count filters), filters by status and
+  company, searches name, DNS name, serial and description, sorts every
+  column and shows each machine's open tickets. The page for one machine
+  shows every field, its contact, its open and recently closed tickets, its
+  history (the desk's changes and every ticket it was attached to or removed
+  from) and a **Raise a ticket for this machine** button that opens the new
+  ticket form prefilled and attaches the machine on creation.
 - **Integrations** (`/admin/integrations`, system administrator): links out
   from a configuration or contact, as URL templates. ScreenConnect's is
   `https://INSTANCE.screenconnect.com/Host#Access/All%20Machines//{remote_session_id}/Join`
@@ -805,7 +815,7 @@ PSA_TEST_DB="Driver={ODBC Driver 18 for SQL Server};Server=127.0.0.1,1433;Databa
 
 Each test empties the database and reseeds it (`db.init(…, reset=True)`, a
 test-only path) and the same assertions run unchanged. **MEASURED, 28 Sep 2026,
-SQL Server 2022 Express 16.0 in a container: 512 tests, OK, 8 skipped** (the
+SQL Server 2022 Express 16.0 in a container: 515 tests, OK, 8 skipped** (the
 eight are SQLite's own file settings: WAL, busy timeout, the escrow copy). CI
 runs the same job against a service container on every push. NOT VERIFIED on
 `DND-SQL01` itself, which no session here can reach; the handoff's step 6 is
