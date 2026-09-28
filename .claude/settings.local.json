@@ -50,7 +50,11 @@
       "Bash(awk '$3==200{print $1}' cdx_univ.txt)",
       "Bash(sed -i 's/# 471 tests, on SQLite/# 473 tests, on SQLite/; s/in a container: 471 tests, OK, 8 skipped/in a container: 473 tests, OK, 8 skipped/' platform/psa-spine/README.md)",
       "Bash(sed -i 's/| SQLite | 471 | OK |/| SQLite | 473 | OK |/; s/| SQL Server \\(`PSA_TEST_DB`\\) | 471 | OK, 8 skipped/| SQL Server \\(`PSA_TEST_DB`\\) | 473 | OK, 8 skipped/' docs/WS36-decisions-d7-20260925.md)",
-      "Bash(git -c user.name=Claude -c user.email=noreply@anthropic.com commit -q -m 'docs: 473 tests on both stores *)"
+      "Bash(git -c user.name=Claude -c user.email=noreply@anthropic.com commit -q -m 'docs: 473 tests on both stores *)",
+      "Bash(git stash *)",
+      "Bash(sed -i 's/# 504 tests, on SQLite;/# 512 tests, on SQLite;/; s/in a container: 504 tests, OK, 8 skipped\\\\*\\\\*/in a container: 512 tests, OK, 8 skipped**/' platform/psa-spine/README.md)",
+      "Bash(sed -i 's/the 526 tests/the 519 tests/; s/\\\\*\\\\*526\\\\*\\\\* on SQLite/**519** on SQLite/' docs/WS36-connectwise-parity-20260928.md)",
+      "Bash(sed -i 's/# 515 tests, on SQLite;/# 519 tests, on SQLite;/; s/in a container: 515 tests, OK, 8 skipped\\\\*\\\\*/in a container: 519 tests, OK, 8 skipped**/' platform/psa-spine/README.md)"
     ]
   }
 }
