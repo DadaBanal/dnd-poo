@@ -2766,6 +2766,17 @@ class WebWSGITest(unittest.TestCase):
         conn.close()
         self.assertEqual(rows[-2], "settings saved: nothing changed")
         self.assertEqual(rows[-1], "settings saved: name 'IT Help' -> 'PMO Helpdesk'; email the owner 0 -> 1")
+        conn = self._db()
+        conn.execute("UPDATE board SET notify_requester = NULL, inactive = NULL WHERE board_id = 'IT_HELP'")
+        conn.commit()
+        conn.close()
+        self._call("POST", "/admin/board/IT_HELP/settings", cookie=alice,
+                   form=base | {"display_name": "PMO Helpdesk", "notify_owner": "1"})
+        conn = self._db()
+        last = conn.execute("SELECT detail FROM audit_event WHERE action = 'BOARD_CONFIG' AND subject_id = 'IT_HELP'"
+                            " ORDER BY audit_id DESC").fetchone()[0]
+        conn.close()
+        self.assertEqual(last, "settings saved: nothing changed")                    # NULL -> 0 is no change
 
     def test_the_board_tab_saves_the_owner_mail_and_the_time_defaults_and_the_composer_shows_them(self):
         alice = self._cookie_for("alice")
@@ -5128,6 +5139,306 @@ class SeedIdempotenceTest(unittest.TestCase):
     def test_a_fresh_install_names_the_first_board_as_pmc_runs_it(self):
         name = self.conn.execute("SELECT display_name FROM board WHERE board_id = 'IT_HELP'").fetchone()[0]
         self.assertEqual(name, "PMO Helpdesk")                             # Dada's own name (part 15); the id stays IT_HELP
+
+
+class CalendarSetupTest(unittest.TestCase):
+    """037 and psaspine.calendars: the Calendar and Holiday List setup tables in
+    the reference PSA's shape, and the clocks honouring what they say."""
+
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+
+    def setUp(self) -> None:
+        WebWSGITest.setUp(self)
+        self.addCleanup(self.tmp.cleanup)
+        self.root = self._cookie_for("root", is_sysadmin=True)
+        self.at = datetime(2026, 9, 28, 14)
+
+    def _conn(self):
+        conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)
+        return conn
+
+    def test_a_part_day_holiday_closes_only_its_hours(self):
+        from psaspine import clocks
+        mon_fri = {i: (480, 1020) for i in range(5)}                      # 08:00-17:00
+        eve = date(2026, 12, 24)                                           # a Thursday
+        cal = clocks.Calendar(mon_fri, set(), closures={eve: [(720, 1440)]})   # closed from noon
+        self.assertEqual(cal.working_minutes(datetime(2026, 12, 24, 8), datetime(2026, 12, 24, 17)), 240)
+        self.assertEqual(cal.working_minutes(datetime(2026, 12, 24, 13), datetime(2026, 12, 24, 16)), 0)
+        # a span crossing it whole: Wed 08:00 to Fri 17:00 is 9 + 4 + 9 hours
+        self.assertEqual(cal.working_minutes(datetime(2026, 12, 23, 8), datetime(2026, 12, 25, 17)), 22 * 60)
+        # whole days still win: the same date as an all-day holiday is 18 hours
+        full = clocks.Calendar(mon_fri, {eve})
+        self.assertEqual(full.working_minutes(datetime(2026, 12, 23, 8), datetime(2026, 12, 25, 17)), 18 * 60)
+
+    def test_add_edit_retire_and_every_change_is_audited(self):
+        from psaspine import calendars as cal, clocks
+        conn = self._conn()
+        lid = cal.add_holiday_list(conn, "Philippine public holidays", at=self.at, actor="root")
+        cal.add_holiday(conn, lid, "2026-11-30", "Bonifacio Day", at=self.at, actor="root")
+        cal.add_holiday(conn, lid, "2026-12-24", "Christmas Eve", all_day=False, time_start="12:00",
+                        time_end="24:00", at=self.at, actor="root")
+        with self.assertRaises(cal.Refused):
+            cal.add_holiday(conn, lid, "2026-11-30", "Again", at=self.at, actor="root")      # one date once
+        with self.assertRaises(cal.Refused):
+            cal.add_holiday(conn, lid, "30/11/2026", "Bad", at=self.at, actor="root")
+        with self.assertRaises(cal.Refused):
+            cal.add_holiday(conn, lid, "2026-12-31", "Eve", all_day=False, time_start="17:00",
+                            time_end="12:00", at=self.at, actor="root")
+        week = cal.clean_week({"monday_start": "8:00", "monday_end": "17:00", "tuesday_start": "08:00",
+                               "tuesday_end": "17:00"})
+        self.assertEqual(week["monday"], ("08:00", "17:00"))
+        self.assertEqual(week["sunday"], (None, None))
+        for bad in ({"monday_start": "08:00"}, {"monday_start": "17:00", "monday_end": "08:00"},
+                    {"monday_start": "25:00", "monday_end": "26:00"}):
+            with self.assertRaises(cal.Refused):
+                cal.clean_week(bad)
+        cid = cal.add_calendar(conn, "Pharmacy counter", week, holiday_list_id=lid, at=self.at, actor="root")
+        with self.assertRaises(cal.Refused):
+            cal.add_calendar(conn, "pharmacy COUNTER", week, at=self.at, actor="root")
+        with self.assertRaises(cal.Refused):
+            cal.add_calendar(conn, "Never open", cal.clean_week({}), at=self.at, actor="root")
+        loaded = clocks.Calendar.load(conn, cid)
+        self.assertIn(date(2026, 11, 30), loaded.holidays)
+        self.assertEqual(loaded.closures[date(2026, 12, 24)], [(720, 1440)])
+        what = cal.save_calendar(conn, cid, week=cal.clean_week(
+            {"monday_start": "07:00", "monday_end": "17:00", "tuesday_start": "08:00", "tuesday_end": "17:00"}),
+            at=self.at, actor="root")
+        self.assertEqual(what, "hours: Mon 08:00-17:00 -> 07:00-17:00")
+        self.assertEqual(cal.save_calendar(conn, cid, name="Pharmacy counter", at=self.at, actor="root"),
+                         "nothing changed")
+        cal.save_calendar(conn, cid, inactive=True, at=self.at, actor="root")
+        self.assertNotIn(cid, [c["calendar_id"] for c in cal.live_calendars(conn)])
+        self.assertIn(cid, [c["calendar_id"] for c in cal.live_calendars(conn, keep=cid)])   # kept where chosen
+        cal.remove_holiday(conn, lid, "2026-11-30", at=self.at, actor="root")
+        self.assertNotIn(date(2026, 11, 30), clocks.Calendar.load(conn, cid).holidays)
+        details = [r[0] for r in conn.execute("SELECT detail FROM audit_event WHERE action = 'CALENDAR_CONFIG'"
+                                              " ORDER BY audit_id")]
+        self.assertEqual(details[0], "holiday list added: Philippine public holidays")
+        self.assertIn("holiday added: 2026-12-24 Christmas Eve (closed 12:00-24:00)", details)
+        self.assertIn("retired", details)
+        self.assertIn("holiday removed: 2026-11-30 Bonifacio Day; the clocks on this list recompute", details)
+        self.assertNotIn("nothing changed", details)
+
+    def test_the_holiday_csv_loads_a_year_and_a_rerun_adds_nothing(self):
+        from psaspine import calendars as cal
+        conn = self._conn()
+        lid = cal.add_holiday_list(conn, "PH 2026", at=self.at, actor="root")
+        path = Path(self.tmp.name) / "holidays.csv"
+        path.write_text("\ufeffDate,Name,AllDay,Start,End\r\n2026-12-25,Christmas Day,,,\r\n"
+                        "2026-12-31,New Year's Eve,no,12:00,24:00\r\n", encoding="utf-8")
+        self.assertEqual(cal.import_csv(conn, lid, path, at=self.at), {"rows": 2, "new": 2, "seen": 0})
+        self.assertEqual(cal.import_csv(conn, lid, path, at=self.at), {"rows": 2, "new": 0, "seen": 2})
+        eve = [h for h in cal.holidays(conn, lid) if h["observed_on"] == "2026-12-31"][0]
+        self.assertEqual((eve["all_day"], eve["time_start"], eve["time_end"]), (0, "12:00", "24:00"))
+
+    def test_the_setup_page_adds_a_calendar_a_list_and_a_date_and_the_board_tab_offers_it(self):
+        for tab in ("calendars", "holidays"):
+            status, _, body = self._call("GET", "/admin/calendars", cookie=self.root, query=f"tab={tab}")
+            self.assertEqual(status, "200 OK", tab)
+        _, h, _ = self._call("POST", "/admin/calendars/holiday-list", cookie=self.root,
+                             form={"name": "Philippine public holidays"})
+        self.assertIn("tab=holidays", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/admin/calendars/holiday", cookie=self.root, form={
+            "holiday_list_id": "PHILIPPINE_PUBLIC_HOLIDAYS", "observed_on": "2026-11-30", "name": "Bonifacio Day",
+            "all_day": "1"})
+        self.assertIn("msg=Added+2026-11-30", dict(h)["Location"])
+        form = {"name": "Ward 3 roster", "holiday_list_id": "PHILIPPINE_PUBLIC_HOLIDAYS"}
+        form.update({f"{d}_start": "06:00" for d in ("monday", "tuesday", "wednesday", "thursday", "friday",
+                                                     "saturday", "sunday")})
+        form.update({f"{d}_end": "22:00" for d in ("monday", "tuesday", "wednesday", "thursday", "friday",
+                                                   "saturday", "sunday")})
+        _, h, _ = self._call("POST", "/admin/calendars", cookie=self.root, form=form)
+        self.assertIn("msg=Added+Ward+3+roster", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/admin/calendars", cookie=self.root, form=form | {"monday_end": ""})
+        self.assertIn("err=Monday", dict(h)["Location"])
+        _, _, body = self._call("GET", "/admin/calendars", cookie=self.root)
+        self.assertIn("value='Ward 3 roster'", body)
+        _, _, body = self._call("GET", "/admin/calendars", cookie=self.root, query="tab=holidays")
+        self.assertIn("Bonifacio Day", body)
+        alice = self._cookie_for("alice")                                    # the board's administrator
+        _, _, page = self._call("GET", "/admin/board/IT_HELP", cookie=alice, query="tab=board")
+        self.assertIn(">Ward 3 roster</option>", page)
+        self._call("POST", "/admin/calendars/save", cookie=self.root, form={"calendar_id": "WARD_3_ROSTER",
+                                                                             "act": "retire"})
+        _, _, page = self._call("GET", "/admin/board/IT_HELP", cookie=alice, query="tab=board")
+        self.assertNotIn(">Ward 3 roster</option>", page)                   # retired: not offered
+        tech = self._cookie_for("tech1")
+        status, _, _ = self._call("GET", "/admin/calendars", cookie=tech)
+        self.assertNotEqual(status, "200 OK")
+
+
+class SchedulingTest(unittest.TestCase):
+    """038 and psaspine.schedule: visits with a status, a where, a lead, done
+    and acknowledged; conflicts refused unless allowed; time off never
+    double-booked; the week Schedule and Setup › Schedule."""
+
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+
+    def setUp(self) -> None:
+        WebWSGITest.setUp(self)
+        self.addCleanup(self.tmp.cleanup)
+        conn = db.connect(self.db_path)
+        conn.executescript(
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','bob','WORK');"
+            "INSERT INTO work_item (work_item_id,source,name,entity_id,contract_basis)"
+            " VALUES ('ITO-2','desk','Label printer','PMC','BASELINE');"
+            "INSERT INTO ticket (work_item_id,board_id,path,impact,urgency,priority,priority_source,"
+            " requested_at,opened_at,state,board_status_id) VALUES ('ITO-2','IT_HELP','INCIDENT','I3',"
+            "'U3','P4','MATRIX','2026-09-17 08:00','2026-09-17 08:00','NEW','IT_HELP.NEW');")
+        conn.commit()
+        conn.close()
+        self.at = datetime(2026, 9, 28, 9)
+
+    def _conn(self):
+        conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)
+        return conn
+
+    def test_visits_statuses_lead_done_ack_and_conflicts(self):
+        from psaspine import schedule
+        conn = self._conn()
+        d = lambda h, m=0: datetime(2026, 9, 29, h, m)
+        v1 = schedule.add(conn, "ITO-1", member="bob", starts_at=d(10), ends_at=d(11), note="Ward 3",
+                          actor="alice", at=self.at, location_id="ON_SITE")
+        row = conn.execute("SELECT * FROM ticket_schedule WHERE schedule_id = ?", (v1,)).fetchone()
+        self.assertEqual((row["status_id"], row["location_id"], row["is_lead"]), ("FIRM", "ON_SITE", 1))  # first is lead
+        with self.assertRaises(schedule.Refused) as refused:                                 # bob is busy
+            schedule.add(conn, "ITO-2", member="Bob", starts_at=d(10, 30), ends_at=d(11, 30), note=None,
+                         actor="alice", at=self.at)
+        self.assertIn("allow a double booking", str(refused.exception))
+        v2 = schedule.add(conn, "ITO-2", member="bob", starts_at=d(10, 30), ends_at=d(11, 30), note=None,
+                          actor="alice", at=self.at, status_id="TENTATIVE", allow_conflict=True)
+        self.assertEqual(conn.execute("SELECT conflict_allowed FROM ticket_schedule WHERE schedule_id = ?",
+                                      (v2,)).fetchone()[0], 1)
+        v3 = schedule.add(conn, "ITO-1", member="alice", starts_at=d(10), ends_at=d(11), note=None,
+                          actor="alice", at=self.at, is_lead=True)
+        leads = [r["member"] for r in schedule.entries_for(conn, "ITO-1") if r["is_lead"]]
+        self.assertEqual(leads, ["alice"])                                                   # one lead a ticket
+        schedule.make_lead(conn, v1, actor="alice", at=self.at)
+        self.assertEqual([r["member"] for r in schedule.entries_for(conn, "ITO-1") if r["is_lead"]], ["bob"])
+        with self.assertRaises(schedule.Refused):
+            schedule.acknowledge(conn, v1, member="alice", at=self.at)                     # only bob can
+        schedule.acknowledge(conn, v1, member="BOB", at=self.at)
+        what = schedule.update(conn, v1, actor="alice", at=self.at, starts_at=d(14), ends_at=d(15))
+        self.assertIn("moved bob, 2026-09-29 10:00 to 11:00 -> bob, 2026-09-29 14:00 to 15:00", what)
+        self.assertIsNone(conn.execute("SELECT acknowledged_at FROM ticket_schedule WHERE schedule_id = ?",
+                                       (v1,)).fetchone()[0])                              # a move asks again
+        self.assertEqual(schedule.update(conn, v1, actor="alice", at=self.at), "nothing changed")
+        schedule.set_done(conn, v1, True, actor="bob", at=self.at)
+        with self.assertRaises(schedule.Refused):
+            schedule.update(conn, v1, actor="alice", at=self.at, starts_at=d(16), ends_at=d(17))
+        schedule.set_done(conn, v1, False, actor="bob", at=self.at)
+        events = [r[0] for r in conn.execute("SELECT detail FROM ticket_event WHERE work_item_id = 'ITO-1'"
+                                             " AND kind = 'SCHEDULE' ORDER BY ticket_event_id")]
+        self.assertTrue(events[0].startswith("visit scheduled: bob, 2026-09-29 10:00 to 11:00 (firm), lead"))
+        self.assertIn("visit acknowledged: bob, 2026-09-29 10:00 to 11:00", events)
+        self.assertIn("visit done: bob, 2026-09-29 14:00 to 15:00", events)
+        self.assertIn("visit reopened: bob, 2026-09-29 14:00 to 15:00", events)
+        del v3
+
+    def test_time_off_is_never_double_booked_and_a_meeting_can_be(self):
+        from psaspine import schedule
+        conn = self._conn()
+        schedule.add_block(conn, member="bob", kind="TIME_OFF", name="Annual leave",
+                           starts_at=datetime(2026, 9, 30, 0), ends_at=datetime(2026, 10, 2, 0), actor="bob", at=self.at)
+        for allow in (False, True):
+            with self.assertRaises(schedule.Refused) as refused:
+                schedule.add(conn, "ITO-1", member="bob", starts_at=datetime(2026, 10, 1, 9),
+                             ends_at=datetime(2026, 10, 1, 10), note=None, actor="alice", at=self.at,
+                             allow_conflict=allow)
+            self.assertIn("time off is never double-booked", str(refused.exception))
+        schedule.add_block(conn, member="alice", kind="MEETING", name="Vendor meeting",
+                           starts_at=datetime(2026, 10, 1, 9), ends_at=datetime(2026, 10, 1, 10), actor="alice", at=self.at)
+        with self.assertRaises(schedule.Refused):
+            schedule.add(conn, "ITO-1", member="alice", starts_at=datetime(2026, 10, 1, 9, 30),
+                         ends_at=datetime(2026, 10, 1, 10, 30), note=None, actor="alice", at=self.at)
+        schedule.add(conn, "ITO-1", member="alice", starts_at=datetime(2026, 10, 1, 9, 30),
+                     ends_at=datetime(2026, 10, 1, 10, 30), note=None, actor="alice", at=self.at, allow_conflict=True)
+        with self.assertRaises(schedule.Refused):                  # time off over a booked visit needs the tick
+            schedule.add_block(conn, member="alice", kind="TIME_OFF", name="Sick",
+                               starts_at=datetime(2026, 10, 1, 0), ends_at=datetime(2026, 10, 2, 0), actor="alice", at=self.at)
+        wk = schedule.week(conn, ["IT_HELP"], date(2026, 9, 28))
+        self.assertEqual(len(wk["blocks"]), 2)
+        self.assertIn("bob", wk["members"])
+        audits = [r[0] for r in conn.execute("SELECT detail FROM audit_event WHERE action = 'SCHEDULE_BLOCK'")]
+        self.assertEqual(audits[0], "time off added: bob, 2026-09-30 00:00 to 2026-10-02 00:00, Annual leave")
+
+    def test_the_booked_member_is_emailed_when_the_board_says_so(self):
+        from psaspine import schedule
+        conn = self._conn()
+        conn.execute("UPDATE board SET notify_owner = 1 WHERE board_id = 'IT_HELP'")
+        for who in ("bob", "alice"):
+            conn.execute("INSERT INTO contact (contact_id, entity_id, display_name, email, sam_account, source,"
+                         " inactive, created_at) VALUES (?, 'PMC', ?, ?, ?, 'AD', 0, '2026-09-17 08:00')",
+                         (f"C_{who}", who, f"{who}@pmcne.ph", who))
+        schedule.add(conn, "ITO-1", member="bob", starts_at=datetime(2026, 9, 29, 10), ends_at=datetime(2026, 9, 29, 11),
+                     note=None, actor="alice", at=self.at)
+        schedule.add(conn, "ITO-2", member="alice", starts_at=datetime(2026, 9, 29, 12), ends_at=datetime(2026, 9, 29, 13),
+                     note=None, actor="alice", at=self.at)                                   # booked herself: none
+        mails = [(r["recipient"], r["subject"]) for r in conn.execute(
+            "SELECT recipient, subject FROM notification WHERE recipient_role = 'SCHEDULED'")]
+        self.assertEqual(mails, [("bob", "[ITO-1] Scheduled for you on IT Help")])     # none to alice; no summary
+        conn.execute("UPDATE board SET notify_owner = 0 WHERE board_id = 'IT_HELP'")
+        schedule.add(conn, "ITO-2", member="bob", starts_at=datetime(2026, 9, 29, 14), ends_at=datetime(2026, 9, 29, 15),
+                     note=None, actor="alice", at=self.at)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM notification WHERE recipient_role = 'SCHEDULED'").fetchone()[0], 1)
+
+    def test_the_week_page_books_blocks_and_setup_edits_the_vocabulary(self):
+        alice, root = self._cookie_for("alice"), self._cookie_for("root", is_sysadmin=True)
+        _, h, _ = self._call("POST", "/schedule/book", cookie=alice, form={
+            "work_item_id": "ito-2", "member": "bob", "starts_at": "2026-09-29T10:00", "ends_at": "2026-09-29T11:00",
+            "status_id": "TENTATIVE", "location_id": "REMOTE", "week": "2026-09-28"})
+        self.assertIn("msg=Booked+ITO-2+for+bob", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/schedule/block", cookie=alice, form={
+            "member": "bob", "kind": "TIME_OFF", "name": "Annual leave", "starts_at": "2026-09-30T00:00",
+            "ends_at": "2026-10-01T00:00", "week": "2026-09-28"})
+        self.assertIn("msg=Added", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/schedule/book", cookie=alice, form={
+            "work_item_id": "ITO-1", "member": "bob", "starts_at": "2026-09-30T10:00", "ends_at": "2026-09-30T11:00"})
+        self.assertIn("never+double-booked", dict(h)["Location"])
+        carol = self._cookie_for("carol")                                                # reads IT Help, works nothing
+        _, h, _ = self._call("POST", "/schedule/book", cookie=carol, form={
+            "work_item_id": "ITO-2", "member": "bob", "starts_at": "2026-09-29T12:00", "ends_at": "2026-09-29T13:00"})
+        self.assertIn("err=You+do+not+work", dict(h)["Location"])
+        status, _, _ = self._call("POST", "/schedule/block", cookie=carol, form={
+            "member": "carol", "kind": "MEETING", "name": "x", "starts_at": "2026-09-29T12:00", "ends_at": "2026-09-29T13:00"})
+        self.assertTrue(status.startswith("403"), status)
+        _, _, page = self._call("GET", "/schedule", cookie=carol, query="week=2026-09-28")
+        self.assertNotIn("Book a visit", page)                                            # a reader sees, cannot book
+        status, _, page = self._call("GET", "/schedule", cookie=alice, query="week=2026-09-28")
+        self.assertEqual(status, "200 OK")
+        self.assertIn("class='sch visit tentative'", page)
+        self.assertIn("10:00–11:00</b> ITO-2", page)
+        self.assertIn("Remote", page)
+        self.assertIn("<b>Time off</b> all day<br>Annual leave", page)
+        self.assertIn("Mon 28 Sep", page)
+        _, _, page = self._call("GET", "/dispatch", cookie=alice, query="day=2026-09-30")
+        self.assertIn("Time off: Annual leave", page)
+        _, _, ticket = self._call("GET", "/ticket/ITO-2", cookie=alice)
+        self.assertIn("Tentative", ticket)
+        self.assertIn("Move or change", ticket)
+        # Setup › Schedule: a sysadmin only
+        status, _, _ = self._call("GET", "/admin/schedule", cookie=alice)
+        self.assertNotEqual(status, "200 OK")
+        _, h, _ = self._call("POST", "/admin/schedule/add", cookie=root, form={"kind": "status", "name": "Waiting on parts"})
+        self.assertIn("msg=Added+Waiting+on+parts", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/admin/schedule/save", cookie=root, form={"kind": "status", "key": "FIRM", "act": "retire"})
+        self.assertIn("err=Not+saved%3A+the+default+status", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/admin/schedule/save", cookie=root, form={"kind": "status", "key": "WAITING_ON_PARTS", "act": "default"})
+        self.assertIn("made+the+default", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/admin/schedule/save", cookie=root, form={"kind": "location", "key": "IN_HOUSE", "name": "Brought to IT", "act": "rename"})
+        self.assertIn("renamed", dict(h)["Location"])
+        _, _, page = self._call("GET", "/admin/schedule", cookie=root)
+        self.assertIn("value='Brought to IT'", page)
+        conn = self._conn()
+        self.assertEqual(conn.execute("SELECT status_id FROM schedule_status WHERE is_default = 1").fetchone()[0],
+                         "WAITING_ON_PARTS")
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'SCHEDULE_CONFIG'").fetchone()[0], 3)
 
 
 class DatabaseSettingsTest(unittest.TestCase):

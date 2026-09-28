@@ -8,6 +8,7 @@ context, and return a Response.
 """
 from __future__ import annotations
 
+from .views import schedule as schedule_view
 from .views import (admin, board, companies, configurations, dispatch, files, loop, oncall,
                     portal, reports, rules, search, ticket, uplift)
 
@@ -43,6 +44,10 @@ ROUTES = [
     ("POST", "/ticket/<work_item_id>/merge", ticket.merge),
     ("POST", "/ticket/<work_item_id>/schedule/add", ticket.schedule_add),
     ("POST", "/ticket/<work_item_id>/schedule/remove", ticket.schedule_remove),
+    ("POST", "/ticket/<work_item_id>/schedule/update", ticket.schedule_update),
+    ("POST", "/ticket/<work_item_id>/schedule/done", ticket.schedule_done),
+    ("POST", "/ticket/<work_item_id>/schedule/ack", ticket.schedule_ack),
+    ("POST", "/ticket/<work_item_id>/schedule/lead", ticket.schedule_lead),
     ("POST", "/ticket/<work_item_id>/attach", files.upload),
     ("GET", "/ticket/<work_item_id>/file/<attachment_id>", files.download),
     ("POST", "/ticket/<work_item_id>/file/<attachment_id>/review", files.review),
@@ -59,6 +64,10 @@ ROUTES = [
     ("GET", "/configuration/<configuration_id>", configurations.detail),
     ("POST", "/configuration/<configuration_id>/update", configurations.update),
     ("GET", "/dispatch", dispatch.index),
+    ("GET", "/schedule", schedule_view.index),
+    ("POST", "/schedule/book", schedule_view.book),
+    ("POST", "/schedule/block", schedule_view.block_add),
+    ("POST", "/schedule/block/remove", schedule_view.block_remove),
     ("POST", "/dispatch/assign", dispatch.assign),
     ("GET", "/oncall", oncall.index),
     ("POST", "/oncall/add", oncall.add),
@@ -90,6 +99,16 @@ ROUTES = [
     ("GET", "/admin/departments", admin.departments),
     ("POST", "/admin/departments/save", admin.departments_save),
     ("POST", "/admin/departments/add", admin.departments_add),
+    ("GET", "/admin/calendars", admin.calendars),
+    ("POST", "/admin/calendars", admin.calendars_add),
+    ("POST", "/admin/calendars/save", admin.calendars_save),
+    ("POST", "/admin/calendars/holiday-list", admin.holiday_list_add),
+    ("POST", "/admin/calendars/holiday-list/save", admin.holiday_list_save),
+    ("POST", "/admin/calendars/holiday", admin.holiday_add),
+    ("POST", "/admin/calendars/holiday/remove", admin.holiday_remove),
+    ("GET", "/admin/schedule", admin.schedule_setup),
+    ("POST", "/admin/schedule/add", admin.schedule_setup_add),
+    ("POST", "/admin/schedule/save", admin.schedule_setup_save),
     ("GET", "/admin/time", admin.time_setup),
     ("POST", "/admin/time/role", admin.time_role_add),
     ("POST", "/admin/time/type", admin.time_type_add),

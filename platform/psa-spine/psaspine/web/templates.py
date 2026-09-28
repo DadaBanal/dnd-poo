@@ -178,6 +178,7 @@ td.center{text-align:center} th.colhead label{font-weight:600;white-space:nowrap
 .dayrow{display:grid;grid-template-columns:160px 1fr;gap:8px 12px;align-items:start;padding:8px 0;border-bottom:1px solid var(--line)}
 .dayrow:last-child{border-bottom:none} .dayrow .who{font-weight:600}
 .slot{display:inline-block;margin:2px 6px 2px 0;padding:3px 10px;border-radius:999px;background:var(--accent-bg);font-size:12px}
+.slot.away{background:var(--warn-bg);color:var(--warn)}
 .kbd{font:11px/1 var(--mono);padding:2px 5px;border:1px solid var(--line-2);border-bottom-width:2px;border-radius:5px;color:var(--ink-2);background:var(--surface)}
 
 /* ---- surfaces ---------------------------------------------------------- */
@@ -269,6 +270,21 @@ fieldset.q{border:none;padding:0;margin:0 0 12px} fieldset.q legend{font-size:13
 .choices{display:flex;flex-wrap:wrap;gap:8px 22px}
 .choices label{display:inline-flex;align-items:center;gap:6px;font-weight:400;color:var(--ink);font-size:13px;letter-spacing:0;cursor:pointer}
 .choices input[type=radio]{margin:0;width:auto;flex:0 0 auto}
+.schedwrap{overflow-x:auto;max-width:100%} .schedbar{justify-content:flex-start;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+table.schedgrid{width:100%;table-layout:fixed;border-collapse:collapse;min-width:760px}
+table.schedgrid thead th{font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--ink-3);text-align:left;padding:6px 4px;border-bottom:1px solid var(--line)}
+table.schedgrid thead th:first-child{width:90px}
+table.schedgrid th.who{white-space:nowrap;vertical-align:top;text-align:left;font-size:12px;color:var(--ink-2);padding:8px 4px;overflow:hidden;text-overflow:ellipsis}
+table.schedgrid td{vertical-align:top;padding:4px;border-bottom:1px solid var(--line);overflow:hidden}
+table.schedgrid .today{background:color-mix(in srgb,var(--accent) 6%,transparent)}
+.sch{display:block;position:relative;font-family:inherit;font-size:12px;line-height:1.35;padding:4px 6px;overflow-wrap:anywhere;margin:0 0 4px;border-radius:var(--r-sm);border:1px solid var(--line-2);background:var(--surface);color:var(--ink);text-decoration:none}
+.sch.visit{border-left:3px solid var(--accent)} .sch.visit:hover{background:var(--surface-2);text-decoration:none}
+.sch.tentative{border-style:dashed;border-left-style:solid} .sch.done{opacity:.6;text-decoration:line-through}
+.sch.block{background:var(--surface-2);color:var(--ink-2);padding-right:20px} .sch.time_off{border-left:3px solid var(--warn)} .sch.meeting,.sch.activity{border-left:3px solid var(--ink-3)}
+.sch form.inline{position:absolute;top:2px;right:2px} .sch .iconbtn.x{padding:0 4px;min-width:0;height:auto;line-height:1}
+.weekrow{display:flex;flex-wrap:wrap;gap:8px 16px;margin-top:10px} .weekrow .day{white-space:nowrap}
+.weekrow .daylbl{display:inline-block;width:30px;color:var(--ink-2);font-size:12px;font-weight:600}
+.weekrow input{width:64px;display:inline-block;padding:4px 6px}
 details.tip{display:inline-block;position:relative;vertical-align:middle;margin-left:4px}
 details.tip>summary{list-style:none;cursor:help;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;
   border:1px solid var(--line-2);background:var(--surface-2);color:var(--ink-2);font-size:12px;font-weight:700;line-height:1}
@@ -422,7 +438,7 @@ function go(i){if(!rows.length)return;if(cur>=0)rows[cur].classList.remove("cur"
   rows[cur].classList.add("cur");rows[cur].scrollIntoView({block:"nearest"})}
 /* palette */
 var pal=$("#pal"),pq=$("#pal-q"),pl=$("#pal-list"),items=[],sel=0;
-var pages=[["Service Board","/","g b"],["Dispatch","/dispatch","g d"],["Companies","/companies","g c"],["On-call","/oncall",""],["Setup","/admin","g s"],["My requests","/my",""],["New ticket","/ticket/new","n"]];
+var pages=[["Service Board","/","g b"],["Dispatch","/dispatch","g d"],["Schedule","/schedule",""],["Companies","/companies","g c"],["On-call","/oncall",""],["Setup","/admin","g s"],["My requests","/my",""],["New ticket","/ticket/new","n"]];
 function ticketFrom(q){var m=q.trim().match(/^(pmc|ito|pcsd)[- ]?0*(\d{1,6})$/i);if(!m)return null;var pre=m[1].toUpperCase();
   return pre==="PMC"?"PMC-"+("000000"+m[2]).slice(-6):pre+"-"+m[2]}
 var remote={q:"",tickets:[],contacts:[],configurations:[]},rtimer=null;
@@ -775,6 +791,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
     nav_items = [
         ("board", "/", "Service Board"),
         ("dispatch", "/dispatch", "Dispatch"),
+        ("schedule", "/schedule", "Schedule"),
         ("companies", "/companies", "Companies"),
         ("oncall", "/oncall", "On-call"),
         ("reports", "/reports", "Reports"),
@@ -787,7 +804,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         active = "my"
     nav = "".join(
         f'<a href="{esc(href)}"{" class=on aria-current=page" if key == active else ""}>'
-        f'{icon("setup" if key == "admin" else key)}<span class=lbl>{esc(label)}</span></a>'
+        f'{icon({"admin": "setup", "schedule": "calendar"}.get(key, key))}<span class=lbl>{esc(label)}</span></a>'
         for key, href, label in nav_items)
     nav += (f'<a class="newbtn" href="/ticket/new" title="New ticket (n)">{icon("plus")} New ticket</a>'
             if user is not None and not requester else "")

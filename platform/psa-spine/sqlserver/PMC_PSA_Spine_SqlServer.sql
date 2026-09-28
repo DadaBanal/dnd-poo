@@ -168,6 +168,9 @@ BEGIN
     PRINT N'    psa.work_type';
     PRINT N'    psa.department';
     PRINT N'    psa.department_board';
+    PRINT N'    psa.schedule_status';
+    PRINT N'    psa.service_location';
+    PRINT N'    psa.schedule_block';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -196,13 +199,15 @@ BEGIN
     PRINT N'    psa.ix_ticket_schedule_ticket';
     PRINT N'    psa.ix_time_entry_ticket';
     PRINT N'    psa.ix_department_board_board';
+    PRINT N'    psa.ix_schedule_block_day';
+    PRINT N'    psa.ix_schedule_block_member';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  77 tables, 27 indexes, 4 triggers.';
+    PRINT N'  80 tables, 29 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -2090,6 +2095,56 @@ CREATE TABLE psa.[department_board] (
 END;
 
 -- --------------------------------------------------------------------------
+-- schedule_status   (from schema/038_schedule.sql)
+IF OBJECT_ID(N'psa.[schedule_status]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[schedule_status] (
+    [status_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_schedule_status] PRIMARY KEY,
+    [name] NVARCHAR(400) NOT NULL,
+    [is_default] INT NOT NULL CONSTRAINT [DF_schedule_status_is_default] DEFAULT (0) CONSTRAINT [CK_schedule_status_01] CHECK (is_default IN (0, 1)),
+    [inactive] INT NOT NULL CONSTRAINT [DF_schedule_status_inactive] DEFAULT (0) CONSTRAINT [CK_schedule_status_02] CHECK (inactive IN (0, 1)),
+    [sort_order] INT NOT NULL CONSTRAINT [DF_schedule_status_sort_order] DEFAULT (0)
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- service_location   (from schema/038_schedule.sql)
+IF OBJECT_ID(N'psa.[service_location]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[service_location] (
+    [location_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_service_location] PRIMARY KEY,
+    [name] NVARCHAR(400) NOT NULL,
+    [inactive] INT NOT NULL CONSTRAINT [DF_service_location_inactive] DEFAULT (0) CONSTRAINT [CK_service_location_01] CHECK (inactive IN (0, 1))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- schedule_block   (from schema/038_schedule.sql)
+-- What is on a person's schedule that is not a ticket. TIME_OFF blocks a
+-- visit outright; a MEETING or an ACTIVITY is a clash like any other, which
+-- "allow the double booking" can override.
+IF OBJECT_ID(N'psa.[schedule_block]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[schedule_block] (
+    [block_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_schedule_block] PRIMARY KEY,
+    [member] NVARCHAR(200) NOT NULL,
+    [kind] NVARCHAR(32) NOT NULL CONSTRAINT [CK_schedule_block_01] CHECK (kind IN ('MEETING', 'ACTIVITY', 'TIME_OFF')),
+    [name] NVARCHAR(400) NOT NULL,
+    [starts_at] NVARCHAR(64) NOT NULL,
+    [ends_at] NVARCHAR(64) NOT NULL,
+    [created_at] NVARCHAR(64) NOT NULL,
+    [created_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [starts_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [starts_at], 126), CASE WHEN [starts_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [starts_at], 112) END)),
+    [ends_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [ends_at], 126), CASE WHEN [ends_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [ends_at], 112) END)),
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END)),
+    CONSTRAINT [CK_schedule_block_02] CHECK (ends_at > starts_at)
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -2343,6 +2398,36 @@ ALTER TABLE psa.[service_family] ADD [inactive] INT NULL CONSTRAINT [DF_service_
 IF COL_LENGTH(N'psa.[service_action]', N'inactive') IS NULL
 ALTER TABLE psa.[service_action] ADD [inactive] INT NULL CONSTRAINT [DF_service_action_inactive] DEFAULT (0) CONSTRAINT [CK_service_action_inactive_01] CHECK (inactive IN (0, 1));
 
+IF COL_LENGTH(N'psa.[holiday]', N'all_day') IS NULL
+ALTER TABLE psa.[holiday] ADD [all_day] INT NULL CONSTRAINT [DF_holiday_all_day] DEFAULT (1) CONSTRAINT [CK_holiday_all_day_01] CHECK (all_day IN (0, 1));
+
+IF COL_LENGTH(N'psa.[holiday]', N'time_start') IS NULL
+ALTER TABLE psa.[holiday] ADD [time_start] NVARCHAR(8) NULL;
+
+IF COL_LENGTH(N'psa.[holiday]', N'time_end') IS NULL
+ALTER TABLE psa.[holiday] ADD [time_end] NVARCHAR(8) NULL;
+
+IF COL_LENGTH(N'psa.[calendar]', N'inactive') IS NULL
+ALTER TABLE psa.[calendar] ADD [inactive] INT NULL CONSTRAINT [DF_calendar_inactive] DEFAULT (0) CONSTRAINT [CK_calendar_inactive_01] CHECK (inactive IN (0, 1));
+
+IF COL_LENGTH(N'psa.[ticket_schedule]', N'status_id') IS NULL
+ALTER TABLE psa.[ticket_schedule] ADD [status_id] NVARCHAR(64) NULL CONSTRAINT [FK_ticket_schedule_status_id] REFERENCES psa.[schedule_status]([status_id]);
+
+IF COL_LENGTH(N'psa.[ticket_schedule]', N'location_id') IS NULL
+ALTER TABLE psa.[ticket_schedule] ADD [location_id] NVARCHAR(64) NULL CONSTRAINT [FK_ticket_schedule_location_id] REFERENCES psa.[service_location]([location_id]);
+
+IF COL_LENGTH(N'psa.[ticket_schedule]', N'is_lead') IS NULL
+ALTER TABLE psa.[ticket_schedule] ADD [is_lead] INT NULL CONSTRAINT [DF_ticket_schedule_is_lead] DEFAULT (0) CONSTRAINT [CK_ticket_schedule_is_lead_01] CHECK (is_lead IN (0, 1));
+
+IF COL_LENGTH(N'psa.[ticket_schedule]', N'conflict_allowed') IS NULL
+ALTER TABLE psa.[ticket_schedule] ADD [conflict_allowed] INT NULL CONSTRAINT [DF_ticket_schedule_conflict_allowed] DEFAULT (0) CONSTRAINT [CK_ticket_schedule_conflict_allowed_01] CHECK (conflict_allowed IN (0, 1));
+
+IF COL_LENGTH(N'psa.[ticket_schedule]', N'done_at') IS NULL
+ALTER TABLE psa.[ticket_schedule] ADD [done_at] NVARCHAR(64) NULL;
+
+IF COL_LENGTH(N'psa.[ticket_schedule]', N'acknowledged_at') IS NULL
+ALTER TABLE psa.[ticket_schedule] ADD [acknowledged_at] NVARCHAR(64) NULL;
+
 -- --------------------------------------------------------------------------
 -- indexes
 
@@ -2430,6 +2515,12 @@ CREATE INDEX [ix_time_entry_ticket] ON psa.[time_entry] ([work_item_id], [worked
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_department_board_board' AND object_id = OBJECT_ID(N'psa.[department_board]'))
 CREATE INDEX [ix_department_board_board] ON psa.[department_board] ([board_id]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_schedule_block_day' AND object_id = OBJECT_ID(N'psa.[schedule_block]'))
+CREATE INDEX [ix_schedule_block_day] ON psa.[schedule_block] ([starts_at]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_schedule_block_member' AND object_id = OBJECT_ID(N'psa.[schedule_block]'))
+CREATE INDEX [ix_schedule_block_member] ON psa.[schedule_block] ([member]);
 
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
@@ -2566,10 +2657,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 77 OR @Triggers <> 4 OR @Indexes < 27
+IF @Tables <> 80 OR @Triggers <> 4 OR @Indexes < 29
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 77), %d triggers (expected 4), %d indexes (expected at least 27). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 80), %d triggers (expected 4), %d indexes (expected at least 29). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -2597,6 +2688,8 @@ PRINT N'target is enforced until somebody with the authority says so.';
     DROP TRIGGER IF EXISTS psa.[ticket_close_requires_a_variation];
     DROP TRIGGER IF EXISTS psa.[patient_reference_needs_a_restricted_board];
     DROP TRIGGER IF EXISTS psa.[patient_reference_stays_on_a_restricted_board];
+    ALTER TABLE psa.[ticket_schedule] DROP CONSTRAINT IF EXISTS [FK_ticket_schedule_location_id];
+    ALTER TABLE psa.[ticket_schedule] DROP CONSTRAINT IF EXISTS [FK_ticket_schedule_status_id];
     ALTER TABLE psa.[board] DROP CONSTRAINT IF EXISTS [FK_board_default_work_type_id];
     ALTER TABLE psa.[board] DROP CONSTRAINT IF EXISTS [FK_board_default_work_role_id];
     ALTER TABLE psa.[time_entry] DROP CONSTRAINT IF EXISTS [FK_time_entry_ticket_event_id];
@@ -2612,6 +2705,9 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[schedule_block];
+    DROP TABLE IF EXISTS psa.[service_location];
+    DROP TABLE IF EXISTS psa.[schedule_status];
     DROP TABLE IF EXISTS psa.[department_board];
     DROP TABLE IF EXISTS psa.[department];
     DROP TABLE IF EXISTS psa.[work_type];

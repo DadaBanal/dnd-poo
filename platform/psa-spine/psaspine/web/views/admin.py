@@ -94,6 +94,17 @@ def index(ctx):
         _board.ensure_time_vocabulary(ctx.conn)
         n_roles = ctx.conn.execute("SELECT COUNT(*) FROM work_role WHERE inactive = 0").fetchone()[0]
         n_types = ctx.conn.execute("SELECT COUNT(*) FROM work_type WHERE inactive = 0").fetchone()[0]
+        n_cal = ctx.conn.execute("SELECT COUNT(*) FROM calendar WHERE COALESCE(inactive, 0) = 0").fetchone()[0]
+        n_hol = ctx.conn.execute("SELECT COUNT(*) FROM holiday").fetchone()[0]
+        cards.append(
+            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-calendar></use></svg>Calendars</h3><p class=sub>"
+            "The working weeks the SLA clocks run on, and the holiday lists that stop them: the reference PSA's "
+            "Calendar and Holiday List setup tables.</p>"
+            f"<a class='btn ghost' href='/admin/calendars'>Calendars ({n_cal}) and holidays ({n_hol})</a></div>")
+        cards.append(
+            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-calendar></use></svg>Schedule</h3><p class=sub>"
+            "What a visit's status and its where can be: the reference PSA's Schedule Status and Service Location "
+            "setup tables.</p><a class='btn ghost' href='/admin/schedule'>Statuses and where</a></div>")
         cards.append(
             "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-clock></use></svg>Time</h3><p class=sub>"
             "The work roles and work types a time entry is written against, as Dada PSA has them.</p>"
@@ -181,7 +192,8 @@ def board_setup(ctx, board_id):
              "</form> It adds only what is missing and never overwrites a change.</div>")
 
     if tab == "board":
-        cals = ctx.conn.execute("SELECT calendar_id, name FROM calendar ORDER BY name").fetchall()
+        from ... import calendars as _cal
+        cals = _cal.live_calendars(ctx.conn, keep=b["calendar_id"])
         cal_opts = "<option value=''>(none — no clocks)</option>" + "".join(
             f"<option value='{t.esc(c['calendar_id'])}'{' selected' if c['calendar_id'] == b['calendar_id'] else ''}>"
             f"{t.esc(c['name'])}</option>" for c in cals)
@@ -203,7 +215,7 @@ def board_setup(ctx, board_id):
                   "Email the requester when their ticket is opened or updated (no note text;"
                   " needs the portal address on the sender)")
             + chk("notify_owner", b["notify_owner"] == 1,
-                  "Email the owner when a ticket is assigned to them")
+                  "Email the owner when a ticket is assigned to them, and a member when a visit is booked for them")
             + "</div><div>" + chk("is_live", b["is_live"], "Live (needs an owner and a deputy)")
             + chk("inactive", b["inactive"], "Retired — no new tickets; history kept") + "</div>"
             f"<div><label>Time entries start with this work role</label><select name=default_work_role_id>"
@@ -214,7 +226,8 @@ def board_setup(ctx, board_id):
             + _reply_policy_form(ctx, b) +
             f"<form method=post action='/admin/board/{bid}/calendar' class=row style='margin-top:14px'>"
             f"<div><label>Calendar the SLA clocks run on</label><select name=calendar_id>{cal_opts}</select></div>"
-            "<div style='flex:0 0 auto'><button type=submit>Save</button></div></form>"
+            "<div style='flex:0 0 auto'><button type=submit>Save</button></div>"
+            "<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/calendars'>Calendars and holidays</a></div></form>"
             f"<form method=post action='/admin/board/{bid}/starter' style='margin-top:14px'>"
             "<button class=ghost type=submit>Apply the starter setup</button> "
             "<span class=why>Adds any missing statuses, calendars and SLA targets. Never overwrites.</span>"
@@ -786,8 +799,11 @@ def _changes(before: dict, after: dict) -> str:
     so the row answers "who renamed the board" (SQL01, part 15); "nothing
     changed" when the Save changed nothing."""
     out = []
+    flags = {"restricted", "closed_loop_required", "is_live", "inactive", "notify_requester", "notify_owner"}
     for key, word in SETTING_WORDS.items():
         a, b = before.get(key), after.get(key)
+        if key in flags:                       # an unset flag reads as its default, off (SQL01, part 16)
+            a, b = a or 0, b or 0
         if a != b:
             show = (lambda v: "-" if v is None else repr(v) if isinstance(v, str) else str(v))
             out.append(f"{word} {show(a)} -> {show(b)}")
@@ -1140,6 +1156,283 @@ def catalogue_associate(ctx):
     return _cat_back("pairs", msg="Pair added; it is offered on tickets now.")
 
 
+# ------------------------------------------------------ Setup › Calendars
+#
+# The reference PSA's Calendar and Holiday List setup tables (psaspine/calendars.py):
+# a calendar is a name, seven day windows and a holiday list; a holiday list is
+# dated rows, each a whole day or the hours it closes. Server-rendered, no script.
+
+def _cal_back(tab: str, **q):
+    from .. import redirect
+    q = {k: v for k, v in q.items() if v}
+    q["tab"] = tab
+    return redirect("/admin/calendars?" + urllib.parse.urlencode(q))
+
+
+def _day_inputs(prefix: str, row: dict | None) -> str:
+    from ... import clocks
+    cells = []
+    for day in clocks.DAYS:
+        s = t.esc((row or {}).get(f"{day}_start") or "")
+        e = t.esc((row or {}).get(f"{day}_end") or "")
+        cells.append(f"<span class=day><span class=daylbl>{day[:3].title()}</span>"
+                     f"<input name={prefix}{day}_start value='{s}' placeholder='closed' size=5 maxlength=5"
+                     f" aria-label='{day.title()} start'> – "
+                     f"<input name={prefix}{day}_end value='{e}' placeholder='' size=5 maxlength=5"
+                     f" aria-label='{day.title()} end'></span>")
+    return "".join(cells)
+
+
+def calendars(ctx):
+    from .. import Response
+    from ... import calendars as cal
+    common.require_sysadmin(ctx)
+    msg, err = ctx.request.query.get("msg", ""), ctx.request.query.get("err", "")
+    tab = ctx.request.query.get("tab", "calendars")
+    if tab not in ("calendars", "holidays"):
+        tab = "calendars"
+    tabs = ("<div class=stabs>" + "".join(
+        f"<a class='{'on' if tab == k else ''}' href='/admin/calendars?tab={k}'>{v}</a>"
+        for k, v in (("calendars", "Calendars"), ("holidays", "Holiday lists"))) + "</div>")
+    lists = cal.holiday_lists(ctx.conn)
+    list_opts = "<option value=''>(no holidays)</option>" + "".join(
+        f"<option value='{t.esc(x['holiday_list_id'])}'>{t.esc(x['name'])}</option>" for x in lists)
+    if tab == "calendars":
+        rows = []
+        for c in cal.calendars(ctx.conn):
+            sel = "<option value=''>(no holidays)</option>" + "".join(
+                f"<option value='{t.esc(x['holiday_list_id'])}'{' selected' if x['holiday_list_id'] == c['holiday_list_id'] else ''}>"
+                f"{t.esc(x['name'])}</option>" for x in lists)
+            rows.append(
+                f"<div class=card{' style=opacity:.6' if c['retired'] else ''}><form method=post action='/admin/calendars/save'>"
+                f"<input type=hidden name=calendar_id value='{t.esc(c['calendar_id'])}'>"
+                "<div class=row><div><label>Name</label>"
+                f"<input name=name value='{t.esc(c['name'])}' maxlength=60 required></div>"
+                f"<div><label>Holiday list</label><select name=holiday_list_id>{sel}</select></div>"
+                f"<div style='flex:0 0 auto;align-self:end'><span class=muted>{t.esc(c['calendar_id'])} · on {c['boards']} board(s)"
+                f"{' · retired' if c['retired'] else ''}</span></div></div>"
+                f"<div class=weekrow>{_day_inputs('', c)}</div>"
+                "<div class='row schedbar' style='margin-top:8px'><div style='flex:0 0 auto'><button type=submit name=act value=save>Save</button></div>"
+                f"<div style='flex:0 0 auto'><button type=submit class=ghost name=act value={'restore' if c['retired'] else 'retire'}>"
+                f"{'Restore' if c['retired'] else 'Retire'}</button></div></div></form></div>")
+        content = (
+            "<div class=card><p class=sub>A calendar is the working week an SLA clock counts: a start and an end "
+            "for each day, blank for closed, <code>24:00</code> for midnight at the end of the day. Its holiday "
+            "list stops the clock on those dates. A board picks its calendar on Setup › Board. Retiring a "
+            "calendar keeps it on the boards that have it and stops offering it to new ones.</p></div>"
+            + "".join(rows) +
+            "<div class=card><h3>" + t.icon("plus") + "Add a calendar</h3><form method=post action='/admin/calendars'>"
+            "<div class=row><div><label>Name</label><input name=name required maxlength=60 placeholder='Pharmacy counter hours'></div>"
+            f"<div><label>Holiday list</label><select name=holiday_list_id>{list_opts}</select></div></div>"
+            f"<div class=weekrow>{_day_inputs('', {f'{d}_start': '08:00' for d in ('monday','tuesday','wednesday','thursday','friday')} | {f'{d}_end': '17:00' for d in ('monday','tuesday','wednesday','thursday','friday')})}</div>"
+            "<div style='margin-top:8px'><button type=submit class=ghost>Add</button></div></form></div>")
+    else:
+        cards = []
+        for x in lists:
+            days = cal.holidays(ctx.conn, x["holiday_list_id"])
+            trs = "".join(
+                f"<tr><td>{t.esc(h['observed_on'])}</td><td>{t.esc(h['name'])}</td>"
+                f"<td>{'all day' if h['all_day'] else t.esc('closed ' + str(h['time_start']) + '–' + str(h['time_end']))}</td>"
+                f"<td><form method=post action='/admin/calendars/holiday/remove' class=inline>"
+                f"<input type=hidden name=holiday_list_id value='{t.esc(x['holiday_list_id'])}'>"
+                f"<input type=hidden name=observed_on value='{t.esc(h['observed_on'])}'>"
+                "<button class=ghost type=submit style='padding:3px 10px'>Remove</button></form></td></tr>" for h in days)
+            cards.append(
+                f"<div class=card><form method=post action='/admin/calendars/holiday-list/save' class=row>"
+                f"<input type=hidden name=holiday_list_id value='{t.esc(x['holiday_list_id'])}'>"
+                f"<div><label>List</label><input name=name value='{t.esc(x['name'])}' maxlength=60 required></div>"
+                "<div style='flex:0 0 auto;align-self:end'><button type=submit class=ghost>Rename</button></div>"
+                f"<div style='flex:0 0 auto;align-self:end'><span class=muted>{t.esc(x['holiday_list_id'])} · on {x['calendars']} calendar(s)</span></div></form>"
+                "<div class=tablewrap><table class=compact><thead><tr><th>Date</th><th>Holiday</th><th>Closes</th><th></th></tr></thead>"
+                f"<tbody>{trs or '<tr><td colspan=4 class=muted>No dates yet.</td></tr>'}</tbody></table></div>"
+                f"<form method=post action='/admin/calendars/holiday' class=row style='margin-top:8px'>"
+                f"<input type=hidden name=holiday_list_id value='{t.esc(x['holiday_list_id'])}'>"
+                "<div><label>Date</label><input name=observed_on type=date required></div>"
+                "<div><label>Holiday</label><input name=name required maxlength=50 placeholder='Bonifacio Day'></div>"
+                "<div style='flex:0 0 auto;align-self:end'><label><input type=checkbox name=all_day value=1 checked> All day</label></div>"
+                "<div><label>Or closed from</label><input name=time_start placeholder='12:00' size=5 maxlength=5></div>"
+                "<div><label>until</label><input name=time_end placeholder='24:00' size=5 maxlength=5></div>"
+                "<div style='flex:0 0 auto;align-self:end'><button type=submit class=ghost>Add</button></div></form></div>")
+        content = (
+            "<div class=card><p class=sub>A holiday list is the dates a calendar does not count: a whole day, or "
+            "the hours it closes (untick All day and give the hours). PMC's own list from HR is the source; "
+            "nothing is compiled in. Load a year at once with "
+            "<code>psaspine import-holidays &lt;db&gt; &lt;list id&gt; holidays.csv</code> (columns Date, Name, "
+            "optional AllDay, Start, End); a date already on the list is left alone. Removing a date is audited, "
+            "and every clock on that list recomputes.</p></div>"
+            + "".join(cards) +
+            "<div class=card><h3>" + t.icon("plus") + "Add a holiday list</h3><form method=post action='/admin/calendars/holiday-list' class=row>"
+            "<div><input name=name required maxlength=60 placeholder='Philippine public holidays'></div>"
+            "<div style='flex:0 0 auto'><button type=submit class=ghost>Add</button></div></form></div>")
+    body = ((f"<div class='banner ok'>{t.esc(msg)}</div>" if msg else "")
+            + (f"<div class='banner err'>{t.esc(err)}</div>" if err else "")
+            + "<h1>Calendars</h1><p class=sub>The working weeks the SLA clocks run on, and the holidays that stop "
+              "them: the reference PSA's Calendar and Holiday List setup tables. <a href='/admin'>Setup</a></p>"
+            + tabs + content)
+    return Response(body=t.page("Calendars", body, user=ctx.user, active="admin"))
+
+
+def _cal_try(ctx, tab, fn, ok):
+    from ... import calendars as cal
+    try:
+        result = fn()
+    except cal.Refused as exc:
+        ctx.conn.rollback()
+        return _cal_back(tab, err=str(exc))
+    ctx.conn.commit()
+    return _cal_back(tab, msg=ok(result))
+
+
+def calendars_add(ctx):
+    from ... import calendars as cal
+    common.require_sysadmin(ctx)
+    f = ctx.request.form()
+    return _cal_try(ctx, "calendars", lambda: cal.add_calendar(
+        ctx.conn, f.get("name", ""), cal.clean_week(f), holiday_list_id=f.get("holiday_list_id") or None,
+        at=ctx.now, actor=ctx.user.id), lambda cid: f"Added {' '.join(f.get('name', '').split())} ({cid})")
+
+
+def calendars_save(ctx):
+    from ... import calendars as cal
+    common.require_sysadmin(ctx)
+    f = ctx.request.form()
+    act = f.get("act", "save")
+    if act in ("retire", "restore"):
+        return _cal_try(ctx, "calendars", lambda: cal.save_calendar(
+            ctx.conn, f.get("calendar_id", ""), inactive=(act == "retire"), at=ctx.now, actor=ctx.user.id),
+            lambda what: f"Calendar: {what}")
+    return _cal_try(ctx, "calendars", lambda: cal.save_calendar(
+        ctx.conn, f.get("calendar_id", ""), name=f.get("name"), week=cal.clean_week(f),
+        holiday_list_id=f.get("holiday_list_id") or None, set_list=True, at=ctx.now, actor=ctx.user.id),
+        lambda what: f"Calendar: {what}")
+
+
+def holiday_list_add(ctx):
+    from ... import calendars as cal
+    common.require_sysadmin(ctx)
+    f = ctx.request.form()
+    return _cal_try(ctx, "holidays", lambda: cal.add_holiday_list(ctx.conn, f.get("name", ""), at=ctx.now, actor=ctx.user.id),
+                    lambda lid: f"Added the list ({lid}); now add its dates")
+
+
+def holiday_list_save(ctx):
+    from ... import calendars as cal
+    common.require_sysadmin(ctx)
+    f = ctx.request.form()
+    return _cal_try(ctx, "holidays", lambda: cal.rename_holiday_list(
+        ctx.conn, f.get("holiday_list_id", ""), f.get("name", ""), at=ctx.now, actor=ctx.user.id),
+        lambda what: f"Holiday list: {what}")
+
+
+def holiday_add(ctx):
+    from ... import calendars as cal
+    common.require_sysadmin(ctx)
+    f = ctx.request.form()
+    return _cal_try(ctx, "holidays", lambda: cal.add_holiday(
+        ctx.conn, f.get("holiday_list_id", ""), f.get("observed_on", ""), f.get("name", ""),
+        all_day=f.get("all_day") == "1", time_start=f.get("time_start"), time_end=f.get("time_end"),
+        at=ctx.now, actor=ctx.user.id), lambda day: f"Added {day}")
+
+
+def holiday_remove(ctx):
+    from ... import calendars as cal
+    common.require_sysadmin(ctx)
+    f = ctx.request.form()
+    return _cal_try(ctx, "holidays", lambda: cal.remove_holiday(
+        ctx.conn, f.get("holiday_list_id", ""), f.get("observed_on", ""), at=ctx.now, actor=ctx.user.id),
+        lambda day: f"Removed {day}; the clocks on this list recompute")
+
+
+# ------------------------------------------------------ Setup › Schedule
+#
+# The reference PSA's Schedule Status and Service Location setup tables.
+
+def schedule_setup(ctx):
+    from .. import Response
+    from ... import schedule
+    common.require_sysadmin(ctx)
+    msg, err = ctx.request.query.get("msg", ""), ctx.request.query.get("err", "")
+    sts = schedule.statuses(ctx.conn, all_rows=True)
+    locs = schedule.locations(ctx.conn, all_rows=True)
+    ctx.conn.commit()
+
+    def row(kind, key, r, extra=""):
+        k = t.esc(key)
+        return (f"<tr{' style=opacity:.55' if r['inactive'] else ''}><td><form method=post action='/admin/schedule/save' class=row style='margin:0'>"
+                f"<input type=hidden name=kind value={kind}><input type=hidden name=key value='{k}'>"
+                f"<div><input name=name value='{t.esc(r['name'])}' maxlength=50 required aria-label='Name'></div>"
+                "<div style='flex:0 0 auto'><button class=ghost type=submit name=act value=rename style='padding:3px 10px'>Rename</button></div>"
+                f"</form></td><td class=muted>{k}</td><td>{extra}</td><td>"
+                f"<form method=post action='/admin/schedule/save' class=inline><input type=hidden name=kind value={kind}>"
+                f"<input type=hidden name=key value='{k}'><button class=ghost type=submit name=act "
+                f"value={'restore' if r['inactive'] else 'retire'} style='padding:3px 10px'>{'Restore' if r['inactive'] else 'Retire'}</button></form></td></tr>")
+
+    def default_btn(r):
+        if r["is_default"]:
+            return "<span class='pill live'>default</span>"
+        if r["inactive"]:
+            return ""
+        return (f"<form method=post action='/admin/schedule/save' class=inline><input type=hidden name=kind value=status>"
+                f"<input type=hidden name=key value='{t.esc(r['status_id'])}'>"
+                "<button class=ghost type=submit name=act value=default style='padding:3px 10px'>Make default</button></form>")
+
+    body = ((f"<div class='banner ok'>{t.esc(msg)}</div>" if msg else "")
+            + (f"<div class='banner err'>{t.esc(err)}</div>" if err else "")
+            + "<h1>Schedule</h1><p class=sub>The reference PSA's Schedule Status and Service Location setup "
+              "tables: what a visit's status and its where can be. A retired one stays on the visits that have "
+              "it. <a href='/admin'>Setup</a> · <a href='/schedule'>The schedule</a></p><div class=grid2>"
+              "<div class=card><h3>" + t.icon("tag") + "Statuses</h3><p class=sub>A new visit takes the default. "
+              "One called Tentative shows dashed on the schedule.</p><div class=tablewrap><table class=compact><tbody>"
+            + "".join(row("status", r["status_id"], r, default_btn(r)) for r in sts)
+            + "</tbody></table></div><form method=post action='/admin/schedule/add' class=row style='margin-top:10px'>"
+              "<input type=hidden name=kind value=status><div><input name=name required maxlength=50 placeholder='e.g. Waiting on parts'></div>"
+              "<div style='flex:0 0 auto'><button class=ghost type=submit>" + t.icon("plus") + " Add status</button></div></form></div>"
+              "<div class=card><h3>" + t.icon("building") + "Where</h3><p class=sub>Where the work is done: on the ward, "
+              "remotely, or brought to IT.</p><div class=tablewrap><table class=compact><tbody>"
+            + "".join(row("location", r["location_id"], r) for r in locs)
+            + "</tbody></table></div><form method=post action='/admin/schedule/add' class=row style='margin-top:10px'>"
+              "<input type=hidden name=kind value=location><div><input name=name required maxlength=50 placeholder='e.g. Supplier workshop'></div>"
+              "<div style='flex:0 0 auto'><button class=ghost type=submit>" + t.icon("plus") + " Add where</button></div></form></div></div>")
+    return Response(body=t.page("Schedule setup", body, user=ctx.user, active="admin"))
+
+
+def _sched_back(**q):
+    from .. import redirect
+    return redirect("/admin/schedule?" + urllib.parse.urlencode({k: v for k, v in q.items() if v}))
+
+
+def schedule_setup_add(ctx):
+    from ... import schedule
+    common.require_sysadmin(ctx)
+    f = ctx.request.form()
+    try:
+        fn = schedule.add_status if f.get("kind") == "status" else schedule.add_location
+        fn(ctx.conn, f.get("name", ""), at=ctx.now, actor=ctx.user.id)
+    except schedule.Refused as exc:
+        ctx.conn.rollback()
+        return _sched_back(err=f"Not added: {exc}")
+    ctx.conn.commit()
+    return _sched_back(msg=f"Added {' '.join(f.get('name', '').split())}")
+
+
+def schedule_setup_save(ctx):
+    from ... import schedule
+    common.require_sysadmin(ctx)
+    f = ctx.request.form()
+    kind = "status" if f.get("kind") == "status" else "location"
+    act = f.get("act", "rename")
+    try:
+        what = schedule.save_vocab(ctx.conn, kind, f.get("key", ""),
+                                   name=f.get("name") if act == "rename" else None,
+                                   inactive=True if act == "retire" else False if act == "restore" else None,
+                                   make_default=act == "default", at=ctx.now, actor=ctx.user.id)
+    except schedule.Refused as exc:
+        ctx.conn.rollback()
+        return _sched_back(err=f"Not saved: {exc}")
+    ctx.conn.commit()
+    return _sched_back(msg=f"{kind.title()}: {what}")
+
+
 def _local_accounts_card(ctx) -> str:
     rows = ctx.conn.execute(
         "SELECT username, is_sysadmin, disabled, last_login_at FROM local_account"
@@ -1169,14 +1462,12 @@ def _local_accounts_card(ctx) -> str:
 
 def _config_overview_card(ctx) -> str:
     counts = {}
-    for label, table in (("Calendars", "calendar"), ("Clinical floors", "clinical_floor"),
-                         ("Catalogue items", "catalogue_item"), ("SLA targets", "sla_target")):
+    for label, table in (("Clinical floors", "clinical_floor"), ("SLA targets", "sla_target")):
         counts[label] = ctx.conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
     rows = "".join(f"<dt>{t.esc(k)}</dt><dd>{v}</dd>" for k, v in counts.items())
     return ("<div class='card'><h3><svg class=ic aria-hidden=true><use href=#i-monitor></use></svg>Cross-board configuration</h3>"
-            "<p class='sub'>Calendars, floors and the catalogue are cross-board and "
-            "still edited by the CLI and seed today; the counts are here so the fence "
-            "is visible. Full editing of these is the next slice.</p>"
+            "<p class='sub'>Clinical floors are signed off by the hospital, not edited here; SLA targets are "
+            "set on each board's SLA tab. The counts are here so the fence is visible.</p>"
             f"<dl class='kv'>{rows}</dl></div>")
 
 

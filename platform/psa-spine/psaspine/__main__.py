@@ -113,6 +113,13 @@ def main(argv: list[str] | None = None) -> int:
     pdp.add_argument("database", help=DB_HELP)
     pdp.add_argument("export_csv")
 
+    phl = sub.add_parser("import-holidays",
+                         help="add holidays to a holiday list from a CSV (Date, Name, optional AllDay, "
+                              "Start, End); a date already on the list is left alone")
+    phl.add_argument("database", help=DB_HELP)
+    phl.add_argument("holiday_list_id", help="the list's id, as Setup > Calendars shows it")
+    phl.add_argument("export_csv")
+
     pcf = sub.add_parser("import-computers",
                          help="upsert configurations under one company from an AD "
                               "computers export (scripts/Export-PmcAdComputers.ps1)")
@@ -308,6 +315,18 @@ def _run(conn, a) -> int:
             print("REFUSED: a row was neither placed nor counted", file=sys.stderr)
             return 1
         conn.commit()
+        return 0
+
+    if a.cmd == "import-holidays":
+        from . import calendars
+        try:
+            c = calendars.import_csv(conn, a.holiday_list_id, a.export_csv, at=datetime.now())
+        except (LookupError, ValueError) as exc:
+            conn.rollback()
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        conn.commit()
+        print(f"{c['rows']} rows: {c['new']} new, {c['seen']} seen")
         return 0
 
     if a.cmd == "import-computers":

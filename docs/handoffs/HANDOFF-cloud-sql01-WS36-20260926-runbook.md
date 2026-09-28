@@ -458,6 +458,50 @@ board named "PMO Helpdesk" by Dada. The four asks are built at this head.
   icon link and the user block with no overlap; a Setup › Board Save that
   renames the board writes an audit row reading "name '…' -> '…'".
 
+## Folded in from part 16 (28 Sep): calendars and holidays; scheduling (schemas 037 and 038)
+
+Part 16: 02627d2 live, 529 OK with 0 errors, the phone header and the rename
+audit PASS. Its one note is done: an unset board flag now reads as its default
+(off), so a first Save no longer audits "- -> 0". Separately, Dada asked for the
+reference PSA's calendars and its scheduling. Both are built at the head this
+section arrives with. Two schema steps, by the sitting-1 road as for 036
+(`init` is safe to run again since part 14).
+
+- **Schema 037: calendars and holidays.** Three NULL-able columns on `holiday`
+  (`all_day`, `time_start`, `time_end`, for a part-day holiday) and one on
+  `calendar` (`inactive`). Setup › Calendars (`/admin/calendars`, sysadmin)
+  edits calendars (seven day windows, a holiday list, retire) and holiday lists
+  (add, rename, add and remove dates). The clocks honour part-day holidays.
+  `psaspine import-holidays <db> <list id> holidays.csv` loads a year.
+- **Schema 038: scheduling.** Two new tables (`schedule_status`,
+  `service_location`), one new table for time off, meetings and activities
+  (`schedule_block`), and six NULL-able columns on `ticket_schedule`
+  (`status_id`, `location_id`, `is_lead`, `conflict_allowed`, `done_at`,
+  `acknowledged_at`). The starter statuses (Firm, Tentative) and places
+  (On-site, Remote, In-house) are written on first use, not by the schema.
+  `/schedule` is the week board; the ticket's Schedule pod books, moves, marks
+  done, acknowledges and makes lead; Setup › Schedule edits the statuses and
+  places. When a board's owner-mail switch is on, the booked person gets an
+  email (role `SCHEDULED`, no summary in the subject); the sender needs no
+  change, since it sends every pending row whatever its role.
+- **Apply.** A COPY_ONLY backup; the preview; stop PSA-Desk; apply the port as
+  SQL01's sysadmin with `@Apply = 1` and `@AllowExisting = 1`; start PSA-Desk.
+  **Pass:** tables **77 → 80** (new: `schedule_status`, `service_location`,
+  `schedule_block`), columns **716 → 745**, triggers 4 → 4, no existing row
+  count changed, `/login` answers. (MEASURED on the SQL Server test container
+  at this head: 80 tables, 745 columns, 4 triggers; the 29 new columns are 19
+  in the three new tables and 10 added to `holiday`, `calendar` and
+  `ticket_schedule`.) Then `init` as the task account.
+- **Pass, for Dada:** Setup › Calendars shows *All hours* and *Business day*;
+  add a holiday list "Philippine public holidays", add 2026-11-30 Bonifacio Day
+  and 2026-12-24 Christmas Eve closed 12:00–24:00, and attach the list to
+  *Business day*: two `CALENDAR_CONFIG` rows. On `/schedule`, add yourself a
+  meeting and book a visit on a ticket; the week shows both, and Dispatch's day
+  shows the meeting.
+- **Counts:** 537 tests at this head (SQLite OK, 1 skipped; SQL Server OK, 2
+  skipped); the drift gate and `tests/smoke.py` pass. **Pass for the suite as
+  SQL01's user:** 537 run, 0 errors.
+
 ## When a step does not pass
 
 Every handoff step has a **Pass** line. This is what to do when it is not

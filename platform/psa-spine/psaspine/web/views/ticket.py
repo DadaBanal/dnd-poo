@@ -916,58 +916,178 @@ def _family_card(ctx, tk, *, can_work: bool) -> str:
 
 
 def _schedule_card(ctx, tk, *, can_work: bool) -> str:
+    """The Schedule pod: the ticket's visits in the reference PSA's shape, each
+    with its status, where, lead, done and acknowledged, and the actions on it."""
     from ... import schedule
     wid = t.esc(tk["work_item_id"])
     rows = schedule.entries_for(ctx.conn, tk["work_item_id"])
-    items = "".join(
-        f"<li><b>{t.esc(r['member'])}</b> · {t.esc(r['starts_at'])} → {t.esc(r['ends_at'][11:])}"
-        + (f" <span class=muted>{t.esc(r['note'])}</span>" if r["note"] else "")
-        + ((f" <form method=post action='/ticket/{wid}/schedule/remove' style='display:inline'>"
-            f"<input type=hidden name=schedule_id value='{r['schedule_id']}'>"
-            "<button class='ghost small' type=submit title='Cancel this visit'>×</button></form>")
-           if can_work else "") + "</li>" for r in rows)
+    statuses, places = schedule.statuses(ctx.conn), schedule.locations(ctx.conn)
+
+    def opts(pairs, sel, blank=None):
+        return ((f"<option value=''>{t.esc(blank)}</option>" if blank is not None else "")
+                + "".join(f"<option value='{t.esc(k)}'{' selected' if k == sel else ''}>{t.esc(v)}</option>"
+                          for k, v in pairs))
+
+    def act(action, sid, label, cls="ghost small", title=""):
+        return (f"<form method=post action='/ticket/{wid}/schedule/{action}' style='display:inline'>"
+                f"<input type=hidden name=schedule_id value='{sid}'>"
+                f"<button class='{cls}' type=submit title='{t.esc(title or label)}'>{label}</button></form>")
+
+    items = []
+    for r in rows:
+        chips = (f"{t.chip(r['status_name'])}" if r["status_name"] else "")
+        chips += f" <span class=muted>{t.esc(r['location_name'])}</span>" if r["location_name"] else ""
+        chips += " <span class=pill>lead</span>" if r["is_lead"] else ""
+        chips += " <span class='pill live'>done</span>" if r["done_at"] else ""
+        chips += " <span class=pill>acknowledged</span>" if r["acknowledged_at"] else ""
+        chips += " <span class='pill warn'>double booked</span>" if r["conflict_allowed"] else ""
+        line = (f"<li{' style=opacity:.65' if r['done_at'] else ''}><b>{t.esc(r['member'])}</b> · "
+                f"{t.esc(r['starts_at'])} → {t.esc(r['ends_at'][11:])} {chips}"
+                + (f"<div class=muted>{t.esc(r['note'])}</div>" if r["note"] else ""))
+        if can_work:
+            sid = r["schedule_id"]
+            buttons = []
+            if not r["acknowledged_at"] and r["member"].lower() == ctx.user.id.lower():
+                buttons.append(act("ack", sid, "Acknowledge", title="I have seen this visit"))
+            buttons.append(act("done", sid, "Reopen" if r["done_at"] else "Done"))
+            if not r["is_lead"]:
+                buttons.append(act("lead", sid, "Make lead"))
+            buttons.append(act("remove", sid, "×", title="Cancel this visit"))
+            line += "<div class=row style='gap:4px;margin-top:4px'>" + "".join(buttons) + "</div>"
+            if not r["done_at"]:
+                line += (f"<details style='margin-top:4px'><summary class=muted>Move or change</summary>"
+                         f"<form method=post action='/ticket/{wid}/schedule/update' class=grid2 style='margin-top:6px'>"
+                         f"<input type=hidden name=schedule_id value='{sid}'>"
+                         f"<div><label>Who</label><input name=member value='{t.esc(r['member'])}'></div>"
+                         f"<div><label>Status</label><select name=status_id>{opts([(x['status_id'], x['name']) for x in statuses], r['status_id'])}</select></div>"
+                         f"<div><label>From</label><input type=datetime-local name=starts_at value='{t.esc(r['starts_at'].replace(' ', 'T'))}'></div>"
+                         f"<div><label>To</label><input type=datetime-local name=ends_at value='{t.esc(r['ends_at'].replace(' ', 'T'))}'></div>"
+                         f"<div><label>Where</label><select name=location_id>{opts([(x['location_id'], x['name']) for x in places], r['location_id'] or '', '(not said)')}</select></div>"
+                         f"<div><label>Note</label><input name=note value='{t.esc(r['note'] or '')}'></div>"
+                         "<div style='grid-column:1/-1'><label><input type=checkbox name=allow_conflict value=1> "
+                         "Allow a double booking</label> <button class=ghost type=submit>Save</button></div></form></details>")
+        items.append(line + "</li>")
     add = ""
     if can_work and not tk["closed_at"]:
         start = ctx.now.replace(minute=0, second=0, microsecond=0)
         add = (f"<form method=post action='/ticket/{wid}/schedule/add' class=grid2 style='margin-top:8px'>"
                f"<div><label>Who</label><input name=member value='{t.esc(tk['owner'] or '')}' required></div>"
-               "<div><label>Note</label><input name=note placeholder='Ward 3, bring toner'></div>"
+               f"<div><label>Status</label><select name=status_id>{opts([(x['status_id'], x['name']) for x in statuses], schedule.default_status(ctx.conn))}</select></div>"
                f"<div><label>From</label><input type=datetime-local name=starts_at value='{start.strftime('%Y-%m-%dT%H:%M')}' required></div>"
                f"<div><label>To</label><input type=datetime-local name=ends_at required></div>"
-               "<div style='grid-column:1/-1'><button class=ghost type=submit>" + t.icon("calendar")
-               + " Schedule the visit</button></div></form>")
+               f"<div><label>Where</label><select name=location_id>{opts([(x['location_id'], x['name']) for x in places], '', '(not said)')}</select></div>"
+               "<div><label>Note</label><input name=note placeholder='Ward 3, bring toner'></div>"
+               "<div style='grid-column:1/-1'><label><input type=checkbox name=allow_conflict value=1> "
+               "Allow a double booking</label> <button class=ghost type=submit>" + t.icon("calendar")
+               + " Schedule the visit</button> <a class=muted href='/schedule'>Week view</a></div></form>")
     head = f"Schedule · {len(rows)}" if rows else "Schedule"
     return (f"<div class=card data-pod=schedule><h3>{t.icon('calendar')}{t.esc(head)}</h3>"
-            + (f"<ul class=plain>{items}</ul>" if items else "<div class=muted>No visits booked.</div>")
+            + (f"<ul class=plain>{''.join(items)}</ul>" if items else "<div class=muted>No visits booked.</div>")
             + add + "</div>")
+
+
+def _schedule_form(ctx) -> dict:
+    from ... import schedule
+    f = ctx.request.form()
+    return {"member": f.get("member", ""),
+            "starts_at": schedule.parse_local(f["starts_at"]) if f.get("starts_at") else None,
+            "ends_at": schedule.parse_local(f["ends_at"]) if f.get("ends_at") else None,
+            "status_id": f.get("status_id") or None, "location_id": f.get("location_id", None),
+            "note": f.get("note"), "allow_conflict": f.get("allow_conflict") == "1"}
 
 
 def schedule_add(ctx, work_item_id):
     from ... import schedule
     tk = _load(ctx, work_item_id)
     common.require_board(ctx, tk["board_id"], need="WORK")
-    f = ctx.request.form()
     try:
-        schedule.add(ctx.conn, work_item_id, member=f.get("member", ""),
-                     starts_at=schedule.parse_local(f.get("starts_at", "")),
-                     ends_at=schedule.parse_local(f.get("ends_at", "")), note=f.get("note"),
-                     actor=ctx.user.id, at=ctx.now)
+        v = _schedule_form(ctx)
+        if v["starts_at"] is None or v["ends_at"] is None:
+            raise schedule.Refused("a visit needs a from and a to")
+        schedule.add(ctx.conn, work_item_id, member=v["member"], starts_at=v["starts_at"], ends_at=v["ends_at"],
+                     note=v["note"], actor=ctx.user.id, at=ctx.now, status_id=v["status_id"],
+                     location_id=v["location_id"] or None, allow_conflict=v["allow_conflict"])
         ctx.conn.commit()
     except (schedule.Refused, LookupError) as exc:
+        ctx.conn.rollback()
         return _back(work_item_id, err=f"Not scheduled: {exc}")
     return _back(work_item_id, msg="Visit scheduled")
+
+
+def _visit_of(ctx, work_item_id):
+    sid = ctx.request.form().get("schedule_id", "")
+    row = ctx.conn.execute("SELECT work_item_id FROM ticket_schedule WHERE schedule_id = ?",
+                           (sid,)).fetchone() if sid.isdigit() else None
+    return int(sid) if row is not None and row["work_item_id"] == work_item_id else None
+
+
+def schedule_update(ctx, work_item_id):
+    from ... import schedule
+    tk = _load(ctx, work_item_id)
+    common.require_board(ctx, tk["board_id"], need="WORK")
+    sid = _visit_of(ctx, work_item_id)
+    if sid is None:
+        return _back(work_item_id, err="No such visit on this ticket")
+    try:
+        v = _schedule_form(ctx)
+        what = schedule.update(ctx.conn, sid, actor=ctx.user.id, at=ctx.now, member=v["member"],
+                               starts_at=v["starts_at"], ends_at=v["ends_at"], status_id=v["status_id"],
+                               location_id=v["location_id"], note=v["note"], allow_conflict=v["allow_conflict"])
+        ctx.conn.commit()
+    except schedule.Refused as exc:
+        ctx.conn.rollback()
+        return _back(work_item_id, err=f"Not changed: {exc}")
+    return _back(work_item_id, msg=f"Visit: {what}")
+
+
+def schedule_done(ctx, work_item_id):
+    from ... import schedule
+    tk = _load(ctx, work_item_id)
+    common.require_board(ctx, tk["board_id"], need="WORK")
+    sid = _visit_of(ctx, work_item_id)
+    if sid is None:
+        return _back(work_item_id, err="No such visit on this ticket")
+    done = not ctx.conn.execute("SELECT done_at FROM ticket_schedule WHERE schedule_id = ?", (sid,)).fetchone()[0]
+    schedule.set_done(ctx.conn, sid, done, actor=ctx.user.id, at=ctx.now)
+    ctx.conn.commit()
+    return _back(work_item_id, msg="Visit done" if done else "Visit reopened")
+
+
+def schedule_ack(ctx, work_item_id):
+    from ... import schedule
+    tk = _load(ctx, work_item_id)
+    common.require_board(ctx, tk["board_id"], need="WORK")
+    sid = _visit_of(ctx, work_item_id)
+    if sid is None:
+        return _back(work_item_id, err="No such visit on this ticket")
+    try:
+        schedule.acknowledge(ctx.conn, sid, member=ctx.user.id, at=ctx.now)
+        ctx.conn.commit()
+    except schedule.Refused as exc:
+        return _back(work_item_id, err=str(exc))
+    return _back(work_item_id, msg="Visit acknowledged")
+
+
+def schedule_lead(ctx, work_item_id):
+    from ... import schedule
+    tk = _load(ctx, work_item_id)
+    common.require_board(ctx, tk["board_id"], need="WORK")
+    sid = _visit_of(ctx, work_item_id)
+    if sid is None:
+        return _back(work_item_id, err="No such visit on this ticket")
+    schedule.make_lead(ctx.conn, sid, actor=ctx.user.id, at=ctx.now)
+    ctx.conn.commit()
+    return _back(work_item_id, msg="Lead changed")
 
 
 def schedule_remove(ctx, work_item_id):
     from ... import schedule
     tk = _load(ctx, work_item_id)
     common.require_board(ctx, tk["board_id"], need="WORK")
-    sid = ctx.request.form().get("schedule_id", "")
-    row = ctx.conn.execute("SELECT work_item_id FROM ticket_schedule WHERE schedule_id = ?",
-                           (sid,)).fetchone() if sid.isdigit() else None
-    if row is None or row["work_item_id"] != work_item_id:
+    sid = _visit_of(ctx, work_item_id)
+    if sid is None:
         return _back(work_item_id, err="No such visit on this ticket")
-    schedule.remove(ctx.conn, int(sid), actor=ctx.user.id, at=ctx.now)
+    schedule.remove(ctx.conn, sid, actor=ctx.user.id, at=ctx.now)
     ctx.conn.commit()
     return _back(work_item_id, msg="Visit cancelled")
 

@@ -120,12 +120,21 @@ def index(ctx):
     by_member: dict[str, list] = {}
     for e in entries:
         by_member.setdefault(e["member"], []).append(e)
+    # who is away or in a meeting that day, among the people who work these boards
+    away: dict[str, list] = {}
+    people = schedule.members_of(ctx.conn, sorted(boards)) + sorted(by_member)
+    for b in schedule.blocks(ctx.conn, people, f"{day} 00:00", f"{(d0 + _td(days=1)).isoformat()} 00:00"):
+        away.setdefault(b["member"], []).append(b)
     rows_html = "".join(
         f"<div class=dayrow><div class=who>{t.esc(m)}</div><div>" + "".join(
+            f"<span class='slot away'>{t.esc(schedule.BLOCK_KINDS[b['kind']])}: {t.esc(b['name'])}</span>"
+            for b in away.get(m, [])) + "".join(
             f"<a class=slot href='/ticket/{t.esc(e['work_item_id'])}' title='{t.esc(e['note'] or '')}'>"
             f"{t.esc(e['starts_at'][11:])}–{t.esc(e['ends_at'][11:])} · {t.esc(e['work_item_id'])} "
-            f"{t.esc((e['summary'] or '')[:40])}</a>" for e in by_member[m]) + "</div></div>"
-        for m in sorted(by_member)) or "<div class=muted>No visits booked for this day.</div>"
+            f"{t.esc((e['summary'] or '')[:40])}"
+            + (f" · {t.esc(e['status_name'])}" if e["status_name"] else "") + "</a>"
+            for e in by_member.get(m, [])) + "</div></div>"
+        for m in sorted(set(by_member) | set(away), key=str.lower)) or "<div class=muted>No visits booked for this day.</div>"
     prev_, next_ = (d0 - _td(days=1)).isoformat(), (d0 + _td(days=1)).isoformat()
     day_card = (
         "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-calendar></use></svg>The day</h3>"
@@ -133,7 +142,8 @@ def index(ctx):
         f"<div style='flex:0 0 auto'><a class='btn ghost' href='/dispatch?day={prev_}'>‹</a></div>"
         f"<div style='flex:0 0 170px'><input type=date name=day value='{t.esc(day)}'></div>"
         f"<div style='flex:0 0 auto'><a class='btn ghost' href='/dispatch?day={next_}'>›</a></div>"
-        "<div style='flex:0 0 auto'><button class=ghost type=submit>Show</button></div></form>"
+        "<div style='flex:0 0 auto'><button class=ghost type=submit>Show</button></div>"
+        f"<div style='flex:0 0 auto'><a class='btn ghost' href='/schedule?week={t.esc(day)}'>Week view</a></div></form>"
         + rows_html + "</div>")
     body = (
         "<h1>Dispatch</h1><p class='sub'>The unrouted queue, ageing in plain sight, "

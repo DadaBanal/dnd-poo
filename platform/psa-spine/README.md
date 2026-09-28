@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 529 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 537 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -327,7 +327,8 @@ whatever the case; ids are made from the name and never collide.
   have the same requester (§6.1). The merged ticket's requester sees "combined
   with a related one" on the portal and is not asked to rate it.
 - **Visits** (the *Schedule* pod): who, from, to, a note; one person is not
-  booked twice at once. Dispatch shows the day by person.
+  booked twice at once unless allowed. Dispatch shows the day by person, and
+  `/schedule` the week (see *Scheduling* below).
 - **Survey:** when a ticket closes (and the board sends requester emails) the
   requester is told and, on the portal, asked once: one to five and a
   sentence, scanned for patient details like every other requester text.
@@ -336,6 +337,55 @@ whatever the case; ids are made from the name and never collide.
   machine, since when) with a worked sample, and the placeholders show an
   example instead of a rule. Nothing is refused; the scan still flags what it
   finds for the desk to tidy, and the thank-you carries one friendly tip.
+
+### Calendars and holidays (Setup › Calendars, 037, 28 Sep 2026)
+
+The reference PSA's Calendar and Holiday List setup tables, at `/admin/calendars`
+for a sysadmin. A **calendar** is a name, a start and an end for each of the
+seven days (blank is closed; `24:00` is midnight at the end of the day, so 24x7
+is seven ordinary rows) and a holiday list. A **holiday list** is dated rows,
+each a whole day or, with *All day* unticked, the hours it closes (the
+reference PSA's `allDayFlag`, `timeStart`, `timeEnd`): Christmas Eve from noon.
+The SLA clocks honour both: a whole-day holiday counts nothing, a part-day one
+counts only the hours it leaves open. Add, rename, change hours and retire a
+calendar (a retired one stays on the boards that have it and is not offered to
+new ones); add and rename lists; add and remove dates. Load a year at once:
+
+```
+psaspine import-holidays <db> <list id> holidays.csv   # Date, Name, optional AllDay, Start, End
+```
+
+A date already on the list is left alone. Nothing is compiled in: PMC's own
+list from HR is the source. Every change is one `CALENDAR_CONFIG` audit row
+("hours: Mon 08:00-17:00 -> 07:00-17:00"; "holiday removed: …; the clocks on
+this list recompute"). A board picks its calendar on Setup › Board.
+
+### Scheduling (`/schedule`, 038, 28 Sep 2026)
+
+The reference PSA's schedule, kept to what a hospital desk needs:
+
+- **A visit** on a ticket has a **status** (Firm, Tentative: the Schedule
+  Status setup table), a **where** (On-site, Remote, In-house: the Service
+  Location setup table), a **lead** (the first visit, or whoever is made lead;
+  one per ticket), **done** and **acknowledged** (only the booked person can
+  acknowledge; moving the visit asks again). The ticket's *Schedule* pod books,
+  moves, re-assigns, marks done, reopens and cancels, each a ticket event.
+- **Conflicts** are refused unless *Allow a double booking* is ticked, and the
+  allowed ones are marked. **Time off is never double-booked**; time off over a
+  booked visit needs the same tick, so a visit is never silently orphaned.
+- **Blocks** are what is not a ticket: time off, a meeting, an activity. Anyone
+  who works a board adds and removes them; each is a `SCHEDULE_BLOCK` audit row.
+- **The Schedule page** is the week: one row per person who works your boards,
+  one column per day, visits as chips (dashed while tentative, struck through
+  when done, ★ the lead) and blocks beside them. Filter by board or *Only me*;
+  book a visit on any ticket you work. Dispatch's day view shows who is away.
+  Visits on a restricted board are an audited read, as everywhere.
+- **Email** to the booked person when the board's owner-mail switch is on, never
+  to someone who booked themselves, and no summary in the subject.
+- **Setup › Schedule** adds, renames, retires and picks the default status, and
+  adds, renames and retires a where.
+- **Not built:** reminders and recurring entries. A reminder is an email the
+  desk would send on a timer, and a recurring meeting is a Teams invite.
 
 ### Search, saved views, standard notes (031)
 

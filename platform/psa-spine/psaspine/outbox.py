@@ -122,6 +122,39 @@ def queue_owner(conn: sqlite3.Connection, work_item_id: str, *, at: datetime, ac
     return True
 
 
+SCHEDULED = "SCHEDULED"
+
+
+def queue_scheduled(conn: sqlite3.Connection, schedule_id: int, *, at: datetime, actor: str) -> bool:
+    """The reference PSA emails the member a schedule entry is for. Here under
+    the same board switch as the owner's mail (board.notify_owner): one unsent
+    email per visit and member, none to the person who booked themselves, and
+    no summary in the subject (§6.1)."""
+    from .board import _event
+    from .intake import subject_token
+    row = conn.execute(
+        "SELECT s.member, s.starts_at, s.ends_at, s.work_item_id, b.notify_owner, b.display_name"
+        "  FROM ticket_schedule s JOIN ticket t ON t.work_item_id = s.work_item_id"
+        "  JOIN board b ON b.board_id = t.board_id WHERE s.schedule_id = ?", (schedule_id,)).fetchone()
+    if row is None or not row["notify_owner"]:
+        return False
+    if (row["member"] or "").lower() == (actor or "").lower() or not address_for(conn, row["member"]):
+        return False
+    wid = row["work_item_id"]
+    when = f"{row['starts_at']} to {row['ends_at'][11:]}"
+    if conn.execute("SELECT 1 FROM notification WHERE work_item_id = ? AND recipient = ? AND recipient_role = ?"
+                    " AND status = 'PENDING' AND body LIKE ?", (wid, row["member"], SCHEDULED, f"%{when}%")).fetchone():
+        return False
+    stamp = at.isoformat(sep=" ", timespec="minutes")
+    conn.execute(
+        "INSERT INTO notification (work_item_id, recipient, recipient_role, subject, body, created_at, status)"
+        " VALUES (?,?,?,?,?,?,'PENDING')",
+        (wid, row["member"], SCHEDULED, f"{subject_token(wid)} Scheduled for you on {row['display_name']}",
+         f"{wid} on {row['display_name']}: a visit booked for you by {actor}, {when}.", stamp))
+    _event(conn, wid, stamp, "NOTIFY", "desk", f"email to {row['member']} queued: a visit {when}")
+    return True
+
+
 def address_for(conn: sqlite3.Connection, recipient: str) -> str | None:
     if "@" in (recipient or ""):
         return email_of(recipient)

@@ -85,9 +85,12 @@ class Calendar:
     """
 
     def __init__(self, windows: dict[int, tuple[int, int]], holidays: set[date],
-                 name: str = "") -> None:
+                 name: str = "", closures: dict[date, list[tuple[int, int]]] | None = None) -> None:
         self.windows = windows          # weekday 0..6 -> (start_min, end_min)
-        self.holidays = holidays
+        self.holidays = holidays        # whole-day holidays
+        # Part-day holidays (the reference PSA's allDayFlag off, with a timeStart
+        # and timeEnd): the calendar is closed for those minutes on that date.
+        self.closures = closures or {}
         self.name = name
         # Minutes a whole working day of each weekday is worth, and a whole week:
         # the fast path below counts full days arithmetically instead of walking
@@ -109,15 +112,21 @@ class Calendar:
             if start is not None and end is not None and end > start:
                 windows[index] = (start, end)
         holidays: set[date] = set()
+        closures: dict[date, list[tuple[int, int]]] = {}
         if row["holiday_list_id"]:
             for h in conn.execute(
-                    "SELECT observed_on FROM holiday WHERE holiday_list_id = ?",
-                    (row["holiday_list_id"],)):
+                    "SELECT observed_on, all_day, time_start, time_end FROM holiday"
+                    " WHERE holiday_list_id = ?", (row["holiday_list_id"],)):
                 try:
-                    holidays.add(parse_instant(h["observed_on"]).date())
+                    day = parse_instant(h["observed_on"]).date()
+                    start, end = parse_clock_time(h["time_start"]), parse_clock_time(h["time_end"])
                 except ValueError:
                     continue            # unparseable dates are counted elsewhere
-        return cls(windows, holidays, row["name"])
+                if h["all_day"] in (None, 1) or start is None or end is None or end <= start:
+                    holidays.add(day)
+                else:
+                    closures.setdefault(day, []).append((start, end))
+        return cls(windows, holidays, row["name"], closures)
 
     def is_working_day(self, day: date) -> bool:
         return day.weekday() in self.windows and day not in self.holidays
@@ -131,7 +140,21 @@ class Calendar:
         overlap_end = min(midnight + timedelta(minutes=close_min), end)
         if overlap_end <= overlap_start:
             return 0
-        return int((overlap_end - overlap_start).total_seconds() // 60)
+        minutes = int((overlap_end - overlap_start).total_seconds() // 60)
+        for c_start, c_end in self.closures.get(day, ()):
+            lost_start = max(midnight + timedelta(minutes=c_start), overlap_start)
+            lost_end = min(midnight + timedelta(minutes=c_end), overlap_end)
+            if lost_end > lost_start:
+                minutes -= int((lost_end - lost_start).total_seconds() // 60)
+        return max(minutes, 0)
+
+    def _closed_minutes(self, day: date) -> int:
+        """Minutes a whole working day loses to its part-day closures."""
+        if day.weekday() not in self.windows:
+            return 0
+        open_min, close_min = self.windows[day.weekday()]
+        return sum(max(0, min(c_end, close_min) - max(c_start, open_min))
+                   for c_start, c_end in self.closures.get(day, ()))
 
     def working_minutes(self, start: datetime, end: datetime) -> int:
         """Working minutes between two instants. Never negative.
@@ -142,7 +165,7 @@ class Calendar:
         for a clock that has run for months."""
         if end <= start:
             return 0
-        if self.round_the_clock and not self.holidays:
+        if self.round_the_clock and not self.holidays and not self.closures:
             return int((end - start).total_seconds() // 60)
         first, last = start.date(), end.date()
         if first == last:
@@ -161,7 +184,10 @@ class Calendar:
         for holiday in self.holidays:
             if inner_first <= holiday < last:
                 total -= self.day_minutes.get(holiday.weekday(), 0)
-        return total
+        for day in self.closures:
+            if inner_first <= day < last and day not in self.holidays:
+                total -= self._closed_minutes(day)
+        return max(total, 0)
 
 
 # ------------------------------------------------------------------- clocks
