@@ -747,6 +747,7 @@ def save_settings(ctx, board_id):
     inactive = 1 if f.get("inactive") == "1" else 0
     if inactive and unrouted:
         return _done(board_id, "board", "Not saved: the unrouted queue cannot be retired")
+    before = dict(ctx.conn.execute("SELECT * FROM board WHERE board_id = ?", (board_id,)).fetchone())
     try:
         from ... import board as _board
         _board.ensure_time_vocabulary(ctx.conn)
@@ -764,12 +765,33 @@ def save_settings(ctx, board_id):
              1 if f.get("closed_loop_required") == "1" else 0, live, inactive,
              1 if f.get("notify_requester") == "1" else 0, 1 if f.get("notify_owner") == "1" else 0,
              f.get("default_work_role_id") or None, f.get("default_work_type_id") or None, board_id))
-        _audit(ctx, board_id, f"settings saved: live={live} inactive={inactive}")
+        _audit(ctx, board_id, "settings saved: " + _changes(before, dict(ctx.conn.execute(
+            "SELECT * FROM board WHERE board_id = ?", (board_id,)).fetchone())))
         ctx.conn.commit()
     except Exception as exc:                                 # noqa: BLE001
         ctx.conn.rollback()
         return _done(board_id, "board", f"Not saved: {exc}")
     return _done(board_id, "board", "Board saved")
+
+
+SETTING_WORDS = {"display_name": "name", "fulfiller_group": "group", "owner": "owner", "deputy": "deputy",
+                 "description": "description", "restricted": "restricted", "closed_loop_required": "closed loop",
+                 "is_live": "live", "inactive": "retired", "notify_requester": "email the requester",
+                 "notify_owner": "email the owner", "default_work_role_id": "work role",
+                 "default_work_type_id": "work type"}
+
+
+def _changes(before: dict, after: dict) -> str:
+    """The audit's words for a settings save: each changed field as old -> new,
+    so the row answers "who renamed the board" (SQL01, part 15); "nothing
+    changed" when the Save changed nothing."""
+    out = []
+    for key, word in SETTING_WORDS.items():
+        a, b = before.get(key), after.get(key)
+        if a != b:
+            show = (lambda v: "-" if v is None else repr(v) if isinstance(v, str) else str(v))
+            out.append(f"{word} {show(a)} -> {show(b)}")
+    return "; ".join(out) or "nothing changed"
 
 
 def add_team(ctx, board_id):

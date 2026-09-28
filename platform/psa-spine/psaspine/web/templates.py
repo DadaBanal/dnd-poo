@@ -372,6 +372,9 @@ em{font-style:italic}
 @media (max-width:1100px){.tablewrap{overflow-x:auto} table.grid thead th{position:static} table.grid td.wrap{white-space:nowrap}}
 @media (max-width:900px){.tiles{grid-template-columns:repeat(2,1fr)}.slastrip{grid-template-columns:1fr}.grid2{grid-template-columns:1fr}.rail{grid-template-columns:1fr}}
 @media (max-width:720px){main{padding:14px 12px}h1{font-size:19px}header.top .who span.name{display:none}.card{padding:12px 14px}.tile .n{font-size:22px}}
+/* a phone: the nav links keep their icon and lose their words, so the header never overlaps itself (SQL01, part 15) */
+@media (max-width:480px){header.top{gap:4px}header.top .brand{margin-right:4px}header.top nav a{padding:6px 8px}header.top nav a .lbl{display:none}
+  header.top nav a .ic{margin-right:0}header.top nav a.on::after{left:6px;right:6px}header.top .who{gap:6px}header.top .newbtn{padding:6px 8px}}
 """.replace("DARKTOKENS", """
   --canvas:#0f1115; --surface:#161920; --surface-2:#1c2029; --surface-3:#232833;
   --ink:#eef0f4; --ink-2:#aeb5c2; --ink-3:#7d8594; --line:#262b36; --line-2:#343a47;
@@ -784,7 +787,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         active = "my"
     nav = "".join(
         f'<a href="{esc(href)}"{" class=on aria-current=page" if key == active else ""}>'
-        f'{icon("setup" if key == "admin" else key)}{esc(label)}</a>'
+        f'{icon("setup" if key == "admin" else key)}<span class=lbl>{esc(label)}</span></a>'
         for key, href, label in nav_items)
     nav += (f'<a class="newbtn" href="/ticket/new" title="New ticket (n)">{icon("plus")} New ticket</a>'
             if user is not None and not requester else "")

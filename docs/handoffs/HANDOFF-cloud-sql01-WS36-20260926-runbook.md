@@ -431,6 +431,33 @@ this section arrives with.
   spaced, one per item; a second `init` as the task account changes no board
   row (compare `display_name`, `calendar_id`, `kind` before and after).
 
+## Folded in from part 15 (28 Sep): the teardown order, the phone header, the settings audit, the seed name
+
+Part 15: 107f05f live, all three Passes met, Unrouted whole again, the first
+board named "PMO Helpdesk" by Dada. The four asks are built at this head.
+
+- **The two Windows teardown errors, properly this time.** `CatalogueSetupTest`
+  no longer borrows `tearDown`; its `setUp` registers the folder's removal with
+  `addCleanup` first, so each test's `conn.close` runs before it (cleanups run
+  last-in first-out, after `tearDown`). Expect **0 errors** as SQL01's user.
+- **The phone header.** Below 480 px every nav link keeps its icon and loses its
+  words (`<span class=lbl>` hidden), the gaps tighten, and the user block no
+  longer sits under "My requests".
+- **The settings audit says what changed.** `BOARD_CONFIG` on a Save now reads
+  each changed field as old → new, in the tab's own words: "settings saved:
+  name 'IT Help' -> 'PMO Helpdesk'; email the owner 0 -> 1"; a Save that changes
+  nothing reads "settings saved: nothing changed". Rows before this head keep
+  their old wording.
+- **The seed name is "PMO Helpdesk"**, Dada's own (*"done renaming i like this
+  name"*), so a fresh install matches what PMC runs. The live row is untouched
+  either way, since `init` no longer overwrites a seeded board.
+- **Counts:** 529 tests at this head (SQLite OK, 1 skipped; SQL Server OK, 2
+  skipped); drift gate and smoke pass. No schema change. Pull, run the SQLite
+  suite as SQL01's user (**Pass: 529 run, 0 errors**), restart PSA-Desk.
+  **Pass:** at 390 px on `help.pmcne.ph/my` the header shows the brand, one
+  icon link and the user block with no overlap; a Setup › Board Save that
+  renames the board writes an audit row reading "name '…' -> '…'".
+
 ## When a step does not pass
 
 Every handoff step has a **Pass** line. This is what to do when it is not

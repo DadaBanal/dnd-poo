@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 523 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 529 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -247,9 +247,9 @@ workbook column A. (Sources are in `schema/022_record_type.sql`.)
   take the ticket's Type is refused.
 - **Requests keep their own SLA.** `sla_target_type` holds targets for one
   Type on a board, so the old Request board's numbers are Request targets on
-  the Help Desk board (id `IT_HELP`; a fresh install names it **Help Desk**,
-  Dada's direction of 28 Sep 2026, and the id stays because ticks, settings
-  and tickets refer to it).
+  the first board (id `IT_HELP`; a fresh install names it **PMO Helpdesk**,
+  the name Dada chose in Setup on 28 Sep 2026, and the id stays because ticks,
+  settings and tickets refer to it).
 - **`init` never overwrites a seeded board.** The two seed rows (`IT_HELP`,
   `UNROUTED`) are insert-if-absent. A replace-seed on SQL Server was an UPDATE
   that put every unlisted column back to its DEFAULT, so each `init` on the

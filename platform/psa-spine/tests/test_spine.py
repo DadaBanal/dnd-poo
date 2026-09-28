@@ -2174,7 +2174,7 @@ class DeskParityTest(unittest.TestCase):
         board.update_fields(self.conn, self.wid, at=self.at, actor="alice", owner="bob")
         mails = self._mails("OWNER")
         self.assertEqual([(m["recipient"], m["subject"]) for m in mails],
-                         [("bob", f"[{self.wid}] Assigned to you on Help Desk")])
+                         [("bob", f"[{self.wid}] Assigned to you on PMO Helpdesk")])
         self.assertNotIn("Printer", mails[0]["subject"])                 # no summary leaves the desk
         self.assertIn("assigned to you by alice", mails[0]["body"])
         # a second assignment while the first is unsent adds nothing
@@ -2751,6 +2751,21 @@ class WebWSGITest(unittest.TestCase):
             self.assertNotIn("345678901", r["detail"])
             self.assertIn("in the note", r["detail"])
         self.assertIn("345678901", note["detail"])           # kept, flagged, never dropped
+
+    def test_a_settings_save_audits_each_change_as_old_to_new(self):
+        """SQL01, part 15: Dada's rename read only "settings saved: live=1 inactive=0"."""
+        alice = self._cookie_for("alice")
+        base = {"display_name": "IT Help", "fulfiller_group": "Dada", "owner": "a", "deputy": "b", "is_live": "1"}
+        self._call("POST", "/admin/board/IT_HELP/settings", cookie=alice, form=base)
+        self._call("POST", "/admin/board/IT_HELP/settings", cookie=alice, form=base)               # the same again
+        self._call("POST", "/admin/board/IT_HELP/settings", cookie=alice,
+                   form=base | {"display_name": "PMO Helpdesk", "notify_owner": "1"})
+        conn = self._db()
+        rows = [r[0] for r in conn.execute("SELECT detail FROM audit_event WHERE action = 'BOARD_CONFIG'"
+                                           " AND subject_id = 'IT_HELP' ORDER BY audit_id")]
+        conn.close()
+        self.assertEqual(rows[-2], "settings saved: nothing changed")
+        self.assertEqual(rows[-1], "settings saved: name 'IT Help' -> 'PMO Helpdesk'; email the owner 0 -> 1")
 
     def test_the_board_tab_saves_the_owner_mail_and_the_time_defaults_and_the_composer_shows_them(self):
         alice = self._cookie_for("alice")
@@ -4117,6 +4132,13 @@ class ProxyAndPortalTest(unittest.TestCase):
         _, _, body = self._call("GET", "/login")
         self.assertIn("<title>Sign in · Dada PSA</title>", body)          # the desk keeps its own
 
+    def test_on_a_phone_the_nav_keeps_its_icons_and_loses_its_words(self):
+        """SQL01, part 15: at 390 px "My requests" sat under the user block."""
+        _, _, body = self._portal("GET", "/my", cookie=self.alice)
+        self.assertIn("<span class=lbl>My requests</span>", body)
+        self.assertIn("@media (max-width:480px)", body)
+        self.assertIn("header.top nav a .lbl{display:none}", body)
+
     def test_answer_choices_are_laid_out_one_per_item(self):
         """Dada, part 14: the raise form read "not working○ I need something"."""
         _, _, body = self._portal("GET", "/my", cookie=self.alice)
@@ -4692,10 +4714,13 @@ class CatalogueSetupTest(unittest.TestCase):
     _environ = WebWSGITest._environ
     _call = WebWSGITest._call
     _cookie_for = WebWSGITest._cookie_for
-    tearDown = WebWSGITest.tearDown
 
     def setUp(self) -> None:
         WebWSGITest.setUp(self)
+        # Cleanups run last-in first-out, after tearDown: registering the folder's
+        # removal first means each test's conn.close runs before it (SQL01, part 15:
+        # Windows will not remove a folder with an open file).
+        self.addCleanup(self.tmp.cleanup)
         self.root = self._cookie_for("root", is_sysadmin=True)
         self.at = datetime(2026, 9, 28, 10)
 
@@ -5100,9 +5125,9 @@ class SeedIdempotenceTest(unittest.TestCase):
         self.assertEqual(after, before)
         self.assertEqual(after["IT_HELP"][1], "Help Desk (renamed)")
 
-    def test_a_fresh_install_names_the_first_board_help_desk(self):
+    def test_a_fresh_install_names_the_first_board_as_pmc_runs_it(self):
         name = self.conn.execute("SELECT display_name FROM board WHERE board_id = 'IT_HELP'").fetchone()[0]
-        self.assertEqual(name, "Help Desk")                                 # Dada, part 14; the id stays IT_HELP
+        self.assertEqual(name, "PMO Helpdesk")                             # Dada's own name (part 15); the id stays IT_HELP
 
 
 class DatabaseSettingsTest(unittest.TestCase):
@@ -6836,7 +6861,7 @@ class ReportsTest(unittest.TestCase):
         self.assertEqual(m["resolve_met_total"], 50)
         self.assertEqual(m["median_resolve"], (30 + 20 * 24 * 60) // 2)
         self.assertEqual(dict(m["by_source"]), {"PHONE": 1, "EMAIL": 1, "PORTAL": 1})
-        self.assertEqual(m["by_board"], [("Help Desk", 3)])
+        self.assertEqual(m["by_board"], [("PMO Helpdesk", 3)])
         self.assertEqual(self.metrics.desk(self.conn, set(), now=datetime(2026, 8, 20))["opened_total"], 0)
         rows = self.metrics.csv_rows(m)
         self.assertEqual(rows[0][0], "month")
