@@ -1162,3 +1162,13 @@ Section "Folded in from part 14". Everything below is MEASURED unless marked.
    It refuses any other account (tested); it parses.
 6. **Not done yet:** the board is still named "IT Help" (Dada's rename is in Setup, and holds now); Unrouted's
    `calendar_id` and `kind` are still NULL (step 5 fixes it).
+
+*Part 15, continued, 12:38 +08:00:* **Pass 3 PASS, and Unrouted is whole again.** The operator ran `Part15-AsDesk.ps1` as the
+task account (`D:\psa\logs\Part15-AsDesk.log`).
+- `init` printed "ready" and **changed no board row**: all 3 boards, every column, compared before and after.
+- `setup-board UNROUTED` said "added 0 statuses, 0 SLA targets, calendar ALL_HOURS".
+
+SQL01 read back: Unrouted has `calendar_id` ALL_HOURS and `kind` SERVICE, with audit row 103 (`BOARD_SETUP UNROUTED`,
+12:38). So a request landing on Unrouted gets its SLA clocks again. All three Passes of "Folded in from part 14" are
+met. **Still open:** Dada's rename of IT Help to "Help Desk" in Setup; WS36's teardown order fix and the phone header
+overlap (part 15, items 1 and 4).
