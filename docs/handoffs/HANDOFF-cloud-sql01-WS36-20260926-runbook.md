@@ -1121,3 +1121,44 @@ marked.
     `init` after a Setup change leaves the board's name, calendar and kind as Setup left them.
   - **Until that lands, SQL01 runs no `init`.** The next schema step waits for the fix, so Dada's rename made in
     Setup now will hold.
+
+### Part 15: 2026-09-28, about 11:00 +08:00. **107f05f live; two of three Passes met; the third waits on one as-desk run; the teardown fix is not yet right**
+
+Section "Folded in from part 14". Everything below is MEASURED unless marked.
+
+1. **The suite on SQLite as SQL01's user: 527 run, 2 skipped, and the same 2 ERRORS.**
+   - The same two `CatalogueSetupTest` tests, `WinError 32` in `tearDown` on the temp `spine.db`.
+   - Why the fix did not work: `CatalogueSetupTest` borrows `tearDown = WebWSGITest.tearDown`
+     (`test_spine.py:2386-2387`, `self.tmp.cleanup()`), and **unittest runs `addCleanup` callbacks after
+     `tearDown`**. So the added `addCleanup(conn.close)` (`test_spine.py:4709`) closes the connection only after the
+     folder removal has already failed.
+   - **Fix:** in `CatalogueSetupTest.setUp`, register `self.addCleanup(self.tmp.cleanup)` right after
+     `WebWSGITest.setUp(self)`, and drop the borrowed `tearDown`. Cleanups run last-in first-out, so each test's
+     `conn.close` then runs before the folder is removed.
+   - The test bodies pass: rerun on their own with the temp folder's cleanup errors ignored (a wrapper outside the
+     repo; the repo untouched), **2 of 2 OK**. The product code is sound, so the desk was restarted.
+2. **PSA-Desk restarted onto `107f05f`:** a new process, 8085 listening, `/login` 200, no error in the console.
+3. **Pass 1:** `https://help.pmcne.ph/my` signed out reads **"Sign in · PMC Requests"**, and
+   `https://desk.pmcne.ph/login` reads "Sign in · Dada PSA".
+4. **Pass 2: the choices are spaced.** Measured on a loopback copy of `107f05f` (scratch SQLite, a test account
+   made for it, `127.0.0.1:8095`, stopped afterwards), `/my` signed in:
+   - 1265 px wide: the three questions each keep their choices on one row with **22 px** between them, 0 overlaps,
+     0 clipped labels, the legend 6 px above;
+   - 390 px wide: they wrap to 2, 3 and 2 rows, 0 overlaps, 0 clipped, no horizontal page scroll.
+
+   The same code drives the live `/my`, which needs a staff sign-in to see. The technician New ticket form uses
+   the same `.choices` row (`ticket.py:662`).
+   - **New spacing defect on a phone, the header.** At 390 px the requester shell's "My requests" link spans
+     153–272 px, and the user block (name or "break-glass" tag, then sign out) starts at 201 px: **about 70 px of
+     overlap**, so the link reads "M" under the name. Please let the header wrap, or hide the link's text under an
+     icon, below about 480 px.
+5. **Pass 3 waits on the operator:** "a second init as the task account changes no board row".
+   `D:\psa\bin\Part15-AsDesk.ps1`, run as the task account:
+   - it reads every column of every `psa.board` row, runs `init`, reads them again, and requires them identical;
+   - then it runs `setup-board --board UNROUTED` (the same `apply_starter` as Setup's button: it adds what is
+     missing and never overwrites) to give Unrouted back the calendar part 13's `init` cleared;
+   - it checks no other board changed.
+
+   It refuses any other account (tested); it parses.
+6. **Not done yet:** the board is still named "IT Help" (Dada's rename is in Setup, and holds now); Unrouted's
+   `calendar_id` and `kind` are still NULL (step 5 fixes it).
