@@ -1172,3 +1172,15 @@ SQL01 read back: Unrouted has `calendar_id` ALL_HOURS and `kind` SERVICE, with a
 12:38). So a request landing on Unrouted gets its SLA clocks again. All three Passes of "Folded in from part 14" are
 met. **Still open:** Dada's rename of IT Help to "Help Desk" in Setup; WS36's teardown order fix and the phone header
 overlap (part 15, items 1 and 4).
+
+*Part 15, continued, 13:15 +08:00:* **the first board is named "PMO Helpdesk".** Dada renamed it in Setup › Board, choosing
+his own name over "Help Desk". His words: *"done renaming i like this name"*.
+
+SQL01 read back: `IT_HELP` `display_name` is **"PMO Helpdesk"**, and `calendar_id` ALL_HOURS, `kind` SERVICE and
+`is_live` 1 are all unchanged (MEASURED). Now that `init` never overwrites a seeded board, the name holds.
+
+Two small asks:
+- **The rename is not in the audit.** Audit row 105 (`BOARD_CONFIG IT_HELP`, 13:15) reads only "settings saved: live=1
+  inactive=0". Please record changed fields as old → new, for example "name 'IT Help' → 'PMO Helpdesk'".
+- **The seed name.** `seed/boards.csv` names the board "Help Desk" for a fresh install. If a fresh install should
+  match what PMC runs, make it "PMO Helpdesk"; Dada's call, and it is harmless either way now.
