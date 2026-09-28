@@ -984,3 +984,40 @@ Waiting on Dada, in order:
    banner about the setting.
 2. IT Help's people added to Unrouted in Setup.
 3. The step 4 test as an employee of a ticked department.
+
+### Part 14: 2026-09-28, about 10:10 +08:00. **70b7d6b live; schema 036 PASS; Dada's catalogue checks are his**
+
+Section "Folded in from part 13". Everything below is MEASURED unless marked.
+
+1. **Pull, with the host's settings file kept.**
+   - `.claude/settings.local.json` was copied byte for byte, stashed, pulled over (the pull removes it, now that
+     it is untracked), then restored. It has the same md5, parses as JSON, is ignored by `.gitignore:12`, and is
+     no longer tracked. HEAD is `70b7d6b`.
+2. **The suite on SQLite as SQL01's user: 522 tests, 520 OK, 2 skipped, 2 ERRORS, and both are Windows-only
+   teardown.**
+   - Both errors are `CatalogueSetupTest`: `test_add_rename_retire_never_delete_and_every_change_is_audited` and
+     `test_the_setup_pages_build_a_pair_the_ticket_offers_and_a_retired_pair_stays_on_its_ticket`.
+   - Each fails in `tearDown` (`test_spine.py:2387`, `self.tmp.cleanup()`) with `PermissionError [WinError 32]`
+     on the temp `spine.db`. A connection the test opened is still open when the folder is removed; Linux allows
+     that and Windows does not.
+   - Rerun on their own, with only the temp folder's cleanup errors ignored (in a wrapper outside the repo; the
+     repo was untouched): **both OK**. The product code is sound.
+   - **Please close the test's connection before cleanup,** as the runbook's sitting-1 table says of `cli.db`.
+3. **Schema 036 by the sitting-1 road: PASS.**
+   - A COPY_ONLY backup, `D:\PMC\backup\PMC_PSA\PMC_PSA_pre036-20260928.bak`, `RESTORE VERIFYONLY` "valid".
+   - The preview: 77 tables, 27 indexes, 4 triggers; 81 existing objects.
+   - PSA-Desk stopped, then the baseline taken with nothing writing: 77 tables, 4 triggers, 714 columns, 377 rows.
+   - The port applied as SQL01's sysadmin login, with `@Apply = 1` and `@AllowExisting = 1` set in memory and the
+     file unchanged: its gate passed, "Seeded: nothing".
+   - **Tables 77 → 77, columns 714 → 716, triggers 4 → 4, no row count changed.** `service_family.inactive` and
+     `service_action.inactive` are present.
+   - PSA-Desk started: `/login` 200, and no error in the console.
+4. **The name.** `https://desk.pmcne.ph/login` reads **"Sign in · Dada PSA"** (2 occurrences; 0 "PSA desk", 0 "IT
+   help"). **Noticed:** the portal host's sign-in page, `https://help.pmcne.ph/my` signed out, also reads "Sign in
+   · Dada PSA", not "PMC Requests". The requester shell's name shows only after sign-in, so a ward's first sight of
+   its own address is the product name. Worth drawing `login_page` in the requester's name on the portal host.
+5. **Dada's checks (a sysadmin sign-in, so his):** the header reads "Dada PSA" after sign-in; Setup › Catalogue
+   adds an area, a subtype and an item, pairs them onto IT Help, a new ticket offers the pair under "Subtype ›
+   Item", and retiring the item withdraws it from new tickets only.
+
+Still open from part 13: Setup › Departments ticks, IT Help's people on Unrouted, and the step 4 employee test.
