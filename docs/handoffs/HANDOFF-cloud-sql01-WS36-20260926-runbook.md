@@ -984,3 +984,106 @@ Waiting on Dada, in order:
    banner about the setting.
 2. IT Help's people added to Unrouted in Setup.
 3. The step 4 test as an employee of a ticked department.
+
+### Part 14: 2026-09-28, about 10:10 +08:00. **70b7d6b live; schema 036 PASS; Dada's catalogue checks are his**
+
+Section "Folded in from part 13". Everything below is MEASURED unless marked.
+
+1. **Pull, with the host's settings file kept.**
+   - `.claude/settings.local.json` was copied byte for byte, stashed, pulled over (the pull removes it, now that
+     it is untracked), then restored. It has the same md5, parses as JSON, is ignored by `.gitignore:12`, and is
+     no longer tracked. HEAD is `70b7d6b`.
+2. **The suite on SQLite as SQL01's user: 522 tests, 520 OK, 2 skipped, 2 ERRORS, and both are Windows-only
+   teardown.**
+   - Both errors are `CatalogueSetupTest`: `test_add_rename_retire_never_delete_and_every_change_is_audited` and
+     `test_the_setup_pages_build_a_pair_the_ticket_offers_and_a_retired_pair_stays_on_its_ticket`.
+   - Each fails in `tearDown` (`test_spine.py:2387`, `self.tmp.cleanup()`) with `PermissionError [WinError 32]`
+     on the temp `spine.db`. A connection the test opened is still open when the folder is removed; Linux allows
+     that and Windows does not.
+   - Rerun on their own, with only the temp folder's cleanup errors ignored (in a wrapper outside the repo; the
+     repo was untouched): **both OK**. The product code is sound.
+   - **Please close the test's connection before cleanup,** as the runbook's sitting-1 table says of `cli.db`.
+3. **Schema 036 by the sitting-1 road: PASS.**
+   - A COPY_ONLY backup, `D:\PMC\backup\PMC_PSA\PMC_PSA_pre036-20260928.bak`, `RESTORE VERIFYONLY` "valid".
+   - The preview: 77 tables, 27 indexes, 4 triggers; 81 existing objects.
+   - PSA-Desk stopped, then the baseline taken with nothing writing: 77 tables, 4 triggers, 714 columns, 377 rows.
+   - The port applied as SQL01's sysadmin login, with `@Apply = 1` and `@AllowExisting = 1` set in memory and the
+     file unchanged: its gate passed, "Seeded: nothing".
+   - **Tables 77 → 77, columns 714 → 716, triggers 4 → 4, no row count changed.** `service_family.inactive` and
+     `service_action.inactive` are present.
+   - PSA-Desk started: `/login` 200, and no error in the console.
+4. **The name.** `https://desk.pmcne.ph/login` reads **"Sign in · Dada PSA"** (2 occurrences; 0 "PSA desk", 0 "IT
+   help"). **Noticed:** the portal host's sign-in page, `https://help.pmcne.ph/my` signed out, also reads "Sign in
+   · Dada PSA", not "PMC Requests". The requester shell's name shows only after sign-in, so a ward's first sight of
+   its own address is the product name. Worth drawing `login_page` in the requester's name on the portal host.
+5. **Dada's checks (a sysadmin sign-in, so his):** the header reads "Dada PSA" after sign-in; Setup › Catalogue
+   adds an area, a subtype and an item, pairs them onto IT Help, a new ticket offers the pair under "Subtype ›
+   Item", and retiring the item withdraws it from new tickets only.
+
+Still open from part 13: Setup › Departments ticks, IT Help's people on Unrouted, and the step 4 employee test.
+
+*Part 14, continued, about 10:20 +08:00.* Everything below is MEASURED unless marked.
+
+- **"My requests" is live on the Employee Portal.** The payroll session deployed it on Dada's word: *"when logging
+  into portal .pmcne.ph the menu should show and do all of the ones that arent done yet"*.
+  - SQL01 fetched `https://portal.pmcne.ph/PMC_Portal.html` from outside: **byte-identical** to the reviewed copy
+    (md5 `fa110d06932ca6dc4c0244dad2c8bfc5`, 46,733 bytes).
+  - It holds the menu entry, the form to `/sso/portal` (`target=_blank`, field `token`), the sign-out image to
+    `/logout`, the admin-preview guard, and "Raise a request to any department"; "Ask for help" appears 0 times.
+  - The previous page is kept beside it as `PMC_Portal.html.pre-myrequests-20260928`. `bridge.js` was neither
+    changed nor restarted.
+- **Step 4 PASS, for Project Management Office.**
+  - Audit row 97, 10:09: `PORTAL_SSO_REFUSED` "department not open (Project Management Office)".
+  - Row 99, 10:10: `DEPARTMENT_BOARDS` "Project Management Office: + IT Help".
+  - Row 100, 10:10: **`PORTAL_SSO`** "employee portal, no contact row, department Project Management Office",
+    with a named employee as actor.
+  - Dada's screenshot shows *Your requests* in the requester's layout, with **"This goes to IT Help."**
+- **Unrouted has 4 members** (was 1).
+- **Found by Dada, to fix: the answer choices run together.**
+  - Where he saw it: on `/my`, the raise form reads "…not working○ I need something…", "Just me○ My ward…" and
+    "No○ Yes, but…".
+  - Why: `portal.py:213-217` (`_radio_group`) writes each choice as an inline `<label>` straight after the
+    previous one, and the only space is the radio's own `margin:0 4px 0 0` (`templates.py:269`). The technician
+    New ticket form's `radios()` (`ticket.py:661-664`) has the same pattern.
+  - Suggested fix, one class for both:
+    - wrap each group's labels in `<div class=choices>`;
+    - style it `display:flex;flex-wrap:wrap;gap:8px 22px`;
+    - style each label `display:inline-flex;align-items:center;gap:6px;font-weight:400`, with the radio's margin
+      0 inside it;
+    - give the legend `margin-bottom:6px`, and the fieldset a bottom margin between questions.
+
+    This wraps to one choice per line on a phone.
+  - Not affected: the survey stars (`.stars`) and the note's Discussion/Internal switch (`.seg`) have their own
+    styles.
+- **Still open:**
+  - Step 4's browser half: the cookie has no `Max-Age`, and a closed-and-reopened browser shows the sign-in page.
+  - Step 5 on a ward PC: the portal's *Sign out* also ends the desk session.
+  - Dada's Catalogue checks: no `CATALOGUE_CONFIG` row yet.
+
+*Part 14, continued, about 10:35 +08:00: a defect in `init` found on the host.* Everything below is MEASURED unless
+marked.
+
+- **Dada: rename the board "IT Help" to "Help Desk".** His words: *"its shouldnt be IT Help but rename it as help desk
+  board"*. Only the display name changes; the id `IT_HELP` stays, because department ticks, settings and tickets
+  refer to it.
+- **`init` resets the seeded boards' Setup settings on SQL Server, so a rename would not survive.**
+  - `db.seed` writes `IT_HELP` and `UNROUTED` from `seed/boards.csv` with `INSERT OR REPLACE` (`db.py:250-258`),
+    and that includes `display_name`, owner, deputy, `is_live` and `restricted`.
+  - On SQL Server, `_replace_in_place` turns it into an UPDATE that sets every listed column **and every unlisted
+    one back to its DEFAULT** (`mssql.py:627-636, 671-672`): `calendar_id`, `kind`, `closed_reply_policy`,
+    `notify_requester`, `closed_loop_required`, the work-role, work-type and owner-email defaults.
+  - Every schema step by the sitting-1 road runs `init` twice as the task account, so every migration silently
+    undoes Setup on those two boards.
+  - **Evidence from today.** Unrouted had calendar `ALL_HOURS` from its starter setup (audit rows 1, 4 and 6, 27
+    Sep). It now has `calendar_id` NULL and `kind` NULL, with no audit row clearing either; the only thing in
+    between is part 13's `init` at 09:12. IT_HELP lost them too and got them back when its starter setup was
+    re-applied at 09:54 (audit row 95, "calendar ALL_HOURS").
+  - **Impact so far: none.** The only ticket opened since 09:00 is PMC-000009 (10:12, source Portal, **routed
+    straight to IT_HELP** by the PMO tick), and it carries its 3 SLA clocks. But any request landing on Unrouted
+    now gets **no SLA clock** ("board not set up") until Unrouted's starter setup is re-applied, which is the
+    operator's step in Setup.
+  - **Fix, please:** seed the two boards **only if missing** (plain insert-if-absent), never overwrite a row that
+    exists, and move `display_name` to "Help Desk" in `seed/boards.csv` for new installs. Add a test that
+    `init` after a Setup change leaves the board's name, calendar and kind as Setup left them.
+  - **Until that lands, SQL01 runs no `init`.** The next schema step waits for the fix, so Dada's rename made in
+    Setup now will hold.
