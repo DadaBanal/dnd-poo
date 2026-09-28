@@ -925,3 +925,20 @@ Everything below is MEASURED unless marked. Local times are +08:00.
 - **Unrouted has one member,** the break-glass administrator. Every portal request lands there (source Portal,
   for example PMC-000008 at 07:57), and nobody else on IT Help can see it. The operator is adding IT Help's people
   to Unrouted in Setup, and the Setup › Departments ticks will send requests straight to their boards.
+
+*Part 13, continued, 09:12 +08:00:* **the as-desk run PASS.** The operator ran `Part13-AsDesk.ps1` as the task account
+(`D:\psa\logs\Part13-AsDesk.log`):
+- `init` twice, the same line both times: "ready: SQL Server, …Database=PMC_PSA";
+- `import-departments` twice: **"52 names: 52 new, 0 seen, 0 restored, 0 retired"**, then **"52 names: 0 new, 52
+  seen, 0 restored, 0 retired"**.
+
+SQL01 read back `psa.department`: **52 rows, all from payroll and live, 0 board ticks**. The control query found a
+real name once and a made-up name not at all. The script's "at <commit>" came out blank, because git refuses a
+repository owned by another account (INFERRED: `safe.directory`); cosmetic only. **Correction:** this part's heading
+says 09:40; the part was written at about 09:10 (the host clock read 09:12 at this line).
+
+Waiting on Dada, in order:
+1. Setup › Departments ticks and Save, as the break-glass sysadmin. Pass: one `DEPARTMENT_BOARDS` audit row, and no
+   banner about the setting.
+2. IT Help's people added to Unrouted in Setup.
+3. The step 4 test as an employee of a ticked department.
