@@ -1,3 +1,3 @@
 board_id,display_name,phase,fulfiller_group,owner,deputy,is_live,restricted,is_unrouted,note
-IT_HELP,IT Help,2,Dada IT + on-site Windows team,Dada Banal,Cadano,1,0,0,The first board. Every other board is created when somebody is ready to run it.
+IT_HELP,Help Desk,2,Dada IT + on-site Windows team,Dada Banal,Cadano,1,0,0,The first board. Every other board is created when somebody is ready to run it.
 UNROUTED,Unrouted,2,PMO coordinator,Dela Cruz,Dada Banal,1,0,1,"Where a row lands when nothing else can take it. Not a guess about how PMC works: without somewhere for an unclassifiable row to go, a lossless import is impossible and the importer fails on a foreign key."

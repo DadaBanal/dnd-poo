@@ -397,6 +397,40 @@ more.
   skipped) at the head this section arrives with; the drift gate and
   `tests/smoke.py` (7 of 7) pass.
 
+## Folded in from part 14 (28 Sep): `init` no longer touches a seeded board; Help Desk; the sign-in brand; the choices; the teardown
+
+Part 14: 70b7d6b live, 036 PASS, My requests on the Employee Portal, step 4 PASS
+for PMO, and three defects found on the host. All five asks are built at the head
+this section arrives with.
+
+- **`init` never overwrites a seeded board.** `db.seed` writes `IT_HELP` and
+  `UNROUTED` insert-if-absent (`INSERT OR IGNORE`, which the translator carries
+  to SQL Server as the INSERT with the duplicate-key error swallowed), so a row
+  that exists is untouched: name, calendar, kind, reply policy, the time
+  defaults, owner mail. `SeedIdempotenceTest` proves a second `init` after a
+  Setup change leaves them as Setup left them, on both stores. **`init` is safe
+  to run again**; the sitting-1 road stands. Unrouted's calendar still needs its
+  starter setup re-applied once in Setup (the operator's step; nothing here
+  restores what 09:12 cleared, deliberately: Setup is the operator's).
+- **Help Desk.** `seed/boards.csv` names the first board **Help Desk** for a
+  fresh install; the id stays `IT_HELP`. The live row is Dada's rename in Setup,
+  which now holds.
+- **The portal host's sign-in page reads "Sign in · PMC Requests"**, on the GET,
+  on a refused try and on the Entra refusal; the desk's own keeps "Dada PSA".
+- **The answer choices no longer run together.** One `.choices` flex row for
+  both the portal's raise form and the technician's New ticket form, one choice
+  per item, wrapping to one per line on a phone, legend above.
+- **The two Windows teardown errors:** `CatalogueSetupTest` now closes its
+  connections before the folder is removed (`addCleanup(conn.close)`), as the
+  sitting-1 table asked of `cli.db`.
+- **Counts:** 527 tests at this head (SQLite OK, 1 skipped; SQL Server OK, 8
+  skipped); the drift gate and `tests/smoke.py` pass. No schema change: nothing
+  to apply. Pull, run the SQLite suite as SQL01's user (expect 0 errors), and
+  restart PSA-Desk. **Pass:** `https://help.pmcne.ph/my` signed out reads
+  "Sign in · PMC Requests"; on `/my` the three questions show their choices
+  spaced, one per item; a second `init` as the task account changes no board
+  row (compare `display_name`, `calendar_id`, `kind` before and after).
+
 ## When a step does not pass
 
 Every handoff step has a **Pass** line. This is what to do when it is not

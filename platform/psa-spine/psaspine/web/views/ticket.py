@@ -659,9 +659,9 @@ def new_form(ctx, *, error: str = "", values: dict | None = None):
     entities = ctx.conn.execute("SELECT entity_id, name FROM entity ORDER BY is_covered DESC, name").fetchall()
 
     def radios(name, pairs, sel):
-        return "".join(
-            f"<label><input type=radio name={name} value='{k}' style='width:auto'"
-            f"{' checked' if k == sel else ''} required> {t.esc(lab)}</label>" for k, lab in pairs)
+        return "<div class=choices>" + "".join(
+            f"<label><input type=radio name={name} value='{k}'"
+            f"{' checked' if k == sel else ''} required> {t.esc(lab)}</label>" for k, lab in pairs) + "</div>"
 
     body = (
         (f"<div class='banner err'>{t.esc(error)}</div>" if error else "") +

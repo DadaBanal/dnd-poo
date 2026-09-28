@@ -477,12 +477,12 @@ def _route(conn, request: Request, config: Config, now: datetime) -> Response:
             next_url = request.query.get("next", "/")
             return Response(body=templates.login_page(
                 entra_configured=config.entra_configured, windows_domain=config.windows_domain,
-                next_url=_portal_next(next_url) if portal else next_url))
+                next_url=_portal_next(next_url) if portal else next_url, requester=portal))
         # Anything else, unauthenticated, becomes the sign-in page with a 401 so
         # a script gets a status and a browser gets a form.
         return Response("401 Unauthorized", templates.login_page(
             entra_configured=config.entra_configured, windows_domain=config.windows_domain,
-            next_url=_portal_next(request.path) if portal else request.path))
+            next_url=_portal_next(request.path) if portal else request.path, requester=portal))
 
     ctx = Ctx(conn=conn, request=request, user=user, config=config, now=now)
     # Who gets the requester's layout: everyone on the portal host, and anyone
@@ -531,11 +531,11 @@ def _do_login(conn, request: Request, config: Config, now: datetime, *,
     except auth.AuthConfigError as exc:
         return Response("401 Unauthorized", templates.login_page(
             entra_configured=config.entra_configured, windows_domain=config.windows_domain,
-            error=str(exc), next_url=next_url))
+            error=str(exc), next_url=next_url, requester=config.is_portal_host(request)))
     except auth.Unauthenticated as exc:
         return Response("401 Unauthorized", templates.login_page(
             entra_configured=config.entra_configured, windows_domain=config.windows_domain,
-            error=str(exc), next_url=next_url))
+            error=str(exc), next_url=next_url, requester=config.is_portal_host(request)))
     token = auth.open_session(user, config.session_secret)
     # Never redirect an open session to an absolute or off-site URL.
     if not next_url.startswith("/"):

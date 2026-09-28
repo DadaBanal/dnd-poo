@@ -2174,7 +2174,7 @@ class DeskParityTest(unittest.TestCase):
         board.update_fields(self.conn, self.wid, at=self.at, actor="alice", owner="bob")
         mails = self._mails("OWNER")
         self.assertEqual([(m["recipient"], m["subject"]) for m in mails],
-                         [("bob", f"[{self.wid}] Assigned to you on IT Help")])
+                         [("bob", f"[{self.wid}] Assigned to you on Help Desk")])
         self.assertNotIn("Printer", mails[0]["subject"])                 # no summary leaves the desk
         self.assertIn("assigned to you by alice", mails[0]["body"])
         # a second assignment while the first is unsent adds nothing
@@ -4103,6 +4103,27 @@ class ProxyAndPortalTest(unittest.TestCase):
         self.assertTrue(status.startswith("303"), status)
         self.assertEqual(dict(headers)["Location"], "/my")
 
+    def test_the_portal_hosts_sign_in_page_wears_the_requesters_brand(self):
+        """SQL01, part 14: a ward's first sight of help.pmcne.ph was "Sign in · Dada PSA"."""
+        status, _, body = self._portal("GET", "/my")
+        self.assertTrue(status.startswith("401"), status)
+        self.assertIn("<title>Sign in · PMC Requests</title>", body)
+        self.assertNotIn("Dada PSA", body)
+        _, _, body = self._portal("GET", "/login")
+        self.assertIn("<title>Sign in · PMC Requests</title>", body)
+        status, _, body = self._portal("POST", "/login", form={"username": "x", "password": "y"})
+        self.assertTrue(status.startswith("401"), status)
+        self.assertIn("<title>Sign in · PMC Requests</title>", body)      # a refused try, the same brand
+        _, _, body = self._call("GET", "/login")
+        self.assertIn("<title>Sign in · Dada PSA</title>", body)          # the desk keeps its own
+
+    def test_answer_choices_are_laid_out_one_per_item(self):
+        """Dada, part 14: the raise form read "not working○ I need something"."""
+        _, _, body = self._portal("GET", "/my", cookie=self.alice)
+        self.assertGreaterEqual(body.count("<div class=choices>"), 3)
+        self.assertNotIn("</label><label style=", body)
+        self.assertNotIn("style='width:auto'", body)
+
     def test_on_the_portal_host_even_a_technician_gets_the_requesters_shell(self):
         _, _, body = self._portal("GET", "/my", cookie=self.alice)
         self.assertIn("<body data-requester>", body)
@@ -4685,6 +4706,7 @@ class CatalogueSetupTest(unittest.TestCase):
     def test_add_rename_retire_never_delete_and_every_change_is_audited(self):
         from psaspine import catalogue as cat, setup
         conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)                    # Windows will not remove a folder with an open file
         fid = cat.add_area(conn, "  Clinical   apps ", at=self.at, actor="root")
         self.assertEqual(fid, "CLINICAL_APPS")
         with self.assertRaises(cat.Refused):
@@ -4774,6 +4796,7 @@ class CatalogueSetupTest(unittest.TestCase):
         self.assertIn("Label printer › Relocate", body)
 
         conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)
         pair = conn.execute("SELECT catalogue_item_id FROM catalogue_item").fetchone()[0]
         wid = tickets.open_ticket(conn, board_id="IT_HELP", summary="move the label printer", impact="I3",
                                   urgency="U3", requested_by=None, at=self.at, catalogue_item_id=pair)
@@ -5039,6 +5062,49 @@ class MachineApiTest(unittest.TestCase):
 
 
 @unittest.skipUnless(ON_SQLITE, "SQLite's file settings; SQL Server has its own")
+class SeedIdempotenceTest(unittest.TestCase):
+    """SQL01, part 14: `init` after a Setup change leaves the seeded boards as
+    Setup left them. On SQL Server a replace-seed was an UPDATE that put every
+    unlisted column back to its DEFAULT, so Unrouted lost its calendar."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = _fresh(self.tmp)
+        self.at = datetime(2026, 9, 28, 10, 40)
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def test_init_never_overwrites_a_seeded_board(self):
+        from psaspine import setup
+        setup.apply_starter(self.conn, "UNROUTED", actor="root", at=self.at)
+        self.conn.execute("UPDATE board SET display_name = 'Help Desk (renamed)', kind = 'SERVICE',"
+                          " notify_owner = 1 WHERE board_id = 'IT_HELP'")
+        self.conn.commit()
+        before = {r["board_id"]: tuple(r) for r in self.conn.execute(
+            "SELECT board_id, display_name, calendar_id, kind, notify_owner, owner, deputy, is_live"
+            " FROM board ORDER BY board_id")}
+        self.assertEqual(before["UNROUTED"][2], "ALL_HOURS")
+        self.conn.close()
+        if TEST_DB:
+            self.conn = db.init(TEST_DB)                    # the host's `init`, on a database that exists
+        else:
+            # SQLite's create() is not re-runnable (plain scripts), so a second
+            # `init` there is the seed alone, which is all the host's run adds.
+            self.conn = db.connect(Path(self.tmp.name) / "spine.db")
+            db.seed(self.conn)
+        after = {r["board_id"]: tuple(r) for r in self.conn.execute(
+            "SELECT board_id, display_name, calendar_id, kind, notify_owner, owner, deputy, is_live"
+            " FROM board ORDER BY board_id")}
+        self.assertEqual(after, before)
+        self.assertEqual(after["IT_HELP"][1], "Help Desk (renamed)")
+
+    def test_a_fresh_install_names_the_first_board_help_desk(self):
+        name = self.conn.execute("SELECT display_name FROM board WHERE board_id = 'IT_HELP'").fetchone()[0]
+        self.assertEqual(name, "Help Desk")                                 # Dada, part 14; the id stays IT_HELP
+
+
 class DatabaseSettingsTest(unittest.TestCase):
     """How the store behaves with more than one person on the desk."""
 
@@ -6770,7 +6836,7 @@ class ReportsTest(unittest.TestCase):
         self.assertEqual(m["resolve_met_total"], 50)
         self.assertEqual(m["median_resolve"], (30 + 20 * 24 * 60) // 2)
         self.assertEqual(dict(m["by_source"]), {"PHONE": 1, "EMAIL": 1, "PORTAL": 1})
-        self.assertEqual(m["by_board"], [("IT Help", 3)])
+        self.assertEqual(m["by_board"], [("Help Desk", 3)])
         self.assertEqual(self.metrics.desk(self.conn, set(), now=datetime(2026, 8, 20))["opened_total"], 0)
         rows = self.metrics.csv_rows(m)
         self.assertEqual(rows[0][0], "month")

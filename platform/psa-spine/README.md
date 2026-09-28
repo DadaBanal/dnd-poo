@@ -247,7 +247,15 @@ workbook column A. (Sources are in `schema/022_record_type.sql`.)
   take the ticket's Type is refused.
 - **Requests keep their own SLA.** `sla_target_type` holds targets for one
   Type on a board, so the old Request board's numbers are Request targets on
-  IT Help.
+  the Help Desk board (id `IT_HELP`; a fresh install names it **Help Desk**,
+  Dada's direction of 28 Sep 2026, and the id stays because ticks, settings
+  and tickets refer to it).
+- **`init` never overwrites a seeded board.** The two seed rows (`IT_HELP`,
+  `UNROUTED`) are insert-if-absent. A replace-seed on SQL Server was an UPDATE
+  that put every unlisted column back to its DEFAULT, so each `init` on the
+  host was silently undoing Setup on those boards (SQL01, part 14: Unrouted
+  lost its calendar). A board that exists is the operator's, whatever the CSV
+  says, and a test proves a second `init` leaves name, calendar and kind alone.
 - **Change enablement.** Standard changes are pre-authorised. A normal change
   cannot enter Approved, Scheduled, Implementing or Implemented until a
   change authority approves it. An emergency change goes ahead but cannot

@@ -247,9 +247,14 @@ def seed_catalogue(conn: sqlite3.Connection) -> None:
     def blank(v):
         return v if (v or "").strip() else None
 
+    # Insert-if-absent, never replace (SQL01, part 14, 28 Sep 2026): on SQL
+    # Server a replace is an UPDATE that puts every unlisted column back to its
+    # DEFAULT, so each `init` was silently undoing Setup on these two boards
+    # (Unrouted lost its calendar; a rename would not have survived). A board
+    # that exists is the operator's, whatever the CSV says.
     for row in _seed_rows("boards.csv"):
         conn.execute(
-            "INSERT OR REPLACE INTO board (board_id, display_name, phase, fulfiller_group,"
+            "INSERT OR IGNORE INTO board (board_id, display_name, phase, fulfiller_group,"
             " owner, deputy, restricted, is_live, is_unrouted, note)"
             " VALUES (?,?,?,?,?,?,?,?,?,?)",
             (row["board_id"], row["display_name"], row["phase"], row["fulfiller_group"],

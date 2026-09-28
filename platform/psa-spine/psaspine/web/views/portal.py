@@ -232,14 +232,14 @@ def _radio_group(name: str, legend: str, choices, *, required: bool = True) -> s
     """One required question. `required` on the first radio makes the browser
     insist on an answer; the server insists again, because a browser is not a
     control."""
+    # One choice per flex item, wrapping to one per line on a phone; the
+    # choices used to run together ("not working○ I need something", Dada, part 14).
     opts = "".join(
-        f"<label style='font-weight:400;color:var(--ink)'>"
-        f"<input type='radio' name='{name}' value='{code}' style='width:auto'"
+        f"<label><input type='radio' name='{name}' value='{code}'"
         f"{' required' if i == 0 and required else ''}> {t.esc(text)}</label>"
         for i, (code, text) in enumerate(choices))
-    return (f"<fieldset style='border:none;padding:0;margin:0'>"
-            f"<legend style='font-size:13px;font-weight:600;color:var(--muted)'>"
-            f"{t.esc(legend)}</legend>{opts}</fieldset>")
+    return (f"<fieldset class=q><legend>{t.esc(legend)}</legend>"
+            f"<div class=choices>{opts}</div></fieldset>")
 
 
 def detail(ctx, work_item_id):

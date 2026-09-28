@@ -149,7 +149,7 @@ def callback(conn, request, config, now, *, clock: float | None = None):
     def refused(why: str):
         return Response("401 Unauthorized", templates.login_page(
             entra_configured=config.entra_configured, windows_domain=config.windows_domain,
-            error=why, next_url="/"))
+            error=why, next_url="/", requester=config.is_portal_host(request)))
 
     raw = request.cookies.get(FLIGHT_COOKIE)
     flight = _open(raw.value, config.session_secret, now=clock) if raw else None

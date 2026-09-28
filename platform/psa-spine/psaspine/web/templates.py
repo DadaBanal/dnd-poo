@@ -265,6 +265,10 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 input::placeholder,textarea::placeholder{color:var(--ink-3)}
 select{appearance:none;-webkit-appearance:none;padding-right:30px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237a8290' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center}
 textarea{min-height:90px;resize:vertical;line-height:1.5}
+fieldset.q{border:none;padding:0;margin:0 0 12px} fieldset.q legend{font-size:13px;font-weight:600;color:var(--muted);margin-bottom:6px;padding:0}
+.choices{display:flex;flex-wrap:wrap;gap:8px 22px}
+.choices label{display:inline-flex;align-items:center;gap:6px;font-weight:400;color:var(--ink);font-size:13px;letter-spacing:0;cursor:pointer}
+.choices input[type=radio]{margin:0;width:auto;flex:0 0 auto}
 details.tip{display:inline-block;position:relative;vertical-align:middle;margin-left:4px}
 details.tip>summary{list-style:none;cursor:help;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;
   border:1px solid var(--line-2);background:var(--surface-2);color:var(--ink-2);font-size:12px;font-weight:700;line-height:1}
@@ -836,7 +840,10 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
 
 
 def login_page(*, entra_configured: bool, error: str = "", next_url: str = "/",
-               windows_domain: str | None = None) -> str:
+               windows_domain: str | None = None, requester: bool = False) -> str:
+    """The sign-in page. On the portal host it wears the requester's brand
+    (PMC Requests), so a ward's first sight of its own address is not the
+    product's name (SQL01, part 14)."""
     err = f'<div class="banner err">{esc(error)}</div>' if error else ""
     windows = ""
     if windows_domain:
@@ -869,4 +876,4 @@ def login_page(*, entra_configured: bool, error: str = "", next_url: str = "/",
         "autocomplete=current-password></label>"
         "<button type=submit>Sign in</button></form></div>")
     body = err + windows + entra + glass
-    return page("Sign in", body)
+    return page("Sign in", body, requester=requester)
