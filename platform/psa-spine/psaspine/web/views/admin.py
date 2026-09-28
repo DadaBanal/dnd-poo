@@ -202,8 +202,14 @@ def board_setup(ctx, board_id):
             + chk("notify_requester", b["notify_requester"] == 1,
                   "Email the requester when their ticket is opened or updated (no note text;"
                   " needs the portal address on the sender)")
+            + chk("notify_owner", b["notify_owner"] == 1,
+                  "Email the owner when a ticket is assigned to them")
             + "</div><div>" + chk("is_live", b["is_live"], "Live (needs an owner and a deputy)")
             + chk("inactive", b["inactive"], "Retired — no new tickets; history kept") + "</div>"
+            f"<div><label>Time entries start with this work role</label><select name=default_work_role_id>"
+            f"{_time_opts(ctx, 'work_role', b['default_work_role_id'])}</select></div>"
+            f"<div><label>… and this work type</label><select name=default_work_type_id>"
+            f"{_time_opts(ctx, 'work_type', b['default_work_type_id'])}</select></div>"
             "</div><div style='margin-top:12px'><button type=submit>Save board</button></div></form>"
             + _reply_policy_form(ctx, b) +
             f"<form method=post action='/admin/board/{bid}/calendar' class=row style='margin-top:14px'>"
@@ -716,6 +722,15 @@ def new_board_create(ctx):
     return _done(bid, "members", "Board created. Add the people who work it.")
 
 
+def _time_opts(ctx, table: str, selected) -> str:
+    from ... import board as _board
+    _board.ensure_time_vocabulary(ctx.conn)
+    rows = ctx.conn.execute(f"SELECT {table}_id AS id, name FROM {table} WHERE inactive = 0 ORDER BY sort_order, name").fetchall()
+    return ("<option value=''>(the first in Setup › Time)</option>" + "".join(
+        f"<option value='{t.esc(r['id'])}'{' selected' if r['id'] == selected else ''}>{t.esc(r['name'])}</option>"
+        for r in rows))
+
+
 def save_settings(ctx, board_id):
     common.require_board(ctx, board_id, need="ADMIN")
     f = ctx.request.form()
@@ -733,14 +748,22 @@ def save_settings(ctx, board_id):
     if inactive and unrouted:
         return _done(board_id, "board", "Not saved: the unrouted queue cannot be retired")
     try:
+        from ... import board as _board
+        _board.ensure_time_vocabulary(ctx.conn)
+        for key, table in (("default_work_role_id", "work_role"), ("default_work_type_id", "work_type")):
+            if f.get(key) and not ctx.conn.execute(f"SELECT 1 FROM {table} WHERE {table}_id = ? AND inactive = 0",
+                                                   (f[key],)).fetchone():
+                return _done(board_id, "board", f"Not saved: no such {table.replace('_', ' ')} in use")
         ctx.conn.execute(
             "UPDATE board SET display_name = ?, fulfiller_group = ?, owner = ?, deputy = ?,"
             " description = ?, restricted = ?, closed_loop_required = ?, is_live = ?, inactive = ?,"
-            " notify_requester = ? WHERE board_id = ?",
+            " notify_requester = ?, notify_owner = ?, default_work_role_id = ?, default_work_type_id = ?"
+            " WHERE board_id = ?",
             (name, f.get("fulfiller_group", "").strip() or "Unassigned", owner, deputy,
              f.get("description", "").strip() or None, 1 if f.get("restricted") == "1" else 0,
              1 if f.get("closed_loop_required") == "1" else 0, live, inactive,
-             1 if f.get("notify_requester") == "1" else 0, board_id))
+             1 if f.get("notify_requester") == "1" else 0, 1 if f.get("notify_owner") == "1" else 0,
+             f.get("default_work_role_id") or None, f.get("default_work_type_id") or None, board_id))
         _audit(ctx, board_id, f"settings saved: live={live} inactive={inactive}")
         ctx.conn.commit()
     except Exception as exc:                                 # noqa: BLE001

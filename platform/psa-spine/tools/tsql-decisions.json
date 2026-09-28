@@ -630,6 +630,8 @@
     "department_board.department": "NAME",
     "department_board.board_id": "ID",
     "department_board.ticked_at": "TIMESTAMP_TEXT",
-    "department_board.ticked_by": "PERSON"
+    "department_board.ticked_by": "PERSON",
+    "board.default_work_role_id": "ID",
+    "board.default_work_type_id": "ID"
   }
 }

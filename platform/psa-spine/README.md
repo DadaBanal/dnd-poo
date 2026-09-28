@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 515 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 519 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -140,7 +140,11 @@ checked against Zammad and HaloPSA:
 - **New ticket** (`/ticket/new`): for phone calls and walk-ups. It records its
   source.
 - **Setup** (`/admin/board/<id>`): Board, Statuses, SLA, and Members & roles
-  tabs, as ConnectWise's Service Board setup table. The starter setup
+  tabs, as ConnectWise's Service Board setup table. The Board tab also holds
+  ConnectWise's *send to resource* (**Email the owner when a ticket is
+  assigned to them**: one unsent email per ticket and owner, none when you
+  assign it to yourself, no summary in the subject) and the board's default
+  work role and type for time entries. The starter setup
   (`psaspine setup-board`) adds what is missing and never overwrites. Every
   change is audited.
 
@@ -455,14 +459,19 @@ OpenAPI schema in the record's extracted model):
   by a per-company setting; a quarter hour is the usual one). Zero or less is
   refused.
 - **Work role** and **work type**, from Setup › Time (ConnectWise's setup
-  tables). The first of each is the default, as ConnectWise defaults them from
-  the member; a retired one stays on old entries and is refused on new ones. A
-  work type carries its bill default (Billable, Do not bill, No charge).
+  tables). A board names its own default of each on its Board tab
+  (ConnectWise's `Board.workRole` / `workType`); otherwise the first of each
+  in Setup › Time; a retired one stays on old entries and is refused on new
+  ones. A work type carries its bill default (Billable, Do not bill, No
+  charge).
 - **Bill option**: Billable, Do not bill, No charge, or No default (the
   agreement decides), on every entry.
 - **Notes with the Internal / Discussion / Resolution flags**, on the entry
   itself: a time entry written with notes is one note carrying the time, and
   the two are refused together when either is wrong.
+- **The "Contact" tick.** On a board that emails requesters, a Discussion
+  note (and a time entry with notes) carries *Email the requester*, on by
+  default; untick it for the one note that is not news.
 - **The Time pod is ConnectWise's Time tab**: one row per entry (date, member,
   start–end, hours, deduct, work role, work type, bill, charged as, band) and
   its own *Add time* form; the note composer carries the same fields under
@@ -815,7 +824,7 @@ PSA_TEST_DB="Driver={ODBC Driver 18 for SQL Server};Server=127.0.0.1,1433;Databa
 
 Each test empties the database and reseeds it (`db.init(…, reset=True)`, a
 test-only path) and the same assertions run unchanged. **MEASURED, 28 Sep 2026,
-SQL Server 2022 Express 16.0 in a container: 515 tests, OK, 8 skipped** (the
+SQL Server 2022 Express 16.0 in a container: 519 tests, OK, 8 skipped** (the
 eight are SQLite's own file settings: WAL, busy timeout, the escrow copy). CI
 runs the same job against a service container on every push. NOT VERIFIED on
 `DND-SQL01` itself, which no session here can reach; the handoff's step 6 is
@@ -874,6 +883,14 @@ own `schema/*.sql` left the file unterminated), a CHECK cannot compare two
 predicates, and an IDENTITY key refuses the one value a CHECK allows.
 **NOT VERIFIED on `DND-SQL01`**, which no environment on this account can reach;
 the handoff runs it with `@Apply = 0` first and reads the plan.
+
+## Against ConnectWise
+
+[`docs/WS36-connectwise-parity-20260928.md`](../../docs/WS36-connectwise-parity-20260928.md)
+is the function-by-function comparison with ConnectWise PSA (superseding the
+23 Sep one): what is built the same, what was changed on 28 Sep because a
+technician who knows ConnectWise would notice, what stays deliberately
+stricter, and what is not built and why.
 
 ## Design notes
 

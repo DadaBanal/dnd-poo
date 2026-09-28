@@ -2143,6 +2143,84 @@ class TimeEntryTest(unittest.TestCase):
         self.assertEqual([r["band_hours"] for r in rows], [4])
 
 
+class ConnectWiseParityTest(unittest.TestCase):
+    """Three board behaviours ConnectWise has that a technician expects (the
+    parity pass of 28 Sep 2026): the owner is emailed on assignment when the
+    board says so; a note's "Contact" tick decides the requester's email; and
+    a board's own default work role and type start a time entry."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = _fresh(self.tmp)
+        self.at = datetime(2026, 9, 28, 9, 0)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        self.conn.execute(
+            "INSERT INTO contact (contact_id, entity_id, display_name, email, sam_account, source, inactive,"
+            " created_at) VALUES ('C_BOB', 'PMC', 'Bob', 'bob@pmcne.ph', 'bob', 'AD', 0, '2026')")
+        self.wid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="Printer down", impact="I3",
+                                       urgency="U3", requested_by="ward@pmcne.ph", at=self.at, entity_id="PMC")
+        # switched on after the open, so the "we have it" email is not in the way
+        self.conn.execute("UPDATE board SET notify_owner = 1, notify_requester = 1 WHERE board_id = 'IT_HELP'")
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _mails(self, role):
+        return self.conn.execute("SELECT recipient, subject, body FROM notification WHERE recipient_role = ?"
+                                 " ORDER BY notification_id", (role,)).fetchall()
+
+    def test_the_owner_is_emailed_on_assignment_once_and_never_by_themselves(self):
+        board.update_fields(self.conn, self.wid, at=self.at, actor="alice", owner="bob")
+        mails = self._mails("OWNER")
+        self.assertEqual([(m["recipient"], m["subject"]) for m in mails],
+                         [("bob", f"[{self.wid}] Assigned to you on IT Help")])
+        self.assertNotIn("Printer", mails[0]["subject"])                 # no summary leaves the desk
+        self.assertIn("assigned to you by alice", mails[0]["body"])
+        # a second assignment while the first is unsent adds nothing
+        board.update_fields(self.conn, self.wid, at=self.at, actor="alice", owner="carol")
+        board.update_fields(self.conn, self.wid, at=self.at, actor="alice", owner="bob")
+        self.assertEqual(len(self._mails("OWNER")), 1)
+        # taking a ticket yourself is not news; an owner with no address gets nothing
+        self.conn.execute("DELETE FROM notification")
+        board.update_fields(self.conn, self.wid, at=self.at, actor="bob", owner="carol")
+        board.update_fields(self.conn, self.wid, at=self.at, actor="Bob", owner="bob")
+        self.assertEqual(self._mails("OWNER"), [])
+        # off by default: a board that has not said so sends none
+        self.conn.execute("UPDATE board SET notify_owner = NULL WHERE board_id = 'IT_HELP'")
+        board.update_fields(self.conn, self.wid, at=self.at, actor="alice", owner="carol")
+        board.update_fields(self.conn, self.wid, at=self.at, actor="alice", owner="bob")
+        self.assertEqual(self._mails("OWNER"), [])
+        # a move that names an owner emails them too
+        self.conn.execute("UPDATE board SET notify_owner = 1 WHERE board_id = 'IT_HELP'")
+        setup.apply_starter(self.conn, "UNROUTED", actor="t", at=self.at)
+        other = tickets.open_ticket(self.conn, board_id="UNROUTED", summary="Route me", impact="I3",
+                                    urgency="U3", requested_by=None, at=self.at, entity_id="PMC")
+        board.move(self.conn, other, "IT_HELP", at=self.at, actor="alice", owner="bob", reason="routed")
+        self.assertEqual([m["recipient"] for m in self._mails("OWNER")], ["bob"])
+
+    def test_a_notes_contact_tick_decides_the_requesters_email(self):
+        board.add_note(self.conn, self.wid, body="Quiet note.", flag="DISCUSSION", actor="alice", at=self.at,
+                       notify_requester=False)
+        self.assertEqual(self._mails("REQUESTER"), [])
+        board.add_note(self.conn, self.wid, body="Loud note.", flag="DISCUSSION", actor="alice", at=self.at)
+        self.assertEqual(len(self._mails("REQUESTER")), 1)
+
+    def test_a_boards_own_work_role_and_type_start_its_time_entries(self):
+        self.conn.execute("UPDATE board SET default_work_role_id = 'ENGINEER', default_work_type_id = 'ON_SITE'"
+                          " WHERE board_id = 'IT_HELP'")
+        self.assertEqual(board.time_defaults(self.conn, board_id="IT_HELP"),
+                         {"work_role_id": "ENGINEER", "work_type_id": "ON_SITE"})
+        board.add_time(self.conn, self.wid, at=self.at, actor="alice", charge_method="INCLUDED_IN_MONTHLY_FEE",
+                       actual_hours="1")
+        e = self.conn.execute("SELECT work_role_id, work_type_id FROM time_entry").fetchone()
+        self.assertEqual(tuple(e), ("ENGINEER", "ON_SITE"))
+        # a retired default falls back to the first in use
+        self.conn.execute("UPDATE work_role SET inactive = 1 WHERE work_role_id = 'ENGINEER'")
+        self.assertEqual(board.time_defaults(self.conn, board_id="IT_HELP")["work_role_id"], "TECHNICIAN")
+        self.assertEqual(board.time_defaults(self.conn, board_id="NOPE")["work_type_id"], "REGULAR")
+
+
 class AuthTest(unittest.TestCase):
     """The two ways in: sealed break-glass, and a hand-verified Entra token."""
 
@@ -2673,6 +2751,34 @@ class WebWSGITest(unittest.TestCase):
             self.assertNotIn("345678901", r["detail"])
             self.assertIn("in the note", r["detail"])
         self.assertIn("345678901", note["detail"])           # kept, flagged, never dropped
+
+    def test_the_board_tab_saves_the_owner_mail_and_the_time_defaults_and_the_composer_shows_them(self):
+        alice = self._cookie_for("alice")
+        _, headers, _ = self._call("POST", "/admin/board/IT_HELP/settings", cookie=alice, form={
+            "display_name": "IT Help", "fulfiller_group": "Dada", "owner": "a", "deputy": "b", "is_live": "1",
+            "notify_owner": "1", "notify_requester": "1", "default_work_role_id": "ENGINEER",
+            "default_work_type_id": "REMOTE"})
+        self.assertIn("Board+saved", dict(headers)["Location"])
+        conn = self._db()
+        row = conn.execute("SELECT notify_owner, default_work_role_id, default_work_type_id FROM board"
+                           " WHERE board_id = 'IT_HELP'").fetchone()
+        conn.close()
+        self.assertEqual(tuple(row), (1, "ENGINEER", "REMOTE"))
+        _, _, page = self._call("GET", "/ticket/ITO-1", cookie=alice)
+        self.assertIn("<option value='ENGINEER' selected>", page)
+        self.assertIn("<option value='REMOTE' selected>", page)
+        self.assertIn("name=notify value=1 checked", page)              # the requester tick, on
+        _, headers, _ = self._call("POST", "/admin/board/IT_HELP/settings", cookie=alice, form={
+            "display_name": "IT Help", "fulfiller_group": "Dada", "owner": "a", "deputy": "b", "is_live": "1",
+            "default_work_role_id": "NOPE"})
+        self.assertIn("no+such+work+role", dict(headers)["Location"])
+        # unticked: the Discussion note is written and no requester email is queued
+        _, headers, _ = self._call("POST", "/ticket/ITO-1/note", cookie=alice, form={
+            "body": "Quietly.", "flag": "DISCUSSION"})
+        self.assertIn("Note+saved", dict(headers)["Location"])
+        conn = self._db()
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM notification WHERE recipient_role = 'REQUESTER'").fetchone()[0], 0)
+        conn.close()
 
     def test_a_form_posted_from_another_site_is_refused(self):
         status, _, _ = self._call("POST", "/ticket/ITO-1/note", cookie=self._cookie_for("alice"),

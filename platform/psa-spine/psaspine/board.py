@@ -444,7 +444,9 @@ def move(conn: sqlite3.Connection, work_item_id: str, to_board_id: str, *,
                                 (work_item_id,)).fetchone():
         open_clocks(conn, work_item_id, at=at, calendar_id=cal)
     touch(conn, work_item_id, at)
-    from . import workflow
+    from . import outbox, workflow
+    if owner and owner != ticket["owner"]:
+        outbox.queue_owner(conn, work_item_id, at=at, actor=actor)
     workflow.fire(conn, work_item_id, "ON_HANDOVER", at=at)
     return {"work_item_id": work_item_id, "board_id": to_board_id,
             "board_status_id": landed}
@@ -493,6 +495,30 @@ def work_roles(conn: sqlite3.Connection, *, all_rows: bool = False) -> list[sqli
 def work_types(conn: sqlite3.Connection, *, all_rows: bool = False) -> list[sqlite3.Row]:
     return conn.execute("SELECT * FROM work_type" + ("" if all_rows else " WHERE inactive = 0")
                         + " ORDER BY sort_order, name").fetchall()
+
+
+def time_defaults(conn: sqlite3.Connection, *, work_item_id: str | None = None,
+                  board_id: str | None = None) -> dict:
+    """The work role and type a time entry starts with: the board's own
+    (Board.workRole / workType in ConnectWise, Setup › the board), else the
+    first active of each in Setup › Time. Either may be None when nothing is
+    set up at all."""
+    ensure_time_vocabulary(conn)
+    if work_item_id and not board_id:
+        row = conn.execute("SELECT board_id FROM ticket WHERE work_item_id = ?", (work_item_id,)).fetchone()
+        board_id = row["board_id"] if row else None
+    board = conn.execute("SELECT default_work_role_id, default_work_type_id FROM board WHERE board_id = ?",
+                         (board_id or "",)).fetchone()
+    out = {}
+    for key, table in (("work_role_id", "work_role"), ("work_type_id", "work_type")):
+        chosen = board[f"default_{key}"] if board else None
+        if chosen and conn.execute(f"SELECT 1 FROM {table} WHERE {key} = ? AND inactive = 0",
+                                   (chosen,)).fetchone():
+            out[key] = chosen
+            continue
+        first = conn.execute(f"SELECT {key} FROM {table} WHERE inactive = 0 ORDER BY sort_order, name LIMIT 1").fetchone()
+        out[key] = first[0] if first else None
+    return out
 
 
 def band_for(hours: float) -> float:
@@ -574,14 +600,14 @@ def prepare_time(conn: sqlite3.Connection, work_item_id: str, *, charge_method,
     # ConnectWise fills the work role and type from the member's own defaults;
     # the desk's default is the first of each in Setup › Time. A named one must
     # exist and be in use.
+    defaults = time_defaults(conn, work_item_id=work_item_id)
     if work_role_id:
         role = conn.execute("SELECT work_role_id FROM work_role WHERE work_role_id = ? AND inactive = 0",
                             (work_role_id,)).fetchone()
         if role is None:
             raise EffortRefused("choose a work role that is in use")
     else:
-        role = conn.execute("SELECT work_role_id FROM work_role WHERE inactive = 0"
-                            " ORDER BY sort_order, name LIMIT 1").fetchone()
+        role = {"work_role_id": defaults["work_role_id"]} if defaults["work_role_id"] else None
         if role is None:
             raise EffortRefused("no work role is set up (Setup › Time)")
     if work_type_id:
@@ -590,8 +616,7 @@ def prepare_time(conn: sqlite3.Connection, work_item_id: str, *, charge_method,
         if wtype is None:
             raise EffortRefused("choose a work type that is in use")
     else:
-        wtype = conn.execute("SELECT work_type_id FROM work_type WHERE inactive = 0"
-                             " ORDER BY sort_order, name LIMIT 1").fetchone()
+        wtype = {"work_type_id": defaults["work_type_id"]} if defaults["work_type_id"] else None
         if wtype is None:
             raise EffortRefused("no work type is set up (Setup › Time)")
     bill = billable_option or "NO_DEFAULT"
@@ -658,9 +683,12 @@ def _event(conn, work_item_id, stamp, kind, actor, detail, flag=None):
 def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: str,
              actor: str, at: datetime, band_hours: float | None = None,
              charge_method: str | None = None, to_status_id: str | None = None,
-             resolution: bool = False, time: dict | None = None) -> dict:
+             resolution: bool = False, time: dict | None = None,
+             notify_requester: bool = True) -> dict:
     """One note, the way ConnectWise takes one: flagged, optionally with time
     against it, optionally moving the status in the same action.
+    `notify_requester` is ConnectWise's "Contact" tick on the note: a
+    Discussion note emails the requester unless the technician unticks it.
 
     Discussion and Resolution notes are the requester's to read on the portal;
     Internal ones never leave the desk. Time is ConnectWise's time entry
@@ -711,7 +739,7 @@ def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: st
     touch(conn, work_item_id, at)
     from . import workflow
     workflow.fire(conn, work_item_id, "ON_NOTE_ADDED", at=at)
-    if flag != "INTERNAL":
+    if flag != "INTERNAL" and notify_requester:
         # The requester can read this note on the portal: tell them it is there.
         from . import outbox
         outbox.queue_requester(conn, work_item_id, "UPDATED", at=at)
@@ -898,6 +926,7 @@ def update_fields(conn: sqlite3.Connection, work_item_id: str, *, at: datetime,
         _event(conn, work_item_id, stamp, "UPDATED", actor, "; ".join(changed))
         touch(conn, work_item_id, at)
         if any(c.startswith("owner ") for c in changed):
-            from . import workflow
+            from . import outbox, workflow
+            outbox.queue_owner(conn, work_item_id, at=at, actor=actor)
             workflow.fire(conn, work_item_id, "ON_OWNER_CHANGE", at=at)
     return changed

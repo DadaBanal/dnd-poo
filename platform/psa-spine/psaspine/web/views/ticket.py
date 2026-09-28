@@ -45,7 +45,7 @@ def _load(ctx, work_item_id):
         "       w.entity_id, e.name AS entity, s.name AS status_name,"
         "       s.escalation_status, b.display_name AS board_name,"
         "       b.closed_loop_required, b.calendar_id, c.name AS calendar_name,"
-        "       b.kind AS board_kind"
+        "       b.kind AS board_kind, b.notify_requester"
         "  FROM ticket t"
         "  JOIN work_item w ON w.work_item_id = t.work_item_id"
         "  LEFT JOIN entity e ON e.entity_id = w.entity_id"
@@ -161,15 +161,13 @@ def _time_fields(ctx, tk, *, prefix: str = "", compact: bool = False) -> str:
     """ConnectWise's time entry fields: date, start and end OR actual hours,
     deduct, work role, work type, bill option, and the spine's charge method.
     The same fields on the note composer and on the Time pod's own form."""
-    engine.ensure_time_vocabulary(ctx.conn)
+    defaults = engine.time_defaults(ctx.conn, board_id=tk["board_id"])
     roles = engine.work_roles(ctx.conn)
     types = engine.work_types(ctx.conn)
     today = ctx.now.date().isoformat()
-    # The first of each is the default, as ConnectWise defaults them from the member.
-    role_opts = _options([(r["work_role_id"], r["name"]) for r in roles],
-                         roles[0]["work_role_id"] if roles else "")
-    type_opts = _options([(w["work_type_id"], w["name"]) for w in types],
-                         types[0]["work_type_id"] if types else "")
+    # The board's own default, else the first of each, as ConnectWise defaults them.
+    role_opts = _options([(r["work_role_id"], r["name"]) for r in roles], defaults["work_role_id"] or "")
+    type_opts = _options([(w["work_type_id"], w["name"]) for w in types], defaults["work_type_id"] or "")
     bill_opts = _options(list(BILL_LABEL.items()), "NO_DEFAULT")
     charge_opts = _options([("", "— choose —")] + list(CHARGE_LABEL.items()), "")
     return (
@@ -326,6 +324,12 @@ def detail(ctx, work_item_id):
     may, why_not = engine.may_book_effort(ctx.conn, work_item_id)
 
     composer = ""
+    # ConnectWise's "Contact" tick on a note: a Discussion note emails the
+    # requester unless the technician says not this one. Drawn only where the
+    # board emails requesters at all.
+    notify_tick = ("<label style='display:block;margin-top:6px;color:var(--ink);font-weight:500'>"
+                   "<input type=checkbox name=notify value=1 checked style='width:auto'> Email the requester</label>"
+                   if tk["notify_requester"] else "")
     if can_work:
         # ConnectWise's note carries its time entry; the fields are its.
         time_block = (
@@ -352,7 +356,7 @@ def detail(ctx, work_item_id):
             "<label class=int><input type=radio name=flag value=INTERNAL><span>Internal</span></label>"
             "</div><label style='display:block;margin-top:6px;color:var(--ink);font-weight:500'>"
             "<input type=checkbox name=resolution value=1 style='width:auto'> Also the resolution"
-            "</label></div>"
+            "</label>" + notify_tick + "</div>"
             "<div><label>And set status</label><select name=to_status>"
             + _options([("", "(no change)")] + status_pairs, "") +
             "</select></div><div style='flex:0 0 auto'><button type=submit><svg class=ic aria-hidden=true><use href=#i-note></use></svg> Save note</button></div>"
@@ -447,7 +451,8 @@ def detail(ctx, work_item_id):
               "<label><input type=radio name=flag value=DISCUSSION checked><span>Discussion</span></label>"
               "<label class=int><input type=radio name=flag value=INTERNAL><span>Internal</span></label>"
               "</div><label style='display:block;margin-top:6px;color:var(--ink);font-weight:500'>"
-              "<input type=checkbox name=resolution value=1 style='width:auto'> Also the resolution</label></div>"
+              "<input type=checkbox name=resolution value=1 style='width:auto'> Also the resolution</label>"
+              + notify_tick + "</div>"
               "<div style='flex:0 0 auto'><button type=submit>" + t.icon("clock") + " Save time</button></div></div>"
               "<p class=why style='margin:6px 0 0'>Start and end, or the actual hours, not both; a deduction "
               "comes off; kept to the quarter hour. The band is the smallest of 0.5 / 2 / 4 / 8 / 20 h the "
@@ -511,7 +516,8 @@ def add_note(ctx, work_item_id):
                         time=_time_from_form(f),
                         charge_method=f.get("charge") or None,
                         to_status_id=f.get("to_status") or None,
-                        resolution=f.get("resolution") == "1")
+                        resolution=f.get("resolution") == "1",
+                        notify_requester=not tk["notify_requester"] or f.get("notify") == "1")
         # §6.1: a technician's note is an intake path too. Saved, and flagged by
         # shape, never by value; a Discussion note reaches the portal and mail.
         for code, severity, detail in phi.scan_fields({"note": f.get("body", "")}):
@@ -544,7 +550,8 @@ def add_time(ctx, work_item_id):
                                 flag=f.get("flag", "DISCUSSION") or "DISCUSSION",
                                 actor=ctx.user.id, at=ctx.now, time=time,
                                 charge_method=f.get("charge") or None,
-                                resolution=f.get("resolution") == "1")
+                                resolution=f.get("resolution") == "1",
+                                notify_requester=not tk["notify_requester"] or f.get("notify") == "1")
             hours = r["actual_hours"]
             for code, severity, detail in phi.scan_fields({"note": body}):
                 ctx.conn.execute(

@@ -2328,6 +2328,15 @@ ALTER TABLE psa.[time_entry] ADD [ticket_event_id] INT NULL CONSTRAINT [FK_time_
 IF COL_LENGTH(N'psa.[time_entry]', N'entry_status') IS NULL
 ALTER TABLE psa.[time_entry] ADD [entry_status] NVARCHAR(32) NULL CONSTRAINT [DF_time_entry_entry_status] DEFAULT ('OPEN') CONSTRAINT [CK_time_entry_entry_status_01] CHECK (entry_status IN ('OPEN', 'READY_TO_BILL', 'BILLED', 'WRITTEN_OFF', 'BILLED_AGREEMENT'));
 
+IF COL_LENGTH(N'psa.[board]', N'default_work_role_id') IS NULL
+ALTER TABLE psa.[board] ADD [default_work_role_id] NVARCHAR(64) NULL CONSTRAINT [FK_board_default_work_role_id] REFERENCES psa.[work_role]([work_role_id]);
+
+IF COL_LENGTH(N'psa.[board]', N'default_work_type_id') IS NULL
+ALTER TABLE psa.[board] ADD [default_work_type_id] NVARCHAR(64) NULL CONSTRAINT [FK_board_default_work_type_id] REFERENCES psa.[work_type]([work_type_id]);
+
+IF COL_LENGTH(N'psa.[board]', N'notify_owner') IS NULL
+ALTER TABLE psa.[board] ADD [notify_owner] INT NULL CONSTRAINT [CK_board_notify_owner_01] CHECK (notify_owner IN (0, 1));
+
 -- --------------------------------------------------------------------------
 -- indexes
 
@@ -2582,6 +2591,8 @@ PRINT N'target is enforced until somebody with the authority says so.';
     DROP TRIGGER IF EXISTS psa.[ticket_close_requires_a_variation];
     DROP TRIGGER IF EXISTS psa.[patient_reference_needs_a_restricted_board];
     DROP TRIGGER IF EXISTS psa.[patient_reference_stays_on_a_restricted_board];
+    ALTER TABLE psa.[board] DROP CONSTRAINT IF EXISTS [FK_board_default_work_type_id];
+    ALTER TABLE psa.[board] DROP CONSTRAINT IF EXISTS [FK_board_default_work_role_id];
     ALTER TABLE psa.[time_entry] DROP CONSTRAINT IF EXISTS [FK_time_entry_ticket_event_id];
     ALTER TABLE psa.[time_entry] DROP CONSTRAINT IF EXISTS [FK_time_entry_work_type_id];
     ALTER TABLE psa.[time_entry] DROP CONSTRAINT IF EXISTS [FK_time_entry_work_role_id];
