@@ -1059,3 +1059,31 @@ Still open from part 13: Setup › Departments ticks, IT Help's people on Unrout
   - Step 4's browser half: the cookie has no `Max-Age`, and a closed-and-reopened browser shows the sign-in page.
   - Step 5 on a ward PC: the portal's *Sign out* also ends the desk session.
   - Dada's Catalogue checks: no `CATALOGUE_CONFIG` row yet.
+
+*Part 14, continued, about 10:35 +08:00: a defect in `init` found on the host.* Everything below is MEASURED unless
+marked.
+
+- **Dada: rename the board "IT Help" to "Help Desk".** His words: *"its shouldnt be IT Help but rename it as help desk
+  board"*. Only the display name changes; the id `IT_HELP` stays, because department ticks, settings and tickets
+  refer to it.
+- **`init` resets the seeded boards' Setup settings on SQL Server, so a rename would not survive.**
+  - `db.seed` writes `IT_HELP` and `UNROUTED` from `seed/boards.csv` with `INSERT OR REPLACE` (`db.py:250-258`),
+    and that includes `display_name`, owner, deputy, `is_live` and `restricted`.
+  - On SQL Server, `_replace_in_place` turns it into an UPDATE that sets every listed column **and every unlisted
+    one back to its DEFAULT** (`mssql.py:627-636, 671-672`): `calendar_id`, `kind`, `closed_reply_policy`,
+    `notify_requester`, `closed_loop_required`, the work-role, work-type and owner-email defaults.
+  - Every schema step by the sitting-1 road runs `init` twice as the task account, so every migration silently
+    undoes Setup on those two boards.
+  - **Evidence from today.** Unrouted had calendar `ALL_HOURS` from its starter setup (audit rows 1, 4 and 6, 27
+    Sep). It now has `calendar_id` NULL and `kind` NULL, with no audit row clearing either; the only thing in
+    between is part 13's `init` at 09:12. IT_HELP lost them too and got them back when its starter setup was
+    re-applied at 09:54 (audit row 95, "calendar ALL_HOURS").
+  - **Impact so far: none.** The only ticket opened since 09:00 is PMC-000009 (10:12, source Portal, **routed
+    straight to IT_HELP** by the PMO tick), and it carries its 3 SLA clocks. But any request landing on Unrouted
+    now gets **no SLA clock** ("board not set up") until Unrouted's starter setup is re-applied, which is the
+    operator's step in Setup.
+  - **Fix, please:** seed the two boards **only if missing** (plain insert-if-absent), never overwrite a row that
+    exists, and move `display_name` to "Help Desk" in `seed/boards.csv` for new installs. Add a test that
+    `init` after a Setup change leaves the board's name, calendar and kind as Setup left them.
+  - **Until that lands, SQL01 runs no `init`.** The next schema step waits for the fix, so Dada's rename made in
+    Setup now will hold.
