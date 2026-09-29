@@ -648,18 +648,25 @@ def add_time(conn: sqlite3.Connection, work_item_id: str, *, at: datetime, actor
     option, and the spine's own charge method. band_hours is derived. Returns
     the entry's id. `values` is prepare_time's answer when the caller checked
     first; otherwise the checks run here."""
+    from . import timesheets
     v = values or prepare_time(conn, work_item_id, charge_method=charge_method, **kw)
     who = (performed_by or actor).strip()
+    day = worked_on or v["worked_on"] or at.date().isoformat()
+    # 046: a submitted or approved week is closed; an open week's entry joins its sheet.
+    locked = timesheets.lock_reason(conn, who, day)
+    if locked:
+        raise EffortRefused(locked)
+    sheet_id = timesheets.sheet_id_for(conn, who, day, at=at)
     cur = conn.execute(
         "INSERT INTO time_entry (work_item_id, entity_id, worked_on, band_hours, performed_by,"
         " entered_by, counts_to_capacity, charge_method, authority_source, note, time_start,"
         " time_end, hours_deduct, actual_hours, work_role_id, work_type_id, billable_option,"
-        " ticket_event_id, entry_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'OPEN')",
-        (work_item_id, v["entity_id"], worked_on or v["worked_on"] or at.date().isoformat(),
+        " ticket_event_id, entry_status, timesheet_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'OPEN',?)",
+        (work_item_id, v["entity_id"], day,
          v["band_hours"], who, actor, 1 if counts_to_capacity else 0, v["charge_method"],
          authority_source, (note or "")[:500] or None, v["time_start"], v["time_end"],
          v["hours_deduct"], v["actual_hours"], v["work_role_id"], v["work_type_id"],
-         v["billable_option"], ticket_event_id))
+         v["billable_option"], ticket_event_id, sheet_id))
     stamp = at.isoformat(sep=" ", timespec="minutes")
     span = (f"{v['time_start'][11:]}–{v['time_end'][11:]}" if v["time_start"] else "actual")
     _event(conn, work_item_id, stamp, "TIME", actor,

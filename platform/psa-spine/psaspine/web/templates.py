@@ -441,7 +441,7 @@ function go(i){if(!rows.length)return;if(cur>=0)rows[cur].classList.remove("cur"
   rows[cur].classList.add("cur");rows[cur].scrollIntoView({block:"nearest"})}
 /* palette */
 var pal=$("#pal"),pq=$("#pal-q"),pl=$("#pal-list"),items=[],sel=0;
-var pages=[["Service Board","/","g b"],["Dispatch","/dispatch","g d"],["Schedule","/schedule",""],["Companies","/companies","g c"],["On-call","/oncall",""],["Setup","/admin","g s"],["My requests","/my",""],["New ticket","/ticket/new","n"]];
+var pages=[["Service Board","/","g b"],["Dispatch","/dispatch","g d"],["Schedule","/schedule",""],["Timesheets","/time",""],["Companies","/companies","g c"],["On-call","/oncall",""],["Setup","/admin","g s"],["My requests","/my",""],["New ticket","/ticket/new","n"]];
 function ticketFrom(q){var m=q.trim().match(/^(pmc|ito|pcsd)[- ]?0*(\d{1,6})$/i);if(!m)return null;var pre=m[1].toUpperCase();
   return pre==="PMC"?"PMC-"+("000000"+m[2]).slice(-6):pre+"-"+m[2]}
 var remote={q:"",tickets:[],contacts:[],configurations:[]},rtimer=null;
@@ -795,6 +795,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         ("board", "/", "Service Board"),
         ("dispatch", "/dispatch", "Dispatch"),
         ("schedule", "/schedule", "Schedule"),
+        ("time", "/time", "Time"),
         ("projects", "/projects", "Projects"),
         ("kb", "/kb", "Knowledge"),
         ("companies", "/companies", "Companies"),
@@ -807,15 +808,15 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
     ]
     levels = getattr(user, "modules", None) or {}
     gate = {"schedule": "SCHEDULE", "projects": "PROJECTS", "kb": "KNOWLEDGE", "reports": "REPORTS",
-            "finance": "FINANCE"}
+            "finance": "FINANCE", "time": "TIME"}
     nav_items = [n for n in nav_items if n[0] not in gate or levels.get(gate[n[0]], "READ") != "NONE"]
     if requester:
-        nav_items = [("my", "/my", "My requests"), ("help", "/my/help", "Help")]
-        if active != "help":
+        nav_items = [("my", "/my", "My requests"), ("approvals", "/my/approvals", "Approvals"), ("help", "/my/help", "Help")]
+        if active not in ("help", "approvals"):
             active = "my"
     nav = "".join(
         f'<a href="{esc(href)}" title="{esc(label)}"{" class=on aria-current=page" if key == active else ""}>'
-        f'{icon({"admin": "setup", "schedule": "calendar", "projects": "layers", "kb": "note", "finance": "tag", "help": "note"}.get(key, key))}<span class=lbl>{esc(label)}</span></a>'
+        f'{icon({"admin": "setup", "schedule": "calendar", "projects": "layers", "kb": "note", "finance": "tag", "help": "note", "time": "clock", "approvals": "check"}.get(key, key))}<span class=lbl>{esc(label)}</span></a>'
         for key, href, label in nav_items)
     nav += (f'<a class="newbtn" href="/ticket/new" title="New ticket (n)">{icon("plus")} New ticket</a>'
             if user is not None and not requester else "")

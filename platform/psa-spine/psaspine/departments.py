@@ -80,6 +80,23 @@ def add(conn: sqlite3.Connection, name: str, *, at: datetime, actor: str) -> str
     return name
 
 
+def set_approver(conn: sqlite3.Connection, name: str, email: str | None, *, at: datetime, actor: str) -> bool:
+    """Who approves a request from this department (049): an email at the
+    hospital, or blank for nobody. Returns whether it changed."""
+    row = conn.execute("SELECT approver FROM department WHERE name = ?", (name,)).fetchone()
+    if row is None:
+        raise ValueError(f"no department {name!r}")
+    email = (email or "").strip().lower() or None
+    if email and ("@" not in email or " " in email or len(email) > 200):
+        raise ValueError(f"the approver for {name} is an email address, e.g. head.nursing@pmcne.ph")
+    if email == (row["approver"] or None):
+        return False
+    conn.execute("UPDATE department SET approver = ? WHERE name = ?", (email, name))
+    db.audit(conn, at=_stamp(at), actor=actor, action="DEPARTMENT_APPROVER", subject_kind="department",
+             subject_id=name, detail=f"{row['approver'] or '-'} -> {email or '-'}")
+    return True
+
+
 def all_departments(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute("SELECT * FROM department ORDER BY retired, name").fetchall()
 

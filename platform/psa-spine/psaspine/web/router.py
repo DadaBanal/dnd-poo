@@ -9,6 +9,9 @@ context, and return a Response.
 from __future__ import annotations
 
 from .views import schedule as schedule_view
+from .views import timesheets as timesheets_view
+from .views import recurring as recurring_view
+from .views import approvals as approvals_view
 from .views import agreements as agreements_view
 from .views import finance as finance_view
 from .views import kb as kb_view
@@ -43,6 +46,8 @@ ROUTES = [
     ("POST", "/ticket/<work_item_id>/note", ticket.add_note),
     ("POST", "/ticket/<work_item_id>/time", ticket.add_time),
     ("POST", "/ticket/<work_item_id>/change/decide", ticket.decide_change),
+    ("POST", "/ticket/<work_item_id>/approval/request", approvals_view.request),
+    ("POST", "/ticket/<work_item_id>/approval/withdraw", approvals_view.withdraw),
     ("POST", "/ticket/<work_item_id>/task/add", ticket.task_add),
     ("POST", "/ticket/<work_item_id>/task/toggle", ticket.task_toggle),
     ("POST", "/ticket/<work_item_id>/template", ticket.template_apply),
@@ -71,11 +76,18 @@ ROUTES = [
     ("GET", "/contacts", companies.contacts_index),
     ("GET", "/contact/<contact_id>", companies.contact_detail),
     ("GET", "/configurations", configurations.index),
+    ("GET", "/configurations/maintenance.csv", configurations.maintenance_csv_all),
+    ("GET", "/configuration/<configuration_id>/maintenance.csv", configurations.maintenance_csv),
     ("POST", "/configurations/new", configurations.create),
     ("GET", "/configuration/<configuration_id>", configurations.detail),
     ("POST", "/configuration/<configuration_id>/update", configurations.update),
     ("GET", "/dispatch", dispatch.index),
     ("GET", "/schedule", schedule_view.index),
+    ("GET", "/time", timesheets_view.index),
+    ("POST", "/time/submit", timesheets_view.submit),
+    ("POST", "/time/decide", timesheets_view.decide),
+    ("POST", "/time/reopen", timesheets_view.reopen),
+    ("POST", "/time/capacity", timesheets_view.capacity),
     ("GET", "/finance", finance_view.index),
     ("GET", "/finance/<kind>", finance_view.detail),                    # ?ref=<BizBox reference>
     ("POST", "/finance/<kind>/propose", finance_view.propose),
@@ -115,6 +127,8 @@ ROUTES = [
     ("POST", "/oncall/add", oncall.add),
     # The requester portal. Ownership, not board membership, is the filter.
     ("GET", "/my", portal.index),
+    ("GET", "/my/approvals", approvals_view.portal_index),
+    ("POST", "/my/approvals/<approval_id>/decide", approvals_view.portal_decide),
     ("POST", "/my/new", portal.create),
     ("GET", "/my/<work_item_id>", portal.detail),
     ("POST", "/my/<work_item_id>/reply", portal.reply),
@@ -132,6 +146,10 @@ ROUTES = [
     ("POST", "/admin/rules/<workflow_id>/test", rules.test),
     ("POST", "/admin/rules/<workflow_id>/activate", rules.activate),
     ("POST", "/admin/rules/<workflow_id>/deactivate", rules.deactivate),
+    ("GET", "/admin/recurring", recurring_view.index),
+    ("POST", "/admin/recurring/add", recurring_view.add),
+    ("POST", "/admin/recurring/toggle", recurring_view.toggle),
+    ("POST", "/admin/recurring/run", recurring_view.run),
     ("GET", "/admin/integrations", configurations.integrations),
     ("POST", "/admin/integrations/add", configurations.integrations_add),
     ("POST", "/admin/integrations/toggle", configurations.integrations_toggle),
@@ -171,6 +189,7 @@ ROUTES = [
     ("POST", "/admin/catalogue/item", admin.catalogue_item_add),
     ("POST", "/admin/catalogue/item/save", admin.catalogue_item_save),
     ("POST", "/admin/catalogue/associate", admin.catalogue_associate),
+    ("POST", "/admin/catalogue/approval", admin.catalogue_approval),
     ("POST", "/admin/board/<board_id>/claim", admin.claim_board),
     ("GET", "/admin/board/<board_id>", admin.board_setup),
     ("POST", "/admin/board/<board_id>/settings", admin.save_settings),

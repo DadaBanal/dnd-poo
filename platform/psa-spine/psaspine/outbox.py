@@ -122,6 +122,31 @@ def queue_owner(conn: sqlite3.Connection, work_item_id: str, *, at: datetime, ac
     return True
 
 
+APPROVER = "APPROVER"
+
+
+def queue_approver(conn: sqlite3.Connection, work_item_id: str, approver: str, *, at: datetime) -> bool:
+    """049: one email to the person asked to approve a request, with the
+    portal's Approvals page as the place to decide. No summary, no note:
+    the words stay behind the sign-in."""
+    from .board import _event
+    from .intake import subject_token
+    if not address_for(conn, approver):
+        return False
+    if conn.execute("SELECT 1 FROM notification WHERE work_item_id = ? AND recipient = ? AND recipient_role = ?"
+                    " AND status = 'PENDING'", (work_item_id, approver, APPROVER)).fetchone():
+        return False
+    stamp = at.isoformat(sep=" ", timespec="minutes")
+    conn.execute(
+        "INSERT INTO notification (work_item_id, recipient, recipient_role, subject, body, created_at, status)"
+        " VALUES (?,?,?,?,?,?,'PENDING')",
+        (work_item_id, approver, APPROVER, f"{subject_token(work_item_id)} A request needs your approval",
+         "A request on the desk waits for your approval before the work is done. Sign in to the portal and "
+         "open Approvals to read it and decide, with a reason.", stamp))
+    _event(conn, work_item_id, stamp, "NOTIFY", "desk", f"email to the approver queued: {approver}")
+    return True
+
+
 SCHEDULED = "SCHEDULED"
 
 
@@ -192,6 +217,9 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
                     f"See it here: {where}\n\nTo add something, reply to this email "
                     "and keep the reference in the subject. The ward, the room or the "
                     "machine is all we need; a patient's details never are.")
+        elif n["recipient_role"] == APPROVER:
+            where = (f"{portal_url}/my/approvals" if portal_url else "the PMC Requests portal, under Approvals")
+            body = f"{n['body'] or ''}\n\nThe reference: {n['work_item_id']}\nDecide it here: {where}"
         else:
             body = (n["body"] or "") + f"\n\nOpen the ticket on the desk: {n['work_item_id']}"
         out.append({"id": n["notification_id"], "to": to, "subject": n["subject"],

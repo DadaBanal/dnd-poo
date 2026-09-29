@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 546 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 569 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -703,6 +703,115 @@ the agreement. And **the band is derived**: `band_hours` is the smallest of
 per day), so §5.2's capacity arithmetic, the uplift evidence and every report
 read exactly what they read before. An entry over the loop (`close_loop`)
 still records its band as its hours.
+
+## Timesheets and time approval (`/time`, 046, 29 Sep 2026)
+
+The uplift claim rests on time entries, and a finance function reading them
+asks who approved them. So every time entry belongs to one **timesheet**: the
+week (Monday to Sunday) of the day it was worked, by the person who performed
+it.
+
+- **The sheet.** `/time` is your own week: every entry with its ticket, hours,
+  role and type, charge method and note; day totals; hours against your hours
+  a week (40 unless Setup says otherwise). A time administrator sees anyone's
+  week, the sheets waiting for a decision, and sets a member's hours a week.
+- **The lifecycle.** OPEN while the week is written; SUBMITTED by its member
+  (or an administrator for them) once the week has begun; APPROVED or
+  REJECTED by a time administrator **who is not that member**, a rejection
+  with a reason; reopened only with a note. Every step is appended to
+  `timesheet_event` and audited (`TIMESHEET`).
+- **The lock.** A submitted or approved week takes no new entry: `add_time`
+  refuses it in a sentence naming the week. A rejected week is open for the
+  corrections and goes round again.
+- **Who.** A sixth security module, **Timesheets** (`TIME`): WRITE keeps your
+  own sheet (every role's default, so a role written before 046 keeps working),
+  ADMIN decides other people's and sets hours a week; Service manager ships
+  with ADMIN, Read only with READ. Setup › Security roles has the column.
+- **The figures.** Reports gains *Utilisation, by member*: hours recorded over
+  the period, the hours on an approved sheet, and the share of hours a week.
+  The uplift evidence says how many of its hours sit on an approved sheet.
+- **Grants moved.** 040's `role_permission` listed its modules in a CHECK, so
+  the sixth could not be written into it on either store. 046 adds
+  `role_grant` (same key and levels, no list); the rows already in
+  `role_permission` are read across the first time a role is looked up, and
+  the old table stays, superseded, because the port never drops a table.
+
+## Recurring tickets (Setup › Recurring tickets, 047, 29 Sep 2026)
+
+Preventive maintenance is a ticket that must exist on a day nobody remembered.
+A **recurrence** names a board template (026), a cadence (daily, weekly,
+monthly, quarterly, yearly, every N), the first due day, an owner or the
+board's queue, the company, optionally the requester and the machine.
+
+- **Raising.** `psaspine run-rules`, which the host runs every minute, raises
+  every due recurrence through `tasks.open_from_template`: the template's
+  summary, description and tasks, the owner, the machine attached, and a line
+  on the ticket saying which recurrence raised it (the Details card says
+  *Raised by*). Then the due day moves on, past today: a runner that was down
+  for weeks raises the ticket once, never once per missed period.
+- **The day.** A monthly series set on the 31st lands on the 30th or 28th in
+  a short month and returns to the 31st after; the anchor is the day the
+  series was set on.
+- **All or nothing, each.** One recurrence that cannot raise (its template
+  retired, say) is rolled back and audited (`RECURRENCE … failed`), and the
+  others still run; the runner's exit code says so.
+- **Who.** A board administrator sets up the recurrences on their boards
+  (Setup › Recurring tickets): add, *Run now* for one extra ticket without
+  moving the due day, *Pause* and *Resume*. Never deleted.
+
+## The life of a machine, and its maintenance record (048, 29 Sep 2026)
+
+021 holds what Active Directory knows about a machine; 048 adds what only the
+desk can know, edited on the configuration's page: **purchased on, warranty
+ends on, installed on, vendor, purchase ref (the PO), location, and the
+agreement** (045) it is under.
+
+- **Warranty.** The Configurations list gains two tiles that filter: *Warranty
+  ends in 90 days* and *Out of warranty*, and a Warranty column with the same
+  chips. `configurations.warranty_state` says EXPIRED, EXPIRING or COVERED
+  and the days.
+- **The maintenance record, per asset.** A machine's page exports
+  `/configuration/<id>/maintenance.csv`: every ticket on it, with board,
+  type, state, opened, closed, owner, hours booked and visits made; the list
+  exports the same for every machine its filters show. What a DOH inspection
+  asks for. Only the boards the reader is on, and a restricted board's rows
+  are audited (`RESTRICTED_READ`) as every other list is.
+- **Two report-writer datasets:** *Configurations* (no board: a machine is
+  the desk's) and *Maintenance: tickets by configuration* (hours from a joined
+  sum, never `SUM` over a subquery, which SQL Server refuses).
+
+## Request approvals on the portal (049, 29 Sep 2026)
+
+A new user account, an access change, a licence: the desk should not do it on
+the requester's word alone. The reference PSA approves *changes*; a hospital
+also needs a manager's yes on a service request. 049 adds it, in three places:
+
+- **Who approves.** Setup › Departments gains an *Approver* column: one email
+  per department (`department.approver`). Setup › Boards and the service
+  catalogue, on a Subtype › Item pair, gains an *Approval: yes/no* toggle
+  (`catalogue_item.needs_approval`). A technician can also ask anyone by hand
+  on the ticket's **Approval** card, which suggests the department's approver.
+- **What happens.** A ticket whose pair needs approval asks by itself when it
+  is opened with the pair or classified into it (`approvals.maybe_request`);
+  when the requester's department names nobody, the ticket says so instead
+  and nothing is asked. A request parks the ticket in the board's **Awaiting
+  approval** status (a starter status now, a waiting status, so the resolve
+  clock pauses; a board without it is not parked), emails the approver one
+  line with the portal's Approvals page and no summary (§6.1), and remembers
+  where the ticket was. The requester's page shows *Waiting for approval from
+  … since …*.
+- **Who decides.** The approver signs in to the portal and finds it under
+  **Approvals**, with the reason; nobody else can decide it (the check is on
+  the signed-in identity, not the URL), and a decline says why. The decision
+  goes on the ticket as a Discussion note the requester reads, the requester
+  is told, the ticket returns to the status it was in (unless someone has
+  moved it since, in which case it stays where they put it), and the desk can
+  withdraw an open question. Decisions are appended, never edited, and every
+  step is audited (`APPROVAL`, `DEPARTMENT_APPROVER`).
+
+`approval` holds one row per question: approver, asked when and by whom, the
+reason, PENDING → APPROVED / DECLINED / WITHDRAWN, decided when and with what
+note, and the status to return to.
 
 ## HTTPS and the organisation sign-in (26 Sep 2026)
 

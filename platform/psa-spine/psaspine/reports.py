@@ -498,6 +498,17 @@ def decisions_owed(conn: sqlite3.Connection, *,
             "open_unattached": open_unattached}
 
 
+def _approval_line(conn: sqlite3.Connection) -> str:
+    """How much of the numerator sits on an approved timesheet (046). A claim
+    whose hours nobody signed is the first thing a finance function asks about."""
+    from . import timesheets
+    total, approved = timesheets.approval_summary(conn)
+    if not total:
+        return "Time approval: no effort counts to capacity yet."
+    return (f"Time approval: {approved:g} h of {total:g} h that count to capacity sit on an approved "
+            f"timesheet ({int(round(100 * approved / total))}%); the rest are open, submitted or rejected.")
+
+
 def uplift_evidence(conn: sqlite3.Connection, *, as_of: date,
                     capacity_hours: float | None = None, boards=None) -> str:
     """The report the whole spine exists to produce.
@@ -547,6 +558,8 @@ def uplift_evidence(conn: sqlite3.Connection, *, as_of: date,
         "# Uplift Evidence — effort by contract basis",
         "",
         f"Generated {as_of.isoformat()} from banded effort in the spine.",
+        "",
+        _approval_line(conn),
         "",
         "This is the evidence behind a capacity uplift claim, and it is the reason the "
         "spine exists. Nothing here is an invoice. It is the arithmetic and the narrative "

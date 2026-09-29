@@ -411,11 +411,14 @@ def _run(conn, a) -> int:
         return 0
 
     if a.cmd == "run-rules":
-        from . import workflow
+        from . import recurring, workflow
         c = workflow.sweep(conn, at=datetime.now())
+        raised = recurring.raise_due(conn, at=datetime.now())
+        failed = [r for r in raised if "error" in r]
         print(f"{c['tickets']} tickets with timed rules: {c['acted']} actions taken, "
-              f"{c['errors']} errors (see workflow_run)")
-        return 1 if c["errors"] else 0
+              f"{c['errors']} errors (see workflow_run); recurring: {len(raised) - len(failed)} raised, "
+              f"{len(failed)} failed (see audit_event)")
+        return 1 if c["errors"] or failed else 0
 
     if a.cmd == "outbox-pending":
         from . import outbox

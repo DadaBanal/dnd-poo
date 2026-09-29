@@ -199,6 +199,12 @@ BEGIN
     PRINT N'    psa.ext_change';
     PRINT N'    psa.agreement';
     PRINT N'    psa.agreement_item';
+    PRINT N'    psa.timesheet';
+    PRINT N'    psa.timesheet_event';
+    PRINT N'    psa.member_capacity';
+    PRINT N'    psa.role_grant';
+    PRINT N'    psa.recurrence';
+    PRINT N'    psa.approval';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -237,13 +243,18 @@ BEGIN
     PRINT N'    psa.ix_kb_ticket_ticket';
     PRINT N'    psa.ix_ext_invoice_agreement';
     PRINT N'    psa.ix_agreement_item_ref';
+    PRINT N'    psa.ix_timesheet_event_sheet';
+    PRINT N'    psa.ix_time_entry_sheet';
+    PRINT N'    psa.ix_recurrence_due';
+    PRINT N'    psa.ix_approval_ticket';
+    PRINT N'    psa.ix_approval_approver';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  101 tables, 37 indexes, 4 triggers.';
+    PRINT N'  107 tables, 42 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -2636,6 +2647,163 @@ CREATE TABLE psa.[agreement_item] (
 END;
 
 -- --------------------------------------------------------------------------
+-- timesheet   (from schema/046_timesheets.sql)
+IF OBJECT_ID(N'psa.[timesheet]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[timesheet] (
+    [timesheet_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_timesheet] PRIMARY KEY,
+
+    -- time_entry.performed_by, as spelt there
+    [member] NVARCHAR(200) NOT NULL,
+
+    -- the Monday, YYYY-MM-DD
+    [week_start] NVARCHAR(32) NOT NULL,
+    [status] NVARCHAR(32) NOT NULL CONSTRAINT [DF_timesheet_status] DEFAULT ('OPEN') CONSTRAINT [CK_timesheet_01] CHECK (status IN ('OPEN', 'SUBMITTED', 'APPROVED', 'REJECTED')),
+    [created_at] NVARCHAR(64) NOT NULL,
+    [submitted_at] NVARCHAR(64) NULL,
+    [submitted_by] NVARCHAR(200) NULL,
+    [decided_at] NVARCHAR(64) NULL,
+    [decided_by] NVARCHAR(200) NULL,
+
+    -- the decision's reason, or why it was reopened
+    [note] NVARCHAR(MAX) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [week_start_parsed] AS (CASE WHEN [week_start] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [week_start], 112) WHEN [week_start] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [week_start], 23) END),
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END)),
+    [submitted_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [submitted_at], 126), CASE WHEN [submitted_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [submitted_at], 112) END)),
+    [decided_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [decided_at], 126), CASE WHEN [decided_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [decided_at], 112) END)),
+    CONSTRAINT [UQ_timesheet] UNIQUE ([member], [week_start])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- timesheet_event   (from schema/046_timesheets.sql)
+-- Append-only: submit, approve, reject, reopen, each with who and when.
+IF OBJECT_ID(N'psa.[timesheet_event]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[timesheet_event] (
+    [event_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_timesheet_event] PRIMARY KEY,
+    [timesheet_id] INT NOT NULL CONSTRAINT [FK_timesheet_event_timesheet_id] REFERENCES psa.[timesheet]([timesheet_id]),
+    [occurred_at] NVARCHAR(64) NOT NULL,
+    [actor] NVARCHAR(200) NOT NULL,
+    [action] NVARCHAR(32) NOT NULL CONSTRAINT [CK_timesheet_event_01] CHECK (action IN ('SUBMIT', 'APPROVE', 'REJECT', 'REOPEN')),
+    [note] NVARCHAR(MAX) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [occurred_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [occurred_at], 126), CASE WHEN [occurred_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [occurred_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- member_capacity   (from schema/046_timesheets.sql)
+-- Hours a week a person is expected to record, for the utilisation figure.
+-- Unset means the desk's default (40). Not the capacity declaration of 003,
+-- which is the client's denominator for the uplift; this is the team's own.
+IF OBJECT_ID(N'psa.[member_capacity]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[member_capacity] (
+    [member] NVARCHAR(200) NOT NULL CONSTRAINT [PK_member_capacity] PRIMARY KEY,
+    [hours_per_week] DECIMAL(9,2) NOT NULL,
+    [set_at] NVARCHAR(64) NOT NULL,
+    [set_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [set_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [set_at], 126), CASE WHEN [set_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [set_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- role_grant   (from schema/046_timesheets.sql)
+-- The module vocabulary belongs to the code (security.MODULES), not to a
+-- CHECK. 040's role_permission listed five modules in its CHECK, so the sixth
+-- (Timesheets) could not be written into it on either store: OR IGNORE
+-- swallowed the refusal and every role silently had no level. role_grant takes
+-- its place: the same key and levels, no list of modules. The rows already in
+-- role_permission are read across by the desk the first time a role is
+-- looked up (security.ensure_roles). role_permission stays, superseded and
+-- unread, because the port never drops a table on a live database.
+IF OBJECT_ID(N'psa.[role_grant]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[role_grant] (
+    [role_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_role_grant_role_id] REFERENCES psa.[security_role]([role_id]),
+    [module] NVARCHAR(32) NOT NULL,
+    [level] NVARCHAR(32) NOT NULL CONSTRAINT [CK_role_grant_01] CHECK (level IN ('NONE', 'READ', 'WRITE', 'ADMIN')),
+    CONSTRAINT [PK_role_grant] PRIMARY KEY ([role_id], [module])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- recurrence   (from schema/047_recurring.sql)
+IF OBJECT_ID(N'psa.[recurrence]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[recurrence] (
+    [recurrence_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_recurrence] PRIMARY KEY,
+    [name] NVARCHAR(400) NOT NULL,
+    [board_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_recurrence_board_id] REFERENCES psa.[board]([board_id]),
+    [template_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_recurrence_template_id] REFERENCES psa.[ticket_template]([template_id]),
+    [cadence] NVARCHAR(32) NOT NULL CONSTRAINT [CK_recurrence_01] CHECK (cadence IN ('DAILY', 'WEEKLY', 'MONTHLY', 'QUARTERLY', 'YEARLY')),
+    [every_n] INT NOT NULL CONSTRAINT [DF_recurrence_every_n] DEFAULT (1),
+
+    -- the day of the month the series was set on
+    [anchor_day] INT NOT NULL,
+
+    -- YYYY-MM-DD
+    [next_due_on] NVARCHAR(32) NOT NULL,
+
+    -- a board member, or NULL for the board's queue
+    [owner] NVARCHAR(200) NULL,
+    [entity_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_recurrence_entity_id] REFERENCES psa.[entity]([entity_id]),
+    [contact_id] NVARCHAR(64) NULL CONSTRAINT [FK_recurrence_contact_id] REFERENCES psa.[contact]([contact_id]),
+    [configuration_id] NVARCHAR(64) NULL CONSTRAINT [FK_recurrence_configuration_id] REFERENCES psa.[configuration]([configuration_id]),
+    [impact] NVARCHAR(32) NOT NULL CONSTRAINT [DF_recurrence_impact] DEFAULT ('I3') CONSTRAINT [CK_recurrence_02] CHECK (impact IN ('I1', 'I2', 'I3')),
+    [urgency] NVARCHAR(32) NOT NULL CONSTRAINT [DF_recurrence_urgency] DEFAULT ('U3') CONSTRAINT [CK_recurrence_03] CHECK (urgency IN ('U1', 'U2', 'U3')),
+    [active] INT NOT NULL CONSTRAINT [DF_recurrence_active] DEFAULT (1) CONSTRAINT [CK_recurrence_04] CHECK (active IN (0, 1)),
+    [last_raised_at] NVARCHAR(64) NULL,
+    [last_work_item_id] NVARCHAR(64) NULL CONSTRAINT [FK_recurrence_last_work_item_id] REFERENCES psa.[ticket]([work_item_id]),
+    [created_at] NVARCHAR(64) NOT NULL,
+    [created_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [next_due_on_parsed] AS (CASE WHEN [next_due_on] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [next_due_on], 112) WHEN [next_due_on] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [next_due_on], 23) END),
+    [last_raised_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [last_raised_at], 126), CASE WHEN [last_raised_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [last_raised_at], 112) END)),
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- approval   (from schema/049_approvals.sql)
+IF OBJECT_ID(N'psa.[approval]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[approval] (
+    [approval_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_approval] PRIMARY KEY,
+    [work_item_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_approval_work_item_id] REFERENCES psa.[ticket]([work_item_id]),
+
+    -- email, lower case
+    [approver] NVARCHAR(200) NOT NULL,
+    [requested_at] NVARCHAR(64) NOT NULL,
+    [requested_by] NVARCHAR(200) NOT NULL,
+    [reason] NVARCHAR(MAX) NULL,
+    [status] NVARCHAR(32) NOT NULL CONSTRAINT [DF_approval_status] DEFAULT ('PENDING') CONSTRAINT [CK_approval_01] CHECK (status IN ('PENDING', 'APPROVED', 'DECLINED', 'WITHDRAWN')),
+    [decided_at] NVARCHAR(64) NULL,
+    [decided_by] NVARCHAR(200) NULL,
+    [note] NVARCHAR(MAX) NULL,
+
+    -- where the ticket goes back to
+    [return_status_id] NVARCHAR(64) NULL CONSTRAINT [FK_approval_return_status_id] REFERENCES psa.[board_status]([board_status_id]),
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [requested_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [requested_at], 126), CASE WHEN [requested_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [requested_at], 112) END)),
+    [decided_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [decided_at], 126), CASE WHEN [decided_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [decided_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -2922,6 +3090,46 @@ ALTER TABLE psa.[ticket_schedule] ADD [acknowledged_at] NVARCHAR(64) NULL;
 IF COL_LENGTH(N'psa.[ext_invoice]', N'supplier_ref') IS NULL
 ALTER TABLE psa.[ext_invoice] ADD [supplier_ref] NVARCHAR(400) NULL;
 
+-- Which sheet an entry sits on. Stamped when the entry is written into an
+-- open week, and on every entry of the week when it is submitted, so rows
+-- that predate this step join their sheet the first time it is submitted.
+IF COL_LENGTH(N'psa.[time_entry]', N'timesheet_id') IS NULL
+ALTER TABLE psa.[time_entry] ADD [timesheet_id] INT NULL CONSTRAINT [FK_time_entry_timesheet_id] REFERENCES psa.[timesheet]([timesheet_id]);
+
+-- The recurrence a ticket was raised by, so the ticket says so and a report can group them.
+IF COL_LENGTH(N'psa.[ticket]', N'recurrence_id') IS NULL
+ALTER TABLE psa.[ticket] ADD [recurrence_id] INT NULL CONSTRAINT [FK_ticket_recurrence_id] REFERENCES psa.[recurrence]([recurrence_id]);
+
+IF COL_LENGTH(N'psa.[configuration]', N'purchased_on') IS NULL
+ALTER TABLE psa.[configuration] ADD [purchased_on] NVARCHAR(32) NULL;
+
+IF COL_LENGTH(N'psa.[configuration]', N'warranty_ends_on') IS NULL
+ALTER TABLE psa.[configuration] ADD [warranty_ends_on] NVARCHAR(32) NULL;
+
+IF COL_LENGTH(N'psa.[configuration]', N'installed_on') IS NULL
+ALTER TABLE psa.[configuration] ADD [installed_on] NVARCHAR(32) NULL;
+
+IF COL_LENGTH(N'psa.[configuration]', N'vendor') IS NULL
+ALTER TABLE psa.[configuration] ADD [vendor] NVARCHAR(400) NULL;
+
+IF COL_LENGTH(N'psa.[configuration]', N'purchase_ref') IS NULL
+ALTER TABLE psa.[configuration] ADD [purchase_ref] NVARCHAR(400) NULL;
+
+-- the BizBox PO number, as a plain reference
+IF COL_LENGTH(N'psa.[configuration]', N'location') IS NULL
+ALTER TABLE psa.[configuration] ADD [location] NVARCHAR(400) NULL;
+
+-- the ward and room, in words
+IF COL_LENGTH(N'psa.[configuration]', N'agreement_id') IS NULL
+ALTER TABLE psa.[configuration] ADD [agreement_id] NVARCHAR(64) NULL CONSTRAINT [FK_configuration_agreement_id] REFERENCES psa.[agreement]([agreement_id]);
+
+IF COL_LENGTH(N'psa.[department]', N'approver') IS NULL
+ALTER TABLE psa.[department] ADD [approver] NVARCHAR(200) NULL;
+
+-- an email at the hospital
+IF COL_LENGTH(N'psa.[catalogue_item]', N'needs_approval') IS NULL
+ALTER TABLE psa.[catalogue_item] ADD [needs_approval] INT NULL CONSTRAINT [DF_catalogue_item_needs_approval] DEFAULT (0) CONSTRAINT [CK_catalogue_item_needs_approval_01] CHECK (needs_approval IN (0, 1));
+
 -- --------------------------------------------------------------------------
 -- indexes
 
@@ -3043,6 +3251,21 @@ CREATE INDEX [ix_ext_invoice_agreement] ON psa.[ext_invoice] ([source_id], [agre
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_agreement_item_ref' AND object_id = OBJECT_ID(N'psa.[agreement_item]'))
 CREATE INDEX [ix_agreement_item_ref] ON psa.[agreement_item] ([source_id], [kind], [ext_ref]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_timesheet_event_sheet' AND object_id = OBJECT_ID(N'psa.[timesheet_event]'))
+CREATE INDEX [ix_timesheet_event_sheet] ON psa.[timesheet_event] ([timesheet_id]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_time_entry_sheet' AND object_id = OBJECT_ID(N'psa.[time_entry]'))
+CREATE INDEX [ix_time_entry_sheet] ON psa.[time_entry] ([timesheet_id]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_recurrence_due' AND object_id = OBJECT_ID(N'psa.[recurrence]'))
+CREATE INDEX [ix_recurrence_due] ON psa.[recurrence] ([active], [next_due_on]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_approval_ticket' AND object_id = OBJECT_ID(N'psa.[approval]'))
+CREATE INDEX [ix_approval_ticket] ON psa.[approval] ([work_item_id]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_approval_approver' AND object_id = OBJECT_ID(N'psa.[approval]'))
+CREATE INDEX [ix_approval_approver] ON psa.[approval] ([approver], [status]);
 
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
@@ -3179,10 +3402,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 101 OR @Triggers <> 4 OR @Indexes < 37
+IF @Tables <> 107 OR @Triggers <> 4 OR @Indexes < 42
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 101), %d triggers (expected 4), %d indexes (expected at least 37). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 107), %d triggers (expected 4), %d indexes (expected at least 42). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -3210,6 +3433,9 @@ PRINT N'target is enforced until somebody with the authority says so.';
     DROP TRIGGER IF EXISTS psa.[ticket_close_requires_a_variation];
     DROP TRIGGER IF EXISTS psa.[patient_reference_needs_a_restricted_board];
     DROP TRIGGER IF EXISTS psa.[patient_reference_stays_on_a_restricted_board];
+    ALTER TABLE psa.[configuration] DROP CONSTRAINT IF EXISTS [FK_configuration_agreement_id];
+    ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_recurrence_id];
+    ALTER TABLE psa.[time_entry] DROP CONSTRAINT IF EXISTS [FK_time_entry_timesheet_id];
     ALTER TABLE psa.[ticket_schedule] DROP CONSTRAINT IF EXISTS [FK_ticket_schedule_location_id];
     ALTER TABLE psa.[ticket_schedule] DROP CONSTRAINT IF EXISTS [FK_ticket_schedule_status_id];
     ALTER TABLE psa.[board] DROP CONSTRAINT IF EXISTS [FK_board_default_work_type_id];
@@ -3227,6 +3453,12 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[approval];
+    DROP TABLE IF EXISTS psa.[recurrence];
+    DROP TABLE IF EXISTS psa.[role_grant];
+    DROP TABLE IF EXISTS psa.[member_capacity];
+    DROP TABLE IF EXISTS psa.[timesheet_event];
+    DROP TABLE IF EXISTS psa.[timesheet];
     DROP TABLE IF EXISTS psa.[agreement_item];
     DROP TABLE IF EXISTS psa.[agreement];
     DROP TABLE IF EXISTS psa.[ext_change];

@@ -21,18 +21,22 @@ from datetime import datetime
 from . import db
 
 MODULES = {"KNOWLEDGE": "Knowledge base", "PROJECTS": "Projects", "REPORTS": "Reports",
-           "SCHEDULE": "Schedule", "FINANCE": "Finance (BizBox)"}
+           "SCHEDULE": "Schedule", "FINANCE": "Finance (BizBox)", "TIME": "Timesheets"}
+# A module added after a role was written has no row for that role; the role
+# keeps working at this level until Setup says otherwise. Timesheets: everyone
+# keeps their own (WRITE); deciding them is ADMIN, given in Setup.
+DEFAULT_LEVEL = {"TIME": "WRITE"}
 LEVELS = ("NONE", "READ", "WRITE", "ADMIN")
 RANK = {level: i for i, level in enumerate(LEVELS)}
 
 # The starter roles, only into an empty table: once a person edits them they are theirs.
 STARTER = (
     ("TECHNICIAN", "Technician", 1, {"KNOWLEDGE": "WRITE", "PROJECTS": "WRITE", "REPORTS": "READ",
-                                    "SCHEDULE": "WRITE", "FINANCE": "READ"}),
+                                    "SCHEDULE": "WRITE", "FINANCE": "READ", "TIME": "WRITE"}),
     ("SERVICE_MANAGER", "Service manager", 0, {"KNOWLEDGE": "ADMIN", "PROJECTS": "ADMIN", "REPORTS": "ADMIN",
-                                               "SCHEDULE": "ADMIN", "FINANCE": "WRITE"}),
+                                               "SCHEDULE": "ADMIN", "FINANCE": "WRITE", "TIME": "ADMIN"}),
     ("READ_ONLY", "Read only", 0, {"KNOWLEDGE": "READ", "PROJECTS": "READ", "REPORTS": "READ",
-                                   "SCHEDULE": "READ", "FINANCE": "NONE"}),
+                                   "SCHEDULE": "READ", "FINANCE": "NONE", "TIME": "READ"}),
 )
 
 
@@ -40,17 +44,29 @@ class Refused(ValueError):
     """A sentence for the person; nothing was written."""
 
 
+def _carry_over(conn: sqlite3.Connection) -> None:
+    """040 -> 046: grants written into role_permission before Timesheets are
+    read once into role_grant, whose module column carries no list. Nothing is
+    deleted; role_permission stays, superseded (the port never drops a table)."""
+    if conn.execute("SELECT COUNT(*) FROM role_grant").fetchone()[0]:
+        return
+    for r in conn.execute("SELECT role_id, module, level FROM role_permission").fetchall():
+        conn.execute("INSERT OR IGNORE INTO role_grant (role_id, module, level) VALUES (?,?,?)",
+                     (r[0], r[1], r[2]))
+
+
 def ensure_roles(conn: sqlite3.Connection) -> None:
     """The starter roles, written on first use. OR IGNORE: two first requests
     on the threaded server can both see an empty table, and the second must
     not fail on the key the first just wrote."""
+    _carry_over(conn)
     if conn.execute("SELECT COUNT(*) FROM security_role").fetchone()[0]:
         return
     for rid, name, default, grants in STARTER:
         conn.execute("INSERT OR IGNORE INTO security_role (role_id, name, is_default, inactive) VALUES (?,?,?,0)",
                      (rid, name, default))
         for module in MODULES:
-            conn.execute("INSERT OR IGNORE INTO role_permission (role_id, module, level) VALUES (?,?,?)",
+            conn.execute("INSERT OR IGNORE INTO role_grant (role_id, module, level) VALUES (?,?,?)",
                          (rid, module, grants.get(module, "NONE")))
 
 
@@ -74,9 +90,9 @@ def level(conn, user, module: str) -> str:
     rid = role_of(conn, user.id)
     if rid is None:
         return "NONE"
-    row = conn.execute("SELECT level FROM role_permission WHERE role_id = ? AND module = ?",
+    row = conn.execute("SELECT level FROM role_grant WHERE role_id = ? AND module = ?",
                        (rid, module)).fetchone()
-    return row[0] if row else "NONE"
+    return row[0] if row else DEFAULT_LEVEL.get(module, "NONE")
 
 
 def levels(conn, user) -> dict[str, str]:
@@ -89,8 +105,8 @@ def levels(conn, user) -> dict[str, str]:
     rid = role_of(conn, user.id)
     if rid is None:
         return {m: "NONE" for m in MODULES}
-    got = {r[0]: r[1] for r in conn.execute("SELECT module, level FROM role_permission WHERE role_id = ?", (rid,))}
-    return {m: got.get(m, "NONE") for m in MODULES}
+    got = {r[0]: r[1] for r in conn.execute("SELECT module, level FROM role_grant WHERE role_id = ?", (rid,))}
+    return {m: got.get(m, DEFAULT_LEVEL.get(m, "NONE")) for m in MODULES}
 
 
 def allows(conn, user, module: str, need: str = "READ") -> bool:
@@ -109,7 +125,7 @@ def roles(conn) -> list[dict]:
     out = []
     for r in conn.execute("SELECT * FROM security_role ORDER BY inactive, name"):
         grants = {row["module"]: row["level"] for row in conn.execute(
-            "SELECT module, level FROM role_permission WHERE role_id = ?", (r["role_id"],))}
+            "SELECT module, level FROM role_grant WHERE role_id = ?", (r["role_id"],))}
         members = [m[0] for m in conn.execute("SELECT member FROM member_role WHERE role_id = ? ORDER BY member",
                                               (r["role_id"],))]
         out.append(dict(r) | {"grants": {m: grants.get(m, "NONE") for m in MODULES}, "members": members})
@@ -129,9 +145,9 @@ def add_role(conn, name: str, *, copy_from: str | None = None, at: datetime, act
         rid, n = f"{rid}_{n}", n + 1
     conn.execute("INSERT INTO security_role (role_id, name, is_default, inactive) VALUES (?,?,0,0)", (rid, name))
     base = {r["module"]: r["level"] for r in conn.execute(
-        "SELECT module, level FROM role_permission WHERE role_id = ?", (copy_from or "",))}
+        "SELECT module, level FROM role_grant WHERE role_id = ?", (copy_from or "",))}
     for module in MODULES:
-        conn.execute("INSERT INTO role_permission (role_id, module, level) VALUES (?,?,?)",
+        conn.execute("INSERT INTO role_grant (role_id, module, level) VALUES (?,?,?)",
                      (rid, module, base.get(module, "NONE")))
     _audit(conn, at=at, actor=actor, subject=rid, detail=f"role added: {name}" + (f", copied from {copy_from}" if base else ""))
     return rid
@@ -139,7 +155,7 @@ def add_role(conn, name: str, *, copy_from: str | None = None, at: datetime, act
 
 def save_grants(conn, role_id: str, grants: dict[str, str], *, at: datetime, actor: str) -> str:
     before = {r["module"]: r["level"] for r in conn.execute(
-        "SELECT module, level FROM role_permission WHERE role_id = ?", (role_id,))}
+        "SELECT module, level FROM role_grant WHERE role_id = ?", (role_id,))}
     if not conn.execute("SELECT 1 FROM security_role WHERE role_id = ?", (role_id,)).fetchone():
         raise Refused("No such role.")
     changed = []
@@ -149,8 +165,8 @@ def save_grants(conn, role_id: str, grants: dict[str, str], *, at: datetime, act
             continue
         if new not in LEVELS:
             raise Refused(f"{new} is not a level.")
-        conn.execute("DELETE FROM role_permission WHERE role_id = ? AND module = ?", (role_id, module))
-        conn.execute("INSERT INTO role_permission (role_id, module, level) VALUES (?,?,?)", (role_id, module, new))
+        conn.execute("DELETE FROM role_grant WHERE role_id = ? AND module = ?", (role_id, module))
+        conn.execute("INSERT INTO role_grant (role_id, module, level) VALUES (?,?,?)", (role_id, module, new))
         changed.append(f"{MODULES[module]} {before.get(module, 'NONE')} -> {new}")
     if changed:
         _audit(conn, at=at, actor=actor, subject=role_id, detail="; ".join(changed))

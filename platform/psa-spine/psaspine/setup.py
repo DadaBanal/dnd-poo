@@ -49,6 +49,7 @@ STARTER_STATUSES = (
     ("Scheduled", "RESOLUTION_PLAN", 0, 0, 1, 1, "A fix is planned — we will tell you when"),
     ("Waiting on Requester", "NO_ESCALATION", 0, 0, 1, 1, "We need something from you"),
     ("Waiting on Vendor", "NO_ESCALATION", 0, 0, 1, 1, "Waiting on a supplier"),
+    ("Awaiting approval", "NO_ESCALATION", 0, 0, 1, 1, "Waiting for an approval"),
     ("Resolved", "RESOLVED", 0, 0, 1, 1, "We think this is fixed — reply if it is not"),
     (">Closed", "RESOLVED", 0, 1, 0, 0, "Closed"),
 )

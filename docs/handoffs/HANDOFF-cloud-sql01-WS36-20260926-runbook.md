@@ -707,6 +707,105 @@ run again; there is nothing to seed).
   rerun there (MEASURED). That wording is the only difference SQL01 will see
   in the script when it pulls for 045.
 
+## Folded in after part 20 (29 Sep, later): schema 046, timesheets and time approval, and the gaps build
+
+Dada, 29 Sep, on the parity list: "do the gaps". Eight are being built in
+order; this is the first, and it comes with **one schema step, by the
+sitting-1 road** (`init` is safe to run again; nothing is seeded).
+
+- **Schema 046: `timesheet`, `timesheet_event`, `member_capacity`,
+  `role_grant`, and `time_entry.timesheet_id`.** Every time entry belongs to
+  the week (Monday to Sunday) of the day it was worked, by the person who
+  performed it. A sheet is OPEN, then SUBMITTED by that person, then APPROVED
+  or REJECTED (with a reason) by a Timesheets administrator who is not that
+  person; reopened only with a note; every step appended and audited. A
+  submitted or approved week takes no new entry. `/time` is the page; Reports
+  gains utilisation by member; the uplift evidence says how many of its hours
+  sit on an approved sheet.
+- **`role_grant` supersedes `role_permission`.** 040's table listed its five
+  modules in a CHECK, so the sixth module (Timesheets) could not be written
+  into it on either store: OR IGNORE swallowed the refusal, MEASURED on the
+  test container. `role_grant` has the same key and levels and no list. The
+  desk reads the rows already in `role_permission` across, once, the first
+  time a role is looked up after the pull (`security.ensure_roles`); nothing
+  is deleted, and `role_permission` stays, superseded and unread, because the
+  port never drops a table. **Nothing for SQL01 to copy by hand.**
+- **Apply.** A COPY_ONLY backup; the preview; stop PSA-Desk; the port as
+  SQL01's sysadmin with `@Apply = 1` and `@AllowExisting = 1`; pull; start.
+  **Pass:** tables **101 → 105**, columns **946 → 976** (30: 10 in `timesheet`
+  and 4 parsed dates beside them, 6 in `timesheet_event` and 1 parsed, 4 in
+  `member_capacity` and 1 parsed, 3 in `role_grant`, 1 on `time_entry`),
+  indexes **37 → 39** (`ix_timesheet_event_sheet`, `ix_time_entry_sheet`),
+  triggers 4 → 4, no existing row count changed, `/login` answers. (MEASURED
+  on the SQL Server test container at this head after the suite applied the
+  port: 105 tables, 976 columns, 39 CREATE INDEX, 4 triggers.) Then `init` as
+  the task account, as before.
+- **Pass, for Dada:** Time appears in the desk's menu; your own week lists the
+  time you booked; Submit for approval locks it (booking more time on that
+  week is refused in a sentence); a Service manager who is not you sees it
+  under *Waiting for a decision* and approves it; you cannot approve your own;
+  Setup › Security roles shows a Timesheets column. Reports shows
+  *Utilisation, by member* once anyone has booked time.
+- **Who decides** is the Timesheets level: WRITE keeps your own sheet (every
+  role's default, so nothing changes for a role written before 046), ADMIN
+  decides others' and sets hours a week. Service manager ships with ADMIN.
+  Whether Technicians may approve each other is Dada's, in Setup.
+- **Schema 047, in the same sitting: `recurrence`, and `ticket.recurrence_id`.**
+  Recurring tickets: a board template raised on a cadence by `run-rules`
+  (PSA-Rules, every minute), once per due day however long the runner was
+  down, with the template's tasks, an owner, the machine, and a *Raised by*
+  line on the ticket; Setup › Recurring tickets to add, run now, pause. The
+  046 and 047 steps go on together: **Pass after both:** tables **101 → 106**,
+  columns **946 → 999**, indexes **37 → 40** (`ix_recurrence_due` added to
+  the two above), triggers 4 → 4, no existing row count changed (MEASURED on
+  the test container: 106 tables, 999 columns, 40 CREATE INDEX, 4 triggers).
+  **Pass, for Dada:** Setup shows *Recurring tickets (0 active)*; a board
+  administrator adds one from a template with a first due day of today, and
+  the next PSA-Rules run raises its ticket, tasks and all, with the line
+  *Raised by the recurrence …* on the ticket's Details card; *Run now* raises
+  one straight away.
+- **Schema 048, in the same sitting: seven columns on `configuration`**
+  (purchased_on, warranty_ends_on, installed_on, vendor, purchase_ref,
+  location, agreement_id): the life of a machine, edited on its page, with
+  warranty tiles on the list, a maintenance-record CSV per asset (and per
+  list) for a DOH inspection, and Configurations and Maintenance datasets in
+  the report writer. All NULL-able; nothing to fill. **Pass after 046, 047
+  and 048 together:** tables **101 → 106**, columns **946 → 1006** (the 7 of
+  048 are all declared: the port adds no parsed date column beside a column
+  it adds with ALTER, only inside a CREATE TABLE), indexes **37 → 40**,
+  triggers 4 → 4, no existing row count changed (MEASURED on the test
+  container: 106 tables, 1006 columns, 40 CREATE INDEX, 4 triggers). **Pass,
+  for Dada:** a printer's page takes a warranty end date and shows it; the
+  Configurations list counts it under *Warranty ends in 90 days* or *Out of
+  warranty*; *Maintenance record (CSV)* on the page downloads its tickets with
+  hours and visits.
+- **Schema 049, in the same sitting: `approval`, `department.approver`,
+  `catalogue_item.needs_approval`.** Request approvals: a department names
+  its approver in Setup › Departments; a catalogue pair can require one; a
+  technician can ask anyone from the ticket's Approval card. The ticket parks
+  in **Awaiting approval** (a new starter status: boards made before this
+  pull do not have it, so on them the request is recorded and the ticket
+  stays where it is until Dada adds the status under Setup › Statuses, with
+  *Waiting* ticked), the approver gets one email pointing at the portal's
+  Approvals page, decides there with a reason, and the ticket returns. All
+  NULL-able or defaulted; nothing to fill. **Pass after 046 to 049 together:**
+  tables **101 → 107**, columns **946 → 1021** (049 adds 15: 11 in `approval`
+  and 2 parsed dates beside them, 1 on `department`, 1 on `catalogue_item`),
+  indexes **37 → 42** (`ix_approval_ticket`, `ix_approval_approver` added),
+  triggers 4 → 4, no existing row count changed (MEASURED on the test
+  container at this head after `init --reset` on a spare database: 107
+  tables, 1021 columns, 42 CREATE INDEX, 4 triggers). **Pass, for Dada:**
+  Setup › Departments shows an Approver column and keeps an email; a pair
+  toggled to *Approval: yes* makes a new ticket with that pair show
+  *approval requested from …* in its history and, once the board has the
+  status, sit in Awaiting approval; the approver, signed in to the portal,
+  sees it under Approvals and their Approve puts *Approved by …* on the
+  ticket and brings it back; a stranger's portal shows *Nothing waits for
+  you*.
+- **Counts:** 569 tests at this head, SQLite OK. 046 alone ran on SQL Server
+  in this container: 554 run, OK, 2 skipped (MEASURED); the run with all
+  four is in the fold-in that follows. The drift gate passes.
+
 ## When a step does not pass
 
 Every handoff step has a **Pass** line. This is what to do when it is not

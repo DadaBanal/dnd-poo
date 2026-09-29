@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import csv
 import io
+from datetime import date
 
 from ... import metrics
 from .. import templates as t
@@ -159,6 +160,7 @@ def index(ctx):
                      cls="" if m["resolve_met_total"] is None or m["resolve_met_total"] >= 80 else "warn")
              + _tile(fmt(m["median_respond"]), "Median time to respond")
              + _tile(fmt(m["median_resolve"]), "Median time to resolve") + "</div>")
+    util = _utilisation_card(ctx, months)
     sat = ""
     if m["satisfaction"] is not None:
         sat = (f"<div class=card><h3>{t.icon('sparkle')}Satisfaction</h3><div class=n style='font-size:26px;font-weight:650'>"
@@ -184,9 +186,34 @@ def index(ctx):
         f"<div class=card><h3>{t.icon('mail')}Opened, by source</h3>"
         f"{chart_bars(m['by_source'], 'Opened by source', names={s: s.replace('_', '-').title() for s, _ in m['by_source']})}</div>"
         f"<div class=card><h3>{t.icon('alert')}Opened, by priority</h3>{chart_bars(m['by_priority'], 'Opened by priority')}</div>"
-        "</div>" + sat
+        "</div>" + sat + util
         + f"<div class=card><h3>{t.icon('rows')}The table</h3>{table}</div>")
     return Response(body=t.page("Reports", body, user=ctx.user, active="reports"))
+
+
+def _utilisation_card(ctx, months: int) -> str:
+    """Hours per member over the period, how many are on an approved timesheet,
+    and the share of their hours a week (046). Per person, across every board:
+    a person's hours are theirs, not a board's, and the ticket they went on is
+    not named here."""
+    from ... import timesheets
+    until = ctx.now.date()
+    y, mo = until.year, until.month - (months - 1)
+    while mo < 1:
+        y, mo = y - 1, mo + 12
+    since = date(y, mo, 1)
+    rows = timesheets.utilisation(ctx.conn, since=since, until=until)
+    if not rows:
+        return ""
+    trs = "".join(
+        f"<tr><td>{t.esc(r['member'])}</td><td class=right>{r['hours']:g}</td><td class=right>{r['approved']:g}</td>"
+        f"<td class=right>{r['capacity']:g}</td><td class=right>{'—' if r['percent'] is None else str(r['percent']) + '%'}</td></tr>"
+        for r in rows)
+    return (f"<div class=card><h3>{t.icon('clock')}Utilisation, by member</h3>"
+            "<div class=tablewrap><table><thead><tr><th>Member</th><th class=right>Hours</th><th class=right>Approved</th>"
+            "<th class=right>Capacity</th><th class=right>Utilisation</th></tr></thead><tbody>" + trs + "</tbody></table></div>"
+            f"<p class=why>Since {since.isoformat()}: hours recorded, the hours on an approved timesheet, and each "
+            "person's hours a week (Timesheets) over the span. Every board, not only the one chosen above.</p></div>")
 
 
 def export_csv(ctx):

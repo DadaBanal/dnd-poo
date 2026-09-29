@@ -66,6 +66,34 @@ DATASETS = {
                     "starts": ("p.starts_on", "Starts"), "ends": ("p.ends_on", "Ends"),
                     "budget": ("p.budget_hours", "Budget hours")},
     },
+    "CONFIGURATIONS": {
+        "label": "Configurations",
+        "from": " FROM configuration c JOIN entity e ON e.entity_id = c.entity_id"
+                " LEFT JOIN contact ct ON ct.contact_id = c.contact_id LEFT JOIN agreement ag ON ag.agreement_id = c.agreement_id",
+        "board": None, "date": "c.created_at", "hours": None, "state": "c.status",
+        "columns": {"id": ("c.configuration_id", "Configuration"), "name": ("c.name", "Name"), "type": ("c.config_type", "Type"),
+                    "company": ("e.name", "Company"), "status": ("c.status", "Status"), "contact": ("ct.display_name", "Contact"),
+                    "location": ("c.location", "Location"), "vendor": ("c.vendor", "Vendor"),
+                    "purchased": ("c.purchased_on", "Purchased"), "warranty": ("c.warranty_ends_on", "Warranty ends"),
+                    "installed": ("c.installed_on", "Installed"), "agreement": ("ag.name", "Agreement"),
+                    "purchase_ref": ("c.purchase_ref", "Purchase ref"), "serial": ("c.serial_number", "Serial"),
+                    "model": ("c.model", "Model"), "seen": ("c.last_seen_at", "Last seen")},
+    },
+    "MAINTENANCE": {
+        "label": "Maintenance: tickets by configuration",
+        "from": " FROM ticket_configuration tc JOIN configuration c ON c.configuration_id = tc.configuration_id"
+                " JOIN ticket t ON t.work_item_id = tc.work_item_id JOIN work_item w ON w.work_item_id = t.work_item_id"
+                " JOIN board b ON b.board_id = t.board_id"
+                " LEFT JOIN (SELECT work_item_id, SUM(COALESCE(actual_hours, band_hours)) AS h FROM time_entry"
+                " GROUP BY work_item_id) th ON th.work_item_id = t.work_item_id",
+        "board": "t.board_id", "date": "t.opened_at", "hours": "COALESCE(th.h, 0)", "state": "t.state",
+        "columns": {"configuration": ("c.name", "Configuration"), "type": ("c.config_type", "Type"),
+                    "serial": ("c.serial_number", "Serial"), "ticket": ("t.work_item_id", "Ticket"),
+                    "summary": ("w.name", "Summary"), "board": ("b.display_name", "Board"), "kind": ("t.record_type", "Ticket type"),
+                    "state": ("t.state", "State"), "opened": ("t.opened_at", "Opened"), "closed": ("t.closed_at", "Closed"),
+                    "owner": ("t.owner", "Owner"), "hours": ("COALESCE(th.h, 0)", "Hours"),
+                    "month": ("SUBSTR(t.opened_at, 1, 7)", "Month opened")},
+    },
     "KNOWLEDGE": {
         "label": "Knowledge articles",
         "from": " FROM kb_article a LEFT JOIN board b ON b.board_id = a.board_id",
@@ -109,15 +137,18 @@ def run(conn: sqlite3.Connection, dataset: str, columns, group_by: str | None, f
     cols, group_by = clean(dataset, columns, group_by)
     where, args = [], []
     boards = sorted(boards)
-    if dataset in ("PROJECTS", "KNOWLEDGE"):
+    if ds["board"] is None:
+        where.append("1 = 1")                       # a machine is on no board; the desk's fulfillers see them all
+    elif dataset in ("PROJECTS", "KNOWLEDGE"):
         # a project or article on no board is everyone's; on a board, its members'
         where.append(f"({ds['board']} IS NULL" + (f" OR {ds['board']} IN ({','.join('?' * len(boards))})" if boards else "") + ")")
+        args += boards
     else:
         if not boards:
             return {"headers": [], "rows": [], "capped": False, "boards": {}}
         where.append(f"{ds['board']} IN ({','.join('?' * len(boards))})")
-    args += boards
-    if filters.get("board"):
+        args += boards
+    if filters.get("board") and ds["board"]:
         where.append(f"{ds['board']} = ?")
         args.append(filters["board"])
     if _d(filters.get("from")):
@@ -133,7 +164,7 @@ def run(conn: sqlite3.Connection, dataset: str, columns, group_by: str | None, f
     # which restricted boards' tickets the rows come from, so the view can audit
     # the read (§6.1 requirement 4); a project or article list names no ticket
     per_board = {}
-    if dataset not in ("PROJECTS", "KNOWLEDGE"):
+    if ds["board"] and dataset not in ("PROJECTS", "KNOWLEDGE"):
         per_board = {r[0]: r[1] for r in conn.execute(
             f"SELECT {ds['board']}, COUNT(*){ds['from']}{tail} GROUP BY {ds['board']}", args)}
     if group_by:

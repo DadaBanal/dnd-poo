@@ -6110,7 +6110,7 @@ class BoardSetupTest(unittest.TestCase):
 
     def test_the_starter_makes_a_board_ready(self):
         r = setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
-        self.assertEqual((r["statuses"], r["targets"]), (8, 12))
+        self.assertEqual((r["statuses"], r["targets"]), (9, 12))                                  # 049 added Awaiting approval
         self.assertEqual(setup.readiness(self.conn, "IT_HELP"), [])
         # Every starter target is measured, never promised.
         self.assertEqual(self.conn.execute(
@@ -6278,7 +6278,7 @@ class ManyBoardsTest(unittest.TestCase):
         bid = setup.create_board(self.conn, display_name="Biomedical", fulfiller_group="Biomed",
                                  creator="dada", at=self.at, copy_from="IT_HELP")
         self.assertEqual(self.conn.execute(
-            "SELECT COUNT(*) FROM board_status WHERE board_id = ?", (bid,)).fetchone()[0], 8)
+            "SELECT COUNT(*) FROM board_status WHERE board_id = ?", (bid,)).fetchone()[0], 9)      # 049 added Awaiting approval
         self.assertEqual(self.conn.execute(
             "SELECT target_minutes FROM sla_target WHERE board_id = ? AND priority='P1'"
             " AND clock='RESPOND'", (bid,)).fetchone()[0], 5)
@@ -9088,6 +9088,918 @@ class SqlServerDialectTest(unittest.TestCase):
     def test_backup_refuses_a_sql_server_target(self):
         with self.assertRaises(ValueError):
             db.backup("Driver={x};Server=h;Database=PMC_PSA", "/tmp/nowhere.bak")
+
+
+class TimesheetsTest(unittest.TestCase):
+    """046: a week of one person's time, submitted by them and decided by
+    somebody else; a submitted week takes no more time; utilisation against
+    hours a week; the uplift evidence says how much an approver signed."""
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+
+    def setUp(self) -> None:
+        from psaspine import security
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = str(_target(self.tmp))
+        conn = _fresh(self.tmp)
+        self.at = datetime(2026, 9, 30, 9, 0)                     # a Wednesday
+        setup.apply_starter(conn, "IT_HELP", actor="t", at=self.at)
+        conn.executescript(
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','alice','ADMIN');"
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','bob','WORK');"
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','dave','WORK');")
+        security.ensure_roles(conn)
+        security.assign(conn, "alice", "SERVICE_MANAGER", at=self.at, actor="root")    # TIME ADMIN
+        security.assign(conn, "dave", "SERVICE_MANAGER", at=self.at, actor="root")
+        self.wid = tickets.open_ticket(conn, board_id="IT_HELP", summary="PC slow", impact="I3", urgency="U3",
+                                       requested_by=None, at=self.at, entity_id="PMC")
+        conn.commit()
+        conn.close()
+        self.config = Config(session_secret=_secrets.token_bytes(32))
+        self.raw = make_app(self.db_path, config=self.config, clock=lambda: self.at)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _book(self, who, day, hours):
+        conn = db.connect(self.db_path)
+        try:
+            board.add_time(conn, self.wid, at=self.at, actor=who, charge_method="INCLUDED_IN_MONTHLY_FEE",
+                           actual_hours=hours, worked_on=day)
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _sheet(self, conn, member):
+        from psaspine import timesheets
+        return timesheets.get(conn, member, date(2026, 9, 28))
+
+    def test_grants_written_before_046_are_read_across_once_and_the_new_module_lands(self):
+        # A desk that ran 040-045 holds its roles in role_permission, whose CHECK
+        # lists five modules. The first look-up after 046 copies them into
+        # role_grant, where Timesheets can be written too, and nothing is lost.
+        from psaspine import security
+        conn = db.connect(self.db_path)
+        try:
+            conn.execute("DELETE FROM role_grant")
+            conn.execute("DELETE FROM member_role")
+            conn.execute("DELETE FROM security_role")
+            conn.execute("INSERT INTO security_role (role_id, name, is_default, inactive) VALUES ('OLD', 'Old role', 1, 0)")
+            conn.execute("INSERT INTO role_permission (role_id, module, level) VALUES ('OLD', 'FINANCE', 'WRITE')")
+            conn.execute("INSERT INTO role_permission (role_id, module, level) VALUES ('OLD', 'REPORTS', 'READ')")
+            conn.commit()
+            user = webauth.User(id="zed", name="zed")
+            self.assertEqual(security.levels(conn, user)["FINANCE"], "WRITE")     # carried across
+            self.assertEqual(security.levels(conn, user)["TIME"], "WRITE")        # the default for a role that predates it
+            security.save_grants(conn, "OLD", {"FINANCE": "WRITE", "REPORTS": "READ", "TIME": "ADMIN"}, at=self.at, actor="root")
+            conn.commit()
+            self.assertEqual(security.level(conn, user, "TIME"), "ADMIN")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM role_permission").fetchone()[0], 2)   # untouched
+            self.assertEqual(conn.execute("SELECT level FROM role_grant WHERE role_id = 'OLD' AND module = 'TIME'").fetchone()[0], "ADMIN")
+        finally:
+            conn.close()
+
+    def test_a_week_starts_on_monday_and_an_entry_joins_its_open_sheet(self):
+        from psaspine import timesheets
+        self.assertEqual(timesheets.week_of("2026-09-30"), date(2026, 9, 28))
+        self.assertEqual(timesheets.week_of(date(2026, 10, 4)), date(2026, 9, 28))     # a Sunday
+        self.assertEqual(timesheets.week_of(datetime(2026, 9, 28, 0, 1)), date(2026, 9, 28))
+        with self.assertRaises(timesheets.Refused):
+            timesheets.week_of("next tuesday")
+        self._book("bob", "2026-09-29", 2)
+        conn = db.connect(self.db_path)
+        try:
+            sheet = self._sheet(conn, "bob")
+            self.assertEqual((sheet["status"], sheet["week_start"]), ("OPEN", "2026-09-28"))
+            entry = conn.execute("SELECT timesheet_id FROM time_entry").fetchone()
+            self.assertEqual(entry["timesheet_id"], sheet["timesheet_id"])
+            rows = timesheets.entries(conn, "bob", date(2026, 9, 28))
+            self.assertEqual([float(r["hours"]) for r in rows], [2.0])
+            self.assertEqual(timesheets.totals(rows), {"days": {"2026-09-29": 2.0},
+                                                       "by_charge": {"INCLUDED_IN_MONTHLY_FEE": 2.0}, "total": 2.0})
+        finally:
+            conn.close()
+
+    def test_a_submitted_week_takes_no_more_time_until_someone_reopens_it_with_a_reason(self):
+        from psaspine import timesheets
+        self._book("bob", "2026-09-29", 2)
+        conn = db.connect(self.db_path)
+        try:
+            with self.assertRaises(timesheets.Refused):
+                timesheets.submit(conn, "bob", date(2026, 10, 5), at=self.at, actor="bob")    # not yet begun
+            sheet = timesheets.submit(conn, "bob", date(2026, 9, 28), at=self.at, actor="bob")
+            self.assertEqual((sheet["status"], sheet["submitted_by"]), ("SUBMITTED", "bob"))
+            conn.commit()
+            with self.assertRaises(board.EffortRefused) as caught:
+                board.add_time(conn, self.wid, at=self.at, actor="bob", charge_method="INCLUDED_IN_MONTHLY_FEE",
+                               actual_hours=1, worked_on="2026-09-30")
+            self.assertIn("submitted", str(caught.exception))
+            conn.rollback()
+            with self.assertRaises(timesheets.Refused):
+                timesheets.reopen(conn, sheet["timesheet_id"], at=self.at, actor="alice", note="")
+            sheet = timesheets.reopen(conn, sheet["timesheet_id"], at=self.at, actor="alice", note="Missed Wednesday")
+            self.assertEqual(sheet["status"], "OPEN")
+            board.add_time(conn, self.wid, at=self.at, actor="bob", charge_method="INCLUDED_IN_MONTHLY_FEE",
+                           actual_hours=1, worked_on="2026-09-30")
+            conn.commit()
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM time_entry WHERE timesheet_id = ?",
+                                          (sheet["timesheet_id"],)).fetchone()[0], 2)
+            actions = [e["action"] for e in timesheets.history(conn, sheet["timesheet_id"])]
+            self.assertEqual(actions, ["SUBMIT", "REOPEN"])
+        finally:
+            conn.close()
+
+    def test_nobody_decides_their_own_sheet_and_a_rejection_says_why(self):
+        from psaspine import timesheets
+        self._book("alice", "2026-09-28", 8)
+        conn = db.connect(self.db_path)
+        try:
+            sheet = timesheets.submit(conn, "alice", date(2026, 9, 28), at=self.at, actor="alice")
+            sid = sheet["timesheet_id"]
+            with self.assertRaises(timesheets.Refused) as own:
+                timesheets.decide(conn, sid, "APPROVE", at=self.at, actor="alice")
+            self.assertIn("own timesheet", str(own.exception))
+            with self.assertRaises(timesheets.Refused):
+                timesheets.decide(conn, sid, "REJECT", at=self.at, actor="dave")               # no reason
+            with self.assertRaises(timesheets.Refused):
+                timesheets.decide(conn, sid, "MAYBE", at=self.at, actor="dave")
+            sheet = timesheets.decide(conn, sid, "REJECT", at=self.at, actor="dave", note="Monday is 8 h on one ticket?")
+            self.assertEqual((sheet["status"], sheet["decided_by"], sheet["note"]),
+                             ("REJECTED", "dave", "Monday is 8 h on one ticket?"))
+            conn.commit()
+            # a rejected week is open for corrections, then goes round again
+            board.add_time(conn, self.wid, at=self.at, actor="alice", charge_method="INCLUDED_IN_MONTHLY_FEE",
+                           actual_hours=1, worked_on="2026-09-29")
+            sheet = timesheets.submit(conn, "alice", date(2026, 9, 28), at=self.at, actor="alice")
+            self.assertEqual(sheet["status"], "SUBMITTED")
+            with self.assertRaises(timesheets.Refused):
+                timesheets.decide(conn, sid, "APPROVE", at=self.at, actor="dave", note="x") if False else \
+                    timesheets.reopen(conn, 999999, at=self.at, actor="dave", note="no such")
+            sheet = timesheets.decide(conn, sid, "APPROVE", at=self.at, actor="dave")
+            self.assertEqual(sheet["status"], "APPROVED")
+            with self.assertRaises(timesheets.Refused):
+                timesheets.decide(conn, sid, "APPROVE", at=self.at, actor="dave")              # decided already
+            conn.commit()
+            self.assertEqual([e["action"] for e in timesheets.history(conn, sid)],
+                             ["SUBMIT", "REJECT", "SUBMIT", "APPROVE"])
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'TIMESHEET'").fetchone()[0], 4)
+            self.assertEqual(len(timesheets.waiting(conn)), 0)
+        finally:
+            conn.close()
+
+    def test_submitting_stamps_the_entries_written_before_this_step(self):
+        from psaspine import timesheets
+        conn = db.connect(self.db_path)
+        try:
+            conn.execute("INSERT INTO time_entry (work_item_id, entity_id, worked_on, band_hours, performed_by,"
+                         " entered_by, charge_method) VALUES (?,?,?,?,?,?,?)",
+                         (self.wid, "PMC", "2026-09-29", 2, "bob", "bob", "INCLUDED_IN_MONTHLY_FEE"))
+            conn.commit()
+            self.assertIsNone(conn.execute("SELECT timesheet_id FROM time_entry").fetchone()[0])
+            sheet = timesheets.submit(conn, "bob", date(2026, 9, 28), at=self.at, actor="bob")
+            conn.commit()
+            self.assertEqual(conn.execute("SELECT timesheet_id FROM time_entry").fetchone()[0], sheet["timesheet_id"])
+            waiting = timesheets.waiting(conn)
+            self.assertEqual([(w["member"], float(w["hours"])) for w in waiting], [("bob", 2.0)])
+        finally:
+            conn.close()
+
+    def test_utilisation_is_hours_against_hours_a_week_and_says_what_is_approved(self):
+        from psaspine import timesheets
+        self._book("bob", "2026-09-28", 8)
+        self._book("bob", "2026-09-29", 4)
+        conn = db.connect(self.db_path)
+        try:
+            week = (date(2026, 9, 28), date(2026, 10, 4))
+            self.assertEqual(timesheets.capacity(conn, "bob"), 40.0)
+            u = timesheets.utilisation(conn, since=week[0], until=week[1])
+            self.assertEqual(u, [{"member": "bob", "hours": 12.0, "approved": 0.0, "capacity": 40.0, "percent": 30}])
+            sheet = timesheets.submit(conn, "bob", week[0], at=self.at, actor="bob")
+            timesheets.decide(conn, sheet["timesheet_id"], "APPROVE", at=self.at, actor="alice")
+            timesheets.set_capacity(conn, "bob", "20", at=self.at, actor="alice")
+            conn.commit()
+            u = timesheets.utilisation(conn, since=week[0], until=week[1])
+            self.assertEqual(u, [{"member": "bob", "hours": 12.0, "approved": 12.0, "capacity": 20.0, "percent": 60}])
+            for bad in ("abc", "0", "200"):
+                with self.assertRaises(timesheets.Refused):
+                    timesheets.set_capacity(conn, "bob", bad, at=self.at, actor="alice")
+            self.assertIn("bob", timesheets.members(conn))
+            text = reports.uplift_evidence(conn, as_of=date(2026, 10, 5))
+            self.assertIn("Time approval: 12 h of 12 h that count to capacity sit on an approved timesheet (100%)", text)
+        finally:
+            conn.close()
+
+    def test_the_page_is_your_own_week_and_an_administrators_view_of_everyone(self):
+        from psaspine import security
+        self._book("bob", "2026-09-29", 2)
+        bob, alice = self._cookie_for("bob"), self._cookie_for("alice")
+        status, _, body = self._call("GET", "/time", cookie=bob)
+        self.assertEqual(status, "200 OK")
+        self.assertIn("Week of 2026-09-28 to 2026-10-04 · bob", body)
+        self.assertIn("Submit for approval", body)
+        self.assertNotIn("Waiting for a decision", body)
+        self.assertIn('href="/time"', body)                                   # in the nav
+        status, _, _ = self._call("GET", "/time", cookie=bob, query="member=alice")
+        self.assertEqual(status, "403 Forbidden")
+        status, _, body = self._call("GET", "/time", cookie=alice, query="member=bob&week=2026-10-01")
+        self.assertEqual(status, "200 OK")
+        self.assertIn("Waiting for a decision", body)
+        self.assertIn("Hours a week", body)
+        self.assertIn(f"/ticket/{self.wid}", body)
+        # a role with no Timesheets level sees no Time in the nav and no page
+        conn = db.connect(self.db_path)
+        rid = security.add_role(conn, "Auditor", at=self.at, actor="root")
+        security.save_grants(conn, rid, {m: "NONE" for m in security.MODULES}, at=self.at, actor="root")
+        security.assign(conn, "eve", rid, at=self.at, actor="root")
+        conn.execute("INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','eve','READ')")
+        conn.commit()
+        conn.close()
+        eve = self._cookie_for("eve")
+        status, _, body = self._call("GET", "/", cookie=eve)
+        self.assertNotIn('href="/time"', body)
+        status, _, _ = self._call("GET", "/time", cookie=eve)
+        self.assertEqual(status, "403 Forbidden")
+
+    def test_submit_and_decide_from_the_page_and_never_your_own(self):
+        import urllib.parse as up
+        self._book("bob", "2026-09-29", 2)
+        bob, alice = self._cookie_for("bob"), self._cookie_for("alice")
+        status, headers, _ = self._call("POST", "/time/submit", cookie=bob, form={"member": "bob", "week": "2026-09-30"})
+        self.assertEqual(status, "303 See Other")
+        self.assertIn("msg=Submitted+for+approval", dict(headers)["Location"])
+        conn = db.connect(self.db_path)
+        sid = conn.execute("SELECT timesheet_id FROM timesheet WHERE member = 'bob'").fetchone()[0]
+        conn.close()
+        # bob cannot decide (WRITE, not ADMIN); alice can, and the page then says so
+        status, _, _ = self._call("POST", "/time/decide", cookie=bob,
+                                  form={"member": "bob", "week": "2026-09-30", "timesheet_id": sid, "decision": "APPROVE"})
+        self.assertEqual(status, "403 Forbidden")
+        status, headers, _ = self._call("POST", "/time/decide", cookie=alice,
+                                        form={"member": "bob", "week": "2026-09-30", "timesheet_id": sid, "decision": "APPROVE"})
+        self.assertEqual(status, "303 See Other")
+        self.assertIn("msg=Approved", dict(headers)["Location"])
+        status, _, body = self._call("GET", "/time", cookie=alice, query="member=bob&week=2026-09-30")
+        self.assertIn("Approved", body)
+        self.assertIn("Reopen", body)
+        # alice's own week: submitted by her, refused to her
+        self._book("alice", "2026-09-28", 3)
+        self._call("POST", "/time/submit", cookie=alice, form={"member": "alice", "week": "2026-09-28"})
+        conn = db.connect(self.db_path)
+        own = conn.execute("SELECT timesheet_id FROM timesheet WHERE member = 'alice'").fetchone()[0]
+        conn.close()
+        status, headers, _ = self._call("POST", "/time/decide", cookie=alice,
+                                        form={"member": "alice", "week": "2026-09-28", "timesheet_id": own, "decision": "APPROVE"})
+        self.assertEqual(status, "303 See Other")
+        self.assertIn("own timesheet", up.unquote_plus(dict(headers)["Location"]))
+        status, _, body = self._call("GET", "/reports", cookie=alice)
+        self.assertEqual(status, "200 OK")
+        self.assertIn("Utilisation, by member", body)
+        self.assertIn("<td>bob</td>", body)
+
+
+
+class RecurringTest(unittest.TestCase):
+    """047: a board template raised on a cadence by the minute runner, once
+    per due day however long the runner was down, with the template's tasks,
+    an owner, the machine, and a line on the ticket saying so."""
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+
+    def setUp(self) -> None:
+        from psaspine import configurations
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = str(_target(self.tmp))
+        conn = _fresh(self.tmp)
+        self.at = datetime(2026, 9, 30, 9, 0)
+        setup.apply_starter(conn, "IT_HELP", actor="t", at=self.at)
+        conn.executescript(
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','alice','ADMIN');"
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','bob','WORK');"
+            "INSERT INTO ticket_template (template_id,board_id,name,summary,record_type,description,inactive,created_at,created_by)"
+            " VALUES ('TPL1','IT_HELP','Monthly analyser check','Analyser monthly check','SERVICE_REQUEST','Run the checklist.',0,'2026-09-01 09:00','alice');"
+            "INSERT INTO ticket_template_task (template_id,sort_order,text) VALUES ('TPL1',1,'Clean the sample probe');"
+            "INSERT INTO ticket_template_task (template_id,sort_order,text) VALUES ('TPL1',2,'Run the calibration');")
+        self.cid = configurations.create(conn, name="LAB-ANALYSER-01", entity_id="PMC", config_type="OTHER",
+                                         at=self.at, actor="alice")
+        conn.commit()
+        conn.close()
+        self.config = Config(session_secret=_secrets.token_bytes(32))
+        self.raw = make_app(self.db_path, config=self.config, clock=lambda: self.at)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_the_next_due_day_keeps_the_day_the_series_was_set_on(self):
+        from psaspine import recurring
+        a = recurring.advance
+        self.assertEqual(a(date(2026, 1, 31), "MONTHLY", anchor_day=31), date(2026, 2, 28))
+        self.assertEqual(a(date(2026, 2, 28), "MONTHLY", anchor_day=31), date(2026, 3, 31))
+        self.assertEqual(a(date(2026, 11, 30), "QUARTERLY", anchor_day=30), date(2027, 2, 28))
+        self.assertEqual(a(date(2028, 2, 29), "YEARLY", anchor_day=29), date(2029, 2, 28))
+        self.assertEqual(a(date(2026, 9, 30), "WEEKLY", 2), date(2026, 10, 14))
+        self.assertEqual(a(date(2026, 9, 30), "DAILY", 3), date(2026, 10, 3))
+        self.assertEqual(a(date(2026, 12, 15), "MONTHLY", 2, anchor_day=15), date(2027, 2, 15))
+        self.assertEqual(recurring.cadence_words("QUARTERLY", 1), "Every quarter")
+        self.assertEqual(recurring.cadence_words("WEEKLY", 2), "Every 2 weeks")
+
+    def test_a_recurrence_is_refused_in_a_sentence_when_it_cannot_raise_a_ticket(self):
+        from psaspine import recurring
+        conn = db.connect(self.db_path)
+        try:
+            good = dict(name="Monthly analyser check", template_id="TPL1", cadence="MONTHLY", first_due_on="2026-10-01",
+                        entity_id="PMC", at=self.at, actor="alice")
+            for bad in ({"template_id": "NOPE"}, {"cadence": "FORTNIGHTLY"}, {"every_n": "0"}, {"every_n": "x"},
+                        {"first_due_on": "soon"}, {"owner": "carol"}, {"entity_id": ""}, {"impact": "I9"},
+                        {"name": "  "}, {"configuration_id": "CFG-none"}, {"contact_id": "who"}):
+                with self.assertRaises(recurring.Refused, msg=str(bad)):
+                    recurring.create(conn, **{**good, **bad})
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM recurrence").fetchone()[0], 0)
+        finally:
+            conn.close()
+
+    def test_the_runner_raises_once_with_the_tasks_and_moves_the_due_day_past_today(self):
+        from psaspine import recurring
+        conn = db.connect(self.db_path)
+        try:
+            rid = recurring.create(conn, name="Monthly analyser check", template_id="TPL1", cadence="MONTHLY",
+                                   first_due_on="2026-07-01", owner="bob", entity_id="PMC", configuration_id=self.cid,
+                                   at=self.at, actor="alice")
+            conn.commit()
+            raised = recurring.raise_due(conn, at=self.at)                       # three months overdue
+            self.assertEqual(len(raised), 1)
+            wid = raised[0]["work_item_id"]
+            self.assertEqual(raised[0]["next_due_on"], "2026-10-01")               # once, and past today
+            tk = conn.execute("SELECT owner, recurrence_id, board_id FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()
+            self.assertEqual((tk["owner"], tk["recurrence_id"], tk["board_id"]), ("bob", rid, "IT_HELP"))
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM ticket_task WHERE work_item_id = ?", (wid,)).fetchone()[0], 2)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM ticket_configuration WHERE work_item_id = ? AND configuration_id = ?",
+                                          (wid, self.cid)).fetchone()[0], 1)
+            lines = [r[0] for r in conn.execute("SELECT detail FROM ticket_event WHERE work_item_id = ? ORDER BY ticket_event_id", (wid,))]
+            self.assertTrue(any("raised by the recurrence Monthly analyser check (#" in ln for ln in lines), lines)
+            rec = recurring.get(conn, rid)
+            self.assertEqual((rec["last_work_item_id"], rec["next_due_on"]), (wid, "2026-10-01"))
+            self.assertEqual(recurring.raise_due(conn, at=self.at), [])          # nothing due now
+            self.assertEqual(recurring.raise_due(conn, at=datetime(2026, 10, 1, 0, 5))[0]["next_due_on"], "2026-11-01")
+            recurring.set_active(conn, rid, False, at=self.at, actor="alice")
+            conn.commit()
+            self.assertEqual(recurring.raise_due(conn, at=datetime(2026, 12, 1, 9)), [])   # paused
+            extra = recurring.run_now(conn, rid, at=datetime(2026, 12, 2, 9), actor="alice")
+            conn.commit()
+            self.assertEqual(recurring.get(conn, rid)["next_due_on"], "2026-11-01")         # run now moves nothing
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM ticket WHERE recurrence_id = ?", (rid,)).fetchone()[0], 3)
+            self.assertNotEqual(extra, wid)
+        finally:
+            conn.close()
+
+    def test_a_failure_on_one_recurrence_is_audited_and_the_others_still_run(self):
+        from psaspine import recurring
+        conn = db.connect(self.db_path)
+        try:
+            ok = recurring.create(conn, name="Fine", template_id="TPL1", cadence="WEEKLY", first_due_on="2026-09-29",
+                                  entity_id="PMC", at=self.at, actor="alice")
+            broken = recurring.create(conn, name="Broken", template_id="TPL1", cadence="WEEKLY", first_due_on="2026-09-29",
+                                      entity_id="PMC", at=self.at, actor="alice")
+            conn.execute("UPDATE ticket_template SET inactive = 1 WHERE template_id = 'TPL1'")
+            conn.execute("INSERT INTO ticket_template (template_id,board_id,name,inactive,created_at,created_by)"
+                         " VALUES ('TPL2','IT_HELP','Other',0,'2026-09-01 09:00','alice')")
+            conn.execute("UPDATE recurrence SET template_id = 'TPL2' WHERE recurrence_id = ?", (ok,))
+            conn.commit()
+            out = recurring.raise_due(conn, at=self.at)
+            by = {r["recurrence_id"]: r for r in out}
+            self.assertIn("work_item_id", by[ok])
+            self.assertIn("error", by[broken])                                    # a retired template raises nothing
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'RECURRENCE' AND detail LIKE 'failed:%'").fetchone()[0], 1)
+            self.assertEqual(recurring.get(conn, broken)["next_due_on"], "2026-09-29")       # still due; nothing half-written
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM ticket WHERE recurrence_id = ?", (broken,)).fetchone()[0], 0)
+        finally:
+            conn.close()
+
+    def test_the_setup_page_lists_adds_runs_and_pauses_and_the_ticket_says_who_raised_it(self):
+        alice, bob = self._cookie_for("alice"), self._cookie_for("bob")
+        status, _, body = self._call("GET", "/admin", cookie=alice)
+        self.assertIn("Recurring tickets (0 active)", body)
+        status, _, _ = self._call("GET", "/admin/recurring", cookie=bob)
+        self.assertEqual(status, "403 Forbidden")
+        status, _, body = self._call("GET", "/admin/recurring", cookie=alice)
+        self.assertEqual(status, "200 OK")
+        self.assertIn("No recurring ticket yet", body)
+        self.assertIn("IT Help · Monthly analyser check", body) if "IT Help" in body else self.assertIn("Monthly analyser check", body)
+        status, headers, _ = self._call("POST", "/admin/recurring/add", cookie=alice, form={
+            "name": "Monthly analyser check", "template_id": "TPL1", "cadence": "MONTHLY", "every_n": "1",
+            "first_due_on": "2026-10-01", "owner": "bob", "entity_id": "PMC", "configuration": "lab-analyser-01",
+            "impact": "I3", "urgency": "U3"})
+        self.assertEqual(status, "303 See Other")
+        self.assertIn("msg=Recurrence", dict(headers)["Location"])
+        status, headers, _ = self._call("POST", "/admin/recurring/add", cookie=alice, form={
+            "name": "Bad", "template_id": "TPL1", "cadence": "MONTHLY", "first_due_on": "2026-10-01",
+            "entity_id": "PMC", "configuration": "no-such-machine"})
+        self.assertIn("err=", dict(headers)["Location"])
+        status, _, body = self._call("GET", "/admin/recurring", cookie=alice)
+        self.assertIn("<b>Monthly analyser check</b>", body)
+        self.assertIn("Every month", body)
+        self.assertIn("2026-10-01", body)
+        status, headers, _ = self._call("POST", "/admin/recurring/run", cookie=alice, form={"id": "1"})
+        self.assertEqual(status, "303 See Other")
+        where = dict(headers)["Location"]
+        self.assertTrue(where.startswith("/ticket/PMC-"), where)
+        status, _, body = self._call("GET", where.split("?")[0], cookie=alice)
+        self.assertIn("Raised by", body)
+        self.assertIn("the recurrence Monthly analyser check", body)
+        self.assertIn("Clean the sample probe", body)
+        status, headers, _ = self._call("POST", "/admin/recurring/toggle", cookie=alice, form={"id": "1", "active": "0"})
+        self.assertIn("paused", dict(headers)["Location"])
+        status, _, body = self._call("GET", "/admin", cookie=alice)
+        self.assertIn("Recurring tickets (0 active)", body)
+        status, _, _ = self._call("POST", "/admin/recurring/run", cookie=bob, form={"id": "1"})
+        self.assertEqual(status, "403 Forbidden")
+
+    def test_the_minute_runner_raises_what_is_due(self):
+        from psaspine import recurring
+        from psaspine.__main__ import main as cli_main
+        conn = db.connect(self.db_path)
+        recurring.create(conn, name="Yearly UPS test", template_id="TPL1", cadence="YEARLY", first_due_on="2000-01-01",
+                         entity_id="PMC", at=self.at, actor="alice")
+        conn.commit()
+        conn.close()
+        self.assertEqual(cli_main(["run-rules", self.db_path]), 0)
+        conn = db.connect(self.db_path)
+        try:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM ticket WHERE recurrence_id IS NOT NULL").fetchone()[0], 1)
+            self.assertGreater(recurring.get(conn, 1)["next_due_on"], "2026-09-29")
+        finally:
+            conn.close()
+
+
+
+class AssetLifecycleTest(unittest.TestCase):
+    """048: what only the desk can know about a machine (bought, warranty,
+    installed, vendor, agreement, where), the warranty tiles, the maintenance
+    record per asset, and the two report-writer datasets."""
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+
+    def setUp(self) -> None:
+        from psaspine import agreements, configurations, schedule
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = str(_target(self.tmp))
+        conn = _fresh(self.tmp)
+        self.at = datetime(2026, 9, 30, 9, 0)
+        setup.apply_starter(conn, "IT_HELP", actor="t", at=self.at)
+        conn.executescript(
+            "INSERT OR REPLACE INTO board (board_id,display_name,phase,fulfiller_group,owner,deputy,is_live,restricted)"
+            " VALUES ('PHI','PHI Board','2','Clin','a','b',1,1);"
+            "INSERT OR REPLACE INTO board_status (board_status_id,board_id,name,escalation_status,is_default)"
+            " VALUES ('PHI.NEW','PHI','New','NOT_RESPONDED',1);"
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','alice','ADMIN');"
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','bob','WORK');"
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('PHI','alice','WORK');")
+        self.cid = configurations.create(conn, name="WARD3-LBL01", entity_id="PMC", config_type="PRINTER",
+                                         serial_number="ZX-1001", at=self.at, actor="alice")
+        self.old = configurations.create(conn, name="OLD-PC-01", entity_id="PMC", config_type="WORKSTATION",
+                                         at=self.at, actor="alice")
+        self.agr = agreements.create(conn, name="Printer care 2026", party="PrintCare", at=self.at, actor="alice")
+        self.wid = tickets.open_ticket(conn, board_id="IT_HELP", summary="Label printer prints blank", impact="I3",
+                                       urgency="U3", requested_by=None, at=self.at, entity_id="PMC")
+        configurations.attach(conn, self.wid, self.cid, at=self.at, actor="alice")
+        board.add_time(conn, self.wid, at=self.at, actor="bob", charge_method="INCLUDED_IN_MONTHLY_FEE", actual_hours=2)
+        schedule.add(conn, self.wid, member="bob", starts_at=datetime(2026, 9, 30, 10), ends_at=datetime(2026, 9, 30, 11),
+                     note=None, actor="alice", at=self.at)
+        self.phi = tickets.open_ticket(conn, board_id="PHI", summary="Printer by the bed", impact="I3", urgency="U3",
+                                       requested_by=None, at=self.at, entity_id="PMC")
+        configurations.attach(conn, self.phi, self.cid, at=self.at, actor="alice")
+        conn.commit()
+        conn.close()
+        self.config = Config(session_secret=_secrets.token_bytes(32))
+        self.raw = make_app(self.db_path, config=self.config, clock=lambda: self.at)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_the_life_of_a_machine_is_written_checked_and_audited(self):
+        from psaspine import configurations
+        conn = db.connect(self.db_path)
+        try:
+            with self.assertRaises(ValueError) as bad:
+                configurations.update(conn, self.cid, at=self.at, actor="alice", warranty_ends_on="March")
+            self.assertIn("warranty ends on is a date", str(bad.exception))
+            with self.assertRaises(LookupError):
+                configurations.update(conn, self.cid, at=self.at, actor="alice", agreement_id="AGR-9999")
+            changed = configurations.update(conn, self.cid, at=self.at, actor="alice", purchased_on="2025-03-31",
+                                            warranty_ends_on="2027-03-31", installed_on="2025-04-02", vendor="PrintCare Services",
+                                            purchase_ref="PO-25-0102", location="Ward 3, nurses' station", agreement_id=self.agr)
+            conn.commit()
+            self.assertEqual(sorted(changed), ["agreement_id", "installed_on", "location", "purchase_ref", "purchased_on",
+                                               "vendor", "warranty_ends_on"])
+            row = conn.execute("SELECT * FROM configuration WHERE configuration_id = ?", (self.cid,)).fetchone()
+            self.assertEqual((row["vendor"], row["warranty_ends_on"], row["agreement_id"]), ("PrintCare Services", "2027-03-31", self.agr))
+            detail = conn.execute("SELECT detail FROM audit_event WHERE action = 'CONFIGURATION_UPDATE' ORDER BY audit_id DESC").fetchone()[0]
+            self.assertIn("warranty_ends_on - -> 2027-03-31", detail)
+            self.assertEqual(configurations.update(conn, self.cid, at=self.at, actor="alice", warranty_ends_on="2027-03-31"), [])
+            self.assertEqual(configurations.warranty_state("2027-03-31", date(2026, 9, 30)), ("COVERED", 182))
+            self.assertEqual(configurations.warranty_state("2026-11-30", date(2026, 9, 30)), ("EXPIRING", 61))
+            self.assertEqual(configurations.warranty_state("2026-09-01", date(2026, 9, 30)), ("EXPIRED", -29))
+            self.assertEqual(configurations.warranty_state(None, date(2026, 9, 30)), (None, None))
+            configurations.update(conn, self.old, at=self.at, actor="alice", warranty_ends_on="2026-01-15")
+            conn.commit()
+            self.assertEqual(configurations.warranty_counts(conn, date(2026, 9, 30)), {"expired": 1, "expiring": 0})
+        finally:
+            conn.close()
+
+    def test_the_list_counts_and_filters_warranties_and_the_page_shows_and_edits_the_life(self):
+        from psaspine import configurations
+        conn = db.connect(self.db_path)
+        configurations.update(conn, self.old, at=self.at, actor="alice", warranty_ends_on="2026-01-15")
+        configurations.update(conn, self.cid, at=self.at, actor="alice", warranty_ends_on="2026-10-20", vendor="PrintCare Services",
+                              agreement_id=self.agr)
+        conn.commit()
+        conn.close()
+        alice = self._cookie_for("alice")
+        status, _, body = self._call("GET", "/configurations", cookie=alice)
+        self.assertEqual(status, "200 OK")
+        self.assertIn("<div class=n>1</div><div class=l>Warranty ends in 90 days</div>", body)
+        self.assertIn("<div class=n>1</div><div class=l>Out of warranty</div>", body)
+        self.assertIn("ended 2026-01-15", body)
+        self.assertIn("20 d left · 2026-10-20", body)
+        self.assertIn("/configurations/maintenance.csv?", body)
+        status, _, body = self._call("GET", "/configurations", cookie=alice, query="warranty=expired")
+        self.assertIn("OLD-PC-01", body)
+        self.assertNotIn(">WARD3-LBL01<", body)
+        status, _, body = self._call("GET", f"/configuration/{self.cid}", cookie=alice)
+        self.assertIn("PrintCare Services", body)
+        self.assertIn(f"/agreement/{self.agr}", body)
+        self.assertIn("Printer care 2026", body)
+        self.assertIn(f"/configuration/{self.cid}/maintenance.csv", body)
+        self.assertIn("name=warranty_ends_on", body)
+        status, headers, _ = self._call("POST", f"/configuration/{self.cid}/update", cookie=alice, form={
+            "config_type": "PRINTER", "status": "ACTIVE", "contact_id": "", "remote_session_id": "", "serial_number": "ZX-1001",
+            "manufacturer": "", "model": "", "purchased_on": "2025-03-31", "warranty_ends_on": "2026-10-20", "installed_on": "",
+            "vendor": "PrintCare Services", "purchase_ref": "PO-25-0102", "location": "Ward 3", "agreement_id": self.agr})
+        self.assertEqual(status, "303 See Other")
+        loc = dict(headers)["Location"]
+        self.assertIn("purchased+on", loc)
+        self.assertIn("location", loc)
+        status, headers, _ = self._call("POST", f"/configuration/{self.cid}/update", cookie=alice, form={
+            "config_type": "PRINTER", "status": "ACTIVE", "warranty_ends_on": "next year"})
+        self.assertIn("warranty+ends+on+is+a+date", dict(headers)["Location"])
+
+    def test_the_maintenance_record_lists_the_tickets_the_reader_may_see(self):
+        bob, alice = self._cookie_for("bob"), self._cookie_for("alice")
+        status, headers, body = self._call("GET", f"/configuration/{self.cid}/maintenance.csv", cookie=bob)
+        self.assertEqual(status, "200 OK")
+        self.assertIn("text/csv", dict(headers)["Content-Type"])
+        lines = body.strip().split("\r\n")
+        self.assertEqual(lines[0], "Configuration,Type,Serial,Ticket,Summary,Board,Ticket type,State,Opened,Closed,Owner,Hours,Visits")
+        self.assertEqual(len(lines), 2)                                     # the PHI ticket is not bob's to see
+        self.assertIn(f"WARD3-LBL01,PRINTER,ZX-1001,{self.wid},Label printer prints blank,", lines[1])
+        self.assertTrue(lines[1].endswith(",2.0,1"), lines[1])                # 2 h booked, 1 visit
+        status, _, body = self._call("GET", f"/configuration/{self.cid}/maintenance.csv", cookie=alice)
+        self.assertEqual(len(body.strip().split("\r\n")), 3)
+        self.assertIn("Printer by the bed", body)
+        conn = db.connect(self.db_path)
+        try:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'RESTRICTED_READ'"
+                                          " AND detail LIKE 'maintenance export%'").fetchone()[0], 1)
+        finally:
+            conn.close()
+        status, _, body = self._call("GET", "/configurations/maintenance.csv", cookie=bob, query="type=PRINTER")
+        self.assertEqual(len(body.strip().split("\r\n")), 2)
+        status, _, body = self._call("GET", "/configurations/maintenance.csv", cookie=bob, query="type=WORKSTATION")
+        self.assertEqual(len(body.strip().split("\r\n")), 1)               # header only: nothing on that machine
+        status, _, _ = self._call("GET", "/configuration/CFG-none/maintenance.csv", cookie=bob)
+        self.assertEqual(status, "404 Not Found")
+
+    def test_the_report_writer_knows_configurations_and_maintenance(self):
+        from psaspine import reportwriter
+        conn = db.connect(self.db_path)
+        try:
+            r = reportwriter.run(conn, "CONFIGURATIONS", ["name", "type", "warranty"], None, {}, boards=set())
+            self.assertEqual(r["headers"], ["Name", "Type", "Warranty ends"])
+            self.assertEqual(sorted(row[0] for row in r["rows"]), ["OLD-PC-01", "WARD3-LBL01"])
+            r = reportwriter.run(conn, "MAINTENANCE", ["configuration", "ticket", "hours"], None, {}, boards={"IT_HELP"})
+            self.assertEqual(r["rows"], [["WARD3-LBL01", self.wid, 2.0]])
+            self.assertEqual(r["boards"], {"IT_HELP": 1})
+            r = reportwriter.run(conn, "MAINTENANCE", [], "configuration", {}, boards={"IT_HELP", "PHI"})
+            self.assertEqual(r["headers"], ["Configuration", "Count", "Hours"])
+            self.assertEqual(r["rows"], [["WARD3-LBL01", 2, 2.0]])
+        finally:
+            conn.close()
+        status, _, body = self._call("GET", "/reports/custom", cookie=self._cookie_for("alice"))
+        self.assertIn("Maintenance: tickets by configuration", body)
+        self.assertIn(">Configurations<", body)
+
+
+class ApprovalsTest(unittest.TestCase):
+    """049: a request parks the ticket in Awaiting approval, emails the
+    approver, and shows on their portal page; only they decide it, a decline
+    says why, the decision goes on the ticket as a note the requester reads,
+    and the ticket returns to where it was. The catalogue asks by itself when
+    the pair needs approval and the requester's department names someone."""
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+    APPROVER = "head.nursing@pmcne.ph"
+
+    def setUp(self) -> None:
+        from psaspine import catalogue as cat
+        from psaspine import departments
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = str(_target(self.tmp))
+        conn = _fresh(self.tmp)
+        self.at = datetime(2026, 9, 30, 9, 0)
+        setup.apply_starter(conn, "IT_HELP", actor="t", at=self.at)
+        conn.executescript(
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','alice','ADMIN');"
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','bob','WORK');"
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','carol','READ');"
+            "UPDATE board SET notify_requester = 1 WHERE board_id = 'IT_HELP';"
+            "INSERT INTO contact (contact_id, entity_id, display_name, email, sam_account, department, source,"
+            " inactive, created_at) VALUES ('C_MS', 'PMC', 'Maria Santos', 'msantos@pmcne.ph', 'msantos',"
+            " 'Nursing - Ward 3', 'AD', 0, '2026-09-17 08:00');")
+        departments.add(conn, "Nursing - Ward 3", at=self.at, actor="root")
+        departments.add(conn, "Pharmacy", at=self.at, actor="root")
+        self.assertTrue(departments.set_approver(conn, "Nursing - Ward 3", "Head.Nursing@pmcne.ph", at=self.at, actor="root"))
+        fid = cat.add_area(conn, "Accounts", at=self.at, actor="root")
+        sub = cat.add_subtype(conn, fid, "User account", at=self.at, actor="root")
+        item = cat.add_item(conn, "New", kind="REQUEST", at=self.at, actor="root")
+        self.pair = cat.associate(conn, sub, item, "IT_HELP", needs_approval=True, at=self.at, actor="root")
+        plain = cat.add_item(conn, "Reset", kind="REQUEST", at=self.at, actor="root")
+        self.plain_pair = cat.associate(conn, sub, plain, "IT_HELP", at=self.at, actor="root")
+        self.wid = tickets.open_ticket(conn, board_id="IT_HELP", summary="New user account for a nurse", impact="I3",
+                                       urgency="U3", requested_by="msantos@pmcne.ph", at=self.at, entity_id="PMC")
+        board.change_status(conn, self.wid, "IT_HELP.IN_PROGRESS", at=self.at, actor="bob")
+        conn.commit()
+        conn.close()
+        self.config = Config(session_secret=_secrets.token_bytes(32))
+        self.raw = make_app(self.db_path, config=self.config, clock=lambda: self.at)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _status(self, conn, wid=None):
+        return conn.execute("SELECT board_status_id FROM ticket WHERE work_item_id = ?", (wid or self.wid,)).fetchone()[0]
+
+    def test_a_request_parks_the_ticket_emails_the_approver_and_a_decision_returns_it(self):
+        from psaspine import approvals, outbox
+        conn = db.connect(self.db_path)
+        try:
+            self.assertEqual(approvals.approver_for(conn, self.wid), self.APPROVER)
+            with self.assertRaises(approvals.Refused):
+                approvals.request(conn, self.wid, approver="the head nurse", at=self.at, actor="bob")
+            aid = approvals.request(conn, self.wid, approver="Head.Nursing@pmcne.ph", reason="  a new  account ",
+                                    at=self.at, actor="bob")
+            conn.commit()
+            row = approvals.get(conn, aid)
+            self.assertEqual((row["status"], row["approver"], row["reason"], row["return_status_id"]),
+                             ("PENDING", self.APPROVER, "a new account", "IT_HELP.IN_PROGRESS"))
+            self.assertEqual(self._status(conn), "IT_HELP.AWAITING_APPROVAL")
+            with self.assertRaises(approvals.Refused) as twice:
+                approvals.request(conn, self.wid, approver=self.APPROVER, at=self.at, actor="bob")
+            self.assertIn("already waiting", str(twice.exception))
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM ticket_event WHERE work_item_id = ? AND detail = ?",
+                                          (self.wid, f"approval requested from {self.APPROVER}: a new account")).fetchone()[0], 1)
+            n = conn.execute("SELECT * FROM notification WHERE recipient_role = 'APPROVER'").fetchall()
+            self.assertEqual([(x["recipient"], x["status"]) for x in n], [(self.APPROVER, "PENDING")])
+            self.assertIn("needs your approval", n[0]["subject"])
+            due = [m for m in outbox.pending(conn, allowed_domains=("pmcne.ph",), dry_run=True,
+                                             portal_url="https://requests.pmcne.ph") if m["to"] == self.APPROVER]
+            self.assertEqual(len(due), 1)
+            self.assertIn("Decide it here: https://requests.pmcne.ph/my/approvals", due[0]["body"])
+            self.assertNotIn("New user account", due[0]["body"])            # the words stay behind the sign-in
+            # only the approver decides, and a decline says why
+            with self.assertRaises(approvals.Refused) as other:
+                approvals.decide(conn, aid, "APPROVE", identities=["bob@pmcne.ph", "bob"], at=self.at)
+            self.assertIn("someone else", str(other.exception))
+            with self.assertRaises(approvals.Refused) as why:
+                approvals.decide(conn, aid, "DECLINE", identities=[self.APPROVER], at=self.at)
+            self.assertIn("says why", str(why.exception))
+            with self.assertRaises(approvals.Refused):
+                approvals.decide(conn, aid, "MAYBE", identities=[self.APPROVER], at=self.at)
+            self.assertEqual(self._status(conn), "IT_HELP.AWAITING_APPROVAL")    # nothing above was written
+            conn.execute("UPDATE notification SET status = 'SENT' WHERE recipient_role = 'REQUESTER'")   # the "we have it" went
+            before = conn.execute("SELECT COUNT(*) FROM notification WHERE recipient_role = 'REQUESTER'").fetchone()[0]
+            row = approvals.decide(conn, aid, "APPROVE", identities=["Head.Nursing@pmcne.ph"], at=self.at, note="Fine for a ward account")
+            conn.commit()
+            self.assertEqual((row["status"], row["decided_by"], row["note"]), ("APPROVED", self.APPROVER, "Fine for a ward account"))
+            self.assertEqual(self._status(conn), "IT_HELP.IN_PROGRESS")           # back where it was
+            note = conn.execute("SELECT detail, note_flag, actor FROM ticket_event WHERE work_item_id = ? AND kind = 'NOTE'"
+                                " ORDER BY ticket_event_id DESC", (self.wid,)).fetchone()
+            self.assertEqual(tuple(note), (f"Approved by {self.APPROVER}: Fine for a ward account", "DISCUSSION", self.APPROVER))
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM notification WHERE recipient_role = 'REQUESTER'").fetchone()[0],
+                             before + 1)                                          # the requester is told
+            with self.assertRaises(approvals.Refused) as done:
+                approvals.decide(conn, aid, "DECLINE", identities=[self.APPROVER], at=self.at, note="no")
+            self.assertIn("already approved", str(done.exception))
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'APPROVAL'").fetchone()[0], 2)
+        finally:
+            conn.close()
+
+    def test_a_decline_and_a_withdrawal_return_the_ticket_and_a_closed_ticket_needs_none(self):
+        from psaspine import approvals
+        conn = db.connect(self.db_path)
+        try:
+            aid = approvals.request(conn, self.wid, approver=self.APPROVER, at=self.at, actor="bob")
+            row = approvals.decide(conn, aid, "DECLINE", identities=[self.APPROVER], at=self.at, note="Not this quarter")
+            self.assertEqual(row["status"], "DECLINED")
+            self.assertEqual(self._status(conn), "IT_HELP.IN_PROGRESS")
+            self.assertEqual(conn.execute("SELECT detail FROM ticket_event WHERE work_item_id = ? AND kind = 'NOTE'"
+                                          " ORDER BY ticket_event_id DESC", (self.wid,)).fetchone()[0],
+                             f"Declined by {self.APPROVER}: Not this quarter")
+            aid2 = approvals.request(conn, self.wid, approver=self.APPROVER, at=self.at, actor="alice")
+            self.assertEqual(self._status(conn), "IT_HELP.AWAITING_APPROVAL")
+            row = approvals.withdraw(conn, aid2, at=self.at, actor="alice")
+            self.assertEqual((row["status"], row["decided_by"]), ("WITHDRAWN", "alice"))
+            self.assertEqual(self._status(conn), "IT_HELP.IN_PROGRESS")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM ticket_event WHERE work_item_id = ? AND detail = ?",
+                                          (self.wid, f"approval request to {self.APPROVER} withdrawn")).fetchone()[0], 1)
+            with self.assertRaises(approvals.Refused):
+                approvals.withdraw(conn, aid2, at=self.at, actor="alice")
+            self.assertEqual([r["status"] for r in approvals.for_ticket(conn, self.wid)], ["DECLINED", "WITHDRAWN"])
+            # parked in a status somebody has since moved it out of: the decision leaves the ticket alone
+            aid3 = approvals.request(conn, self.wid, approver=self.APPROVER, at=self.at, actor="bob")
+            board.change_status(conn, self.wid, "IT_HELP.SCHEDULED", at=self.at, actor="bob")
+            approvals.decide(conn, aid3, "APPROVE", identities=[self.APPROVER], at=self.at)
+            self.assertEqual(self._status(conn), "IT_HELP.SCHEDULED")
+            board.change_status(conn, self.wid, "IT_HELP.RESOLVED", at=self.at, actor="bob")
+            with self.assertRaises(approvals.Refused) as closed:
+                approvals.request(conn, self.wid, approver=self.APPROVER, at=self.at, actor="bob")
+            self.assertIn("closed ticket", str(closed.exception))
+            with self.assertRaises(approvals.Refused):
+                approvals.request(conn, "PMC-999999", approver=self.APPROVER, at=self.at, actor="bob")
+            # a board without the status: the request is recorded and nothing is parked
+            conn.execute("UPDATE board_status SET inactive = 1 WHERE board_status_id = 'IT_HELP.AWAITING_APPROVAL'")
+            other = tickets.open_ticket(conn, board_id="IT_HELP", summary="Licence for the lab", impact="I3", urgency="U3",
+                                        requested_by="msantos@pmcne.ph", at=self.at, entity_id="PMC")
+            aid4 = approvals.request(conn, other, approver=self.APPROVER, at=self.at, actor="bob")
+            self.assertEqual(self._status(conn, other), "IT_HELP.NEW")
+            self.assertIsNone(approvals.get(conn, aid4)["return_status_id"])
+            approvals.decide(conn, aid4, "APPROVE", identities=[self.APPROVER], at=self.at)
+            self.assertEqual(self._status(conn, other), "IT_HELP.NEW")
+        finally:
+            conn.close()
+
+    def test_the_catalogue_asks_by_itself_when_the_pair_needs_approval(self):
+        from psaspine import approvals
+        conn = db.connect(self.db_path)
+        try:
+            self.assertEqual(approvals.maybe_request(conn, self.wid, at=self.at, actor="bob"), "NOT_NEEDED")
+            board.update_fields(conn, self.wid, at=self.at, actor="bob", catalogue_item_id=self.plain_pair)
+            self.assertEqual(approvals.maybe_request(conn, self.wid, at=self.at, actor="bob"), "NOT_NEEDED")
+            board.update_fields(conn, self.wid, at=self.at, actor="bob", catalogue_item_id=self.pair)
+            self.assertEqual(approvals.maybe_request(conn, self.wid, at=self.at, actor="bob"), "REQUESTED")
+            p = approvals.pending(conn, self.wid)
+            self.assertEqual((p["approver"], p["reason"], p["requested_by"]), (self.APPROVER, "the request's item needs approval", "bob"))
+            self.assertEqual(self._status(conn), "IT_HELP.AWAITING_APPROVAL")
+            self.assertEqual(approvals.maybe_request(conn, self.wid, at=self.at, actor="bob"), "ALREADY")
+            approvals.decide(conn, p["approval_id"], "APPROVE", identities=[self.APPROVER], at=self.at)
+            self.assertEqual(approvals.maybe_request(conn, self.wid, at=self.at, actor="bob"), "ALREADY")   # approved once is enough
+            # a requester the desk does not know, or whose department names nobody: the ticket says so
+            stranger = tickets.open_ticket(conn, board_id="IT_HELP", summary="Account for a locum", impact="I3", urgency="U3",
+                                           requested_by="locum@example.org", at=self.at, entity_id="PMC", catalogue_item_id=self.pair)
+            self.assertEqual(approvals.maybe_request(conn, stranger, at=self.at, actor="bob"), "NO_APPROVER")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM ticket_event WHERE work_item_id = ? AND detail LIKE"
+                                          " 'this item needs an approval, but the requester''s department names no approver%'",
+                                          (stranger,)).fetchone()[0], 1)
+            self.assertIsNone(approvals.pending(conn, stranger))
+            conn.execute("UPDATE contact SET department = 'Pharmacy' WHERE contact_id = 'C_MS'")
+            pharm = tickets.open_ticket(conn, board_id="IT_HELP", summary="Account for pharmacy", impact="I3", urgency="U3",
+                                        requested_by="MSantos@pmcne.ph", at=self.at, entity_id="PMC", catalogue_item_id=self.pair)
+            self.assertEqual(approvals.maybe_request(conn, pharm, at=self.at, actor="bob"), "NO_APPROVER")
+            self.assertEqual(approvals.waiting_for(conn, [self.APPROVER]), [])
+            self.assertEqual([r["work_item_id"] for r in approvals.decided_by(conn, ["HEAD.NURSING@pmcne.ph"])], [self.wid])
+        finally:
+            conn.close()
+
+    def test_the_ticket_card_asks_and_withdraws_and_the_portal_lists_and_decides(self):
+        bob, carol, nurse = self._cookie_for("bob"), self._cookie_for("carol"), self._cookie_for("msantos", email="msantos@pmcne.ph")
+        head = self._cookie_for("head.nursing", email="Head.Nursing@pmcne.ph")
+        someone = self._cookie_for("someone", email="someone@pmcne.ph")
+        status, _, body = self._call("GET", f"/ticket/{self.wid}", cookie=bob)
+        self.assertIn("data-pod=approval", body)
+        self.assertIn(f"name=approver value='{self.APPROVER}'", body)             # suggested from the department
+        self.assertIn("No approval asked for.", body)
+        status, _, _ = self._call("POST", f"/ticket/{self.wid}/approval/request", cookie=carol,
+                                  form={"approver": self.APPROVER, "reason": "x"})
+        self.assertEqual(status, "404 Not Found")                             # READ may not ask; absence is the answer
+        status, headers, _ = self._call("POST", f"/ticket/{self.wid}/approval/request", cookie=bob,
+                                        form={"approver": "nobody", "reason": "x"})
+        self.assertIn("err=An+approver+is+an+email", dict(headers)["Location"])
+        status, headers, _ = self._call("POST", f"/ticket/{self.wid}/approval/request", cookie=bob,
+                                        form={"approver": self.APPROVER, "reason": "A new account for the ward"})
+        self.assertEqual(status, "303 See Other")
+        self.assertIn("msg=Approval+asked+for", dict(headers)["Location"])
+        status, _, body = self._call("GET", f"/ticket/{self.wid}", cookie=bob)
+        self.assertIn("Withdraw the request", body)
+        self.assertIn("A new account for the ward", body)
+        self.assertIn("Awaiting approval", body)
+        status, _, body = self._call("GET", f"/my/{self.wid}", cookie=nurse)
+        self.assertEqual(status, "200 OK")
+        self.assertIn(f"Waiting for approval from {self.APPROVER} since 2026-09-30 09:00", body)
+        status, _, body = self._call("GET", "/my", cookie=nurse)
+        self.assertIn('href="/my/approvals"', body)
+        # the approver's page: theirs to see and decide, nobody else's
+        status, _, body = self._call("GET", "/my/approvals", cookie=someone)
+        self.assertEqual(status, "200 OK")
+        self.assertIn("Nothing waits for you.", body)
+        status, _, body = self._call("GET", "/my/approvals", cookie=head)
+        self.assertIn(f"{self.wid} · New user account for a nurse", body)
+        self.assertIn("Raised by msantos@pmcne.ph", body)
+        self.assertIn("A new account for the ward", body)
+        aid = int(re.search(r"/my/approvals/(\d+)/decide", body).group(1))
+        status, headers, _ = self._call("POST", f"/my/approvals/{aid}/decide", cookie=someone, form={"decision": "APPROVE"})
+        self.assertIn("err=This+approval+is+for+someone+else", dict(headers)["Location"])
+        status, headers, _ = self._call("POST", f"/my/approvals/{aid}/decide", cookie=head, form={"decision": "DECLINE", "note": ""})
+        self.assertIn("A+decline+says+why", dict(headers)["Location"])
+        status, headers, _ = self._call("POST", f"/my/approvals/999/decide", cookie=head, form={"decision": "APPROVE"})
+        self.assertIn("err=No+such+approval", dict(headers)["Location"])
+        status, headers, _ = self._call("POST", f"/my/approvals/{aid}/decide", cookie=head,
+                                        form={"decision": "APPROVE", "note": "Fine, standard ward access"})
+        self.assertEqual(status, "303 See Other")
+        self.assertIn("msg=Approved.", dict(headers)["Location"])
+        status, _, body = self._call("GET", "/my/approvals", cookie=head)
+        self.assertIn("Nothing waits for you.", body)
+        self.assertIn("Decided", body)
+        self.assertIn("Fine, standard ward access", body)
+        status, _, body = self._call("GET", f"/my/{self.wid}", cookie=nurse)
+        self.assertNotIn("Waiting for approval", body)
+        self.assertIn(f"Approved by {self.APPROVER}: Fine, standard ward access", body)   # the note is theirs to read
+        status, _, body = self._call("GET", f"/ticket/{self.wid}", cookie=bob)
+        self.assertIn("Approved</span>", body)
+        self.assertIn("Ask for approval from", body)                            # can ask again
+        conn = db.connect(self.db_path)
+        try:
+            self.assertEqual(self._status(conn), "IT_HELP.IN_PROGRESS")
+        finally:
+            conn.close()
+        # withdraw from the card
+        self._call("POST", f"/ticket/{self.wid}/approval/request", cookie=bob, form={"approver": self.APPROVER})
+        status, _, body = self._call("GET", f"/ticket/{self.wid}", cookie=bob)
+        aid2 = int(re.search(r"name=approval_id value=(\d+)", body).group(1))
+        status, headers, _ = self._call("POST", f"/ticket/{self.wid}/approval/withdraw", cookie=bob, form={"approval_id": aid})
+        self.assertIn("err=This+approval+was+already+approved", dict(headers)["Location"])   # the decided one stays decided
+        status, headers, _ = self._call("POST", f"/ticket/{self.wid}/approval/withdraw", cookie=bob, form={"approval_id": "999"})
+        self.assertIn("err=No+such+approval+on+this+ticket", dict(headers)["Location"])
+        status, headers, _ = self._call("POST", f"/ticket/{self.wid}/approval/withdraw", cookie=bob, form={"approval_id": aid2})
+        self.assertIn("msg=Approval+request+withdrawn", dict(headers)["Location"])
+        conn = db.connect(self.db_path)
+        try:
+            self.assertEqual(self._status(conn), "IT_HELP.IN_PROGRESS")
+            self.assertEqual(conn.execute("SELECT status FROM approval WHERE approval_id = ?", (aid2,)).fetchone()[0], "WITHDRAWN")
+        finally:
+            conn.close()
+
+    def test_a_new_ticket_with_the_pair_asks_and_setup_names_the_approver_and_the_pair(self):
+        root = self._cookie_for("alice", is_sysadmin=True)
+        status, headers, _ = self._call("POST", "/ticket/new", cookie=root, form={
+            "board_id": "IT_HELP", "summary": "Account for the new ward clerk", "impact": "I3", "urgency": "U3",
+            "requested_by": "msantos@pmcne.ph", "catalogue_item_id": self.pair, "entity_id": "PMC"})
+        self.assertEqual(status, "303 See Other")
+        wid = dict(headers)["Location"].split("/ticket/")[1].split("?")[0]
+        conn = db.connect(self.db_path)
+        try:
+            self.assertEqual(self._status(conn, wid), "IT_HELP.AWAITING_APPROVAL")
+            self.assertEqual(conn.execute("SELECT approver FROM approval WHERE work_item_id = ?", (wid,)).fetchone()[0], self.APPROVER)
+        finally:
+            conn.close()
+        # Setup › Departments names the approver
+        status, _, body = self._call("GET", "/admin/departments", cookie=root)
+        self.assertIn(f"name='approver|Nursing - Ward 3' value='{self.APPROVER}'", body)
+        self.assertIn("name='approver|Pharmacy' value=''", body)
+        status, headers, _ = self._call("POST", "/admin/departments/save", cookie=root,
+                                        form={"approver|Pharmacy": "chief pharmacist"})
+        self.assertIn("is+an+email+address", dict(headers)["Location"])
+        status, headers, _ = self._call("POST", "/admin/departments/save", cookie=root,
+                                        form={"approver|Pharmacy": " Chief.Pharmacist@pmcne.ph ", "approver|Nursing - Ward 3": self.APPROVER})
+        self.assertIn("Pharmacy%3A+approver+chief.pharmacist%40pmcne.ph", dict(headers)["Location"])
+        conn = db.connect(self.db_path)
+        try:
+            self.assertEqual(conn.execute("SELECT approver FROM department WHERE name = 'Pharmacy'").fetchone()[0], "chief.pharmacist@pmcne.ph")
+            self.assertEqual(conn.execute("SELECT detail FROM audit_event WHERE action = 'DEPARTMENT_APPROVER' ORDER BY audit_id DESC")
+                             .fetchone()[0], "- -> chief.pharmacist@pmcne.ph")
+        finally:
+            conn.close()
+        status, _, _ = self._call("POST", "/admin/departments/save", cookie=self._cookie_for("bob"), form={"approver|Pharmacy": ""})
+        self.assertEqual(status, "403 Forbidden")
+        # Setup › Boards and the service catalogue: the pair's Approval toggle
+        status, _, body = self._call("GET", "/admin/catalogue", cookie=root, query="tab=pairs")
+        self.assertIn("Approval: yes", body)
+        self.assertIn("Approval: no", body)
+        status, headers, _ = self._call("POST", "/admin/catalogue/approval", cookie=root,
+                                        form={"catalogue_item_id": self.pair, "needs_approval": "0"})
+        self.assertIn("no+longer+asks", dict(headers)["Location"])
+        status, headers, _ = self._call("POST", "/admin/catalogue/approval", cookie=root,
+                                        form={"catalogue_item_id": self.pair, "needs_approval": "0"})
+        self.assertIn("Nothing+changed", dict(headers)["Location"])
+        conn = db.connect(self.db_path)
+        try:
+            self.assertEqual(conn.execute("SELECT needs_approval FROM catalogue_item WHERE catalogue_item_id = ?",
+                                          (self.pair,)).fetchone()[0], 0)
+            from psaspine import approvals
+            self.assertEqual(approvals.maybe_request(conn, self.wid, at=self.at, actor="bob"), "NOT_NEEDED")
+        finally:
+            conn.close()
 
 
 if __name__ == "__main__":

@@ -129,6 +129,12 @@ def index(ctx):
             "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-sparkle></use></svg>Workflow rules</h3><p class=sub>Escalations, notifications and "
             "routing as rules: an event, conditions, actions. Test, then switch on.</p>"
             f"<a class='btn ghost' href='/admin/rules'>Workflow rules ({n_rules} on)</a></div>")
+        n_rec = ctx.conn.execute("SELECT COUNT(*) FROM recurrence WHERE active = 1").fetchone()[0]
+        cards.append(
+            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-calendar></use></svg>Recurring tickets</h3><p class=sub>"
+            "A board template raised on a cadence: the monthly analyser check, the quarterly printer care. The minute "
+            "runner raises each on its due day.</p>"
+            f"<a class='btn ghost' href='/admin/recurring'>Recurring tickets ({n_rec} active)</a></div>")
     if rows:
         cards.append("<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-layers></use></svg>Your boards</h3><div class=tablewrap><table>"
                      "<thead><tr><th>Board</th><th>Setup</th><th>Tickets</th><th></th></tr></thead>"
@@ -893,7 +899,7 @@ def catalogue(ctx):
         rows = ctx.conn.execute(
             "SELECT i.catalogue_item_id, f.display_name AS type, c.display_name AS subtype,"
             "       a.display_name AS item, a.kind, b.display_name AS board, i.default_contract_basis,"
-            "       i.min_priority, i.clinical_impact, i.is_draft, i.record_type"
+            "       i.min_priority, i.clinical_impact, i.is_draft, i.record_type, i.needs_approval"
             "  FROM catalogue_item i JOIN service_component c ON c.component_id = i.component_id"
             "  JOIN service_family f ON f.family_id = c.family_id"
             "  JOIN service_action a ON a.action_id = i.action_id"
@@ -905,6 +911,11 @@ def catalogue(ctx):
             f"<td>{t.esc(itil.LABEL.get(r['record_type']) or ('Incident' if r['kind'] == 'FAULT' else 'Request'))}</td>"
             f"<td>{t.esc(r['board'])}</td><td>{t.esc(r['default_contract_basis'])}</td>"
             f"<td>{t.esc(r['min_priority'] or '')}{' · clinical' if r['clinical_impact'] else ''}</td>"
+            f"<td><form method=post action='/admin/catalogue/approval' class=inline>"
+            f"<input type=hidden name=catalogue_item_id value='{t.esc(r['catalogue_item_id'])}'>"
+            f"<input type=hidden name=needs_approval value={0 if r['needs_approval'] else 1}>"
+            f"<button class=ghost type=submit style='padding:3px 10px' title='Whether a ticket with this pair asks the department approver first'>"
+            f"{'Approval: yes' if r['needs_approval'] else 'Approval: no'}</button></form></td>"
             f"<td><form method=post action='/admin/catalogue/toggle' class=inline>"
             f"<input type=hidden name=catalogue_item_id value='{t.esc(r['catalogue_item_id'])}'>"
             f"<button class=ghost type=submit style='padding:3px 10px'>{'Use' if r['is_draft'] else 'Retire'}"
@@ -924,8 +935,8 @@ def catalogue(ctx):
             f"<span class=why>{len(rows)} pair(s). Only a pair is offered on a ticket; retire a pair to "
             "withdraw it and keep every ticket that carries it.</span></div>"
             "<div class=card><div class=tablewrap><table><thead><tr><th>Area</th><th>Subtype</th>"
-            "<th>Item</th><th>Default Type</th><th>Board</th><th>Basis</th><th>Floor</th><th></th></tr></thead>"
-            f"<tbody>{trs or '<tr><td colspan=8 class=muted>Empty. Load the template, or add areas, subtypes and items on the tabs, then pair them here.</td></tr>'}"
+            "<th>Item</th><th>Default Type</th><th>Board</th><th>Basis</th><th>Floor</th><th>Approval</th><th></th></tr></thead>"
+            f"<tbody>{trs or '<tr><td colspan=9 class=muted>Empty. Load the template, or add areas, subtypes and items on the tabs, then pair them here.</td></tr>'}"
             "</tbody></table></div></div>"
             "<div class=card><h3>" + t.icon("plus") + "Associate a subtype with an item</h3>"
             "<form method=post action='/admin/catalogue/associate' class=row>"
@@ -938,6 +949,7 @@ def catalogue(ctx):
             "<div><label>Priority floor</label><select name=min_priority>"
             + _cat_options([("", "(none)"), ("P1", "P1"), ("P2", "P2"), ("P3", "P3"), ("P4", "P4")]) + "</select></div>"
             "<div style='flex:0 0 auto'><label><input type=checkbox name=clinical_impact value=1> Clinical impact</label></div>"
+            "<div style='flex:0 0 auto'><label><input type=checkbox name=needs_approval value=1> Needs approval</label></div>"
             "<div style='flex:0 0 auto'><button type=submit class=ghost>Associate</button></div></form></div>")
     elif tab == "types":
         takes: dict[str, list] = {}
@@ -1162,12 +1174,27 @@ def catalogue_associate(ctx):
         cat.associate(ctx.conn, f.get("component_id", ""), f.get("action_id", ""), f.get("default_board_id", ""),
                       basis=f.get("basis", "UNKNOWN"), scope_item_id=f.get("scope_item_id") or None,
                       min_priority=f.get("min_priority") or None, clinical_impact=f.get("clinical_impact") == "1",
-                      at=ctx.now, actor=ctx.user.id)
+                      needs_approval=f.get("needs_approval") == "1", at=ctx.now, actor=ctx.user.id)
     except cat.Refused as exc:
         ctx.conn.rollback()
         return _cat_back("pairs", err=str(exc))
     ctx.conn.commit()
     return _cat_back("pairs", msg="Pair added; it is offered on tickets now.")
+
+
+def catalogue_approval(ctx):
+    from ... import catalogue as cat
+    common.require_sysadmin(ctx)
+    f = ctx.request.form()
+    try:
+        changed = cat.set_needs_approval(ctx.conn, f.get("catalogue_item_id", ""), f.get("needs_approval") == "1",
+                                         at=ctx.now, actor=ctx.user.id)
+    except cat.Refused as exc:
+        ctx.conn.rollback()
+        return _cat_back("pairs", err=str(exc))
+    ctx.conn.commit()
+    return _cat_back("pairs", msg=("Tickets with this pair now ask the department approver first." if f.get("needs_approval") == "1"
+                                   else "This pair no longer asks for an approval.") if changed else "Nothing changed.")
 
 
 # ------------------------------------------------------ Setup › Calendars
@@ -1841,12 +1868,16 @@ def departments(ctx):
             + (" <span class=chip>retired</span>" if r["retired"] else "")
             + (" <span class=muted>by hand</span>" if r["source"] == "MANUAL" else "") + "</td>"
             f"<td class=center>{'<span class=chip>open</span>' if on & {b['board_id'] for b in boards} else '<span class=muted>closed</span>'}</td>"
+            f"<td><input name='approver|{t.esc(r['name'])}' value='{t.esc(r['approver'] or '')}' placeholder='email' "
+            f"aria-label='Approver for {t.esc(r['name'])}' style='min-width:180px'></td>"
             + cells + "</tr>")
     # every known department is submitted, shown or not, so a filtered Save
     # never unticks what is off screen
     hidden = "".join(
         f"<input type=hidden name=tick value='{t.esc(r['name'])}|{t.esc(b)}'>"
         for r in rows if r not in shown for b in have.get(r["name"], set()))
+    hidden += "".join(f"<input type=hidden name='approver|{t.esc(r['name'])}' value='{t.esc(r['approver'] or '')}'>"
+                      for r in rows if r not in shown)
     body = (
         (f"<div class='banner ok'>{t.esc(msg)}</div>" if msg else "")
         + (f"<div class='banner err'>{t.esc(err)}</div>" if err else "") + fallback
@@ -1860,7 +1891,7 @@ def departments(ctx):
           "<code>psaspine import-departments &lt;db&gt; departments.csv</code> (one column, Department); a re-run adds and "
           "retires, never deletes.</p></div>"
           "<div class=card><form method=post action='/admin/departments/save' id=deptgrid>" + hidden
-        + "<div class=tablewrap><table class=grid><thead><tr><th>Department</th><th>My requests</th>" + head
+        + "<div class=tablewrap><table class=grid><thead><tr><th>Department</th><th>My requests</th><th>Approver</th>" + head
         + "</tr></thead><tbody>" + "".join(trs) + "</tbody></table></div>"
           "<div style='margin-top:12px'><button type=submit>Save the grid</button></div></form></div>"
           "<div class=card><h3>" + t.icon("plus") + "Add a department</h3><form method=post action='/admin/departments/add' class=row>"
@@ -1883,6 +1914,14 @@ def departments_save(ctx):
         if name and board_id:
             wanted.setdefault(name, set()).add(board_id)
     lines = dept.save_grid(ctx.conn, wanted, at=ctx.now, actor=ctx.user.id)
+    for key, value in ctx.request.form().items():
+        if key.startswith("approver|"):
+            try:
+                if dept.set_approver(ctx.conn, key[len("approver|"):], value, at=ctx.now, actor=ctx.user.id):
+                    lines.append(f"{key[len('approver|'):]}: approver {value.strip().lower() or 'cleared'}")
+            except ValueError as exc:
+                ctx.conn.rollback()
+                return _dept_back(err=str(exc))
     ctx.conn.commit()
     return _dept_back(msg=("Saved: " + "; ".join(lines)) if lines else "Nothing changed.")
 

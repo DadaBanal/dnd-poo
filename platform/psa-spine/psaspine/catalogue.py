@@ -239,7 +239,7 @@ def save_item(conn, action_id: str, *, name: str | None = None, kind: str | None
 def associate(conn, component_id: str, action_id: str, default_board_id: str, *,
               basis: str = "UNKNOWN", scope_item_id: str | None = None, min_priority: str | None = None,
               clinical_impact: bool = False, restricted: bool = False, note: str | None = None,
-              at: datetime, actor: str) -> str:
+              needs_approval: bool = False, at: datetime, actor: str) -> str:
     """A new Subtype › Item pair, offered on tickets from now on."""
     c = conn.execute("SELECT c.display_name, f.display_name AS area FROM service_component c"
                      " JOIN service_family f ON f.family_id = c.family_id WHERE c.component_id = ?",
@@ -263,10 +263,27 @@ def associate(conn, component_id: str, action_id: str, default_board_id: str, *,
     cid = _fresh_id(conn, "catalogue_item", "catalogue_item_id", f"CI_{component_id}_{action_id}")
     conn.execute(
         "INSERT INTO catalogue_item (catalogue_item_id, component_id, action_id, default_board_id,"
-        " default_scope_item_id, default_contract_basis, clinical_impact, min_priority, restricted, is_draft, note)"
-        " VALUES (?,?,?,?,?,?,?,?,?,0,?)",
+        " default_scope_item_id, default_contract_basis, clinical_impact, min_priority, restricted, is_draft, note,"
+        " needs_approval) VALUES (?,?,?,?,?,?,?,?,?,0,?,?)",
         (cid, component_id, action_id, default_board_id, scope_item_id or None, basis,
-         int(bool(clinical_impact)), min_priority or None, int(bool(restricted)), (note or "").strip() or None))
+         int(bool(clinical_impact)), min_priority or None, int(bool(restricted)), (note or "").strip() or None,
+         int(bool(needs_approval))))
     _audit(conn, at=at, actor=actor, kind="catalogue_item", subject=cid,
            detail=f"pair added: {c['area']} › {c['display_name']} › {a['display_name']} -> {b['display_name']}, {basis}")
     return cid
+
+
+def set_needs_approval(conn, catalogue_item_id: str, flag: bool, *, at: datetime, actor: str) -> bool:
+    """049: whether a ticket classified with this pair asks the requester's
+    department's approver before the work is done. Returns whether it changed."""
+    row = conn.execute("SELECT needs_approval FROM catalogue_item WHERE catalogue_item_id = ?",
+                       (catalogue_item_id,)).fetchone()
+    if row is None:
+        raise Refused("No such pair.")
+    if bool(row[0]) == bool(flag):
+        return False
+    conn.execute("UPDATE catalogue_item SET needs_approval = ? WHERE catalogue_item_id = ?",
+                 (1 if flag else 0, catalogue_item_id))
+    _audit(conn, at=at, actor=actor, kind="catalogue_item", subject=catalogue_item_id,
+           detail="needs approval" if flag else "no approval needed")
+    return True

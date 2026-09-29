@@ -281,8 +281,12 @@ def detail(ctx, work_item_id):
             f"<li><a href='/my/{t.esc(work_item_id)}/file/{f['attachment_id']}'>"
             f"{t.esc(f['filename'])}</a></li>" for f in shared) + "</ul></div>")
 
+    from ... import approvals as _appr
+    waiting = _appr.pending(ctx.conn, work_item_id)
+    banner = (f"<div class='banner ok'>Waiting for approval from {t.esc(waiting['approver'])} since "
+              f"{t.esc(waiting['requested_at'])}. Their decision will appear here.</div>" if waiting else "")
     body = (
-        f"<h1>{t.esc(row['summary'])}</h1>"
+        banner + f"<h1>{t.esc(row['summary'])}</h1>"
         f"<p class='sub'>{t.esc(work_item_id)} &middot; "
         f"{t.chip(_status_words(row))} &middot; raised {t.esc(row['opened_at'])}</p>"
         f"<div class='card'><h3><svg class=ic aria-hidden=true><use href=#i-clock></use></svg>What has happened</h3>"

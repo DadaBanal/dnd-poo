@@ -219,6 +219,13 @@ def _options(pairs, selected) -> str:
                    f"{t.esc(label)}</option>" for v, label in pairs)
 
 
+def _raised_by(ctx, work_item_id: str) -> str:
+    """047: the recurrence that raised this ticket, if one did."""
+    row = ctx.conn.execute("SELECT r.name FROM ticket tk JOIN recurrence r ON r.recurrence_id = tk.recurrence_id"
+                           " WHERE tk.work_item_id = ?", (work_item_id,)).fetchone()
+    return f"<dt>Raised by</dt><dd>the recurrence {t.esc(row[0])}</dd>" if row else ""
+
+
 def detail(ctx, work_item_id):
     from .. import Response
     tk = _load(ctx, work_item_id)
@@ -483,20 +490,22 @@ def detail(ctx, work_item_id):
         f"<dt>Opened</dt><dd>{t.esc(tk['opened_at'])}</dd>"
         f"<dt>Updated</dt><dd>{t.esc(_ago(common.human_age(tk['updated_at'] or tk['opened_at'], now=ctx.now)))}</dd>"
         f"<dt>Source</dt><dd>{t.esc((tk['intake_source'] or '—').replace('_', '-').title())}</dd>"
-        f"<dt>Desk ref</dt><dd>{t.esc(tk['external_ref'] or '—')}</dd>"
+        f"<dt>Desk ref</dt><dd>{t.esc(tk['external_ref'] or '—')}</dd>" + _raised_by(ctx, work_item_id) +
         f"<dt>Calendar</dt><dd>{t.esc(tk['calendar_name'] or '—')}</dd></dl></div>")
 
     from . import configurations as cmdb_views
     configs = cmdb_views.ticket_card(ctx, tk, can_work=can_work)
     from . import files as file_views
-    configs = (_change_card(ctx, tk, can_work=can_work) + _family_card(ctx, tk, can_work=can_work)
+    from . import approvals as approvals_view
+    configs = (_change_card(ctx, tk, can_work=can_work) + approvals_view.ticket_card(ctx, tk, can_work=can_work)
+               + _family_card(ctx, tk, can_work=can_work)
                + _schedule_card(ctx, tk, can_work=can_work) + _tasks_card(ctx, tk, can_work=can_work)
                + file_views.ticket_card(ctx, tk, can_work=can_work) + _links_card(ctx, tk, can_work=can_work) + configs)
     from . import finance as finance_views, kb as kb_views
     from . import projects as project_views
     configs += (project_views.ticket_card(ctx, tk, can_work=can_work) + kb_views.ticket_card(ctx, tk, can_work=can_work)
                 + finance_views.ticket_card(ctx, tk, can_work=can_work))
-    body = header + strip + (f"<div class=rail>{left}<div class=pods data-col=right data-order='ticket,change,family,"
+    body = header + strip + (f"<div class=rail>{left}<div class=pods data-col=right data-order='ticket,change,approval,family,"
                              f"schedule,tasks,files,links,configurations,project,knowledge,finance,time,commercial,details'>{fields}{configs}{time_card}"
                              f"{commercial}{details}</div></div>")
     return Response(body=t.page(work_item_id, body, user=ctx.user, active="board"))
@@ -613,6 +622,10 @@ def update(ctx, work_item_id):
             requested_by=f.get("requested_by"), impact=impact, urgency=urgency,
             catalogue_item_id=f.get("catalogue_item_id") if "catalogue_item_id" in f else None,
             record_type=want_type, **change_fields_from(f))
+        if any("item" in c or "catalogue" in c for c in changed):
+            from ... import approvals as _appr
+            if _appr.maybe_request(ctx.conn, work_item_id, at=ctx.now, actor=ctx.user.id) == "REQUESTED":
+                changed.append("approval asked for")
         to_status = f.get("to_status", "")
         now_status = ctx.conn.execute("SELECT board_status_id FROM ticket WHERE work_item_id = ?",
                                       (work_item_id,)).fetchone()[0]
@@ -728,6 +741,9 @@ def new_create(ctx):
             owner=f.get("owner", "").strip() or None, source=source, event_kind="OPENED",
             catalogue_item_id=f.get("catalogue_item_id") or None,
             record_type=f.get("record_type") or None)
+        if f.get("catalogue_item_id"):
+            from ... import approvals as _appr
+            _appr.maybe_request(ctx.conn, wid, at=ctx.now, actor=ctx.user.id)
         tpl_id = f.get("template_id") or ""
         if tpl_id and ctx.conn.execute(
                 "SELECT 1 FROM ticket_template WHERE template_id = ? AND board_id = ?",

@@ -12,7 +12,10 @@ technician's click goes.
 """
 from __future__ import annotations
 
+import csv
+import io
 import urllib.parse
+from datetime import timedelta
 
 from ... import configurations as cmdb
 from .. import templates as t
@@ -84,7 +87,49 @@ TYPE_WORDS = {"WORKSTATION": "Workstations", "LAPTOP": "Laptops", "SERVER": "Ser
               "NETWORK": "Network", "MOBILE": "Mobile", "OTHER": "Other"}
 SORTS = {"name": "c.name", "type": "c.config_type, c.name", "os": "c.os_name, c.name",
          "contact": "ct.display_name, c.name", "seen": "c.last_seen_at DESC, c.name",
-         "tickets": "open_tickets DESC, c.name", "company": "c.entity_id, c.name"}
+         "tickets": "open_tickets DESC, c.name", "company": "c.entity_id, c.name",
+         "warranty": "c.warranty_ends_on, c.name"}
+WARRANTY_FILTERS = ("expiring", "expired")
+
+
+def _warranty_cell(ctx, row) -> str:
+    """The warranty as a chip: ended (red), ends within 90 days (amber), or the date."""
+    state, days = cmdb.warranty_state(row["warranty_ends_on"], ctx.now.date())
+    if state == "EXPIRED":
+        return f"<span class='chip sla-bad'>ended {t.esc(row['warranty_ends_on'])}</span>"
+    if state == "EXPIRING":
+        return f"<span class='chip sla-warn'>{days} d left · {t.esc(row['warranty_ends_on'])}</span>"
+    return t.esc(row["warranty_ends_on"] or "—")
+
+
+def _list_filters(ctx):
+    """The list's filters, shared by the page and its maintenance export."""
+    q = ctx.request.query
+    text = q.get("q", "").strip()
+    kind = q.get("type", "") if q.get("type", "") in cmdb.TYPES else ""
+    status = q.get("status", "ACTIVE")
+    if status not in cmdb.STATUSES + ("ALL",):
+        status = "ACTIVE"
+    entity = q.get("company", "")
+    sort = q.get("sort", "name") if q.get("sort", "name") in SORTS else "name"
+    warranty = q.get("warranty", "") if q.get("warranty", "") in WARRANTY_FILTERS else ""
+    where, params = ["1 = 1"], []
+    if text:
+        where.append("(c.name LIKE ? OR c.serial_number LIKE ? OR c.description LIKE ? OR c.dns_name LIKE ?)")
+        params += [f"%{text}%"] * 4
+    if kind:
+        where.append("c.config_type = ?"); params.append(kind)
+    if status != "ALL":
+        where.append("c.status = ?"); params.append(status)
+    if entity:
+        where.append("c.entity_id = ?"); params.append(entity)
+    today = ctx.now.date().isoformat()
+    if warranty == "expired":
+        where.append("c.warranty_ends_on IS NOT NULL AND c.warranty_ends_on < ?"); params.append(today)
+    elif warranty == "expiring":
+        where.append("c.warranty_ends_on >= ? AND c.warranty_ends_on <= ?")
+        params += [today, (ctx.now.date() + timedelta(days=cmdb.WARRANTY_SOON_DAYS)).isoformat()]
+    return text, kind, status, entity, sort, warranty, where, params
 
 
 def _opts(pairs, sel):
@@ -100,23 +145,7 @@ def index(ctx):
     from .. import Response
     _fulfiller(ctx)
     q = ctx.request.query
-    text = q.get("q", "").strip()
-    kind = q.get("type", "") if q.get("type", "") in cmdb.TYPES else ""
-    status = q.get("status", "ACTIVE")
-    if status not in cmdb.STATUSES + ("ALL",):
-        status = "ACTIVE"
-    entity = q.get("company", "")
-    sort = q.get("sort", "name") if q.get("sort", "name") in SORTS else "name"
-    where, params = ["1 = 1"], []
-    if text:
-        where.append("(c.name LIKE ? OR c.serial_number LIKE ? OR c.description LIKE ? OR c.dns_name LIKE ?)")
-        params += [f"%{text}%"] * 4
-    if kind:
-        where.append("c.config_type = ?"); params.append(kind)
-    if status != "ALL":
-        where.append("c.status = ?"); params.append(status)
-    if entity:
-        where.append("c.entity_id = ?"); params.append(entity)
+    text, kind, status, entity, sort, warranty, where, params = _list_filters(ctx)
     rows = ctx.conn.execute(
         "SELECT c.*, ct.display_name AS contact_name, e.name AS entity_name,"
         "       (SELECT COUNT(*) FROM ticket_configuration tc JOIN ticket t ON t.work_item_id = tc.work_item_id"
@@ -131,12 +160,17 @@ def index(ctx):
     active = sum(counts.values())
 
     def keep(**kw):
-        d = {"q": text, "type": kind, "status": status, "company": entity, "sort": sort}
+        d = {"q": text, "type": kind, "status": status, "company": entity, "sort": sort, "warranty": warranty}
         d.update(kw)
         return "/configurations?" + urllib.parse.urlencode({k: v for k, v in d.items() if v and not (k == "status" and v == "ACTIVE")})
     tiles = (f"<a class='tile{' on' if not kind else ''}' href='{keep(type='')}'><div class=n>{active}</div><div class=l>Active, all types</div></a>"
              + "".join(f"<a class='tile{' on' if kind == k else ''}' href='{keep(type=k)}'><div class=n>{counts.get(k, 0)}</div>"
                        f"<div class=l>{v}</div></a>" for k, v in TYPE_WORDS.items()))
+    wc = cmdb.warranty_counts(ctx.conn, ctx.now.date())
+    tiles += (f"<a class='tile{' on' if warranty == 'expiring' else ''}' href='{keep(warranty='' if warranty == 'expiring' else 'expiring')}'>"
+              f"<div class=n>{wc['expiring']}</div><div class=l>Warranty ends in 90 days</div></a>"
+              f"<a class='tile{' on' if warranty == 'expired' else ''}' href='{keep(warranty='' if warranty == 'expired' else 'expired')}'>"
+              f"<div class=n>{wc['expired']}</div><div class=l>Out of warranty</div></a>")
     companies = ctx.conn.execute("SELECT entity_id, name FROM entity ORDER BY name").fetchall()
     filters = (
         "<form method=get class=row style='margin-bottom:10px'>"
@@ -154,14 +188,16 @@ def index(ctx):
         + (" <span class=muted>by hand</span>" if r["source"] == "MANUAL" else "") + "</td>"
         f"<td>{t.esc(r['entity_name'])}</td><td>{t.esc(r['config_type'].title())}</td>"
         f"<td>{t.esc(r['os_name'] or '—')}</td><td>{t.esc(r['contact_name'] or '—')}</td>"
-        f"<td>{t.esc((r['last_seen_at'] or '—')[:10])}</td>"
+        f"<td>{t.esc((r['last_seen_at'] or '—')[:10])}</td><td>{_warranty_cell(ctx, r)}</td>"
         f"<td class=num>{r['open_tickets'] or ''}</td><td>{links_html(ctx, 'CONFIGURATION', r)}</td></tr>" for r in rows)
     table = ("<div class=tablewrap><table><thead><tr>" + th("name", "Name") + th("company", "Company") + th("type", "Type")
-             + th("os", "OS") + th("contact", "Contact") + th("seen", "Last seen") + th("tickets", "Open")
+             + th("os", "OS") + th("contact", "Contact") + th("seen", "Last seen") + th("warranty", "Warranty") + th("tickets", "Open")
              + "<th></th></tr></thead><tbody>" + body_rows + "</tbody></table></div>"
              if rows else "<div class=muted>Nothing matches. Import machines from AD: psaspine import-computers; "
                           "or add one by hand below.</div>")
-    shown = f"<p class=why>{len(rows)} of {total} shown.</p>" if total > len(rows) else f"<p class=why>{total} configuration(s).</p>"
+    export = keep().replace("/configurations?", "/configurations/maintenance.csv?")
+    shown = ((f"<p class=why>{len(rows)} of {total} shown." if total > len(rows) else f"<p class=why>{total} configuration(s).")
+             + f" <a href='{export}'>Maintenance record (CSV) for these</a>: every ticket on them, with hours and visits.</p>")
     add = ""
     if _may_work(ctx):
         add = (
@@ -183,7 +219,7 @@ def index(ctx):
         + "<h1>Configurations</h1><p class=sub>The machines and devices the desk supports, as Dada PSA's "
           "Configurations: from Active Directory, or typed in by hand. Open one to launch its remote session, "
           "see its tickets and its history, or raise a ticket for it.</p>"
-        + f"<div class='tiles' style='grid-template-columns:repeat(8,1fr)'>{tiles}</div>"
+        + f"<div class='tiles' style='grid-template-columns:repeat(auto-fit,minmax(112px,1fr))'>{tiles}</div>"
         + "<div class=card>" + filters + table + shown + "</div>" + add)
     return Response(body=t.page("Configurations", body, user=ctx.user, active="companies"))
 
@@ -230,10 +266,11 @@ def detail(ctx, configuration_id: str):
     boards = _fulfiller(ctx)
     c = ctx.conn.execute(
         "SELECT c.*, e.name AS entity_name, ct.display_name AS contact_name, ct.email AS contact_email,"
-        "       ct.department AS contact_department, s.name AS site_name FROM configuration c"
+        "       ct.department AS contact_department, s.name AS site_name, ag.name AS agreement_name FROM configuration c"
         " JOIN entity e ON e.entity_id = c.entity_id"
         " LEFT JOIN contact ct ON ct.contact_id = c.contact_id"
         " LEFT JOIN site s ON s.site_id = c.site_id"
+        " LEFT JOIN agreement ag ON ag.agreement_id = c.agreement_id"
         " WHERE c.configuration_id = ?", (configuration_id,)).fetchone()
     if c is None:
         raise HttpError("404 Not Found", "No such configuration.")
@@ -264,6 +301,11 @@ def detail(ctx, configuration_id: str):
         ("Description", "description"), ("Site", "site_name"), ("ScreenConnect session", "remote_session_id"),
         ("AD object", "ad_object_guid"), ("Source", "source"), ("Added", "created_at"),
         ("Last synced from AD", "last_synced_at"), ("Last seen in AD", "last_seen_at")))
+    facts += (f"<dt>Vendor</dt><dd>{t.esc(c['vendor'] or '—')}</dd><dt>Purchased</dt><dd>{t.esc(c['purchased_on'] or '—')}</dd>"
+              f"<dt>Warranty ends</dt><dd>{_warranty_cell(ctx, c)}</dd><dt>Installed</dt><dd>{t.esc(c['installed_on'] or '—')}</dd>"
+              f"<dt>Purchase ref</dt><dd>{t.esc(c['purchase_ref'] or '—')}</dd><dt>Location</dt><dd>{t.esc(c['location'] or '—')}</dd>"
+              "<dt>Agreement</dt><dd>" + (f"<a href='/agreement/{t.esc(c['agreement_id'])}'>{t.esc(c['agreement_id'])}</a> {t.esc(c['agreement_name'] or '')}"
+                                          if c["agreement_id"] else "—") + "</dd>")
     person = ""
     if c["contact_id"]:
         bits = " · ".join(t.esc(x) for x in (c["contact_department"], c["contact_email"]) if x)
@@ -280,6 +322,7 @@ def detail(ctx, configuration_id: str):
         sites = ctx.conn.execute("SELECT site_id, name FROM site WHERE entity_id = ? ORDER BY name",
                                  (c["entity_id"],)).fetchall()
         manual = c["source"] == "MANUAL"
+        deals = ctx.conn.execute("SELECT agreement_id, name FROM agreement WHERE status <> 'CANCELLED' ORDER BY name").fetchall()
         edit = (
             f"<div class=card><h3>{t.icon('flag')}Change</h3><form method=post action='/configuration/"
             f"{t.esc(configuration_id)}/update' class=fields>"
@@ -291,6 +334,13 @@ def detail(ctx, configuration_id: str):
             + f"<label>Manufacturer</label><input name=manufacturer value='{t.esc(c['manufacturer'] or '')}' maxlength=100>"
             f"<label>Model</label><input name=model value='{t.esc(c['model'] or '')}' maxlength=100>"
             f"<label>Serial</label><input name=serial_number value='{t.esc(c['serial_number'] or '')}' maxlength=100>"
+            f"<label>Vendor</label><input name=vendor value='{t.esc(c['vendor'] or '')}' maxlength=100>"
+            f"<label>Purchased on</label><input type=date name=purchased_on value='{t.esc(c['purchased_on'] or '')}'>"
+            f"<label>Warranty ends on</label><input type=date name=warranty_ends_on value='{t.esc(c['warranty_ends_on'] or '')}'>"
+            f"<label>Installed on</label><input type=date name=installed_on value='{t.esc(c['installed_on'] or '')}'>"
+            f"<label>Purchase ref (the PO)</label><input name=purchase_ref value='{t.esc(c['purchase_ref'] or '')}' maxlength=60>"
+            f"<label>Location</label><input name=location value='{t.esc(c['location'] or '')}' maxlength=120 placeholder='Ward 3, room 302'>"
+            f"<label>Agreement</label><select name=agreement_id>{_opts([('', '(none)')] + [(a['agreement_id'], a['agreement_id'] + ' ' + a['name']) for a in deals], c['agreement_id'] or '')}</select>"
             + (f"<label>Description</label><input name=description value='{t.esc(c['description'] or '')}' maxlength=400>" if manual else
                "<p class=why style='margin:8px 0 0'>Name, DNS name, OS and description are Active Directory's: change them there and re-import.</p>")
             + f"<label>ScreenConnect session id</label><input name=remote_session_id "
@@ -307,7 +357,8 @@ def detail(ctx, configuration_id: str):
         + (f" · {t.esc(c['os_name'])}" if c["os_name"] else "")
         + (" · typed in by hand" if c["source"] == "MANUAL" else " · from Active Directory") + "</p>"
         + f"<p>{links_html(ctx, 'CONFIGURATION', c)} "
-        + (f"<a class='btn' href='/ticket/new?{raise_qs}'>{t.icon('plus')} Raise a ticket for this machine</a>" if _may_work(ctx) else "")
+        + (f"<a class='btn' href='/ticket/new?{raise_qs}'>{t.icon('plus')} Raise a ticket for this machine</a> " if _may_work(ctx) else "")
+        + f"<a class='btn ghost' href='/configuration/{t.esc(configuration_id)}/maintenance.csv'>{t.icon('arrow')} Maintenance record (CSV)</a>"
         + "</p><div class=rail>"
         f"<div><div class=card><h3>{t.icon('ticket')}Open tickets</h3>{tickets_html}{_hidden_note(hidden)}</div>"
         f"<div class=card><h3>{t.icon('check')}Recently closed</h3>{closed_html}</div>"
@@ -329,7 +380,10 @@ def update(ctx, configuration_id: str):
             config_type=f.get("config_type"), status=f.get("status"),
             contact_id=f.get("contact_id", None), remote_session_id=f.get("remote_session_id"),
             serial_number=f.get("serial_number"), manufacturer=f.get("manufacturer"), model=f.get("model"),
-            site_id=f.get("site_id", None), name=f.get("name"), description=f.get("description"))
+            site_id=f.get("site_id", None), name=f.get("name"), description=f.get("description"),
+            purchased_on=f.get("purchased_on"), warranty_ends_on=f.get("warranty_ends_on"), installed_on=f.get("installed_on"),
+            vendor=f.get("vendor"), purchase_ref=f.get("purchase_ref"), location=f.get("location"),
+            agreement_id=f.get("agreement_id", None))
     except LookupError as exc:
         if "no configuration" in str(exc):
             raise HttpError("404 Not Found", "No such configuration.")
@@ -340,6 +394,46 @@ def update(ctx, configuration_id: str):
     return redirect(base + urllib.parse.urlencode(
         {"msg": "Saved: " + ", ".join(x.replace("_", " ") for x in changed) if changed
          else "Nothing changed."}))
+
+
+# ------------------------------------------------------ 048: the maintenance record
+
+def _maintenance_response(ctx, rows, filename: str):
+    from .. import Response
+    common.audit_restricted_reads(ctx, [r["board_id"] for r in rows], detail=f"maintenance export {filename}:")
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\r\n")
+    w.writerow(["Configuration", "Type", "Serial", "Ticket", "Summary", "Board", "Ticket type", "State", "Opened", "Closed",
+                "Owner", "Hours", "Visits"])
+    for r in rows:
+        w.writerow(["'" + v if isinstance(v, str) and v[:1] in "=+-@" else v for v in (
+            r["configuration"], r["config_type"], r["serial_number"], r["work_item_id"], r["summary"], r["board"],
+            r["record_type"], r["state"], r["opened_at"], r["closed_at"], r["owner"], float(r["hours"] or 0), r["visits"])])
+    return Response(body=buf.getvalue(), content_type="text/csv; charset=utf-8", headers=[
+        ("Content-Disposition", f'attachment; filename="{filename}"'), ("Cache-Control", "no-store")])
+
+
+def maintenance_csv(ctx, configuration_id: str):
+    """One machine's maintenance record: every ticket on it that the reader
+    may see, with hours and visits. What a DOH inspection asks for, per asset."""
+    from .. import HttpError
+    boards = _fulfiller(ctx)
+    if ctx.conn.execute("SELECT 1 FROM configuration WHERE configuration_id = ?", (configuration_id,)).fetchone() is None:
+        raise HttpError("404 Not Found", "No such configuration.")
+    q = ctx.request.query
+    rows = cmdb.maintenance(ctx.conn, [configuration_id], boards=boards, since=q.get("from") or None, until=q.get("to") or None)
+    return _maintenance_response(ctx, rows, f"maintenance-{configuration_id}.csv")
+
+
+def maintenance_csv_all(ctx):
+    """The same record for every machine the list's filters show."""
+    boards = _fulfiller(ctx)
+    _text, _kind, _status, _entity, _sort, _warranty, where, params = _list_filters(ctx)
+    ids = [r[0] for r in ctx.conn.execute(
+        f"SELECT c.configuration_id FROM configuration c WHERE {' AND '.join(where)} ORDER BY c.name LIMIT 500", params)]
+    q = ctx.request.query
+    rows = cmdb.maintenance(ctx.conn, ids, boards=boards, since=q.get("from") or None, until=q.get("to") or None)
+    return _maintenance_response(ctx, rows, "maintenance.csv")
 
 
 # ------------------------------------------------------ the ticket's card

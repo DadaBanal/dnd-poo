@@ -29,7 +29,7 @@ import re
 import sqlite3
 import urllib.parse
 import uuid
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from . import db
@@ -198,7 +198,10 @@ def update(conn: sqlite3.Connection, configuration_id: str, *, at: datetime, act
            contact_id: str | None = None, remote_session_id: str | None = None,
            serial_number: str | None = None, manufacturer: str | None = None,
            model: str | None = None, site_id: str | None = None, name: str | None = None,
-           description: str | None = None) -> list[str]:
+           description: str | None = None, purchased_on: str | None = None,
+           warranty_ends_on: str | None = None, installed_on: str | None = None,
+           vendor: str | None = None, purchase_ref: str | None = None, location: str | None = None,
+           agreement_id: str | None = None) -> list[str]:
     """Change what the desk owns about a configuration, and audit it.
 
     `contact_id=""` clears the contact; `None` leaves any field as it is. A
@@ -258,6 +261,27 @@ def update(conn: sqlite3.Connection, configuration_id: str, *, at: datetime, act
             changes["remote_session_id"] = value
     if serial_number is not None and (serial_number.strip() or None) != row["serial_number"]:
         changes["serial_number"] = serial_number.strip() or None
+    # 048: the life of the machine, the desk's own knowledge
+    for key, value in (("purchased_on", purchased_on), ("warranty_ends_on", warranty_ends_on),
+                       ("installed_on", installed_on)):
+        if value is None:
+            continue
+        v = value.strip() or None
+        if v:
+            try:
+                v = date.fromisoformat(v[:10]).isoformat()
+            except ValueError:
+                raise ValueError(f"{key.replace('_', ' ')} is a date, e.g. 2026-03-31") from None
+        if v != row[key]:
+            changes[key] = v
+    for key, value, width in (("vendor", vendor, 100), ("purchase_ref", purchase_ref, 60), ("location", location, 120)):
+        if value is not None and (value.strip()[:width] or None) != row[key]:
+            changes[key] = value.strip()[:width] or None
+    if agreement_id is not None and (agreement_id or None) != row["agreement_id"]:
+        if agreement_id and conn.execute("SELECT 1 FROM agreement WHERE agreement_id = ?",
+                                         (agreement_id,)).fetchone() is None:
+            raise LookupError("no such agreement")
+        changes["agreement_id"] = agreement_id or None
     if changes:
         conn.execute("UPDATE configuration SET " + ", ".join(f"{k} = ?" for k in changes)
                      + " WHERE configuration_id = ?", list(changes.values()) + [configuration_id])
@@ -355,3 +379,67 @@ def links_for(conn: sqlite3.Connection, applies_to: str, record) -> list[dict]:
             link["url_template"])
         out.append({"label": link["label"], "url": url, "why": ""})
     return out
+
+
+# ------------------------------------------------------------ 048: warranty and maintenance
+
+WARRANTY_SOON_DAYS = 90
+
+
+def warranty_state(warranty_ends_on: str | None, today: date) -> tuple[str | None, int | None]:
+    """EXPIRED, EXPIRING (within 90 days) or COVERED, with the days left
+    (negative once expired); (None, None) with no date."""
+    if not warranty_ends_on:
+        return None, None
+    try:
+        ends = date.fromisoformat(str(warranty_ends_on)[:10])
+    except ValueError:
+        return None, None
+    days = (ends - today).days
+    if days < 0:
+        return "EXPIRED", days
+    if days <= WARRANTY_SOON_DAYS:
+        return "EXPIRING", days
+    return "COVERED", days
+
+
+def warranty_counts(conn: sqlite3.Connection, today: date) -> dict:
+    """Active machines whose warranty has ended, and whose ends within 90 days."""
+    t, soon = today.isoformat(), (today + timedelta(days=WARRANTY_SOON_DAYS)).isoformat()
+    expired = conn.execute("SELECT COUNT(*) FROM configuration WHERE status = 'ACTIVE' AND warranty_ends_on IS NOT NULL"
+                           " AND warranty_ends_on < ?", (t,)).fetchone()[0]
+    expiring = conn.execute("SELECT COUNT(*) FROM configuration WHERE status = 'ACTIVE' AND warranty_ends_on >= ?"
+                            " AND warranty_ends_on <= ?", (t, soon)).fetchone()[0]
+    return {"expired": expired, "expiring": expiring}
+
+
+def maintenance(conn: sqlite3.Connection, configuration_ids, *, boards, since: str | None = None,
+                until: str | None = None, limit: int = 5000):
+    """The maintenance record: every ticket attached to the machines, on the
+    boards given (the reader's), with the hours booked and the visits made.
+    What a DOH inspection asks for, per asset."""
+    ids = list(configuration_ids)
+    boards = sorted(boards)
+    if not ids or not boards:
+        return []
+    where = [f"tc.configuration_id IN ({','.join('?' * len(ids))})", f"t.board_id IN ({','.join('?' * len(boards))})"]
+    args: list = ids + boards
+    if since:
+        where.append("t.opened_at >= ?")
+        args.append(since)
+    if until:
+        where.append("t.opened_at < ?")
+        args.append(until + " 99")
+    args.append(limit)
+    return conn.execute(
+        "SELECT c.configuration_id, c.name AS configuration, c.config_type, c.serial_number, t.work_item_id, t.board_id,"
+        " w.name AS summary, b.display_name AS board, t.record_type, t.state, t.opened_at, t.closed_at, t.owner,"
+        " COALESCE(th.h, 0) AS hours, COALESCE(vs.n, 0) AS visits"
+        " FROM ticket_configuration tc JOIN configuration c ON c.configuration_id = tc.configuration_id"
+        " JOIN ticket t ON t.work_item_id = tc.work_item_id JOIN work_item w ON w.work_item_id = t.work_item_id"
+        " JOIN board b ON b.board_id = t.board_id"
+        " LEFT JOIN (SELECT work_item_id, SUM(COALESCE(actual_hours, band_hours)) AS h FROM time_entry GROUP BY work_item_id) th"
+        "   ON th.work_item_id = t.work_item_id"
+        " LEFT JOIN (SELECT work_item_id, COUNT(*) AS n FROM ticket_schedule GROUP BY work_item_id) vs"
+        "   ON vs.work_item_id = t.work_item_id"
+        " WHERE " + " AND ".join(where) + " ORDER BY c.name, t.opened_at LIMIT ?", args).fetchall()
