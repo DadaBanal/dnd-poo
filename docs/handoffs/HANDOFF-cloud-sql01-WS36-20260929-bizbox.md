@@ -283,3 +283,48 @@ WHERE ISNULL(a.deleteflag, 0) = 0;
   - **No password exists anywhere**, and the Pass is the same.
   - `public` holds no grant on any `dbo` table (MEASURED: its object grants are on 195 `sys` catalog views and on 22 objects the catalog does not list), so the user inherits nothing that reaches a base table.
   - The desk's code needs no change: `odbc_string` refuses only `sa`.
+
+### Part 3: 2026-09-29, 11:47 +08:00. **Step 3 PASS: the desk's own SQL login. Step 4 is ready and dry-run; one run of Dada's registers the hourly sync (step 5).**
+
+**Dada's answers, 29 Sep, verbatim and in order:**
+1. "active directory accounts"
+2. "there should be a bizboxsa account"
+3. "no sorry"
+4. "no use sql to read and write thats what i meant"
+
+SQL01 read the last one as: a SQL login, as step 3 is written. Two points came up on the way (MEASURED):
+
+- **`bizboxsa` exists, and it is BizBox's own login.** It is db_owner of `LiveDB_PMC`, and BizBox had 96 sessions open on it during the check. **Not used.** The desk would inherit every right BizBox has, patient tables included, on BizBox's own password.
+- **"Write":** the desk has no BizBox writer today; the one in force is `NoWriter`. The desk's own account writes the mirror in `PMC_PSA`. When a write path is built, it gets exactly the rights it needs.
+
+**Step 3: Dada ran `D:\psa\bin\New-PsaBizboxLogin.ps1` at 11:40.**
+
+- It created the SQL login `psa_bizbox_reader`: policy checked, no expiry, and a random 32-character password that nobody saw or typed.
+- In `LiveDB_PMC`, the login has a user with SELECT on schema `psa` and nothing else.
+- The connection string is only in `D:\psa\bizbox.odbc`, which SYSTEM, Administrators and the desk's task account can open.
+- **Pass**, tested by logging in as the new login:
+  - the four views read: 5,113, 527, 1,400 and 636 rows;
+  - `iwPOinv`, `iwItems`, `faVendors`, `psDatacenter` and `udf_GetFullName` are refused;
+  - it is neither sysadmin nor db_owner.
+
+**Step 4: SQL01, 11:43.**
+
+- `D:\psa\bizbox-map.json` holds the four kinds, and the desk's `load_map` accepts it.
+- **`PSA_BIZBOX_ODBC` is not in any task's arguments.**
+  - `D:\psa\bin\Invoke-PsaBizboxSync.ps1` loads it from `D:\psa\bizbox.odbc` at run time, masks `PWD=` in its log, and clears it afterwards.
+  - The handoff said "the same way as the other PSA_* settings". Those sit in the PSA-Desk task's command line, part of which the desk log prints (part 2).
+  - Only the sync reads BizBox; the web desk reads the mirror. So the PSA-Desk task needs nothing.
+- **Dry run** into a scratch SQLite desk, deleted afterwards:
+  - the preview printed one line per kind (5,113, 527, 1,400 and 636 rows, 0 skipped) and "preview only";
+  - the apply wrote them, and a second apply found them all unchanged;
+  - every PO line's product is in the mirror, and every invoice has a due date;
+  - each apply wrote one `BIZBOX_SYNC` audit row;
+  - no secret reached the log.
+
+**Step 5 needs psa_desk's password, which Task Scheduler keeps, so Dada runs `D:\psa\bin\Register-PsaBizboxSync.ps1`.**
+
+- It registers `PSA-BizBox` as psa_desk: hourly at five past, IgnoreNew, 10-minute limit.
+- It runs the task once in preview, which is step 4's Pass on the live desk.
+- It then switches the task to `-Apply` and runs it once. That is step 5's first apply, and it must add exactly one `BIZBOX_SYNC` audit row.
+- If either run fails, it removes the task again.
+- Its preflight passed at 11:46, with no `BIZBOX_SYNC` audit rows yet.
