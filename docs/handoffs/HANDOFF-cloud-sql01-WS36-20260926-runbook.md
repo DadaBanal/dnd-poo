@@ -1357,3 +1357,49 @@ Section "Folded in from part 16". Everything below is MEASURED unless marked.
    - `/schedule`: a meeting and a booked visit.
 
    SQL01 will read the audit rows back after.
+
+### Part 18: 2026-09-29, about 11:05 +08:00. **402fb0e live; schemas 039–043 PASS; BizBox step 1 reported, stopped for Dada**
+
+Section "Folded in after part 16 (29 Sep)". Everything below is MEASURED unless marked.
+
+1. **Part 17's as-desk run: PASS.** The operator ran it on 29 Sep at 10:45.
+   - `init` ran twice and gave the same "ready" line both times.
+   - No `psa.board` row changed; there are 4 boards.
+2. **The suite ran first, in a separate worktree of `402fb0e`: 544 run, OK, 2 skipped, 0 errors.**
+   - The live tree stayed at `d5b4c99` while the suite ran, so PSA-Rules never ran new code against the old schema.
+   - The worktree was removed after the apply.
+3. **Schemas 039–043 went in by the sitting-1 road.**
+   - **Backup:** COPY_ONLY, `D:\PMC\backup\PMC_PSA\PMC_PSA_pre039-043-20260929.bak`, 11.7 MB. `RESTORE VERIFYONLY` says "valid".
+   - **Preview**, from the worktree's port: 99 tables, 34 indexes, 4 triggers.
+   - **Baseline**, taken after PSA-Desk was stopped: 80 tables, 4 triggers, 745 columns, 432 rows.
+   - **Apply:** the port ran as SQL01's sysadmin, with `@Apply = 1` and `@AllowExisting = 1` set in memory. It printed "Created: 99 tables, 4 triggers, 34 indexes", its gate passed, and it printed "Seeded: nothing".
+   - **Result:**
+     - **tables 80 → 99**, with 19 new: `ext_agreement`, `ext_change`, `ext_invoice`, `ext_link`, `ext_po_line`, `ext_product`, `ext_purchase_order`, `ext_source`, `kb_article`, `kb_revision`, `kb_ticket`, `member_role`, `phase_dependency`, `project`, `project_phase`, `project_ticket`, `report_def`, `role_permission`, `security_role`;
+     - **columns 745 → 920**;
+     - triggers 4 → 4;
+     - **no existing row count changed**.
+   - **Two SQL Server warnings at create.** Both keys can exceed the 900-byte limit: `PK_ext_link` can reach 1,184 bytes and `PK_ext_po_line` 928.
+     - An insert fails only when one key's values are that long.
+     - INFERRED: BizBox's keys are numbers and item codes, far shorter, so nothing fails.
+     - Shortening those key columns would remove the warnings. That is WS36's call.
+4. **The live tree was then pulled to `402fb0e`, and PSA-Desk started at 10:50.**
+   - `/login` answers 200.
+   - The console's only "error" is PowerShell wrapping the desk's start-up banner as a `NativeCommandError`, as in earlier parts.
+   - PSA-Rules at 11:00: result 0, "0 errors".
+   - **Correction to part 17.** Signed out, the desk answers 401 to every path, including a made-up one (`/zz-no-such-page-12345` gives 401).
+     - So part 17's "`/schedule` and `/admin/calendars` answer 401 (they exist, sign-in first)" proved nothing about those pages.
+     - The new pages are in `402fb0e`'s route table: `/kb`, `/my/help`, `/projects`, `/finance`, `/reports/custom` and `/admin/roles`.
+     - Dada's checks below are what prove them.
+5. **`init` as the task account waits on the operator.** It runs from `D:\psa\bin\Part18-AsDesk.ps1`, with the same checks as part 17's. The script parses and refuses any other account (tested at 11:03).
+6. **Dada's checks:**
+   - the menu shows Knowledge, Projects and Finance;
+   - one article, once published, shows on `/my/help`;
+   - a project whose second phase depends on its first refuses to start the second phase;
+   - Setup › Security roles lists Technician, Service manager and Read only.
+
+   Part 17's calendar and schedule checks are still open too.
+7. **BizBox step 1 is reported** in `HANDOFF-cloud-sql01-WS36-20260929-bizbox.md` (Reply, part 1). It used the catalog only; no row was read.
+   - Four kinds map.
+   - Agreements have no source in BizBox.
+   - The supplier's name lives only in `psDatacenter`, and that is Dada's decision.
+   - **SQL01 stopped there for Dada's approval. Steps 2–6 have not started.**
