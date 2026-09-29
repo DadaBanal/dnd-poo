@@ -1403,3 +1403,10 @@ Section "Folded in after part 16 (29 Sep)". Everything below is MEASURED unless 
    - Agreements have no source in BizBox.
    - The supplier's name lives only in `psDatacenter`, and that is Dada's decision.
    - **SQL01 stopped there for Dada's approval. Steps 2–6 have not started.**
+
+*Part 18, continued, 11:10 +08:00:* **the as-desk run PASS.** The operator ran `Part18-AsDesk.ps1` as the task account
+(`D:\psa\logs\Part18-AsDesk.log`, read back by SQL01):
+- `init` ran twice, exit 0 both times, and printed the same line both times: "ready: SQL Server, …Database=PMC_PSA";
+- **no `psa.board` row changed** (4 boards, every column compared).
+
+Item 5 is met. What remains open is Dada's checks (item 6) and his approval of BizBox step 1 (item 7).
