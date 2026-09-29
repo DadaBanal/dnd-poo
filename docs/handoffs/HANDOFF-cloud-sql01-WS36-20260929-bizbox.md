@@ -365,3 +365,20 @@ The desk's own tables were untouched: 4 boards, as before.
 - **The 12:05 hourly run.** SQL01 reads it back: a new "applied" line and `BIZBOX_SYNC` rows going from 1 to 2.
 - **Dada's check:** Finance on `desk.pmcne.ph` shows the rows, and Setup › BizBox shows the last sync.
 - **Step 6** (edits back to BizBox) is not started, as the handoff says. The desk's writer is still `NoWriter`, and the login can only read.
+
+*Part 4, continued, 12:05 +08:00:* **the first hourly run PASS** (MEASURED, read back by SQL01).
+- `PSA-BizBox` ran on schedule at 12:05:09 as psa_desk, exit 0.
+- It picked up BizBox's changes from the past hour:
+
+  | Kind | Rows now | New | Changed |
+  |---|---|---|---|
+  | purchase_order | 528 | 1 | 15 |
+  | po_line | 1,408 | 8 | 0 |
+  | invoice | 638 | 2 | 0 |
+  | product | 5,113 | 0 | 0 |
+
+  Nothing was skipped or absent.
+- `BIZBOX_SYNC` audit rows went from 1 to 2: one per run.
+- `ext_source` records the last sync as 12:05.
+
+Step 5's Pass is met, except Dada's look at Finance and Setup › BizBox.
