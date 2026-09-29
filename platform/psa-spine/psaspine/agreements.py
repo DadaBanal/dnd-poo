@@ -237,12 +237,15 @@ def totals(conn, agreement_id: str) -> dict:
     out = {}
     for word, kind in {v: k for k, v in COVERS.items()}.items():
         table = bizbox.KINDS[kind][0]
-        money = "r.total" if "total" in bizbox.KINDS[kind][1] else "NULL"
+        # no SUM over a kind without a total: SQL Server refuses SUM(NULL)
+        # ("operand data type NULL is invalid for sum operator"); SQLite does not
+        has_total = "total" in bizbox.KINDS[kind][1]
+        money = "SUM(r.total)" if has_total else "NULL"
         row = conn.execute(
-            f"SELECT COUNT(*) AS n, SUM({money}) AS total FROM agreement_item i"
+            f"SELECT COUNT(*) AS n, {money} AS total FROM agreement_item i"
             f"  LEFT JOIN {table} r ON r.source_id = i.source_id AND r.ext_ref = i.ext_ref"
             " WHERE i.agreement_id = ? AND i.kind = ?", (agreement_id, word)).fetchone()
-        out[word] = {"n": row["n"], "total": (None if money == "NULL" else float(row["total"] or 0))}
+        out[word] = {"n": row["n"], "total": (float(row["total"] or 0) if has_total else None)}
     return out
 
 

@@ -672,10 +672,13 @@ run again; there is nothing to seed).
   `KEY` width (200), so no 900-byte warning.
 - **Apply.** A COPY_ONLY backup; the preview; stop PSA-Desk; the port as
   SQL01's sysadmin with `@Apply = 1` and `@AllowExisting = 1`; pull; start.
-  **Pass:** tables **99 → 101**, columns **921 → 941**, indexes **36 → 37**
-  (`ix_agreement_item_ref`), triggers 4 → 4, no existing row count changed,
-  `/login` answers. (MEASURED on the SQL Server test container at this head:
-  see the line below this list.) Then `init` as the task account. The order
+  **Pass:** tables **99 → 101**, columns **921 → 946** (20 in the two tables,
+  and the 5 parsed date columns the port adds beside every `DATE_TEXT` and
+  `TIMESTAMP_TEXT` column), indexes **36 → 37** (`ix_agreement_item_ref`),
+  triggers 4 → 4, no existing row count changed, `/login` answers. (MEASURED on
+  the SQL Server test container at this head after the suite applied the port:
+  101 tables, 946 columns, 37 indexes, 4 triggers.) Then `init` as the task
+  account. The order
   matters as before: Finance › Agreements reads `agreement` on every visit.
 - **Pass, for Dada:** Finance opens on **Agreements** (empty, "No agreement
   yet"); a Service manager creates one, opens it, types a receiving number
@@ -687,12 +690,13 @@ run again; there is nothing to seed).
   and Setup › Security roles is where Dada gives it to a role (Service
   manager has it as shipped; Technician has Read). Nothing goes to BizBox;
   step 6 of the BizBox handoff stands.
-- **Counts:** 546 tests at this head. SQLite OK (MEASURED). The SQL Server run
-  here was cut short when the test container's Docker daemon died mid-run (the
-  environment, not the code; the errors are login failures); it is being rerun,
-  and Cloud Build amends this line when it passes. **SQL01's own worktree run is
-  the Pass, as always:** 546 run, 0 errors. The drift gate and `tests/smoke.py`
-  pass.
+- **Counts:** 546 tests at this head. SQLite OK. On SQL Server the full run
+  found one real fault the SQLite run could not: the agreement totals summed a
+  NULL for products, which SQL Server refuses; fixed at this head, and the
+  module tests pass on both stores (MEASURED). The one other error in that run
+  was a login timeout right after the test container was restarted, and passes
+  on rerun. **Pass for the suite as SQL01's user:** 546 run, 0 errors. The
+  drift gate and `tests/smoke.py` pass.
 
 ## When a step does not pass
 

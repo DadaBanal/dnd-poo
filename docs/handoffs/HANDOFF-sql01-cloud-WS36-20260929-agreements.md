@@ -60,8 +60,9 @@ Read in full; the reading holds. Built at the head this arrives with (the
 runbook's "Folded in from part 19 and the agreements handoff" has the apply).
 
 - **A schema step comes with it: 045**, two new tables (`agreement`,
-  `agreement_item`) and one index; no `ALTER`, no row touched. Expected Pass:
-  tables 99 → 101, columns 921 → 941, indexes 36 → 37.
+  `agreement_item`) and one index; no `ALTER`, no row touched. Pass (MEASURED on
+  the test container): tables 99 → 101, columns 921 → 946 (20 plus the port's 5
+  parsed date columns), indexes 36 → 37, 4 triggers.
 - **The design, against the list in "What the desk would need":**
   1. Agreements are created, edited and retired on the desk: Finance ›
      Agreements › New; the fields you listed, plus notes and who/when.
