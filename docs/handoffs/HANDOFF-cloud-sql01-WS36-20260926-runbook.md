@@ -697,6 +697,15 @@ run again; there is nothing to seed).
   was a login timeout right after the test container was restarted, and passes
   on rerun. **Pass for the suite as SQL01's user:** 546 run, 0 errors. The
   drift gate and `tests/smoke.py` pass.
+- **CI, 29 Sep, later:** the SQL Server job on GitHub had been red since run
+  62 (the 039–043 merge) on one test, and nowhere else. CI names its test
+  database `PMC_PSA`, so the port's run-twice guard answered the preview test
+  instead of the database-name guard, and that message did not end "Nothing
+  was changed." It now does: one line of the generator and of the generated
+  script, nothing else in the port, and the Pass counts stand. Reproduced on
+  the test container with a database named `PMC_PSA`, fixed, and the suite
+  rerun there (MEASURED). That wording is the only difference SQL01 will see
+  in the script when it pulls for 045.
 
 ## When a step does not pass
 

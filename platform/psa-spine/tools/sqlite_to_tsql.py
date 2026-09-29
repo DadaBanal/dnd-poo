@@ -524,7 +524,7 @@ SELECT @Existing = COUNT(*)
 
 IF @Existing > 0 AND @AllowExisting = 0
 BEGIN
-    RAISERROR(N'Refusing: schema [%s] already holds %d objects. This script is not meant to run twice. Set @AllowExisting = 1 to create only what is missing.',
+    RAISERROR(N'Refusing: schema [%s] already holds %d objects. This script is not meant to run twice. Set @AllowExisting = 1 to create only what is missing. Nothing was changed.',
               16, 1, @Schema, @Existing);
     RETURN;
 END;
