@@ -476,6 +476,18 @@ Schema 044 went in first; see runbook part 19. Everything below is MEASURED.
 - `BIZBOX_SYNC` audit rows now stand at 4, one per run: 11:49, 12:05, 13:05 and 14:05.
 - The second half of the Pass, "the run after says 0 changed" for invoices, is 15:05's. SQL01 reads it back then.
 
+*Part 5, continued, 15:05 +08:00:* **the run after: met.** MEASURED; BizBox was read for flags and dates only.
+- The invoice line reads "638 rows, 0 new, 1 changed, 637 unchanged, 1 absent". The `supplier_ref` fill did not repeat.
+- **The 1 changed** is BizBox's own edit: that receiving report was cancelled in BizBox at 14:32, and the mirror now reads Cancelled.
+- **The 1 absent** is a draft receiving report deleted in BizBox at 14:33. The view drops deleted rows, so the mirror marks it absent and keeps it, as designed.
+- The other kinds show BizBox's hour:
+
+  | Kind | Rows | New | Changed |
+  |---|---|---|---|
+  | product | 5,149 | 24 | 1 |
+  | purchase_order | 534 | 2 | 7 |
+  | po_line | 1,415 | 2 | 2 |
+
 **The four scripts, now in `platform/psa-spine/scripts/`,** each with the house header: PREVIEW BY DEFAULT, and "what it deliberately does NOT do".
 
 | Script | What changed |
