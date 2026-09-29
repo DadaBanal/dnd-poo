@@ -40,6 +40,9 @@ def _is_mine(ctx, owner) -> bool:
                                              (ctx.user.name or "").lower()}
 
 
+# On a phone (gap 5) the row keeps the summary, the priority and the clocks; the
+# rest folds into a line under the summary, so the list reads as cards.
+SM_HIDE = {"id", "company", "contact", "board", "status", "owner", "age", "updated"}
 PAGE = 100
 CLOSED_STATES_SQL = "('RESOLVED','CLOSED','CANCELLED')"
 # Sort keys SQL can order by; "sla" needs the clocks and is sorted in Python.
@@ -350,7 +353,7 @@ def _filters(ctx, boards, f) -> str:
         "</select></div><div><label>Source</label><select name=src>"
         + _options([("", "Any")] + [(s, s.replace("_", "-").title()) for s in SOURCES], f["src"]) +
         "</select></div>"
-        f"<div style='flex:1'><label>Search</label><input name=q value='{t.esc(f['q'])}' "
+        f"<div class=wide style='flex:1'><label>Search</label><input name=q value='{t.esc(f['q'])}' "
         "placeholder='ticket #, summary, contact'></div>"
         f"<div style='min-width:0'><button type=submit>{t.icon('filter')} Filter</button></div></form></div>")
 
@@ -376,7 +379,7 @@ def _table(ctx, boards, shown, f, total: int) -> str:
         on = f["sort"] == key
         nxt = "asc" if on and f["dir"] != "asc" else "desc" if on else ""
         arrow = (" ▲" if f["dir"] == "asc" else " ▼") if on else ""
-        head.append(f"<th class='sort{' on' if on else ''}'>"
+        head.append(f"<th class='sort{' on' if on else ''}{' sm-hide' if key in SM_HIDE else ''}'>"
                     f"<a href='{t.esc(_link(f, sort=key, dir=nxt))}'>{t.esc(label)}{arrow}</a></th>")
 
     lines = []
@@ -391,8 +394,10 @@ def _table(ctx, boards, shown, f, total: int) -> str:
         lines.append(
             f"<tr class='{cls}'>"
             f"<td><input type=checkbox name=ids value='{t.esc(wid)}' form=bulk aria-label='Tick {t.esc(wid)}'></td>"
-            f"<td><a href='/ticket/{t.esc(wid)}'>{t.esc(wid)}</a></td>"
+            f"<td class=sm-hide><a href='/ticket/{t.esc(wid)}'>{t.esc(wid)}</a></td>"
             f"<td class=sum><a href='/ticket/{t.esc(wid)}' style='color:inherit'><b>{t.esc(r['summary'])}</b></a>"
+            f"<div class='sm-only meta'>{t.esc(wid)} · {t.esc(r['status_name'] or r['state'].replace('_', ' ').title())}"
+            f" · {t.esc(r['owner'] or 'unassigned')} · {t.esc(common.human_age(r['opened_at'], now=ctx.now))}</div>"
             + (" <span class='chip sla-warn' title='The requester has written since the desk last did'>"
                "customer updated</span>" if r["customer_updated"] else "")
             + "<div class=last><span class=pill>" + t.esc(" › ".join(
@@ -404,19 +409,19 @@ def _table(ctx, boards, shown, f, total: int) -> str:
                if r["children"] else "")
             + "</div>"
             + (f"<div class=last>{t.esc(last)}</div>" if last else "") + "</td>"
-            f"<td title='{t.esc(r['entity'] or '')}'>{t.esc(r['entity_id'] or '—')}</td>"
-            f"<td class='muted wrap'>{t.esc(r['requested_by'] or '—')}</td>"
-            f"<td class=wrap>{t.esc(r['board_name'])}</td>"
-            f"<td>{t.esc(r['status_name'] or r['state'].replace('_', ' ').title())}</td>"
+            f"<td class=sm-hide title='{t.esc(r['entity'] or '')}'>{t.esc(r['entity_id'] or '—')}</td>"
+            f"<td class='muted wrap sm-hide'>{t.esc(r['requested_by'] or '—')}</td>"
+            f"<td class='wrap sm-hide'>{t.esc(r['board_name'])}</td>"
+            f"<td class=sm-hide>{t.esc(r['status_name'] or r['state'].replace('_', ' ').title())}</td>"
             f"<td>{t.badge(r['priority'])}</td>"
-            f"<td>{t.esc(r['owner'] or '—')}</td>"
-            f"<td>{t.esc(common.human_age(r['opened_at'], now=ctx.now))}</td>"
-            f"<td class=muted>{t.esc(common.human_age(r['updated_at'] or r['opened_at'], now=ctx.now))}</td>"
+            f"<td class=sm-hide>{t.esc(r['owner'] or '—')}</td>"
+            f"<td class=sm-hide>{t.esc(common.human_age(r['opened_at'], now=ctx.now))}</td>"
+            f"<td class='muted sm-hide'>{t.esc(common.human_age(r['updated_at'] or r['opened_at'], now=ctx.now))}</td>"
             f"<td>{sla}</td></tr>")
 
     return (
         "<div class=card style='padding:10px'>" + _bulk_bar(ctx, boards, f) +
-        "<div class=tablewrap><table class=grid><thead><tr>"
+        "<div class=tablewrap><table class='grid cards'><thead><tr>"
         "<th><input type=checkbox data-all aria-label='Select every ticket on this page'></th>"
         + "".join(head) + "</tr></thead><tbody>" + "".join(lines) + "</tbody></table></div>"
         f"<div class=pager>{_pager(f, len(shown), total)}</div>"

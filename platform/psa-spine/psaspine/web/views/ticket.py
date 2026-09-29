@@ -226,6 +226,21 @@ def _raised_by(ctx, work_item_id: str) -> str:
     return f"<dt>Raised by</dt><dd>the recurrence {t.esc(row[0])}</dd>" if row else ""
 
 
+def _quick_bar(wid: str, person, can_work: bool) -> str:
+    """The phone's bottom bar (gap 5): the board, a note, the ticket card, and a
+    call to the contact when the desk knows their number. CSS shows it under
+    640 px only; on a desk it is not there."""
+    phone = (person["phone"] or "").strip() if person is not None else ""
+    tel = re.sub(r"[^0-9+]", "", phone)
+    items = [("/", "board", "Board")]
+    if can_work:
+        items += [(f"/ticket/{wid}#composer", "note", "Note"), (f"/ticket/{wid}#ticketcard", "ticket", "Ticket")]
+    if tel and len(tel) >= 5:
+        items.append((f"tel:{tel}", "oncall", "Call"))
+    return "<nav class=quick aria-label='Quick actions'>" + "".join(
+        f"<a href='{t.esc(href)}'>{t.icon(ic)}<span>{label}</span></a>" for href, ic, label in items) + "</nav>"
+
+
 def detail(ctx, work_item_id):
     from .. import Response
     tk = _load(ctx, work_item_id)
@@ -366,7 +381,7 @@ def detail(ctx, work_item_id):
                           f"<option value='{n['note_id']}' data-flag='{n['flag']}' data-body='{t.esc(n['body'])}'>"
                           f"{t.esc(n['name'])}</option>" for n in std) + "</select></div></div>")
         composer = (
-            "<div class=card data-pod=composer><h3><svg class=ic aria-hidden=true><use href=#i-note></use></svg>Add a note</h3>"
+            "<div class=card data-pod=composer id=composer><h3><svg class=ic aria-hidden=true><use href=#i-note></use></svg>Add a note</h3>"
             f"<form method=post action='/ticket/{wid}/note'>" + picker +
             "<textarea name=body required placeholder='What you found, what you did, what is next. The ward, room and machine say it best; a patient never needs naming (§6.1).'></textarea>"
             "<div class=row style='margin-top:10px'>"
@@ -418,7 +433,7 @@ def detail(ctx, work_item_id):
     else:
         person_line = ""
     fields = (
-        "<div class='card fields' data-pod=ticket><h3><svg class=ic aria-hidden=true><use href=#i-ticket></use></svg>Ticket</h3>"
+        "<div class='card fields' data-pod=ticket id=ticketcard><h3><svg class=ic aria-hidden=true><use href=#i-ticket></use></svg>Ticket</h3>"
         f"<form method=post action='/ticket/{wid}/update'>"
         f"<label>Board</label><select name=board_id{dis}>{_options(board_pairs, tk['board_id'])}</select>"
         f"<label>Status</label><select name=to_status{dis}>"
@@ -508,7 +523,7 @@ def detail(ctx, work_item_id):
     body = header + strip + (f"<div class=rail>{left}<div class=pods data-col=right data-order='ticket,change,approval,family,"
                              f"schedule,tasks,files,links,configurations,project,knowledge,finance,time,commercial,details'>{fields}{configs}{time_card}"
                              f"{commercial}{details}</div></div>")
-    return Response(body=t.page(work_item_id, body, user=ctx.user, active="board"))
+    return Response(body=t.page(work_item_id, body, user=ctx.user, active="board", quick=_quick_bar(wid, person, can_work)))
 
 
 def _back(work_item_id, **q):

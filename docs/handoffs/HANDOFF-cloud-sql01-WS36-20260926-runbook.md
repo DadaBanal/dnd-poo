@@ -802,9 +802,20 @@ sitting-1 road** (`init` is safe to run again; nothing is seeded).
   sees it under Approvals and their Approve puts *Approved by …* on the
   ticket and brings it back; a stranger's portal shows *Nothing waits for
   you*.
-- **Counts:** 569 tests at this head, SQLite OK. 046 alone ran on SQL Server
-  in this container: 554 run, OK, 2 skipped (MEASURED); the run with all
-  four is in the fold-in that follows. The drift gate passes.
+- **Gap 5, no schema: the desk on a technician's phone.** The same pages
+  read their width: under 640 px the board is a list of cards, every control
+  is thumb-sized, a bar at the foot of the screen reaches Board, Dispatch,
+  Schedule, Time and New, and on a ticket reaches the note, the ticket card
+  and a call to the contact. Nothing to apply on SQL01 beyond the pull.
+  **Pass, for Dada:** on a phone on the hospital Wi-Fi, the desk's address
+  shows the board as cards with the bar at the foot; a ticket's bar has
+  *Note* and *Ticket*, and *Call* when the contact has a number. (MEASURED
+  in the cloud with Playwright at 390 × 844: fourteen pages, no sideways
+  scroll, no control under 40 px.)
+- **Counts:** 570 tests at this head, SQLite OK (1 skipped). The whole suite
+  with 046 to 049 ran on SQL Server in this container against the port:
+  569 run, OK, 2 skipped, 13.5 minutes (MEASURED, 29 Sep). The drift gate
+  passes; CI run 67 is on the same head.
 
 ## When a step does not pass
 

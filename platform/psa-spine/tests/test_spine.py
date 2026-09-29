@@ -7448,6 +7448,52 @@ class DeskLookTest(unittest.TestCase):
         self.assertIn("Reset layout", templates.SCRIPT)
         self.assertIn("Move to the other column", templates.SCRIPT)
 
+    def test_on_a_technicians_phone_the_board_is_a_list_of_cards_and_the_ticket_has_a_quick_bar(self):
+        """Gap 5 (29 Sep): the same pages read their width. Under 640 px the
+        board row keeps the summary, the priority and the clocks and folds the
+        rest into a line; a fixed bar at the foot of the ticket reaches the
+        board, the note, the ticket card and a call to the contact; a coarse
+        pointer gets 40 px controls. None of it exists on a desk."""
+        from psaspine.web import templates
+        css = templates.STYLE
+        self.assertIn("@media (pointer:coarse){button,.btn,.iconbtn,select,input:not([type=checkbox]):not([type=radio]){min-height:40px}", css)
+        self.assertIn("@media (max-width:640px){", css)
+        for rule in (".sm-hide{display:none!important}.sm-only{display:block}", "input,select,textarea{font-size:16px}",
+                     ".quick{display:flex;position:fixed;left:0;right:0;bottom:0;", "main{padding:12px 10px 84px}",
+                     "form.toolbar{display:grid;grid-template-columns:1fr 1fr;", ".tablewrap>table:not(.cards){min-width:720px}"):
+            self.assertIn(rule, css, rule)
+        self.assertIn(".sm-only{display:none} .quick{display:none}", css)     # off until the width says so
+        alice = self._cookie_for("alice")
+        _, _, board_page = self._call("GET", "/", cookie=alice)
+        self.assertIn("<th class='sort sm-hide'><a", board_page)                 # the id column folds
+        self.assertIn("<td class=sm-hide><a href='/ticket/ITO-1'>ITO-1</a></td>", board_page)
+        self.assertRegex(board_page, r"<div class='sm-only meta'>ITO-1 · [^<]+ · [^<]+ · [^<]+</div>")
+        self.assertNotIn("<th class='sort sm-hide'><a href='[^']*sort=summary", board_page)
+        self.assertIn("<div class=wide style='flex:1'><label>Search</label>", board_page)
+        self.assertIn("<table class='grid cards'><thead>", board_page)
+        sections = re.search(r"<nav class=quick aria-label='Sections'>(.*?)</nav>", board_page).group(1)
+        self.assertEqual(re.findall(r"href='([^']+)'", sections), ["/", "/dispatch", "/schedule", "/time", "/ticket/new"])
+        self.assertIn("<span class=sep> · </span><a href=\"/logout\">sign out</a>", board_page)
+        self.assertIn("header.top nav a .lbl,header.top nav a.on .lbl{display:none}", css)   # the active label too
+        self.assertIn("table.grid.cards tr{display:grid;", css)
+        conn = db.connect(self.db_path)
+        conn.execute("INSERT INTO contact (contact_id, entity_id, display_name, email, phone, source, inactive, created_at)"
+                     " VALUES ('C_PH', 'PMC', 'Ward Clerk', 'clerk@pmcne.ph', '(02) 8123 4567 loc. 301', 'AD', 0, '2026-09-17 08:00')")
+        conn.execute("UPDATE ticket SET contact_id = 'C_PH' WHERE work_item_id = 'ITO-1'")
+        conn.commit()
+        conn.close()
+        _, _, ticket = self._call("GET", "/ticket/ITO-1", cookie=alice)
+        self.assertIn("<div class=card data-pod=composer id=composer>", ticket)
+        self.assertIn("<div class='card fields' data-pod=ticket id=ticketcard>", ticket)
+        quick = re.search(r"<nav class=quick aria-label='Quick actions'>(.*?)</nav>", ticket).group(1)
+        self.assertEqual(re.findall(r"href='([^']+)'", quick), ["/", "/ticket/ITO-1#composer", "/ticket/ITO-1#ticketcard", "tel:+0281234567301".replace("+", "")])
+        self.assertEqual(ticket.count("<nav class=quick"), 1)
+        _, _, read_only = self._call("GET", "/ticket/ITO-1", cookie=self._cookie_for("carol"))   # READ: no note, no card
+        self.assertEqual(re.findall(r"href='([^']+)'", re.search(r"<nav class=quick[^>]*>(.*?)</nav>", read_only).group(1)),
+                         ["/", "tel:0281234567301"])
+        _, _, portal = self._call("GET", "/my", cookie=self._cookie_for("nurse", email="nurse@pmcne.ph"))
+        self.assertNotIn("class=quick", portal)                                 # the requester's shell has none
+
     def test_the_script_is_plain_and_escapes_what_it_shows(self):
         from psaspine.web import templates
         # innerHTML only ever takes a string literal; anything from a ticket goes through textContent.

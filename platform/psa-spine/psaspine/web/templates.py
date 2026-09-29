@@ -387,10 +387,42 @@ em{font-style:italic}
 /* ---- small screens ----------------------------------------------------- */
 @media (max-width:1100px){.tablewrap{overflow-x:auto} table.grid thead th{position:static} table.grid td.wrap{white-space:nowrap}}
 @media (max-width:900px){.tiles{grid-template-columns:repeat(2,1fr)}.slastrip{grid-template-columns:1fr}.grid2{grid-template-columns:1fr}.rail{grid-template-columns:1fr}}
-@media (max-width:720px){main{padding:14px 12px}h1{font-size:19px}header.top .who span.name{display:none}.card{padding:12px 14px}.tile .n{font-size:22px}}
+@media (max-width:720px){main{padding:14px 12px}h1{font-size:19px}header.top .who span.name,header.top .who .sep{display:none}.card{padding:12px 14px}.tile .n{font-size:22px}}
 /* a laptop: with every module on, the words no longer fit; the current page keeps its word, the rest show an icon and a title */
 @media (max-width:1400px){header.top nav a .lbl{display:none} header.top nav a.on .lbl{display:inline} header.top nav a .ic{margin-right:0}
   header.top nav a.on .ic{margin-right:6px}}
+/* a technician's phone (gap 5, 29 Sep): one column, thumb-sized controls, the board as a list of cards, and a
+   quick bar on the ticket. Nothing is a separate app; the same page reads its width and its pointer. */
+.sm-only{display:none} .quick{display:none} header.top #pal-open .ic{display:none}
+@media (pointer:coarse){button,.btn,.iconbtn,select,input:not([type=checkbox]):not([type=radio]){min-height:40px}
+  input[type=checkbox],input[type=radio]{width:20px;height:20px}.iconbtn{width:40px}header.top nav a{min-height:40px}}
+@media (max-width:640px){
+  html{-webkit-text-size-adjust:100%}input,select,textarea{font-size:16px}
+  main{padding:12px 10px 84px}h1{font-size:18px;overflow-wrap:anywhere}.sub{margin-bottom:12px}
+  .tiles,.tiles.six{grid-template-columns:repeat(2,1fr);gap:8px}.tile{padding:10px 12px}.tile .n{font-size:20px}
+  form.toolbar{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:end}form.toolbar>div{min-width:0}form.toolbar>div.wide{grid-column:1/-1}
+  form.toolbar select,form.toolbar input{width:100%}.tablewrap>table:not(.cards){min-width:720px}.tablewrap>table:not(.cards) td{white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis}.tablewrap>table:not(.cards) td:has(form){max-width:none;overflow:visible}
+  .sm-hide{display:none!important}.sm-only{display:block}
+  table.grid.cards td.sum{min-width:0;white-space:normal;overflow-wrap:anywhere}table.grid td,table.grid th{padding:8px 6px}
+  table.grid td.sum .meta{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);margin-top:2px}
+  table.grid.cards{display:block}table.grid.cards thead{display:none}table.grid.cards tbody{display:block}
+  table.grid.cards tr{display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:4px 8px;align-items:start;padding:10px 8px 10px 6px;border-bottom:1px solid var(--line)}
+  table.grid.cards td{display:block;padding:0;border:0;white-space:normal;width:auto}
+  table.grid.cards td:first-child{grid-row:1/3;padding-left:0;width:auto}table.grid.cards td.sum{grid-column:2}
+  table.grid.cards td:last-child{grid-column:2/4;padding-top:2px}table.grid.cards td:last-child .chip{margin:0 4px 4px 0}
+  header.top nav a .lbl,header.top nav a.on .lbl{display:none}header.top .who .sep,header.top .who [popovertarget=keys]{display:none}
+  header.top #pal-open .kbd{display:none}header.top #pal-open .ic{display:block}
+  .tabs{overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none}.tabs a{white-space:nowrap;padding:7px 10px}
+  .hdr{flex-direction:column;gap:6px}.slastrip{grid-template-columns:1fr 1fr}.slastrip .slabox:last-child:nth-child(odd){grid-column:1/-1}
+  .rail{gap:10px}.pods .card{padding:12px}.card{padding:12px}
+  form.stack{max-width:none}.row>div{min-width:120px}
+  .pager{justify-content:space-between;flex-wrap:wrap}.banner.toast{left:10px;right:10px;bottom:76px;max-width:none}
+  .quick{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:30;background:var(--glass);backdrop-filter:blur(12px);
+    border-top:1px solid var(--line);padding:6px 6px calc(6px + env(safe-area-inset-bottom));justify-content:space-around}
+  .quick a{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-width:56px;min-height:46px;
+    font-size:11px;color:var(--ink-2);text-decoration:none;border-radius:var(--r)}.quick a:active{background:var(--surface-3)}
+  .quick a .ic{width:20px;height:20px;stroke-width:1.9}
+}
 /* a phone: the nav links keep their icon and lose their words, so the header never overlaps itself (SQL01, part 15) */
 @media (max-width:480px){header.top{gap:4px}header.top .brand{margin-right:4px}header.top nav a{padding:6px 8px}header.top nav a .lbl{display:none}
   header.top nav a .ic{margin-right:0}header.top nav a.on::after{left:6px;right:6px}header.top .who{gap:6px}header.top .newbtn{padding:6px 8px}}
@@ -776,8 +808,21 @@ def chip(text: str, cls: str = "") -> str:
     classes = "chip" + (f" {cls}" if cls else "")
     return f'<span class="{classes}">{esc(text)}</span>'
 
+QUICK_KEYS = ("board", "dispatch", "schedule", "time")
 
-def page(title: str, body: str, *, user=None, active: str = "", requester: bool | None = None) -> str:
+
+def _quick_default(nav_items) -> str:
+    """The phone's bottom bar for the desk (gap 5): the first sections the
+    person may see, and a new ticket. CSS shows it under 640 px only."""
+    items = [(href, key, label) for key, href, label in nav_items if key in QUICK_KEYS][:4]
+    items.append(("/ticket/new", "plus", "New"))
+    return "<nav class=quick aria-label='Sections'>" + "".join(
+        f"<a href='{esc(href)}'>{icon({'schedule': 'calendar', 'time': 'clock'}.get(key, key))}"
+        f"<span>{esc(label if key != 'board' else 'Board')}</span></a>" for href, key, label in items) + "</nav>"
+
+
+def page(title: str, body: str, *, user=None, active: str = "", requester: bool | None = None,
+         quick: str | None = None) -> str:
     """The shell every page shares: header, nav, the acting user, the body.
 
     A break-glass session is marked in the corner, in amber, on every page. Who
@@ -826,11 +871,11 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         tools = ""
         if not requester:
             tools = ('<button class="iconbtn" id="pal-open" type="button" title="Search and commands (Ctrl+K)"'
-                     ' aria-label="Search and commands"><span class=kbd>⌘K</span></button>'
+                     f' aria-label="Search and commands">{icon("search")}<span class=kbd>⌘K</span></button>'
                      '<button class="iconbtn" type="button" popovertarget="keys" title="Keyboard shortcuts (?)"'
                      f' aria-label="Keyboard shortcuts">{icon("keyboard")}</button>')
         who = (f'<div class="who">{glass}<span class=name>{esc(user.name)}</span>'
-               f' · <a href="/logout">sign out</a>' + tools +
+               f'<span class=sep> · </span><a href="/logout">sign out</a>' + tools +
                f'<button class="iconbtn" id="theme" type="button" title="Light / dark (t)"'
                f' aria-label="Toggle light or dark">{icon("sun")}</button></div>')
     palette = ""
@@ -864,6 +909,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         f'{"PMC Requests" if requester else "Dada PSA"}</a>'
         f"<nav>{nav}</nav>{who}</header>"
         f"<main>{body}</main>"
+        + (quick if quick is not None else (_quick_default(nav_items) if user is not None and not requester else ""))
         + ("<footer>PMC Requests — a request reaches the department it is for.</footer>" if requester else
            "<footer>PMC PSA spine — Phase B pilot. LAN only, Dada IT only. "
            "Kitameraki remains the system of record until dual-run ends.</footer>")

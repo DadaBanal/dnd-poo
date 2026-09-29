@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 569 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 570 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -812,6 +812,36 @@ also needs a manager's yes on a service request. 049 adds it, in three places:
 `approval` holds one row per question: approver, asked when and by whom, the
 reason, PENDING → APPROVED / DECLINED / WITHDRAWN, decided when and with what
 note, and the status to return to.
+
+## The desk on a technician's phone (gap 5, 29 Sep 2026)
+
+The same pages, read on a phone in a ward: no separate app, no second set of
+templates. The page reads its width and its pointer (`templates.STYLE`, the
+rules under `@media (max-width:640px)` and `@media (pointer:coarse)`):
+
+- **One column, thumb-sized.** Every control is at least 40 px tall on a
+  touch screen, fields are 16 px so iOS does not zoom into them, the tiles
+  and the board's filter bar go two across, the ticket's two columns become
+  one (the pods keep their order), and the SLA strip stacks.
+- **The board is a list of cards.** Under 640 px a row keeps the summary, the
+  priority and the SLA chips, and folds the number, status, owner and age
+  into one line under the summary (`table.grid.cards`); the other columns
+  and the header row go. Wider tables elsewhere (Dispatch, Setup) scroll
+  sideways inside their card rather than crush their columns.
+- **A bottom bar.** Every desk page carries a fixed bar at the foot of a
+  phone: Board, Dispatch, Schedule, Time (those the person may see) and New.
+  On a ticket the bar is the ticket's: Board, Note (the composer), Ticket
+  (the card), and **Call** when the contact has a phone number, as a `tel:`
+  link. The header keeps its icons and drops the words, the ⌘K badge becomes
+  a search icon, and the keyboard-shortcuts button is not there.
+- **The requester's portal** already fitted a phone (part 15); it gains
+  nothing here and shows no bar.
+
+MEASURED on 29 Sep with Playwright at an iPhone 13's 390 × 844: fourteen
+pages (board, ticket, dispatch, schedule, configurations, time, setup, new
+ticket, reports, knowledge, finance, the portal's requests and approvals)
+render with no horizontal overflow, no control under 40 px, and the bar
+present on every desk page and absent from the portal.
 
 ## HTTPS and the organisation sign-in (26 Sep 2026)
 
