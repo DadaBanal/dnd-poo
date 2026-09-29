@@ -574,7 +574,80 @@ def integrations(ctx):
         f"<p class=why>Fields you can use: {t.esc(fields)}. The ScreenConnect shape is the one "
         "its integrations document (NinjaOne, Syncro); put your own instance in place of "
         "INSTANCE.</p><div><button type=submit>Add link</button></div></form></div>")
+    body += _teams_card(ctx)
     return Response(body=t.page("Integrations", body, user=ctx.user, active="admin"))
+
+
+def _teams_card(ctx) -> str:
+    """Setup › Integrations › Teams channels (050): the names the desk posts
+    cards to. The address behind a name lives on the host, in the sender's
+    webhook file, never here."""
+    from ... import channels
+    rows = channels.targets(ctx.conn)
+    lines = "".join(
+        f"<tr><td><code>{t.esc(r['target_id'])}</code></td><td>{t.esc(r['label'])}</td>"
+        f"<td><form method=post action='/admin/integrations/teams/pages' class=inline>"
+        f"<input type=hidden name=target_id value='{t.esc(r['target_id'])}'><input type=hidden name=pages value={0 if r['pages'] else 1}>"
+        f"<button class=ghost type=submit title='Whether pages to the on-call also post here'>{'Pages: yes' if r['pages'] else 'Pages: no'}</button></form></td>"
+        f"<td>{'<span class=chip>off</span>' if r['inactive'] else 'on'}</td>"
+        f"<td><form method=post action='/admin/integrations/teams/toggle' class=inline>"
+        f"<input type=hidden name=target_id value='{t.esc(r['target_id'])}'>"
+        f"<button class=ghost type=submit>{'Turn on' if r['inactive'] else 'Turn off'}</button></form></td></tr>"
+        for r in rows) or "<tr><td colspan=5 class=muted>No Teams channels yet.</td></tr>"
+    return ("<div class=card><h3>" + t.icon("bell") + "Teams channels</h3>"
+            "<p class=why>A workflow rule can notify a Teams channel as a card, and a page to the on-call posts to every "
+            "channel that carries pages. Name the channel here; the webhook address goes on the host, in the Teams "
+            "sender's file, keyed by this name. A card carries the ticket number, board, priority, status and owner and "
+            "the rule's words: never the summary, never a note.</p>"
+            "<div class=tablewrap><table><thead><tr><th>Name</th><th>Label</th><th>Carries pages</th><th>State</th><th></th></tr></thead>"
+            f"<tbody>{lines}</tbody></table></div>"
+            "<form method=post action='/admin/integrations/teams/add' class=fields style='margin-top:10px'>"
+            "<label>Name (the key in the host's webhook file)</label><input name=target_id required placeholder='helpdesk-alerts' pattern='[a-z0-9][a-z0-9-]{1,39}'>"
+            "<label>Label</label><input name=label required placeholder='IT Helpdesk › Alerts'>"
+            "<label><input type=checkbox name=pages value=1> Carries pages to the on-call</label>"
+            "<div style='margin-top:8px'><button type=submit>Add the channel</button></div></form></div>")
+
+
+def teams_add(ctx):
+    from .. import redirect
+    from ... import channels
+    common.require_sysadmin(ctx)
+    f = ctx.request.form()
+    try:
+        name = channels.add_target(ctx.conn, f.get("target_id", ""), label=f.get("label", ""),
+                                   pages=f.get("pages") == "1", at=ctx.now, actor=ctx.user.id)
+    except channels.Refused as exc:
+        ctx.conn.rollback()
+        return redirect("/admin/integrations?" + urllib.parse.urlencode({"err": str(exc)}))
+    ctx.conn.commit()
+    return redirect("/admin/integrations?" + urllib.parse.urlencode({"msg": f"Teams channel {name} added; give the host's webhook file its address"}))
+
+
+def teams_toggle(ctx):
+    from .. import redirect
+    from ... import channels
+    common.require_sysadmin(ctx)
+    tid = ctx.request.form().get("target_id", "")
+    try:
+        row = channels.get(ctx.conn, tid)
+        changed = channels.set_active(ctx.conn, tid, bool(row["inactive"]) if row else True, at=ctx.now, actor=ctx.user.id)
+    except channels.Refused as exc:
+        return redirect("/admin/integrations?" + urllib.parse.urlencode({"err": str(exc)}))
+    ctx.conn.commit()
+    return redirect("/admin/integrations?msg=" + ("Teams+channel+updated" if changed else "Nothing+changed"))
+
+
+def teams_pages(ctx):
+    from .. import redirect
+    from ... import channels
+    common.require_sysadmin(ctx)
+    f = ctx.request.form()
+    try:
+        changed = channels.set_pages(ctx.conn, f.get("target_id", ""), f.get("pages") == "1", at=ctx.now, actor=ctx.user.id)
+    except channels.Refused as exc:
+        return redirect("/admin/integrations?" + urllib.parse.urlencode({"err": str(exc)}))
+    ctx.conn.commit()
+    return redirect("/admin/integrations?msg=" + ("Teams+channel+updated" if changed else "Nothing+changed"))
 
 
 def integrations_add(ctx):

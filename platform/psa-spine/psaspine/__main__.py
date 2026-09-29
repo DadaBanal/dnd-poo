@@ -92,6 +92,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="what it is for, in words: 'orthanc monitoring'")
     pk.add_argument("--board", required=True, dest="board_id",
                     help="the one board this token may raise tickets onto")
+    pk.add_argument("--scope", choices=("RAISE", "READ", "WRITE"), default="RAISE",
+                    help="RAISE tickets and read its own (default); READ every ticket on the board and the "
+                         "configurations; WRITE a note, a status or an owner as well")
 
     pb = sub.add_parser("backup",
                         help="escrow copy via SQLite's backup API (safe under WAL); "
@@ -164,6 +167,10 @@ def main(argv: list[str] | None = None) -> int:
     pob.add_argument("--portal-url",
                      help="https:// address of the requester portal for the link in requester "
                           "emails (else PSA_PORTAL_URL; never committed)")
+    pob.add_argument("--channel", choices=("EMAIL", "TEAMS"), default="EMAIL",
+                     help="which sender is asking: EMAIL (the Graph sender) or TEAMS (the webhook sender)")
+    pob.add_argument("--desk-url",
+                     help="https:// address of the desk for the link on a Teams card (else PSA_PUBLIC_URL)")
     pom = sub.add_parser("outbox-mark", help="record what the sender did with one notification")
     pom.add_argument("database", help=DB_HELP)
     pom.add_argument("--id", type=int, required=True)
@@ -411,20 +418,26 @@ def _run(conn, a) -> int:
         return 0
 
     if a.cmd == "run-rules":
-        from . import recurring, workflow
+        from . import paging, recurring, workflow
         c = workflow.sweep(conn, at=datetime.now())
         raised = recurring.raise_due(conn, at=datetime.now())
         failed = [r for r in raised if "error" in r]
+        p = paging.tick(conn, at=datetime.now())
+        conn.commit()
         print(f"{c['tickets']} tickets with timed rules: {c['acted']} actions taken, "
               f"{c['errors']} errors (see workflow_run); recurring: {len(raised) - len(failed)} raised, "
-              f"{len(failed)} failed (see audit_event)")
+              f"{len(failed)} failed (see audit_event); pages: {p['open']} open, {p['sent']} repeated, "
+              f"{p['ended']} ended, {p['escalated']} escalated")
         return 1 if c["errors"] or failed else 0
 
     if a.cmd == "outbox-pending":
-        from . import outbox
+        from . import channels, outbox
         try:
-            items = outbox.pending(conn, allowed_domains=tuple(a.allowed_domain),
-                                   dry_run=a.dry_run, portal_url=a.portal_url)
+            if a.channel == "TEAMS":
+                items = channels.pending_teams(conn, dry_run=a.dry_run, desk_url=a.desk_url)
+            else:
+                items = outbox.pending(conn, allowed_domains=tuple(a.allowed_domain),
+                                       dry_run=a.dry_run, portal_url=a.portal_url)
         except ValueError as exc:
             print(f"refused: {exc}", file=sys.stderr)
             return 1
@@ -578,7 +591,7 @@ def _run(conn, a) -> int:
         from .web import api
         try:
             token_id, token = api.create_token(conn, label=a.label, board_id=a.board_id,
-                                               at=datetime.now())
+                                               at=datetime.now(), scope=a.scope)
             conn.commit()
         except ValueError as exc:
             print(f"refused: {exc}", file=sys.stderr)

@@ -201,7 +201,7 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
         raise ValueError("the portal address must be https://")
     allowed = tuple(d.lower().lstrip("@") for d in allowed_domains)
     out = []
-    for n in conn.execute("SELECT * FROM notification WHERE status = 'PENDING'"
+    for n in conn.execute("SELECT * FROM notification WHERE status = 'PENDING' AND COALESCE(channel, 'EMAIL') = 'EMAIL'"
                           " ORDER BY notification_id LIMIT ?", (limit,)).fetchall():
         to = address_for(conn, n["recipient"])
         if not to or to.rsplit("@", 1)[1] not in allowed:
@@ -220,6 +220,8 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
         elif n["recipient_role"] == APPROVER:
             where = (f"{portal_url}/my/approvals" if portal_url else "the PMC Requests portal, under Approvals")
             body = f"{n['body'] or ''}\n\nThe reference: {n['work_item_id']}\nDecide it here: {where}"
+        elif n["recipient_role"] == "PAGE":
+            body = (n["body"] or "") + f"\n\nOpen the ticket on the desk and press Acknowledge: {n['work_item_id']}"
         else:
             body = (n["body"] or "") + f"\n\nOpen the ticket on the desk: {n['work_item_id']}"
         out.append({"id": n["notification_id"], "to": to, "subject": n["subject"],

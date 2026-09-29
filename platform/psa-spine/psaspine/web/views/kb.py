@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import urllib.parse
 
-from ... import knowledge, phi, setup
+from ... import kbfiles, knowledge, phi, setup
 from .. import templates as t
 from . import common
 
@@ -87,7 +87,8 @@ def _form(ctx, row=None, *, error: str = "", values: dict | None = None) -> str:
               f"<div><label>For</label><select name=audience>{aud}</select></div>"
               f"<div><label>Board</label><select name=board_id>{board_opts}</select></div>"
               f"<div style='grid-column:1/-1'><label>Subtype › Item</label><select name=catalogue_item_id>{pairs}</select></div></div>"
-              "<label>The fix, step by step (Markdown: # heading, - list, **bold**, `code`)"
+              "<label>The fix, step by step (Markdown: # heading, - list, **bold**, `code`; a picture from Files as "
+              "![caption](file:3), a link as [words](https://…))"
               f"<textarea name=body required style='min-height:320px'>{t.esc(v.get('body') or '')}</textarea></label>"
               "<p class=why style='margin:0'>Write what someone needs to fix it again: the symptom, the cause, the steps, "
               "how to check it worked. A ward, a room or a machine says it best; a patient never needs naming.</p>"
@@ -155,7 +156,9 @@ def detail(ctx, article_id):
             + f"<h1>{t.esc(row['title'])}</h1><p class=sub>{aid} · {t.chip(STATUS_WORDS[row['status']])} · "
               f"{t.esc(knowledge.AUDIENCES[row['audience']])} · {t.esc(row['board_name'] or 'Every board')} · "
               f"version {row['version']} · used on {row['uses']} ticket(s) · <a href='/kb'>Knowledge</a></p>"
-            + actions + f"<div class=card><div class=md>{t.md_to_html(row['body'])}</div></div>"
+            + actions + "<div class=card><div class=md>"
+            + t.md_to_html(row["body"], file_url=kbfiles.resolver(ctx.conn, row["article_id"], portal=False, base=f"/kb/{aid}/file/"))
+            + "</div></div>" + _files_card(ctx, row, can_write=can_write)
             + "<div class=grid2><div class=card><h3>" + t.icon("note") + "Used on</h3>"
             + ("<ul class=plain>" + "".join(f"<li><a href='/ticket/{t.esc(w)}'>{t.esc(w)}</a></li>" for w in used[:50]) + "</ul>"
                if used else "<div class=muted>No ticket yet.</div>")
@@ -262,6 +265,159 @@ def portal_detail(ctx, article_id):
     # requester on no board cannot open one by guessing its sequential id.
     if row is None or row["status"] != "PUBLISHED" or row["audience"] != "REQUESTER" or row["board_id"] is not None:
         raise HttpError("404 Not Found", "No such help page.")
-    body = (f"<h1>{t.esc(row['title'])}</h1><div class=card><div class=md>{t.md_to_html(row['body'])}</div></div>"
-            "<p><a href='/my/help'>All help</a> · <a href='/my'>Raise a request</a></p>")
+    shown = t.md_to_html(row["body"], file_url=kbfiles.resolver(ctx.conn, row["article_id"], portal=True,
+                                                                 base=f"/my/help/{t.esc(row['article_id'])}/file/"))
+    files = [f for f in kbfiles.of_article(ctx.conn, row["article_id"]) if kbfiles.visible(f, portal=True)
+             and not f["media_type"].startswith("image/")]
+    downloads = ("<div class=card><h3>" + t.icon("paperclip") + "Files</h3><ul class=plain>" + "".join(
+        f"<li><a href='/my/help/{t.esc(row['article_id'])}/file/{f['file_id']}'>{t.esc(f['caption'] or f['filename'])}</a></li>"
+        for f in files) + "</ul></div>") if files else ""
+    body = (f"<h1>{t.esc(row['title'])}</h1><div class=card><div class=md>{shown}</div></div>" + downloads
+            + "<p><a href='/my/help'>All help</a> · <a href='/my'>Raise a request</a></p>")
     return Response(body=t.page(row["title"], body, user=ctx.user, active="help"))
+
+
+# ------------------------------------------------------------ files (051)
+
+FILE_WORDS = {"PENDING": "awaiting review", "CLEARED": "cleared", "WITHHELD": "withheld"}
+
+
+def _size(n: int) -> str:
+    return f"{n / 1024:.0f} KB" if n >= 1024 else f"{n} B"
+
+
+def _files_card(ctx, row, *, can_write: bool) -> str:
+    """The article's files: what each is, its review, how to show it in the
+    text; upload and review for a writer, removal for an administrator."""
+    aid = t.esc(row["article_id"])
+    can_admin = common.allows(ctx, "KNOWLEDGE", "ADMIN")
+    lines = []
+    for f in kbfiles.of_article(ctx.conn, row["article_id"]):
+        served = kbfiles.visible(f, portal=False)
+        url = f"/kb/{aid}/file/{f['file_id']}"
+        thumb = (f"<img src='{url}' alt='' class=kbthumb>" if served and f["media_type"].startswith("image/") else "")
+        name = f"<a href='{url}'>{t.esc(f['filename'])}</a>" if served else t.esc(f["filename"])
+        chip = {"PENDING": "sla-warn", "CLEARED": "sla-ok", "WITHHELD": "sla-bad"}[f["review_status"]]
+        forms = ""
+        if can_write:
+            forms = (f"<form method=post action='/kb/{aid}/file/{f['file_id']}/review' class=inline>"
+                     "<button class='ghost small' name=decision value=CLEAR type=submit>Clear</button> "
+                     "<button class='ghost small' name=decision value=WITHHOLD type=submit>Withhold</button></form>")
+        if can_admin:
+            forms += (f" <form method=post action='/kb/{aid}/file/{f['file_id']}/remove' class=inline>"
+                      "<button class='ghost small danger' type=submit>Remove</button></form>")
+        lines.append(f"<li>{thumb}{name} <span class=muted>· {t.esc(f['media_type'])} · {_size(f['size_received'])} · "
+                     f"{t.esc(f['uploaded_by'])} {t.esc(f['uploaded_at'])}</span> "
+                     f"<span class='chip {chip}'>{FILE_WORDS[f['review_status']]}</span>"
+                     + (f" <span class=muted>{t.esc(f['caption'])}</span>" if f["caption"] else "")
+                     + (f"<br><code>![{t.esc(f['caption'] or f['filename'])}](file:{f['file_id']})</code>"
+                        if f["media_type"].startswith("image/") else f"<br><code>[{t.esc(f['caption'] or f['filename'])}](file:{f['file_id']})</code>")
+                     + (f"<br>{forms}" if forms else "") + "</li>")
+    upload = ""
+    if can_write:
+        upload = (f"<form method=post action='/kb/{aid}/file' enctype='multipart/form-data' class=fields style='margin-top:10px'>"
+                  "<label>Add a file</label><input type=file name=file required>"
+                  "<label>Caption</label><input name=caption maxlength=200 placeholder='Where the switch is'>"
+                  "<div style='margin-top:8px'><button class=ghost type=submit>Upload</button></div>"
+                  "<p class=why style='margin:6px 0 0'>Pictures, PDFs, logs and Office documents. Every file waits for a "
+                  "patient-information review before a requester can see it; the desk sees it at once. "
+                  "Paste the code line under a file into the text to show it there.</p></form>")
+    return ("<div class=card><h3>" + t.icon("paperclip") + "Files</h3>"
+            + (f"<ul class=plain>{''.join(lines)}</ul>" if lines else "<div class=muted>No file yet.</div>") + upload + "</div>")
+
+
+def _file_on(ctx, article_id, file_id):
+    from .. import HttpError
+    try:
+        row = kbfiles.get(ctx.conn, int(file_id))
+    except ValueError:
+        row = None
+    if row is None or row["article_id"] != article_id or row["removed_at"]:
+        raise HttpError("404 Not Found", "No such file on this article.")
+    return row
+
+
+def _serve(ctx, row):
+    """The file's bytes: inline when it is a picture, a download otherwise; never
+    a page the browser runs."""
+    from .. import HttpError, Response
+    try:
+        _, data = kbfiles.read(ctx.conn, row["file_id"])
+    except kbfiles.Removed:
+        raise HttpError("410 Gone", "That file was removed.")
+    except (OSError, LookupError):
+        raise HttpError("404 Not Found", "That file is missing or damaged; it was not served.")
+    ascii_name = row["filename"].encode("ascii", "replace").decode().replace("?", "_").replace('"', "_")
+    kind = "inline" if row["media_type"].startswith("image/") else "attachment"
+    disposition = f'{kind}; filename="{ascii_name}"; ' + f"filename*=UTF-8''{urllib.parse.quote(row['filename'])}"
+    return Response(body=data, content_type=row["media_type"], headers=[
+        ("Content-Disposition", disposition), ("Content-Security-Policy", "sandbox"),
+        ("Cache-Control", "private, no-store")])
+
+
+def _back_to(article_id, **q):
+    from .. import redirect
+    q = {k: v for k, v in q.items() if v}
+    return redirect(f"/kb/{article_id}" + ("?" + urllib.parse.urlencode(q) if q else ""))
+
+
+def upload(ctx, article_id):
+    common.require_module(ctx, "KNOWLEDGE", "WRITE")
+    row = _load(ctx, article_id)
+    files = ctx.request.files("file")
+    caption = ctx.request.form().get("caption", "")
+    if not files:
+        return _back_to(article_id, err="Choose a file first.")
+    kept = []
+    try:
+        for filename, data in files:
+            r = kbfiles.add(ctx.conn, row["article_id"], data, filename, caption=caption, actor=ctx.user.id, at=ctx.now)
+            kept.append(r["file_id"])
+        ctx.conn.commit()
+    except kbfiles.Refused as exc:
+        ctx.conn.rollback()
+        return _back_to(article_id, err=f"Not kept: {exc}")
+    return _back_to(article_id, msg=f"File {', '.join(str(k) for k in kept)} added; show it in the text as ![caption](file:{kept[-1]})")
+
+
+def file(ctx, article_id, file_id):
+    from .. import HttpError
+    common.require_module(ctx, "KNOWLEDGE")
+    _load(ctx, article_id)
+    row = _file_on(ctx, article_id, file_id)
+    if not kbfiles.visible(row, portal=False):
+        raise HttpError("404 Not Found", "No such file on this article.")
+    return _serve(ctx, row)
+
+
+def file_review(ctx, article_id, file_id):
+    common.require_module(ctx, "KNOWLEDGE", "WRITE")
+    _load(ctx, article_id)
+    row = _file_on(ctx, article_id, file_id)
+    decision = ctx.request.form().get("decision", "")
+    try:
+        r = kbfiles.review(ctx.conn, row["file_id"], decision, actor=ctx.user.id, at=ctx.now)
+        ctx.conn.commit()
+    except ValueError as exc:
+        return _back_to(article_id, err=str(exc))
+    return _back_to(article_id, msg=f"{r['filename']} {FILE_WORDS[r['review_status']]}")
+
+
+def file_remove(ctx, article_id, file_id):
+    common.require_module(ctx, "KNOWLEDGE", "ADMIN")
+    _load(ctx, article_id)
+    row = _file_on(ctx, article_id, file_id)
+    kbfiles.remove(ctx.conn, row["file_id"], actor=ctx.user.id, at=ctx.now)
+    ctx.conn.commit()
+    return _back_to(article_id, msg=f"{row['filename']} removed")
+
+
+def portal_file(ctx, article_id, file_id):
+    from .. import HttpError
+    row = knowledge.get(ctx.conn, article_id)
+    if row is None or row["status"] != "PUBLISHED" or row["audience"] != "REQUESTER" or row["board_id"] is not None:
+        raise HttpError("404 Not Found", "No such help page.")
+    f = _file_on(ctx, article_id, file_id)
+    if not kbfiles.visible(f, portal=True):
+        raise HttpError("404 Not Found", "No such file on this help page.")
+    return _serve(ctx, f)

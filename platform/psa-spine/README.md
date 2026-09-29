@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 570 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 580 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -843,6 +843,101 @@ ticket, reports, knowledge, finance, the portal's requests and approvals)
 render with no horizontal overflow, no control under 40 px, and the bar
 present on every desk page and absent from the portal.
 
+## Beyond email: Teams cards and on-call paging (050, 29 Sep 2026)
+
+The outbox carried one kind of message, an email the host's Graph sender
+sends. A ward at 02:00 needs two more things: a card in the IT team's Teams
+channel, and a page to the person on call that repeats until they answer.
+
+- **A Teams channel is named on the desk, addressed on the host.** Setup ›
+  Integrations › *Teams channels* names a channel (`helpdesk-alerts`) and
+  whether it *carries pages*. The webhook address behind the name lives only
+  on DND-SQL01, in the Teams sender's file (`D:\psa\teams-webhooks.json`,
+  keyed by that name); it is never in the database and never in this
+  repository. `scripts/Send-PsaTeamsNotifications.ps1` takes the outbox's
+  TEAMS channel (`outbox-pending --channel TEAMS`), posts each card to its
+  URL, and marks it; preview by default; it posts only to `https://` on a
+  Microsoft host (`*.webhook.office.com`, or `*.logic.azure.com` for a Power
+  Automate "post to a channel" workflow) and marks anything else FAILED
+  unposted. The card (an Adaptive Card in the incoming-webhook envelope)
+  carries the ticket number, board, priority, status and owner, the rule's
+  words and an *Open on the desk* button (`--desk-url`, else
+  `PSA_PUBLIC_URL`): **never the summary, never a note.** A channel is
+  outside the sign-in, and §6.1 keeps a patient's words behind it. Whether
+  Teams renders the envelope exactly as posted is NOT VERIFIED from here; the
+  SQL01 sitting posts one card and says.
+- **A rule chooses the channel.** A workflow rule's *Notify* or *Escalate*
+  action now says how it reaches its target: by email (as before), as a card
+  in a named Teams channel, or as a page. The email sender never sees a
+  card and the Teams sender never sees an email: the outbox row carries its
+  channel and each sender asks for its own.
+- **A page repeats until somebody answers.** *Page the on-call* on a ticket
+  (or a rule's *Escalate … as a page*) pages whoever the rota says is on
+  call for the board now, or the duty manager when nobody is: an email to
+  them and a card to every channel that carries pages, again every 5
+  minutes, 3 times (`page` holds the episode). It ends when they press
+  **Acknowledge** on the ticket, when they write a note on it, when someone
+  stops it with a reason, or when the ticket closes. Unanswered after the
+  last attempt it is EXHAUSTED and, if it was the on-call, the duty manager
+  is paged in turn; if nobody is on the rota the ticket says so. `run-rules`
+  (PSA-Rules, every minute) moves the clock. Every step is on the ticket's
+  history and in the audit (`PAGE`, `CHANNEL`).
+
+What this is not: an SMS gateway. The hospital has none; a phone number on
+the contact reaches the technician's phone as a *Call* link (gap 5), and a
+page reaches them by email and Teams, which their phone already shows.
+
+## Pictures on a knowledge article (051, 29 Sep 2026)
+
+A fix is often a picture: where the switch is, what the dialog looks like.
+An article (039) now takes files, kept the way a ticket's are (027) and
+shown in its text.
+
+- **Kept like a ticket's file.** *Files* on the article page: the media type
+  is read from the file's own bytes (a program, a script or a web page is
+  refused whatever its name), a PNG is repacked and a JPEG stripped of its
+  metadata, the bytes are named by their hash in a store of their own
+  (`PSA_KB_DIR`, else the attachment folder's name with `-kb`), so the
+  attachment store's verifier and purge, which know only tickets, never take
+  an article's picture for an orphan. `kb_file` is the row; a removed file
+  keeps its row and its audit line (`KB_FILE`).
+- **Reviewed before a requester sees it.** Every file starts *awaiting
+  review*. The desk (anyone with Knowledge READ) sees it at once; a
+  requester on the portal sees it only once a writer has **cleared** it; a
+  **withheld** file is served to nobody, and the text says *[image not
+  shown]* where it stood. An administrator removes a file.
+- **Shown in the text.** The Markdown-lite renderer (`md_to_html`) gains
+  `![caption](file:N)` for a picture, `[words](file:N)` for a download and
+  `[words](https://…)` for a link; the code line under each file on the
+  page is what to paste. Every address is resolved per reader, so the same
+  article renders the picture for the desk and the caption for a requester
+  who may not yet see it. A picture is served inline with `Content-Security-
+  Policy: sandbox`, `nosniff` and no caching; anything else as a download.
+
+## The machine API reads and updates (gap 8, 29 Sep 2026)
+
+`/api/v1` raised tickets and read the ones it raised. Other systems read and
+update: a monitoring dashboard lists a board's open tickets, a runbook tool
+adds a note and closes what it fixed. A token now carries a **scope**
+(`create-api-token --scope`; `schema/local/api_token_scope.sql`, a row from
+before it reads as RAISE):
+
+| Scope | May |
+|---|---|
+| `RAISE` | `POST /api/v1/tickets` onto its board and `GET` the tickets it raised (as before, the default) |
+| `READ` | RAISE, and `GET /api/v1/tickets` (`state=open\|closed\|all`, `since=YYYY-MM-DD`, `limit`, `offset`), `GET /api/v1/tickets/<id>` for any ticket on its board (status, owner, requester, times, description), `GET /api/v1/configurations` (`type`, `status`, `q`) and `GET /api/v1/configurations/<id>` |
+| `WRITE` | READ, and `PATCH /api/v1/tickets/<id>` with `note` (and `flag` INTERNAL or DISCUSSION), `status` (a name on the board) and `owner` (a member, or blank to unassign) |
+
+A PATCH is applied the way the desk applies it, so the history, the clocks,
+the rules and the pages run the same; a note is scanned for patient
+information and flagged, never dropped; the audit says `API_UPDATE` with
+what changed. The configurations come without the person on the machine.
+Still one board and still a local token: a token for a restricted board is
+minted deliberately, and every list and read on that board writes
+`RESTRICTED_READ` as a person's does. The wrong scope is a 403 that names
+the scope needed; another board's ticket is a 404 a caller cannot tell from
+none.
+
 ## HTTPS and the organisation sign-in (26 Sep 2026)
 
 The desk speaks TLS itself when it is given a certificate, so nothing else has
@@ -1071,8 +1166,8 @@ python3 -m psaspine create-api-token spine.db --label "orthanc monitoring" --boa
 | `import-mail` | the helpdesk mailboxes | Keyed by Message-ID, so a re-run makes no second ticket; replies thread by In-Reply-To. Kills the MEASURED double-creation at the intake end. |
 | `/api/v1/tickets` | monitoring, the archive | A local token (§6.2 — the WAN-down alarm cannot fetch an Entra token), sha256 only, one board, tokens only. Priority computed from impact × urgency, never asserted. A `dedup_key` holds one open ticket per alert. |
 
-API tokens live in `schema/local/` beside the break-glass accounts and are
-never ported to SQL Server.
+API tokens live in `schema/local/` beside the break-glass accounts; since D7 put
+the desk on SQL Server the local tables are ported like the rest.
 
 **Email arrives within about 30 seconds.** `scripts/Invoke-PmcMailPickup.ps1`
 runs on DND-SQL01. It polls the helpdesk mailbox through Microsoft Graph

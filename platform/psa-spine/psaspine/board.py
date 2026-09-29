@@ -726,6 +726,8 @@ def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: st
 
     stamp = at.isoformat(sep=" ", timespec="minutes")
     event_id = _event(conn, work_item_id, stamp, "NOTE", actor, body, flag)
+    from . import paging
+    paging.note_by(conn, work_item_id, actor, at=at)              # 050: a note answers an open page
     if resolution and flag != "RESOLUTION":
         # Dada PSA's second flag on one note (025): who reads it is still
         # the note's own flag; an Internal resolution stays internal.

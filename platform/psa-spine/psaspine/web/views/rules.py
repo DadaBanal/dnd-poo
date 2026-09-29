@@ -38,6 +38,7 @@ ACTIONS = (("NOTIFY", "Notify"), ("ESCALATE", "Escalate to"), ("SET_STATUS", "Se
            ("FLAG", "Flag for review"))
 ROLES = ("SERVICE_MANAGER", "DISPATCH", "ON_CALL", "DUTY_MANAGER", "TEAM_LEADER", "OWNER",
          "REQUESTER")
+CHANNELS = (("EMAIL", "by email"), ("TEAMS", "as a card in a Teams channel"), ("PAGE", "as a page, repeated until answered"))
 UNITS = ("MINUTES", "HOURS", "DAYS")
 ON = "<span class='chip sla-ok'>on</span>"
 OFF = "<span class=chip>off</span>"
@@ -93,6 +94,8 @@ def _event_form(ctx, action_url: str, board_id: str | None) -> str:
         f"<div style='flex:0 0 130px'><select name=op{i}>{_opts(OPS)}</select></div>"
         f"<div><input name=value{i} placeholder='value, or a,b,c for one of'></div></div>"
         for i in range(3))
+    from ... import channels as _ch
+    channels_ = [(c["target_id"], f"{c['label']} ({c['target_id']})") for c in _ch.targets(ctx.conn, active_only=True)]
     acts = "".join(
         "<div class=row>"
         f"<div style='flex:0 0 170px'><select name=act{i}>{_opts([('', '(no action)')] + list(ACTIONS))}</select></div>"
@@ -101,7 +104,9 @@ def _event_form(ctx, action_url: str, board_id: str | None) -> str:
         f"<div><select name=board{i}>{_opts([('', '(board)')] + boards)}</select></div>"
         f"<div><select name=template{i}>{_opts([('', '(template)')] + templates)}</select></div>"
         f"<div><input name=member{i} placeholder='a named person (optional)'></div>"
-        f"<div><input name=detail{i} placeholder='what it says'></div></div>"
+        f"<div><input name=detail{i} placeholder='what it says'></div>"
+        f"<div style='flex:0 0 200px'><select name=channel{i} title='How a notify or escalate reaches them (050)'>{_opts(CHANNELS)}</select></div>"
+        f"<div><select name=target{i}>{_opts([('', '(Teams channel)')] + channels_)}</select></div></div>"
         for i in range(2))
     return (
         f"<form method=post action='{t.esc(action_url)}'>"
@@ -214,6 +219,8 @@ def detail(ctx, workflow_id):
             f"{t.esc((a['notify_role'] or '').replace('_', ' ').lower())} "
             f"{t.esc(a['target_member'] or '')} {t.esc(a['target_status_id'] or '')} "
             f"{t.esc(a['target_board_id'] or '')} {t.esc(a['target_template_id'] or '')}"
+            + (f" <span class=chip>{t.esc('Teams ' + (a['target_id'] or '?') if a['channel'] == 'TEAMS' else 'page')}</span>"
+               if a["action"] in ("NOTIFY", "ESCALATE") and (a["channel"] or "EMAIL") != "EMAIL" else "")
             + (f" <span class=muted>“{t.esc(a['detail'])}”</span>" if a["detail"] else "") + "</li>"
             for a in ctx.conn.execute("SELECT * FROM workflow_action WHERE event_id = ?"
                                       " ORDER BY sort_order", (e["event_id"],)))
@@ -290,14 +297,22 @@ def add_event(ctx, workflow_id):
                      f.get(f"conj{i}", "AND") if i else "AND", i))
         for i in range(2):
             if f.get(f"act{i}"):
+                channel = f.get(f"channel{i}") if f.get(f"channel{i}") in dict(CHANNELS) else "EMAIL"
+                if f[f"act{i}"] not in ("NOTIFY", "ESCALATE"):
+                    channel = "EMAIL"
+                target = f.get(f"target{i}") or None
+                if channel == "TEAMS" and not target:
+                    raise ValueError("a Teams notification needs a channel (Setup › Integrations › Teams channels)")
                 ctx.conn.execute(
                     "INSERT INTO workflow_action (event_id, action, notify_role, target_status_id,"
-                    " target_board_id, target_member, detail, sort_order, target_template_id)"
-                    " VALUES (?,?,?,?,?,?,?,?,?)",
+                    " target_board_id, target_member, detail, sort_order, target_template_id, channel, target_id)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                     (ev, f[f"act{i}"], f.get(f"role{i}") or None, f.get(f"status{i}") or None,
-                     f.get(f"board{i}") or None, f.get(f"member{i}", "").strip() or None,
+                     f.get(f"board{i}") or None,
+                     # 008's CHECK wants a notify to reach someone; a card's "someone" is its channel.
+                     (f.get(f"member{i}", "").strip() or None) if channel != "TEAMS" else target,
                      f.get(f"detail{i}", "").strip() or None, i,
-                     f.get(f"template{i}") or None))
+                     f.get(f"template{i}") or None, channel, target if channel == "TEAMS" else None))
     except Exception as exc:                                  # noqa: BLE001
         ctx.conn.rollback()
         hint = (" A repeating event needs an interval, and 'a number of times' needs a limit."

@@ -237,11 +237,28 @@ def _act(conn, event, action, row, *, at: datetime) -> None:
     elif kind == "ADD_NOTE":
         board._event(conn, wid, stamp, "NOTE", by, action["detail"] or said, "INTERNAL")
     elif kind in ("NOTIFY", "ESCALATE"):
+        channel = (action["channel"] or "EMAIL") if "channel" in action.keys() else "EMAIL"
+        subject = f"{subject_token(wid)} {kind.title()}: {row['priority']} on {row['board_id']}"
+        if channel == "TEAMS":
+            # A card in a channel (050): the same words, no summary, no note.
+            from . import channels
+            channels.queue_teams(conn, wid, action["target_id"], subject=subject, body=said, at=at,
+                                 event_id=event["event_id"], actor=by)
+            board._event(conn, wid, stamp, kind, by, f"{kind.lower()} Teams channel {action['target_id']}: {said}")
+            return
         who, role = _who(conn, action, row, at)
         if not who:
             # Nobody to reach is a failure, said out loud (the 008 CHECK's point).
             raise LookupError(f"{kind.lower()} to {role or 'nobody'}: no one holds that role "
                               f"on {row['board_id']} right now")
+        if channel == "PAGE":
+            # A page (050): repeats until answered; one open page per person per ticket.
+            from . import paging
+            paging.start(conn, wid, member=who, role=role if role in ("ON_CALL", "DUTY_MANAGER") else "NAMED",
+                         at=at, actor=by, note=said)
+            board._event(conn, wid, stamp, kind, by, f"{kind.lower()} page to {who}"
+                         + (f" ({role.replace('_', ' ').lower()})" if role else "") + f": {said}")
+            return
         conn.execute(
             "INSERT INTO notification (work_item_id, event_id, recipient, recipient_role,"
             " subject, body, created_at, status) VALUES (?,?,?,?,?,?,?,'PENDING')",
@@ -249,8 +266,7 @@ def _act(conn, event, action, row, *, at: datetime) -> None:
              # No summary: a subject leaves the desk, and a summary can carry
              # what 6.1 keeps out of mail. The token and the priority are enough
              # to open the ticket.
-             f"{subject_token(wid)} {kind.title()}: {row['priority']} on {row['board_id']}",
-             said, stamp))
+             subject, said, stamp))
         board._event(conn, wid, stamp, kind, by, f"{kind.lower()} {who}"
                      + (f" ({role.replace('_', ' ').lower()})" if role else "") + f": {said}")
         return

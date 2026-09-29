@@ -4898,9 +4898,10 @@ class MachineApiTest(unittest.TestCase):
              ctype="application/json", cookie=None, validate=True):
         body = raw if raw is not None else (
             _json.dumps(payload).encode() if payload is not None else b"")
+        path, _, query = path.partition("?")                    # a query on the path, as a client sends it
         env = {
             "REQUEST_METHOD": method, "PATH_INFO": path, "SCRIPT_NAME": "",
-            "QUERY_STRING": "", "SERVER_NAME": "t", "SERVER_PORT": "80",
+            "QUERY_STRING": query, "SERVER_NAME": "t", "SERVER_PORT": "80",
             "SERVER_PROTOCOL": "HTTP/1.1", "wsgi.version": (1, 0),
             "wsgi.url_scheme": "http", "wsgi.input": _io.BytesIO(body),
             "wsgi.errors": _io.StringIO(), "wsgi.multithread": False,
@@ -10044,6 +10045,605 @@ class ApprovalsTest(unittest.TestCase):
                                           (self.pair,)).fetchone()[0], 0)
             from psaspine import approvals
             self.assertEqual(approvals.maybe_request(conn, self.wid, at=self.at, actor="bob"), "NOT_NEEDED")
+        finally:
+            conn.close()
+
+class ChannelsAndPagingTest(unittest.TestCase):
+    """050: a card in a Teams channel named on the desk (the address lives on
+    the host), a rule that notifies a channel or pages the on-call, and a page
+    that repeats until answered and hands to the duty manager when it is not."""
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+
+    def setUp(self) -> None:
+        from psaspine import channels, workflow
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = str(_target(self.tmp))
+        conn = _fresh(self.tmp)
+        self.at = datetime(2026, 9, 30, 9, 0)
+        setup.apply_starter(conn, "IT_HELP", actor="t", at=self.at)
+        workflow.ensure_vocabulary(conn)
+        conn.executescript(
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','alice','ADMIN');"
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','bob','WORK');"
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','carol','READ');"
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','oncall1','WORK');"
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','dm1','WORK');"
+            "INSERT INTO oncall_slot (slot_id, board_id, member, role, starts_at, ends_at) VALUES"
+            " ('OC-1', 'IT_HELP', 'oncall1', 'ON_CALL', '2026-09-30 00:00', '2026-10-01 00:00'),"
+            " ('OC-2', 'IT_HELP', 'dm1', 'DUTY_MANAGER', '2026-09-30 00:00', '2026-10-01 00:00');"
+            "INSERT INTO contact (contact_id, entity_id, display_name, email, sam_account, source, inactive, created_at)"
+            " VALUES ('C_OC', 'PMC', 'On Call One', 'oncall1@pmcne.ph', 'oncall1', 'AD', 0, '2026-09-17 08:00');")
+        channels.add_target(conn, "helpdesk-alerts", label="IT Helpdesk › Alerts", pages=True, at=self.at, actor="root")
+        channels.add_target(conn, "quiet", label="Quiet channel", pages=False, at=self.at, actor="root")
+        self.wid = tickets.open_ticket(conn, board_id="IT_HELP", summary="Printer down in Ward 3", impact="I2",
+                                       urgency="U2", requested_by=None, at=self.at, entity_id="PMC")
+        conn.commit()
+        conn.close()
+        self.config = Config(session_secret=_secrets.token_bytes(32))
+        self.raw = make_app(self.db_path, config=self.config, clock=lambda: self.at)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _rule(self, conn, wf, fires_on, acts):
+        from psaspine import workflow
+        conn.execute("INSERT INTO workflow (workflow_id, board_id, name, table_type) VALUES (?, 'IT_HELP', ?, 'TICKET')", (wf, wf))
+        ev = f"{wf}_E1"
+        conn.execute("INSERT INTO workflow_event (event_id, workflow_id, fires_on, execution_time) VALUES (?,?,?,'ONCE')",
+                     (ev, wf, fires_on))
+        for n, (act, role, channel, target, detail) in enumerate(acts):
+            conn.execute("INSERT INTO workflow_action (event_id, action, notify_role, detail, sort_order, channel, target_id,"
+                         " target_member) VALUES (?,?,?,?,?,?,?,?)",
+                         (ev, act, role, detail, n, channel, target, target if channel == "TEAMS" else None))
+        workflow.test_event(conn, ev, at=self.at)
+        workflow.activate(conn, wf, actor="t", at=self.at)
+        return ev
+
+    def test_a_channel_is_named_on_the_desk_and_a_card_carries_no_summary(self):
+        from psaspine import channels, outbox
+        conn = db.connect(self.db_path)
+        try:
+            for bad in ("Helpdesk Alerts", "x", "-lead", "a" * 41):
+                with self.assertRaises(channels.Refused):
+                    channels.add_target(conn, bad, label="x", at=self.at, actor="root")
+            with self.assertRaises(channels.Refused):
+                channels.add_target(conn, "ward-3", label="  ", at=self.at, actor="root")
+            with self.assertRaises(channels.Refused):
+                channels.add_target(conn, "helpdesk-alerts", label="again", at=self.at, actor="root")
+            with self.assertRaises(LookupError):
+                channels.queue_teams(conn, self.wid, "nope", subject="s", body="b", at=self.at)
+            nid = channels.queue_teams(conn, self.wid, "helpdesk-alerts", subject="[X] Notify: P2 on IT_HELP",
+                                       body="New P2 for the ward", at=self.at)
+            conn.commit()
+            n = conn.execute("SELECT * FROM notification WHERE notification_id = ?", (nid,)).fetchone()
+            self.assertEqual((n["channel"], n["recipient"], n["recipient_role"], n["target_id"]),
+                             ("TEAMS", "helpdesk-alerts", "CHANNEL", "helpdesk-alerts"))
+            # the email sender never sees it; the Teams sender gets a card with no summary
+            self.assertEqual(outbox.pending(conn, allowed_domains=("pmcne.ph",), dry_run=True), [])
+            with self.assertRaises(ValueError):
+                channels.pending_teams(conn, dry_run=True, desk_url="http://desk.pmcne.ph")
+            items = channels.pending_teams(conn, dry_run=True, desk_url="https://desk.pmcne.ph/")
+            self.assertEqual([(i["id"], i["target"], i["ticket"]) for i in items], [(nid, "helpdesk-alerts", self.wid)])
+            card = items[0]["card"]
+            text = _json.dumps(card)
+            self.assertNotIn("Printer down", text)
+            self.assertEqual(card["type"], "message")
+            content = card["attachments"][0]["content"]
+            facts = {f["title"]: f["value"] for f in content["body"][1]["facts"]}
+            pri = conn.execute("SELECT priority FROM ticket WHERE work_item_id = ?", (self.wid,)).fetchone()[0]
+            self.assertEqual(facts, {"Ticket": self.wid, "Board": "PMO Helpdesk", "Priority": pri, "Status": "New", "Owner": "unassigned"})
+            self.assertEqual(content["actions"][0]["url"], f"https://desk.pmcne.ph/ticket/{self.wid}")
+            self.assertEqual(content["body"][2]["text"], "New P2 for the ward")
+            self.assertTrue(outbox.mark(conn, nid, "SENT", at=self.at))
+            # a channel turned off: its cards are marked NO_SENDER, never posted
+            nid2 = channels.queue_teams(conn, self.wid, "quiet", subject="s", body=None, at=self.at)
+            self.assertTrue(channels.set_active(conn, "quiet", False, at=self.at, actor="root"))
+            self.assertFalse(channels.set_active(conn, "quiet", False, at=self.at, actor="root"))
+            self.assertEqual(channels.pending_teams(conn), [])
+            self.assertEqual(conn.execute("SELECT status FROM notification WHERE notification_id = ?", (nid2,)).fetchone()[0], "NO_SENDER")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'CHANNEL'").fetchone()[0], 3)
+        finally:
+            conn.close()
+
+    def test_a_rule_notifies_a_teams_channel_or_pages_the_on_call(self):
+        from psaspine import channels
+        conn = db.connect(self.db_path)
+        try:
+            self._rule(conn, "W_TEAMS", "ON_CREATE", [("NOTIFY", None, "TEAMS", "helpdesk-alerts", "a new ticket")])
+            self._rule(conn, "W_PAGE", "ON_CREATE", [("ESCALATE", "ON_CALL", "PAGE", None, "page the on-call")])
+            self._rule(conn, "W_BAD", "ON_CREATE", [("NOTIFY", None, "TEAMS", "quiet", "to a channel since turned off")])
+            channels.set_active(conn, "quiet", False, at=self.at, actor="root")
+            conn.commit()
+            wid = tickets.open_ticket(conn, board_id="IT_HELP", summary="Lab analyser offline", impact="I1", urgency="U1",
+                                      requested_by=None, at=self.at, entity_id="PMC")
+            conn.commit()
+            cards = conn.execute("SELECT * FROM notification WHERE work_item_id = ? AND channel = 'TEAMS' ORDER BY notification_id",
+                                 (wid,)).fetchall()
+            self.assertEqual(sorted((c["target_id"], c["event_id"] or "", c["page_id"] or 0) for c in cards),
+                             [("helpdesk-alerts", "", 1), ("helpdesk-alerts", "W_TEAMS_E1", 0)])   # the page's card and the rule's
+            self.assertEqual([c["body"] for c in cards if c["event_id"]], ["W_TEAMS: a new ticket"])
+            page = conn.execute("SELECT * FROM page WHERE work_item_id = ?", (wid,)).fetchone()
+            self.assertEqual((page["member"], page["role"], page["attempts"], page["status"], page["every_minutes"], page["max_attempts"]),
+                             ("oncall1", "ON_CALL", 1, "OPEN", 5, 3))
+            mail = conn.execute("SELECT * FROM notification WHERE work_item_id = ? AND COALESCE(channel, 'EMAIL') = 'EMAIL'"
+                                " AND recipient_role = 'PAGE'", (wid,)).fetchall()
+            self.assertEqual([(m["recipient"], m["page_id"]) for m in mail], [("oncall1", 1)])
+            self.assertEqual(mail[0]["subject"], f"[{wid}] Page 1 of 3: P1 on PMO Helpdesk")
+            self.assertNotIn("analyser", mail[0]["body"])
+            run = conn.execute("SELECT outcome, detail FROM workflow_run WHERE event_id = 'W_BAD_E1'").fetchone()
+            self.assertEqual(run["outcome"], "ERROR")
+            self.assertIn("quiet is not set up or is off", run["detail"])
+            # the page's card went to the channel that carries pages, not to the quiet one
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM notification WHERE target_id = 'quiet'").fetchone()[0], 0)
+            # the page's email says how to answer
+            from psaspine import outbox
+            due = outbox.pending(conn, allowed_domains=("pmcne.ph",), dry_run=True)
+            mine = [d for d in due if d["to"] == "oncall1@pmcne.ph"]
+            self.assertEqual(len(mine), 1)
+            self.assertIn("press Acknowledge", mine[0]["body"])
+        finally:
+            conn.close()
+
+    def test_a_page_repeats_until_answered_and_hands_to_the_duty_manager(self):
+        from psaspine import paging
+        conn = db.connect(self.db_path)
+        try:
+            with self.assertRaises(LookupError):
+                paging.page_oncall(conn, self.wid, at=datetime(2026, 10, 2, 9, 0), actor="bob")
+            pid = paging.page_oncall(conn, self.wid, at=self.at, actor="bob", note="Ward 3 printer, nurses waiting")
+            self.assertEqual(paging.page_oncall(conn, self.wid, at=self.at, actor="bob"), pid)      # not doubled
+            conn.commit()
+
+            def sent(page_id):
+                return conn.execute("SELECT COUNT(*) FROM notification WHERE page_id = ? AND channel = 'EMAIL'", (page_id,)).fetchone()[0]
+            self.assertEqual(sent(pid), 1)
+            self.assertEqual(paging.tick(conn, at=self.at + timedelta(minutes=3)), {"open": 1, "sent": 0, "ended": 0, "escalated": 0})
+            self.assertEqual(paging.tick(conn, at=self.at + timedelta(minutes=5))["sent"], 1)
+            self.assertEqual(paging.tick(conn, at=self.at + timedelta(minutes=10))["sent"], 1)
+            self.assertEqual((sent(pid), paging.get(conn, pid)["attempts"]), (3, 3))
+            c = paging.tick(conn, at=self.at + timedelta(minutes=15))
+            self.assertEqual((c["ended"], c["escalated"]), (1, 1))
+            self.assertEqual(paging.get(conn, pid)["status"], "EXHAUSTED")
+            dm = [p for p in paging.open_for(conn, self.wid)]
+            self.assertEqual([(p["member"], p["role"], p["attempts"]) for p in dm], [("dm1", "DUTY_MANAGER", 1)])
+            self.assertIn("did not answer 3 pages", dm[0]["note"])
+            self.assertEqual(paging.tick(conn, at=self.at + timedelta(minutes=16))["sent"], 0)
+            row = paging.acknowledge(conn, dm[0]["page_id"], at=self.at + timedelta(minutes=17), actor="dm1")
+            self.assertEqual((row["status"], row["ended_by"]), ("ACKNOWLEDGED", "dm1"))
+            with self.assertRaises(paging.Refused):
+                paging.acknowledge(conn, dm[0]["page_id"], at=self.at, actor="dm1")
+            self.assertEqual(paging.tick(conn, at=self.at + timedelta(minutes=30)), {"open": 0, "sent": 0, "ended": 0, "escalated": 0})
+            events = [r[0] for r in conn.execute("SELECT detail FROM ticket_event WHERE work_item_id = ? ORDER BY ticket_event_id", (self.wid,))]
+            for want in ("page 1 of 3 to oncall1 (on call)", "page 3 of 3 to oncall1 (on call)",
+                         "page to oncall1 unanswered after 3 attempts", "page 1 of 3 to dm1 (duty manager)",
+                         "page to dm1 acknowledged by dm1"):
+                self.assertTrue(any(want in e for e in events), want)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'PAGE'").fetchone()[0], 4)
+            # a note by the person paged answers the page; a closed ticket ends it; stop says why
+            other = tickets.open_ticket(conn, board_id="IT_HELP", summary="Second", impact="I3", urgency="U3",
+                                        requested_by=None, at=self.at, entity_id="PMC")
+            p2 = paging.page_oncall(conn, other, at=self.at, actor="bob")
+            board.add_note(conn, other, body="On my way", flag="INTERNAL", actor="OnCall1", at=self.at)
+            self.assertEqual(paging.get(conn, p2)["status"], "ACKNOWLEDGED")
+            p3 = paging.start(conn, other, member="bob", at=self.at, actor="alice")
+            self.assertEqual(paging.get(conn, p3)["role"], "NAMED")
+            board.change_status(conn, other, "IT_HELP.RESOLVED", at=self.at, actor="bob")
+            self.assertEqual(paging.tick(conn, at=self.at + timedelta(minutes=1))["ended"], 1)
+            self.assertEqual(paging.get(conn, p3)["status"], "STOPPED")
+            with self.assertRaises(paging.Refused):
+                paging.start(conn, other, member="bob", at=self.at, actor="alice")
+            p4 = paging.page_oncall(conn, self.wid, at=self.at + timedelta(hours=1), actor="bob")
+            row = paging.stop(conn, p4, at=self.at + timedelta(hours=1), actor="alice", reason="handled by phone")
+            self.assertEqual(row["status"], "STOPPED")
+            self.assertIn("stopped by alice: handled by phone",
+                          conn.execute("SELECT detail FROM ticket_event WHERE work_item_id = ? ORDER BY ticket_event_id DESC", (self.wid,)).fetchone()[0])
+            with self.assertRaises(paging.Refused):
+                paging.start(conn, self.wid, member="bob", every_minutes=0, at=self.at, actor="alice")
+        finally:
+            conn.close()
+
+    def test_the_ticket_pages_and_acknowledges_and_setup_names_the_channels(self):
+        bob, carol, oncall = self._cookie_for("bob"), self._cookie_for("carol"), self._cookie_for("oncall1")
+        root = self._cookie_for("alice", is_sysadmin=True)
+        status, _, body = self._call("GET", f"/ticket/{self.wid}", cookie=bob)
+        self.assertIn("Page the on-call", body)
+        status, _, _ = self._call("POST", f"/ticket/{self.wid}/page", cookie=carol, form={"note": "x"})
+        self.assertEqual(status, "404 Not Found")
+        status, headers, _ = self._call("POST", f"/ticket/{self.wid}/page", cookie=bob, form={"note": "nurses waiting"})
+        self.assertEqual(status, "303 See Other")
+        self.assertIn("msg=Paging+oncall1", dict(headers)["Location"])
+        status, _, body = self._call("GET", f"/ticket/{self.wid}", cookie=bob)
+        self.assertIn("Paging <b>oncall1</b> (on call): attempt 1 of 3, every 5 min", body)
+        self.assertIn("nurses waiting", body)
+        self.assertIn("/page/1/ack", body)
+        self.assertIn("Stop paging", body)
+        self.assertNotIn("Page the on-call", body)
+        status, _, body = self._call("GET", f"/ticket/{self.wid}", cookie=carol)     # may look, not answer
+        self.assertIn("Paging <b>oncall1</b>", body)
+        self.assertNotIn("/page/1/ack", body)
+        status, _, _ = self._call("POST", f"/ticket/{self.wid}/page/1/ack", cookie=self._cookie_for("stranger"))
+        self.assertEqual(status, "404 Not Found")
+        status, _, _ = self._call("POST", f"/ticket/{self.wid}/page/9/ack", cookie=oncall)
+        self.assertEqual(status, "404 Not Found")
+        status, headers, _ = self._call("POST", f"/ticket/{self.wid}/page/1/ack", cookie=oncall)
+        self.assertIn("msg=Page+acknowledged", dict(headers)["Location"])
+        status, headers, _ = self._call("POST", f"/ticket/{self.wid}/page/1/ack", cookie=oncall)
+        self.assertIn("already+ended", dict(headers)["Location"])
+        self._call("POST", f"/ticket/{self.wid}/page", cookie=bob, form={})
+        status, headers, _ = self._call("POST", f"/ticket/{self.wid}/page/2/stop", cookie=bob, form={"reason": "by phone"})
+        self.assertIn("msg=Paging+stopped", dict(headers)["Location"])
+        conn = db.connect(self.db_path)
+        try:
+            self.assertEqual([r[0] for r in conn.execute("SELECT status FROM page ORDER BY page_id")], ["ACKNOWLEDGED", "STOPPED"])
+        finally:
+            conn.close()
+        # Setup › Integrations › Teams channels
+        status, _, body = self._call("GET", "/admin/integrations", cookie=root)
+        self.assertIn("Teams channels", body)
+        self.assertIn("<code>helpdesk-alerts</code>", body)
+        self.assertIn("Pages: yes", body)
+        self.assertIn("Pages: no", body)
+        status, headers, _ = self._call("POST", "/admin/integrations/teams/add", cookie=root, form={"target_id": "Ward 3", "label": "x"})
+        self.assertIn("err=A+channel+name+is", dict(headers)["Location"])
+        status, headers, _ = self._call("POST", "/admin/integrations/teams/add", cookie=root,
+                                        form={"target_id": "ward-3", "label": "Ward 3 nurses", "pages": "1"})
+        self.assertIn("msg=Teams+channel+ward-3+added", dict(headers)["Location"])
+        status, headers, _ = self._call("POST", "/admin/integrations/teams/toggle", cookie=root, form={"target_id": "quiet"})
+        self.assertIn("msg=Teams+channel+updated", dict(headers)["Location"])
+        status, headers, _ = self._call("POST", "/admin/integrations/teams/pages", cookie=root, form={"target_id": "quiet", "pages": "1"})
+        self.assertIn("msg=Teams+channel+updated", dict(headers)["Location"])
+        status, _, _ = self._call("POST", "/admin/integrations/teams/add", cookie=bob, form={"target_id": "x-y", "label": "x"})
+        self.assertEqual(status, "403 Forbidden")
+        conn = db.connect(self.db_path)
+        try:
+            rows = {r["target_id"]: (r["inactive"], r["pages"]) for r in conn.execute("SELECT * FROM channel_target")}
+            self.assertEqual(rows, {"helpdesk-alerts": (0, 1), "quiet": (1, 1), "ward-3": (0, 1)})
+            conn.execute("INSERT INTO workflow (workflow_id, board_id, name, table_type) VALUES ('W1', 'IT_HELP', 'W1', 'TICKET')")
+            conn.commit()
+        finally:
+            conn.close()
+        # the rules editor: a notify as a Teams card needs a channel; a page needs none
+        status, _, body = self._call("GET", "/admin/rules/W1", cookie=root)
+        self.assertIn("name=channel0", body)
+        self.assertIn("<option value='helpdesk-alerts'>IT Helpdesk › Alerts (helpdesk-alerts)</option>", body)
+        self.assertNotIn("value='quiet'", body)                                    # off: not offered
+        status, headers, _ = self._call("POST", "/admin/rules/W1/event", cookie=root, form={
+            "event_name": "New P1 to Teams", "fires_on": "ON_CREATE", "mode": "ONCE", "act0": "NOTIFY", "channel0": "TEAMS", "detail0": "new"})
+        self.assertIn("needs+a+channel", dict(headers)["Location"])
+        status, headers, _ = self._call("POST", "/admin/rules/W1/event", cookie=root, form={
+            "event_name": "New P1 to Teams", "fires_on": "ON_CREATE", "mode": "ONCE", "act0": "NOTIFY", "channel0": "TEAMS",
+            "target0": "helpdesk-alerts", "detail0": "new", "act1": "ESCALATE", "role1": "ON_CALL", "channel1": "PAGE", "target1": "helpdesk-alerts"})
+        self.assertEqual(status, "303 See Other")
+        conn = db.connect(self.db_path)
+        try:
+            acts = conn.execute("SELECT action, channel, target_id, notify_role FROM workflow_action WHERE event_id = 'W1_E1' ORDER BY sort_order").fetchall()
+            self.assertEqual([tuple(a) for a in acts], [("NOTIFY", "TEAMS", "helpdesk-alerts", None), ("ESCALATE", "PAGE", None, "ON_CALL")])
+        finally:
+            conn.close()
+        status, _, body = self._call("GET", "/admin/rules/W1", cookie=root)
+        self.assertIn("<span class=chip>Teams helpdesk-alerts</span>", body)
+        self.assertIn("<span class=chip>page</span>", body)
+
+    def test_the_cli_serves_the_teams_sender_and_runs_the_paging_clock(self):
+        import subprocess
+        from psaspine import channels, paging
+        conn = db.connect(self.db_path)
+        channels.queue_teams(conn, self.wid, "helpdesk-alerts", subject="[x] Notify: P2 on IT_HELP", body="hello", at=self.at)
+        paging.start(conn, self.wid, member="oncall1", role="ON_CALL", at=datetime.now() - timedelta(minutes=30), actor="bob")
+        conn.commit()
+        conn.close()
+        root = Path(__file__).resolve().parent.parent
+        r = subprocess.run([sys.executable, "-m", "psaspine", "outbox-pending", self.db_path, "--channel", "TEAMS",
+                            "--allowed-domain", "pmcne.ph", "--dry-run", "--desk-url", "https://desk.pmcne.ph"],
+                           cwd=root, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        items = _json.loads(r.stdout)
+        self.assertEqual([i["target"] for i in items], ["helpdesk-alerts", "helpdesk-alerts"])   # the rule's card and the page's
+        self.assertIn("Open on the desk", r.stdout)
+        r = subprocess.run([sys.executable, "-m", "psaspine", "outbox-pending", self.db_path, "--channel", "TEAMS",
+                            "--allowed-domain", "pmcne.ph", "--desk-url", "http://desk"], cwd=root, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("https://", r.stderr)
+        r = subprocess.run([sys.executable, "-m", "psaspine", "run-rules", self.db_path], cwd=root, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("pages: 1 open, 1 repeated, 0 ended, 0 escalated", r.stdout)
+        conn = db.connect(self.db_path)
+        try:
+            self.assertEqual(conn.execute("SELECT attempts FROM page").fetchone()[0], 2)
+        finally:
+            conn.close()
+
+class KnowledgeFilesTest(unittest.TestCase):
+    """051: a picture on an article, kept the way a ticket's files are, reviewed
+    before a requester sees it, shown in the text as ![caption](file:N)."""
+    tearDown = WebWSGITest.tearDown
+
+    def setUp(self) -> None:
+        WebWSGITest.setUp(self)
+        self.at = datetime(2026, 9, 29, 10)
+
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+    _send = AttachmentsWebTest._send
+
+    def _article(self, body="Step 1: find the switch.\n\n![Where the switch is](file:1)\n\nThen read [the manual](file:2)."):
+        from psaspine import knowledge, security
+        conn = db.connect(self.db_path)
+        try:
+            security.ensure_roles(conn)
+            conn.execute("INSERT OR REPLACE INTO board_member (board_id, member, access) VALUES ('IT_HELP', 'reader', 'READ')")
+            security.assign(conn, "reader", "READ_ONLY", at=self.at, actor="root")             # knowledge READ, no writing
+            aid = knowledge.create(conn, title="Label printer prints blank", body=body, audience="REQUESTER",
+                                   at=self.at, actor="alice")
+            conn.commit()
+        finally:
+            conn.close()
+        return aid
+
+    def test_a_file_is_kept_reviewed_shown_and_removed(self):
+        import hashlib
+        from psaspine import kbfiles
+        aid = self._article()
+        conn = db.connect(self.db_path)
+        try:
+            with self.assertRaises(LookupError):
+                kbfiles.add(conn, "KB-9999", _png(), "x.png", actor="alice", at=self.at)
+            with self.assertRaises(kbfiles.Refused):
+                kbfiles.add(conn, aid, b"MZ\x90\x00 program", "setup.exe", actor="alice", at=self.at)
+            with self.assertRaises(kbfiles.Refused):
+                kbfiles.add(conn, aid, b"", "empty.png", actor="alice", at=self.at)
+            r = kbfiles.add(conn, aid, _png(), "switch.png", caption="  Where the  switch is ", actor="alice", at=self.at)
+            conn.commit()
+            self.assertEqual((r["file_id"], r["media_type"]), (1, "image/png"))
+            row, data = kbfiles.read(conn, 1)
+            self.assertTrue(data.startswith(b"\x89PNG"))
+            self.assertEqual(hashlib.sha256(data).hexdigest(), row["sha256"])
+            self.assertEqual((row["review_status"], row["caption"], row["filename"]), ("PENDING", "Where the switch is", "switch.png"))
+            self.assertTrue(kbfiles.kb_dir(conn).name.endswith("-kb"))
+            self.assertTrue(kbfiles._path(kbfiles.kb_dir(conn), row["sha256"]).exists())
+            self.assertTrue(kbfiles.visible(row, portal=False))
+            self.assertFalse(kbfiles.visible(row, portal=True))
+            url = kbfiles.resolver(conn, aid, portal=False, base="/x/")
+            self.assertEqual((url(1), url(2)), ("/x/1", None))
+            self.assertIsNone(kbfiles.resolver(conn, aid, portal=True, base="/x/")(1))
+            with self.assertRaises(ValueError):
+                kbfiles.review(conn, 1, "MAYBE", actor="alice", at=self.at)
+            row = kbfiles.review(conn, 1, "CLEAR", actor="alice", at=self.at)
+            self.assertEqual((row["review_status"], row["reviewed_by"]), ("CLEARED", "alice"))
+            self.assertTrue(kbfiles.visible(row, portal=True))
+            row = kbfiles.review(conn, 1, "WITHHOLD", actor="alice", at=self.at)
+            self.assertFalse(kbfiles.visible(row, portal=False))
+            self.assertTrue(kbfiles.remove(conn, 1, actor="root", at=self.at))
+            self.assertFalse(kbfiles.remove(conn, 1, actor="root", at=self.at))
+            self.assertFalse(kbfiles._path(kbfiles.kb_dir(conn), row["sha256"]).exists())
+            with self.assertRaises(kbfiles.Removed):
+                kbfiles.read(conn, 1)
+            self.assertEqual(kbfiles.of_article(conn, aid), [])
+            self.assertEqual([r[0] for r in conn.execute("SELECT detail FROM audit_event WHERE action = 'KB_FILE' ORDER BY audit_id")][::3],
+                             [f"added to {aid}: switch.png (image/png, {len(_png())} B received, {r['size_stored']} B stored); awaiting review",
+                              f"removed from {aid}: switch.png"])
+        finally:
+            conn.close()
+
+    def test_the_article_shows_its_pictures_to_the_desk_at_once_and_to_requesters_once_cleared(self):
+        from psaspine import knowledge
+        aid = self._article()
+        alice, reader, root = self._cookie_for("alice"), self._cookie_for("reader"), self._cookie_for("root", is_sysadmin=True)
+        nurse = self._cookie_for("nurse", email="nurse@pmcne.ph")
+        status, headers, _ = self._send("POST", f"/kb/{aid}/file", cookie=alice, fields={"caption": "Where the switch is"},
+                                        files=[("switch.png", _png())])
+        self.assertEqual(status, "303 See Other")
+        self.assertIn("File+1+added", headers["Location"])
+        status, headers, _ = self._send("POST", f"/kb/{aid}/file", cookie=alice, fields={"caption": "The manual"},
+                                        files=[("manual.pdf", b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<<>>\nendobj\n")])
+        self.assertIn("File+2+added", headers["Location"])
+        status, headers, _ = self._send("POST", f"/kb/{aid}/file", cookie=alice, fields={}, files=[("run.exe", b"MZ\x90\x00")])
+        self.assertIn("Not+kept%3A+programs", headers["Location"])
+        status, _, _ = self._send("POST", f"/kb/{aid}/file", cookie=reader, fields={}, files=[("x.png", _png())])
+        self.assertEqual(status, "403 Forbidden")
+        # the desk sees a pending file at once, as a picture in the text and in the Files card
+        status, _, body = self._call("GET", f"/kb/{aid}", cookie=alice)
+        self.assertIn(f'<img src="/kb/{aid}/file/1" alt="Where the switch is" class=kbimg loading=lazy>', body)
+        self.assertIn(f'<a href="/kb/{aid}/file/2">the manual</a>', body)
+        self.assertIn("awaiting review", body)
+        self.assertIn(f"<code>![Where the switch is](file:1)</code>", body)
+        self.assertIn(f"<code>[The manual](file:2)</code>", body)
+        self.assertIn("name=decision value=CLEAR", body)
+        self.assertNotIn(">Remove<", body)                                        # not an administrator
+        status, headers, payload = self._send("GET", f"/kb/{aid}/file/1", cookie=reader)
+        self.assertEqual(status, "200 OK")
+        self.assertEqual(headers["Content-Type"], "image/png")
+        self.assertTrue(headers["Content-Disposition"].startswith('inline; filename="switch.png"'))
+        self.assertEqual(headers["Content-Security-Policy"], "sandbox")
+        self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
+        self.assertTrue(payload.startswith(b"\x89PNG"))
+        status, headers, _ = self._send("GET", f"/kb/{aid}/file/2", cookie=reader)
+        self.assertTrue(headers["Content-Disposition"].startswith('attachment; filename="manual.pdf"'))
+        status, _, _ = self._send("GET", f"/kb/{aid}/file/1", cookie=nurse)
+        self.assertEqual(status, "403 Forbidden")
+        # the requester's help page: nothing until a person clears the file
+        conn = db.connect(self.db_path)
+        knowledge.set_status(conn, aid, "PUBLISHED", at=self.at, actor="alice")
+        conn.commit()
+        conn.close()
+        status, _, body = self._call("GET", f"/my/help/{aid}", cookie=nurse)
+        self.assertEqual(status, "200 OK")
+        self.assertIn("[image not shown: Where the switch is]", body)
+        self.assertIn("[the manual: file not shown]", body)
+        self.assertNotIn("<img", body)
+        status, _, _ = self._send("GET", f"/my/help/{aid}/file/1", cookie=nurse)
+        self.assertEqual(status, "404 Not Found")
+        for n in (1, 2):
+            status, headers, _ = self._call("POST", f"/kb/{aid}/file/{n}/review", cookie=alice, form={"decision": "CLEAR"})
+            self.assertIn("cleared", dict(headers)["Location"])
+        status, _, body = self._call("GET", f"/my/help/{aid}", cookie=nurse)
+        self.assertIn(f'<img src="/my/help/{aid}/file/1" alt="Where the switch is" class=kbimg loading=lazy>', body)
+        self.assertIn(f"<a href='/my/help/{aid}/file/2'>The manual</a>", body)
+        status, headers, payload = self._send("GET", f"/my/help/{aid}/file/1", cookie=nurse)
+        self.assertEqual((status, headers["Content-Type"]), ("200 OK", "image/png"))
+        # withheld: nobody is served it, and the text says so; a reader may not review; an administrator removes
+        status, _, _ = self._call("POST", f"/kb/{aid}/file/1/review", cookie=reader, form={"decision": "WITHHOLD"})
+        self.assertEqual(status, "403 Forbidden")
+        self._call("POST", f"/kb/{aid}/file/1/review", cookie=alice, form={"decision": "WITHHOLD"})
+        status, _, _ = self._send("GET", f"/kb/{aid}/file/1", cookie=alice)
+        self.assertEqual(status, "404 Not Found")
+        status, _, body = self._call("GET", f"/kb/{aid}", cookie=alice)
+        self.assertIn("[image not shown: Where the switch is]", body)
+        self.assertIn("withheld", body)
+        status, _, _ = self._call("POST", f"/kb/{aid}/file/2/remove", cookie=alice)
+        self.assertEqual(status, "403 Forbidden")
+        status, headers, _ = self._call("POST", f"/kb/{aid}/file/2/remove", cookie=root)
+        self.assertIn("manual.pdf+removed", dict(headers)["Location"])
+        status, _, _ = self._send("GET", f"/kb/{aid}/file/2", cookie=alice)
+        self.assertEqual(status, "404 Not Found")
+        status, _, _ = self._send("GET", f"/kb/{aid}/file/9", cookie=alice)
+        self.assertEqual(status, "404 Not Found")
+        status, _, body = self._call("GET", f"/kb/{aid}/edit", cookie=alice)
+        self.assertIn("![caption](file:3)", body)
+
+class ApiScopesTest(unittest.TestCase):
+    """Gap 8: a token's scope. RAISE raises and reads its own (as before); READ
+    lists and reads every ticket on its board and the configurations; WRITE
+    adds a note, sets a status or an owner, applied the way the desk applies
+    them. One board still; a restricted board's reads audited like a person's."""
+    _api = MachineApiTest._api
+    _conn = MachineApiTest._conn
+
+    def setUp(self) -> None:
+        from psaspine import configurations
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = str(_target(self.tmp))
+        conn = _fresh(self.tmp)
+        self.at = datetime(2026, 9, 30, 9, 0)
+        setup.apply_starter(conn, "IT_HELP", actor="t", at=self.at)
+        conn.executescript(
+            "INSERT OR REPLACE INTO board (board_id,display_name,phase,fulfiller_group,owner,deputy,is_live,restricted)"
+            " VALUES ('PHI','PHI Board','2','Clin','a','b',1,1);"
+            "INSERT OR REPLACE INTO board_status (board_status_id,board_id,name,escalation_status,is_default)"
+            " VALUES ('PHI.NEW','PHI','New','NOT_RESPONDED',1);"
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','bob','WORK');")
+        with self.assertRaises(ValueError):
+            webapi.create_token(conn, label="x", board_id="IT_HELP", at=self.at, scope="ROOT")
+        _, self.raise_tok = webapi.create_token(conn, label="monitor", board_id="IT_HELP", at=self.at)
+        self.read_id, self.read_tok = webapi.create_token(conn, label="dashboard", board_id="IT_HELP", at=self.at, scope="READ")
+        self.write_id, self.write_tok = webapi.create_token(conn, label="runbook tool", board_id="IT_HELP", at=self.at, scope="WRITE")
+        self.phi_id, self.phi_tok = webapi.create_token(conn, label="ward board", board_id="PHI", at=self.at, scope="READ")
+        self.mine = tickets.open_ticket(conn, board_id="IT_HELP", summary="Printer down in Ward 3", impact="I3", urgency="U3",
+                                        requested_by="nurse@pmcne.ph", description="Zebra at the station", at=self.at, entity_id="PMC")
+        self.old = tickets.open_ticket(conn, board_id="IT_HELP", summary="Old one", impact="I3", urgency="U3",
+                                       requested_by=None, at=datetime(2026, 9, 1, 9), entity_id="PMC")
+        board.change_status(conn, self.old, "IT_HELP.RESOLVED", at=datetime(2026, 9, 2, 9), actor="bob")
+        self.other = tickets.open_ticket(conn, board_id="PHI", summary="Bedside monitor", impact="I3", urgency="U3",
+                                         requested_by=None, at=self.at, entity_id="PMC")
+        self.cfg = configurations.create(conn, name="WARD3-LBL01", entity_id="PMC", config_type="PRINTER",
+                                         serial_number="ZX-1001", at=self.at, actor="alice")
+        conn.commit()
+        conn.close()
+        self.config = Config(session_secret=_secrets.token_bytes(32))
+        self.raw = make_app(self.db_path, config=self.config, clock=lambda: self.at)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_a_scope_says_what_a_token_may_read(self):
+        status, _, data = self._api("GET", "/api/v1/tickets", token=self.raise_tok)
+        self.assertEqual((status, data["error"]), ("403 Forbidden", "this token's scope is RAISE; READ is needed"))
+        status, _, data = self._api("GET", f"/api/v1/tickets/{self.mine}", token=self.raise_tok)
+        self.assertEqual(status, "404 Not Found")                                 # not its own
+        status, _, data = self._api("POST", "/api/v1/tickets", token=self.raise_tok, payload={"summary": "Link down"})
+        raised = data["id"]
+        status, _, data = self._api("GET", f"/api/v1/tickets/{raised}", token=self.raise_tok)
+        self.assertEqual(status, "200 OK")
+        self.assertNotIn("status", data)                                           # the short shape, as before
+        status, _, data = self._api("GET", "/api/v1/tickets", token=self.read_tok)
+        self.assertEqual(status, "200 OK")
+        self.assertEqual(([t["id"] for t in data["tickets"]], data["count"], data["total"]), ([raised, self.mine], 2, 2))
+        self.assertEqual(data["tickets"][1]["status"], "New")
+        self.assertEqual(data["tickets"][1]["description"], "Zebra at the station")
+        status, _, data = self._api("GET", "/api/v1/tickets?state=closed", token=self.read_tok)
+        self.assertEqual([t["id"] for t in data["tickets"]], [self.old])
+        status, _, data = self._api("GET", "/api/v1/tickets?state=all&since=2026-09-15&limit=1", token=self.read_tok)
+        self.assertEqual((data["count"], data["total"]), (1, 2))
+        for bad in ("state=bogus", "since=2026-13-01", "limit=0", "limit=201", "offset=x"):
+            status, _, _ = self._api("GET", "/api/v1/tickets?" + bad, token=self.read_tok)
+            self.assertEqual(status, "400 Bad Request", bad)
+        status, _, data = self._api("GET", f"/api/v1/tickets/{self.mine}", token=self.read_tok)
+        self.assertEqual((status, data["board"], data["owner"], data["open"]), ("200 OK", "IT_HELP", None, True))
+        status, _, _ = self._api("GET", f"/api/v1/tickets/{self.other}", token=self.read_tok)   # another board
+        self.assertEqual(status, "404 Not Found")
+        status, _, data = self._api("PATCH", f"/api/v1/tickets/{self.mine}", token=self.read_tok, payload={"note": "x"})
+        self.assertEqual(status, "403 Forbidden")
+        status, _, _ = self._api("GET", "/api/v1/configurations", token=self.raise_tok)
+        self.assertEqual(status, "403 Forbidden")
+        status, _, data = self._api("GET", "/api/v1/configurations?type=printer", token=self.read_tok)
+        self.assertEqual((status, data["count"], data["configurations"][0]["name"], data["configurations"][0]["type"]),
+                         ("200 OK", 1, "WARD3-LBL01", "PRINTER"))
+        self.assertNotIn("contact_id", data["configurations"][0])                 # the person never comes with the machine
+        status, _, data = self._api("GET", "/api/v1/configurations?q=ZX-10", token=self.read_tok)
+        self.assertEqual(data["total"], 1)
+        status, _, data = self._api("GET", f"/api/v1/configurations/{self.cfg}", token=self.read_tok)
+        self.assertEqual((status, data["id"], data["serial_number"]), ("200 OK", self.cfg, "ZX-1001"))
+        status, _, _ = self._api("GET", "/api/v1/configurations/CFG-none", token=self.read_tok)
+        self.assertEqual(status, "404 Not Found")
+        status, _, _ = self._api("POST", "/api/v1/configurations", token=self.read_tok, payload={})
+        self.assertEqual(status, "405 Method Not Allowed")
+        status, _, _ = self._api("GET", "/api/v1/people", token=self.read_tok)
+        self.assertEqual(status, "404 Not Found")
+        # a row from before the scope column reads as RAISE
+        conn = self._conn()
+        conn.execute("UPDATE api_token SET scope = NULL WHERE token_id = ?", (self.read_id,))
+        conn.commit()
+        conn.close()
+        status, _, data = self._api("GET", "/api/v1/tickets", token=self.read_tok)
+        self.assertEqual(status, "403 Forbidden")
+
+    def test_a_write_token_notes_moves_and_assigns_the_way_the_desk_does(self):
+        status, _, data = self._api("PATCH", f"/api/v1/tickets/{self.mine}", token=self.write_tok, payload={})
+        self.assertEqual(status, "400 Bad Request")
+        for payload, field in (({"note": ""}, "note"), ({"note": "x", "flag": "SECRET"}, "flag"), ({"status": "Nope"}, "status"),
+                               ({"owner": "zed"}, "owner"), ({"priority": "P1"}, "priority")):
+            status, _, data = self._api("PATCH", f"/api/v1/tickets/{self.mine}", token=self.write_tok, payload=payload)
+            self.assertEqual((status, data["field"]), ("422 Unprocessable Entity", field), payload)
+        status, _, _ = self._api("PATCH", f"/api/v1/tickets/{self.other}", token=self.write_tok, payload={"note": "x"})
+        self.assertEqual(status, "404 Not Found")
+        status, _, data = self._api("PATCH", f"/api/v1/tickets/{self.mine}", token=self.write_tok,
+                                    payload={"note": "Restarted the print spooler; PhilHealth 12-345678901-2 was on the label",
+                                             "owner": "bob", "status": "In Progress"})
+        self.assertEqual(status, "200 OK", data)
+        self.assertEqual((data["owner"], data["status"], data["open"]), ("bob", "In Progress", True))
+        self.assertEqual(data["applied"], ["owner - -> bob", "internal note", "status In Progress"])
+        conn = self._conn()
+        try:
+            actor = f"api:{self.write_id}"
+            events = conn.execute("SELECT kind, actor, note_flag FROM ticket_event WHERE work_item_id = ? AND actor = ?"
+                                  " ORDER BY ticket_event_id", (self.mine, actor)).fetchall()
+            self.assertIn(("NOTE", actor, "INTERNAL"), [tuple(e) for e in events])
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM data_quality WHERE subject_id = ? AND code = 'PHI_PHILHEALTH_NUMBER'",
+                                          (self.mine,)).fetchone()[0], 1)                  # flagged, never dropped
+            audit = conn.execute("SELECT detail FROM audit_event WHERE action = 'API_UPDATE'").fetchone()[0]
+            self.assertEqual(audit, "owner - -> bob; internal note; status In Progress")
+        finally:
+            conn.close()
+        status, _, data = self._api("PATCH", f"/api/v1/tickets/{self.mine}", token=self.write_tok,
+                                    payload={"status": "resolved", "note": "Fixed", "flag": "DISCUSSION"})
+        self.assertEqual((status, data["status"], data["open"]), ("200 OK", "Resolved", False))
+        status, _, data = self._api("PATCH", f"/api/v1/tickets/{self.mine}", token=self.write_tok, payload={"owner": ""})
+        self.assertEqual((status, data["owner"]), ("200 OK", None))
+
+    def test_a_token_on_a_restricted_board_is_audited_on_every_read(self):
+        status, _, data = self._api("GET", "/api/v1/tickets", token=self.phi_tok)
+        self.assertEqual((status, [t["id"] for t in data["tickets"]]), ("200 OK", [self.other]))
+        status, _, _ = self._api("GET", f"/api/v1/tickets/{self.other}", token=self.phi_tok)
+        self.assertEqual(status, "200 OK")
+        self._api("GET", "/api/v1/tickets", token=self.read_tok)                   # an open board: no audit row
+        conn = self._conn()
+        try:
+            rows = conn.execute("SELECT actor, subject_id, detail FROM audit_event WHERE action = 'RESTRICTED_READ' ORDER BY audit_id").fetchall()
+            self.assertEqual([tuple(r) for r in rows], [(f"api:{self.phi_id}", "PHI", "api list open 1 ticket(s)"),
+                                                        (f"api:{self.phi_id}", "PHI", f"api read {self.other}")])
         finally:
             conn.close()
 

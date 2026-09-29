@@ -812,10 +812,64 @@ sitting-1 road** (`init` is safe to run again; nothing is seeded).
   *Note* and *Ticket*, and *Call* when the contact has a number. (MEASURED
   in the cloud with Playwright at 390 × 844: fourteen pages, no sideways
   scroll, no control under 40 px.)
-- **Counts:** 570 tests at this head, SQLite OK (1 skipped). The whole suite
-  with 046 to 049 ran on SQL Server in this container against the port:
-  569 run, OK, 2 skipped, 13.5 minutes (MEASURED, 29 Sep). The drift gate
-  passes; CI run 67 is on the same head.
+- **Schema 050, in the same sitting: `channel_target`, `page`, and channel
+  columns on `notification` and `workflow_action`.** Teams cards and on-call
+  paging. A channel is named in Setup › Integrations › Teams channels; its
+  webhook address goes in **`D:\psa\teams-webhooks.json`** on the host, a
+  JSON object `{ "helpdesk-alerts": "https://…webhook.office.com/…" }`,
+  ACL'd to the task account, never committed. A new task, **PSA-Teams**,
+  runs `scripts\Send-PsaTeamsNotifications.ps1 -Database … -WebhookFile
+  D:\psa\teams-webhooks.json -StateDir D:\psa\mail-state -DeskUrl
+  https://<desk> -Apply -Loop` beside PSA-Notify, preview first (no -Apply:
+  it counts and checks the file, posts nothing). The added columns are
+  NULL-able by the port's rule; the desk reads NULL as EMAIL. **Pass after
+  046 to 050 together:** tables **101 → 109**, columns **946 → 1052** (050
+  adds 31: 8 in `channel_target` and 1 parsed date, 14 in `page` and 3
+  parsed, 3 on `notification`, 2 on `workflow_action`), indexes **37 → 43**
+  (`ix_page_open` added), triggers 4 → 4, no existing row count changed
+  (MEASURED on the test container at this head after `init --reset` on a
+  spare database: 109 tables, 1052 columns, 43 CREATE INDEX, 4 triggers).
+  **Pass, for Dada:** Setup › Integrations shows *Teams channels*; a channel
+  named there with its address in the file receives one card when a rule
+  set to *as a card in a Teams channel* fires (PSA-Teams in preview says
+  "1 card(s) due", with -Apply "1 posted"); a ticket's *Page the on-call*
+  puts *Paging <name>: attempt 1 of 3* on the ticket, the email arrives,
+  the on-call's *Acknowledge* ends it; with nobody on the rota the button
+  says so and pages nobody. **Whether Teams shows the card as posted is the
+  one thing only this sitting can say (NOT VERIFIED from the cloud).**
+- **Schema 051, in the same sitting: `kb_file`.** Pictures and documents on
+  a knowledge article, reviewed before a requester sees them, shown in the
+  text as `![caption](file:N)`. The bytes go in a folder of their own:
+  **`D:\psa\attachments-kb`** (the attachment folder's name with `-kb`;
+  or `PSA_KB_DIR` in every PSA task), made with the same ACL as
+  `D:\psa\attachments` and added to the same backup, because the
+  attachment verifier and purge deliberately do not look there. **Pass after
+  046 to 051 together:** tables **101 → 110**, columns **946 → 1072** (051
+  adds 20: 17 in `kb_file` and 3 parsed dates), indexes **37 → 44**
+  (`ix_kb_file_article` added), triggers 4 → 4, no existing row count
+  changed (MEASURED on the test container at this head after `init --reset`
+  on a spare database: 110 tables, 1072 columns, 44 CREATE INDEX, 4
+  triggers). **Pass, for Dada:** an article's page shows *Files*; a
+  screenshot uploaded there appears in the article at once where
+  `![caption](file:1)` is pasted, and on the portal's help page only after
+  *Clear*; a `.exe` is refused in a sentence; `D:\psa\attachments-kb`
+  holds one file after the upload.
+- **Gap 8, one column: `api_token.scope`** (`schema/local/api_token_scope.sql`,
+  ported like the rest). A machine token is RAISE (as before, and what an
+  existing row reads as), READ (list and read every ticket on its board and
+  the configurations) or WRITE (a note, a status, an owner as well):
+  `create-api-token … --scope READ`. **Pass after 046 to 051 and this:**
+  tables **101 → 110**, columns **946 → 1073**, indexes **37 → 44**,
+  triggers 4 → 4 (MEASURED on the test container at this head after `init
+  --reset` on a spare database). **Pass, for Dada:** a token minted with
+  `--scope READ` answers `GET /api/v1/tickets` with the board's open
+  tickets; the same call with the old monitoring token answers 403 naming
+  the scope; nothing else on the host changes.
+- **Counts:** 580 tests at this head, SQLite OK (1 skipped). The whole suite
+  ran on SQL Server in this container against the port twice today: with
+  046 to 049, 569 run, OK, 2 skipped, 13.5 minutes; with 046 to 050, 575
+  run, OK, 2 skipped, 13.8 minutes (both MEASURED, 29 Sep). The drift gate
+  passes; CI runs 67 and 68 are green on the pushed heads.
 
 ## When a step does not pass
 

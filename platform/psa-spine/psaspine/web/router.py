@@ -12,6 +12,7 @@ from .views import schedule as schedule_view
 from .views import timesheets as timesheets_view
 from .views import recurring as recurring_view
 from .views import approvals as approvals_view
+from .views import paging as paging_view
 from .views import agreements as agreements_view
 from .views import finance as finance_view
 from .views import kb as kb_view
@@ -48,6 +49,9 @@ ROUTES = [
     ("POST", "/ticket/<work_item_id>/change/decide", ticket.decide_change),
     ("POST", "/ticket/<work_item_id>/approval/request", approvals_view.request),
     ("POST", "/ticket/<work_item_id>/approval/withdraw", approvals_view.withdraw),
+    ("POST", "/ticket/<work_item_id>/page", paging_view.page),
+    ("POST", "/ticket/<work_item_id>/page/<page_id>/ack", paging_view.ack),
+    ("POST", "/ticket/<work_item_id>/page/<page_id>/stop", paging_view.stop),
     ("POST", "/ticket/<work_item_id>/task/add", ticket.task_add),
     ("POST", "/ticket/<work_item_id>/task/toggle", ticket.task_toggle),
     ("POST", "/ticket/<work_item_id>/template", ticket.template_apply),
@@ -116,9 +120,14 @@ ROUTES = [
     ("GET", "/kb/<article_id>/edit", kb_view.edit_form),
     ("POST", "/kb/<article_id>/save", kb_view.save),
     ("POST", "/kb/<article_id>/status", kb_view.set_status),
+    ("POST", "/kb/<article_id>/file", kb_view.upload),
+    ("GET", "/kb/<article_id>/file/<file_id>", kb_view.file),
+    ("POST", "/kb/<article_id>/file/<file_id>/review", kb_view.file_review),
+    ("POST", "/kb/<article_id>/file/<file_id>/remove", kb_view.file_remove),
     ("POST", "/ticket/<work_item_id>/kb", kb_view.link_ticket),
     ("GET", "/my/help", kb_view.portal_index),
     ("GET", "/my/help/<article_id>", kb_view.portal_detail),
+    ("GET", "/my/help/<article_id>/file/<file_id>", kb_view.portal_file),
     ("POST", "/schedule/book", schedule_view.book),
     ("POST", "/schedule/block", schedule_view.block_add),
     ("POST", "/schedule/block/remove", schedule_view.block_remove),
@@ -153,6 +162,9 @@ ROUTES = [
     ("GET", "/admin/integrations", configurations.integrations),
     ("POST", "/admin/integrations/add", configurations.integrations_add),
     ("POST", "/admin/integrations/toggle", configurations.integrations_toggle),
+    ("POST", "/admin/integrations/teams/add", configurations.teams_add),
+    ("POST", "/admin/integrations/teams/toggle", configurations.teams_toggle),
+    ("POST", "/admin/integrations/teams/pages", configurations.teams_pages),
     ("GET", "/admin/board/new", admin.new_board_form),
     ("POST", "/admin/board/new", admin.new_board_create),
     ("GET", "/admin/catalogue", admin.catalogue),

@@ -205,6 +205,9 @@ BEGIN
     PRINT N'    psa.role_grant';
     PRINT N'    psa.recurrence';
     PRINT N'    psa.approval';
+    PRINT N'    psa.channel_target';
+    PRINT N'    psa.page';
+    PRINT N'    psa.kb_file';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -248,13 +251,15 @@ BEGIN
     PRINT N'    psa.ix_recurrence_due';
     PRINT N'    psa.ix_approval_ticket';
     PRINT N'    psa.ix_approval_approver';
+    PRINT N'    psa.ix_page_open';
+    PRINT N'    psa.ix_kb_file_article';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  107 tables, 42 indexes, 4 triggers.';
+    PRINT N'  110 tables, 44 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -2804,6 +2809,93 @@ CREATE TABLE psa.[approval] (
 END;
 
 -- --------------------------------------------------------------------------
+-- channel_target   (from schema/050_channels.sql)
+IF OBJECT_ID(N'psa.[channel_target]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[channel_target] (
+    -- a short name: helpdesk-alerts
+    [target_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_channel_target] PRIMARY KEY,
+    [kind] NVARCHAR(32) NOT NULL CONSTRAINT [DF_channel_target_kind] DEFAULT ('TEAMS_WEBHOOK') CONSTRAINT [CK_channel_target_01] CHECK (kind IN ('TEAMS_WEBHOOK')),
+
+    -- what people call it
+    [label] NVARCHAR(400) NOT NULL,
+
+    -- also carries pages to the on-call
+    [pages] INT NOT NULL CONSTRAINT [DF_channel_target_pages] DEFAULT (0) CONSTRAINT [CK_channel_target_02] CHECK (pages IN (0, 1)),
+    [note] NVARCHAR(MAX) NULL,
+    [inactive] INT NOT NULL CONSTRAINT [DF_channel_target_inactive] DEFAULT (0) CONSTRAINT [CK_channel_target_03] CHECK (inactive IN (0, 1)),
+    [created_at] NVARCHAR(64) NOT NULL,
+    [created_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- page   (from schema/050_channels.sql)
+IF OBJECT_ID(N'psa.[page]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[page] (
+    [page_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_page] PRIMARY KEY,
+    [work_item_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_page_work_item_id] REFERENCES psa.[ticket]([work_item_id]),
+
+    -- who is being paged
+    [member] NVARCHAR(200) NOT NULL,
+    [role] NVARCHAR(32) NOT NULL CONSTRAINT [CK_page_01] CHECK (role IN ('ON_CALL', 'DUTY_MANAGER', 'NAMED')),
+    [started_at] NVARCHAR(64) NOT NULL,
+    [started_by] NVARCHAR(200) NOT NULL,
+    [every_minutes] INT NOT NULL CONSTRAINT [CK_page_02] CHECK (every_minutes BETWEEN 1 AND 120),
+    [max_attempts] INT NOT NULL CONSTRAINT [CK_page_03] CHECK (max_attempts BETWEEN 1 AND 20),
+    [attempts] INT NOT NULL CONSTRAINT [DF_page_attempts] DEFAULT (0),
+    [last_sent_at] NVARCHAR(64) NULL,
+    [status] NVARCHAR(32) NOT NULL CONSTRAINT [DF_page_status] DEFAULT ('OPEN') CONSTRAINT [CK_page_04] CHECK (status IN ('OPEN', 'ACKNOWLEDGED', 'EXHAUSTED', 'STOPPED')),
+    [ended_at] NVARCHAR(64) NULL,
+    [ended_by] NVARCHAR(200) NULL,
+    [note] NVARCHAR(MAX) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [started_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [started_at], 126), CASE WHEN [started_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [started_at], 112) END)),
+    [last_sent_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [last_sent_at], 126), CASE WHEN [last_sent_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [last_sent_at], 112) END)),
+    [ended_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [ended_at], 126), CASE WHEN [ended_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [ended_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- kb_file   (from schema/051_kb_files.sql)
+IF OBJECT_ID(N'psa.[kb_file]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[kb_file] (
+    [file_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_kb_file] PRIMARY KEY,
+    [article_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_kb_file_article_id] REFERENCES psa.[kb_article]([article_id]),
+    [filename] NVARCHAR(400) NOT NULL,
+    [caption] NVARCHAR(400) NULL,
+    [media_type] NVARCHAR(400) NOT NULL,
+    [size_received] INT NOT NULL CONSTRAINT [CK_kb_file_01] CHECK (size_received > 0),
+    [size_stored] INT NOT NULL CONSTRAINT [CK_kb_file_02] CHECK (size_stored > 0),
+    [sha256] NVARCHAR(64) NOT NULL,
+    [encoding] NVARCHAR(32) NOT NULL CONSTRAINT [CK_kb_file_03] CHECK (encoding IN ('IDENTITY', 'GZIP')),
+    [treatment] NVARCHAR(400) NOT NULL,
+    [uploaded_by] NVARCHAR(200) NOT NULL,
+    [uploaded_at] NVARCHAR(64) NOT NULL,
+    [review_status] NVARCHAR(32) NOT NULL CONSTRAINT [DF_kb_file_review_status] DEFAULT ('PENDING') CONSTRAINT [CK_kb_file_04] CHECK (review_status IN ('PENDING', 'CLEARED', 'WITHHELD')),
+    [reviewed_by] NVARCHAR(200) NULL,
+    [reviewed_at] NVARCHAR(64) NULL,
+    [removed_at] NVARCHAR(64) NULL,
+    [removed_by] NVARCHAR(200) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [uploaded_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [uploaded_at], 126), CASE WHEN [uploaded_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [uploaded_at], 112) END)),
+    [reviewed_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [reviewed_at], 126), CASE WHEN [reviewed_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [reviewed_at], 112) END)),
+    [removed_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [removed_at], 126), CASE WHEN [removed_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [removed_at], 112) END)),
+    CONSTRAINT [CK_kb_file_05] CHECK ((((review_status = 'PENDING') AND (reviewed_by IS NULL)) OR (NOT (review_status = 'PENDING') AND NOT (reviewed_by IS NULL))))
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -3130,6 +3222,28 @@ ALTER TABLE psa.[department] ADD [approver] NVARCHAR(200) NULL;
 IF COL_LENGTH(N'psa.[catalogue_item]', N'needs_approval') IS NULL
 ALTER TABLE psa.[catalogue_item] ADD [needs_approval] INT NULL CONSTRAINT [DF_catalogue_item_needs_approval] DEFAULT (0) CONSTRAINT [CK_catalogue_item_needs_approval_01] CHECK (needs_approval IN (0, 1));
 
+-- Added columns are NULL-able by the port's rule (a row from before 050 has no
+-- value); the desk reads NULL as EMAIL everywhere.
+IF COL_LENGTH(N'psa.[notification]', N'channel') IS NULL
+ALTER TABLE psa.[notification] ADD [channel] NVARCHAR(32) NULL CONSTRAINT [DF_notification_channel] DEFAULT ('EMAIL') CONSTRAINT [CK_notification_channel_01] CHECK (channel IN ('EMAIL', 'TEAMS'));
+
+IF COL_LENGTH(N'psa.[notification]', N'target_id') IS NULL
+ALTER TABLE psa.[notification] ADD [target_id] NVARCHAR(64) NULL CONSTRAINT [FK_notification_target_id] REFERENCES psa.[channel_target]([target_id]);
+
+IF COL_LENGTH(N'psa.[notification]', N'page_id') IS NULL
+ALTER TABLE psa.[notification] ADD [page_id] INT NULL CONSTRAINT [FK_notification_page_id] REFERENCES psa.[page]([page_id]);
+
+IF COL_LENGTH(N'psa.[workflow_action]', N'channel') IS NULL
+ALTER TABLE psa.[workflow_action] ADD [channel] NVARCHAR(32) NULL CONSTRAINT [DF_workflow_action_channel] DEFAULT ('EMAIL') CONSTRAINT [CK_workflow_action_channel_01] CHECK (channel IN ('EMAIL', 'TEAMS', 'PAGE'));
+
+-- A card's channel is also written to target_member: 008's CHECK asks that a
+-- notify reach someone, and for a card the someone is the channel.
+IF COL_LENGTH(N'psa.[workflow_action]', N'target_id') IS NULL
+ALTER TABLE psa.[workflow_action] ADD [target_id] NVARCHAR(64) NULL CONSTRAINT [FK_workflow_action_target_id] REFERENCES psa.[channel_target]([target_id]);
+
+IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
+ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
+
 -- --------------------------------------------------------------------------
 -- indexes
 
@@ -3267,6 +3381,12 @@ CREATE INDEX [ix_approval_ticket] ON psa.[approval] ([work_item_id]);
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_approval_approver' AND object_id = OBJECT_ID(N'psa.[approval]'))
 CREATE INDEX [ix_approval_approver] ON psa.[approval] ([approver], [status]);
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_page_open' AND object_id = OBJECT_ID(N'psa.[page]'))
+CREATE INDEX [ix_page_open] ON psa.[page] ([status], [work_item_id]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_kb_file_article' AND object_id = OBJECT_ID(N'psa.[kb_file]'))
+CREATE INDEX [ix_kb_file_article] ON psa.[kb_file] ([article_id]);
+
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
@@ -3402,10 +3522,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 107 OR @Triggers <> 4 OR @Indexes < 42
+IF @Tables <> 110 OR @Triggers <> 4 OR @Indexes < 44
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 107), %d triggers (expected 4), %d indexes (expected at least 42). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 110), %d triggers (expected 4), %d indexes (expected at least 44). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -3433,6 +3553,9 @@ PRINT N'target is enforced until somebody with the authority says so.';
     DROP TRIGGER IF EXISTS psa.[ticket_close_requires_a_variation];
     DROP TRIGGER IF EXISTS psa.[patient_reference_needs_a_restricted_board];
     DROP TRIGGER IF EXISTS psa.[patient_reference_stays_on_a_restricted_board];
+    ALTER TABLE psa.[workflow_action] DROP CONSTRAINT IF EXISTS [FK_workflow_action_target_id];
+    ALTER TABLE psa.[notification] DROP CONSTRAINT IF EXISTS [FK_notification_page_id];
+    ALTER TABLE psa.[notification] DROP CONSTRAINT IF EXISTS [FK_notification_target_id];
     ALTER TABLE psa.[configuration] DROP CONSTRAINT IF EXISTS [FK_configuration_agreement_id];
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_recurrence_id];
     ALTER TABLE psa.[time_entry] DROP CONSTRAINT IF EXISTS [FK_time_entry_timesheet_id];
@@ -3453,6 +3576,9 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[kb_file];
+    DROP TABLE IF EXISTS psa.[page];
+    DROP TABLE IF EXISTS psa.[channel_target];
     DROP TABLE IF EXISTS psa.[approval];
     DROP TABLE IF EXISTS psa.[recurrence];
     DROP TABLE IF EXISTS psa.[role_grant];

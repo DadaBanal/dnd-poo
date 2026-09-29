@@ -520,7 +520,9 @@ def detail(ctx, work_item_id):
     from . import projects as project_views
     configs += (project_views.ticket_card(ctx, tk, can_work=can_work) + kb_views.ticket_card(ctx, tk, can_work=can_work)
                 + finance_views.ticket_card(ctx, tk, can_work=can_work))
-    body = header + strip + (f"<div class=rail>{left}<div class=pods data-col=right data-order='ticket,change,approval,family,"
+    from . import paging as paging_view
+    body = header + strip + paging_view.banner(ctx, tk, can_work=can_work) + (
+        f"<div class=rail>{left}<div class=pods data-col=right data-order='ticket,change,approval,family,"
                              f"schedule,tasks,files,links,configurations,project,knowledge,finance,time,commercial,details'>{fields}{configs}{time_card}"
                              f"{commercial}{details}</div></div>")
     return Response(body=t.page(work_item_id, body, user=ctx.user, active="board", quick=_quick_bar(wid, person, can_work)))

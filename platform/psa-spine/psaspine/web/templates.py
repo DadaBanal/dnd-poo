@@ -394,6 +394,7 @@ em{font-style:italic}
 /* a technician's phone (gap 5, 29 Sep): one column, thumb-sized controls, the board as a list of cards, and a
    quick bar on the ticket. Nothing is a separate app; the same page reads its width and its pointer. */
 .sm-only{display:none} .quick{display:none} header.top #pal-open .ic{display:none}
+.md img.kbimg{display:block;max-width:100%;height:auto;margin:8px 0;border:1px solid var(--line);border-radius:var(--r)} .kbthumb{width:56px;height:42px;object-fit:cover;border-radius:6px;border:1px solid var(--line);vertical-align:middle;margin-right:6px}
 @media (pointer:coarse){button,.btn,.iconbtn,select,input:not([type=checkbox]):not([type=radio]){min-height:40px}
   input[type=checkbox],input[type=radio]{width:20px;height:20px}.iconbtn{width:40px}header.top nav a{min-height:40px}}
 @media (max-width:640px){
@@ -687,21 +688,51 @@ def esc(value) -> str:
     return html.escape("" if value is None else str(value), quote=True)
 
 
-def _inline(text: str) -> str:
+def _inline(text: str, file_url=None) -> str:
     """Escape, then the two inline shapes the reports actually emit: **bold** and
     `code`. Escaping first is what keeps this safe — the markers are literal
-    characters html.escape leaves alone, so the regex sees only them."""
+    characters html.escape leaves alone, so the regex sees only them.
+
+    051: an article may show an image, ![caption](file:N), and link,
+    [text](https://…) or [text](file:N). `file_url` says what file N is to
+    this reader (its address, or None: then the caption stands in). The tags
+    are parked as placeholders while the emphasis runs, so an address never
+    grows an <em>."""
     out = esc(text)
+    parked: list[str] = []
+
+    def park(html_: str) -> str:
+        parked.append(html_)
+        return f"\x00{len(parked) - 1}\x00"
+
+    def img(m):
+        alt, n = m.group(1), int(m.group(2))
+        url = file_url(n) if file_url else None
+        if not url:
+            return park(f"<span class=muted>[image not shown: {alt or 'file ' + str(n)}]</span>")
+        return park(f'<img src="{esc(url)}" alt="{alt}" class=kbimg loading=lazy>')
+
+    def link(m):
+        words, target = m.group(1), m.group(2)
+        if target.startswith("file:"):
+            url = file_url(int(target[5:])) if file_url else None
+            if not url:
+                return park(f"<span class=muted>[{words}: file not shown]</span>")
+            return park(f'<a href="{esc(url)}">{words}</a>')
+        return park(f'<a href="{target}" rel="noopener noreferrer">{words}</a>')
+
+    out = re.sub(r"!\[([^\]]*)\]\(file:(\d+)\)", img, out)
+    out = re.sub(r"\[([^\]]+)\]\((https://[^\s)]+|file:\d+)\)", link, out)
     out = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", out)
     out = re.sub(r"`([^`]+)`", r"<code>\1</code>", out)
     # Emphasis last, after **bold** has consumed its pairs. Word-bounded so a
     # snake_case name or an arithmetic * is left alone.
     out = re.sub(r"(?<![\w*])\*(?!\s)([^*\n]+?)(?<!\s)\*(?![\w*])", r"<em>\1</em>", out)
     out = re.sub(r"(?<![\w])_(?!\s)([^_\n]+?)(?<!\s)_(?![\w])", r"<em>\1</em>", out)
-    return out
+    return re.sub(r"\x00(\d+)\x00", lambda m: parked[int(m.group(1))], out) if parked else out
 
 
-def md_to_html(md: str) -> str:
+def md_to_html(md: str, *, file_url=None) -> str:
     """Just enough Markdown for the reports this repo generates: ATX headings,
     GitHub pipe tables, horizontal rules, bullet lists, bold, code and
     paragraphs. Not a general parser — a renderer for a known, tested shape, so
@@ -713,7 +744,7 @@ def md_to_html(md: str) -> str:
 
     def flush_para():
         if para:
-            out.append("<p>" + "<br>".join(_inline(p) for p in para) + "</p>")
+            out.append("<p>" + "<br>".join(_inline(p, file_url) for p in para) + "</p>")
             para.clear()
 
     def is_sep(row: str) -> bool:
@@ -738,7 +769,7 @@ def md_to_html(md: str) -> str:
         if m:
             flush_para()
             level = len(m.group(1))
-            out.append(f"<h{level}>{_inline(m.group(2))}</h{level}>")
+            out.append(f"<h{level}>{_inline(m.group(2), file_url)}</h{level}>")
             i += 1
             continue
 
@@ -751,9 +782,9 @@ def md_to_html(md: str) -> str:
             while i < len(lines) and lines[i].strip().startswith("|"):
                 body.append([c.strip() for c in lines[i].strip().strip("|").split("|")])
                 i += 1
-            head_html = "".join(f"<th>{_inline(c)}</th>" for c in header)
+            head_html = "".join(f"<th>{_inline(c, file_url)}</th>" for c in header)
             rows_html = "".join(
-                "<tr>" + "".join(f"<td>{_inline(c)}</td>" for c in r) + "</tr>"
+                "<tr>" + "".join(f"<td>{_inline(c, file_url)}</td>" for c in r) + "</tr>"
                 for r in body)
             out.append("<div class='tablewrap'><table><thead><tr>" + head_html +
                        "</tr></thead><tbody>" + rows_html + "</tbody></table></div>")
