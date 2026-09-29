@@ -1652,3 +1652,16 @@ Section "Folded in from part 19 and the agreements handoff". Everything below is
    - The invoice's own page lists the agreement.
    - A Technician sees all of it, with no New, Add or Remove.
    - Which roles hold Finance Write is Dada's to set in Setup › Security roles.
+
+*Part 20, continued, 15:23 +08:00:* **the as-desk run PASS.** The operator ran `Part20-AsDesk.ps1` as the task account
+(`D:\psa\logs\Part20-AsDesk.log`):
+- `init` ran twice, exit 0 both times, and printed the same line both times: "ready: SQL Server, …Database=PMC_PSA";
+- **no `psa.board` row changed** (6 boards, every column compared).
+
+**6 boards, not part 18's 4.** SQL01 read the audit trail, because the script compares only the first `init` with the
+second.
+- `IT_CHANGE` and `IT_PROJECTS` were created in Setup by a person at 14:29, one `BOARD_CREATE` and one
+  `BOARD_SETUP` row each. That was before 045 and before this run.
+- `init` created no board.
+
+Item 5 is met. What remains open is Dada's checks (item 6).
