@@ -79,6 +79,6 @@ work types; Setup tables for types, subtypes and items. See that record.
 
 ## Evidence
 
-- Tests at the head this file arrives with: **580** on SQLite (OK, 1 skipped). On SQL Server 2022 in a container, the whole suite ran today with 046 to 049 (569 run, OK, 2 skipped, 13.5 min) and with 046 to 050 (575 run, OK, 2 skipped, 13.8 min); the run with 051 and the API scopes is recorded in the runbook when it finishes. The drift gate passes; CI runs 67 and 68 are green on the pushed heads.
+- Tests at the head this file arrives with: **580** on SQLite (OK, 1 skipped). On SQL Server 2022 in a container, the whole suite ran today with 046 to 049 (569 run, OK, 2 skipped, 13.5 min) and with 046 to 050 (575 run, OK, 2 skipped, 13.8 min); and with 051 and the API scopes (580 run, OK, 2 skipped, 14.3 min). The drift gate passes; CI runs 67 and 68 are green on the pushed heads.
 - Screens checked in Chromium on 29 Sep at an iPhone 13's width: fourteen desk and portal pages fit with no sideways scroll and no control under 40 px (the phone layout's MEASURED line in the README).
 - Nothing here was verified against a live ConnectWise tenant or a live Teams tenant; the Teams card's rendering is the one item for the SQL01 sitting to confirm.

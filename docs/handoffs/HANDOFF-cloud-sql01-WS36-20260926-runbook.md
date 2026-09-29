@@ -866,10 +866,11 @@ sitting-1 road** (`init` is safe to run again; nothing is seeded).
   tickets; the same call with the old monitoring token answers 403 naming
   the scope; nothing else on the host changes.
 - **Counts:** 580 tests at this head, SQLite OK (1 skipped). The whole suite
-  ran on SQL Server in this container against the port twice today: with
-  046 to 049, 569 run, OK, 2 skipped, 13.5 minutes; with 046 to 050, 575
-  run, OK, 2 skipped, 13.8 minutes (both MEASURED, 29 Sep). The drift gate
-  passes; CI runs 67 and 68 are green on the pushed heads.
+  ran on SQL Server in this container against the port three times today:
+  with 046 to 049, 569 run, OK, 2 skipped, 13.5 minutes; with 046 to 050,
+  575 run, OK, 2 skipped, 13.8 minutes; with 046 to 051 and the token
+  scope, 580 run, OK, 2 skipped, 14.3 minutes (all MEASURED, 29 Sep). The
+  drift gate passes; CI runs 67 and 68 are green on the pushed heads.
 
 ## When a step does not pass
 
