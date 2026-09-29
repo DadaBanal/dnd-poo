@@ -1529,3 +1529,37 @@ from BizBox's own function, doctors included.
 - Task `PSA-BizBox` runs hourly as psa_desk.
 - The mirror holds 5,113 products, 527 POs, 1,400 lines and 636 invoices.
 - The details are in the bizbox handoff, Reply parts 3 and 4. What is left there is the 12:05 read-back and Dada's Finance check.
+
+### Part 19: 2026-09-29, about 14:00 +08:00. **23caa5f live; schema 044 PASS; the view and the map done; the kb count is 0; the four scripts committed**
+
+Section "Folded in from part 18 and the BizBox Reply, parts 1–4". Everything below is MEASURED unless marked.
+
+1. **The suite first, in a separate worktree of `23caa5f`: 545 run, OK, 2 skipped, 0 errors** (265 s).
+   - The live tree stayed at `989b50e` while the suite ran.
+   - The worktree was removed afterwards.
+2. **Schema 044 by the sitting-1 road, in the section's order: stop, port, pull, start.**
+   - **Backup:** COPY_ONLY, `D:\PMC\backup\PMC_PSA\PMC_PSA_pre044-20260929.bak`, 15.8 MB. `RESTORE VERIFYONLY` says "valid".
+   - **Preview**, from the worktree's port: 99 tables, 36 indexes, 4 triggers; 103 existing objects.
+   - **Baseline**, after PSA-Desk was stopped at 13:58:33 with 8085 closed: 99 tables, 4 triggers, 920 columns, 34 indexes, 8,142 rows.
+   - **Apply** at 13:58:44, as SQL01's sysadmin with the switches set in memory. It printed "Created: 99 tables, 4 triggers, 36 indexes", its gate passed, and it printed "Seeded: nothing". There was no 900-byte warning: no new key.
+   - **Result:**
+     - tables **99 → 99**;
+     - columns **920 → 921** (`ext_invoice.supplier_ref`);
+     - indexes **34 → 36** (`ix_ext_invoice_agreement`, `ix_kb_ticket_ticket`);
+     - triggers 4 → 4;
+     - **no existing row count changed**.
+   - The work was timed to finish well before PSA-BizBox's 14:05 run, which writes rows.
+3. **The live tree was pulled to `23caa5f` at 13:59:12, and PSA-Desk started at 13:59:16.**
+   - There is one desk process and 8085 is listening. Loopback `/login` answers 200, and so does `desk.pmcne.ph/login`.
+   - `help.pmcne.ph/my` answers 401 with its sign-in page.
+   - PSA-Rules ran on the new code at 13:59:59: result 0, "0 errors".
+4. **The view and the map:** done after the pull. See the bizbox handoff, Reply part 5.
+5. **The count is 0:** `SELECT COUNT(*) FROM psa.kb_article WHERE board_id IS NOT NULL AND audience = 'REQUESTER'`.
+   - `kb_article` holds no rows at all: no article has been written yet, so nothing was ever exposed.
+   - What the section marked INFERRED is now MEASURED.
+6. **`init` as the task account waits on the operator.** It runs from `D:\psa\bin\Part19-AsDesk.ps1`, with the same checks as part 18's.
+7. **The four scripts are committed** into `platform/psa-spine/scripts/` in the house style: PREVIEW BY DEFAULT, `-Apply` to act. See Reply part 5.
+8. **Dada's checks:**
+   - Finance opens on Procurement, with no Agreements tab;
+   - Finance › Invoices shows *Supplier's invoice no.*;
+   - the tabs count the whole mirror.

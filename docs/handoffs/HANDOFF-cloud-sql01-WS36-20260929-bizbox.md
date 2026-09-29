@@ -446,3 +446,46 @@ in a task's arguments, since the desk log prints part of that line), and the
 random password nobody saw. The handoff's step 4 said "the same way as the
 other `PSA_*` settings"; SQL01's way is better and is now the way.
 
+### Part 5: 2026-09-29, about 14:06 +08:00. **Cloud Build's step done: the view, the map, and the four scripts in the repo**
+
+Schema 044 went in first; see runbook part 19. Everything below is MEASURED.
+
+**The view, 13:59:47,** after 044 and the pull. `ALTER VIEW psa.vw_invoice` ran with Cloud Build's SQL verbatim, in one transaction.
+- The columns are now `ReceivingNo`, `SupplierInvoiceNo`, `VendorName`, `InvoiceDate`, `DueDate`, `Status`, `TotalAmount` and `Currency`.
+- The view is still not schema-bound, and it still reads only `iwApinv` and `udf_GetFullName`.
+- `SupplierInvoiceNo` is filled on 639 of 639 rows.
+- `psa_bizbox_reader` reads the new column through its schema grant. This was tested by impersonation, with no password.
+
+**The map, 13:59:47.**
+- `"supplier_ref": "SupplierInvoiceNo"` was added to the invoice's columns in `D:\psa\bizbox-map.json`.
+- The new file was checked by the live tree's own `load_map` before it replaced the old one.
+- The old map is kept as `D:\psa\bizbox-map.json.pre-supplier-ref-20260929`.
+- A dry run into a scratch desk with the new code and map filled `supplier_ref` on 639 of 639 invoices. The scratch copy was deleted.
+
+**The 14:05 run, the first with the new code and map: PASS.** It ran as psa_desk, exit 0.
+- The invoice line reads **"639 rows, 1 new, 638 changed, 0 unchanged"**: every present invoice counted as changed, once.
+- `ext_invoice` now has `supplier_ref` filled on 639 of 639 present invoices.
+- The other kinds show BizBox's own hour:
+
+  | Kind | Rows | New | Changed |
+  |---|---|---|---|
+  | product | 5,125 | 12 | 1 |
+  | purchase_order | 532 | 4 | 3 |
+  | po_line | 1,413 | 5 | 1 |
+
+- `BIZBOX_SYNC` audit rows now stand at 4, one per run: 11:49, 12:05, 13:05 and 14:05.
+- The second half of the Pass, "the run after says 0 changed" for invoices, is 15:05's. SQL01 reads it back then.
+
+**The four scripts, now in `platform/psa-spine/scripts/`,** each with the house header: PREVIEW BY DEFAULT, and "what it deliberately does NOT do".
+
+| Script | What changed |
+|---|---|
+| `Invoke-PsaBizboxSync.ps1` | Header only; the behaviour is unchanged (preview unless `-Apply`). The task runs the host copy in `D:\psa\bin`, which is replaced by this one after the 14:05 run |
+| `New-PsaBizboxLogin.ps1` | Now previews by default (the preflight) and acts only with `-Apply`. `-Undo` alone previews; `-Undo -Apply` acts |
+| `Register-PsaBizboxSync.ps1` | The same change as `New-PsaBizboxLogin.ps1` |
+| `bizbox-step2.py` | The four views as they stand, `SupplierInvoiceNo` included. Previews by default; `apply` is CREATE OR ALTER, so it is safe to run again |
+
+- **The two one-shot scripts** in `D:\psa\bin` are now the same files. On this built host their previews say BLOCKED (the login, the file and the task exist), and `-Undo` alone only says what it would do. Tested at 14:01; nothing changed.
+- **`bizbox-step2.py verify`**, run from the repo copy against the live views, passes. The script runs from the repo, because it imports the desk's fence from `platform/psa-spine`. It never ran from `D:\psa\bin`: it was in SQL01's scratchpad.
+- **No secret is in any of them.** The PMC_PSA connection string is Windows sign-in, like the README's and `__main__.py`'s.
+
