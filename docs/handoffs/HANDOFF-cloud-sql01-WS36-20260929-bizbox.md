@@ -177,3 +177,109 @@ The lines are in `iwApitem`: `FK_TRXNO`, plus `FK_iwPOitem` back to the PO line.
 - this list;
 - (a), (b) or (b′);
 - where agreements come from, if anywhere.
+
+### Part 2: 2026-09-29, 11:20 +08:00. **Step 2 done: schema `psa` and four views in `LiveDB_PMC`, with Dada's (b). Stopped before step 3, which needs one decision.**
+
+**Dada's answer to part 1, 29 Sep, verbatim: "b".** SQL01 read it as:
+- the list is approved;
+- the supplier's name comes from BizBox's own `udf_GetFullName`, doctors included;
+- agreements stay empty.
+
+**What the data settled.** All MEASURED. Only the procurement tables were read, and only as counts and codes; no row's content is recorded here.
+
+| Question from part 1 | Answer |
+|---|---|
+| Is the PO `docno` unique? | Yes: 526 of 526 not deleted. It becomes `PONo` |
+| Is the receipt `docno` unique? | Yes: 634 of 634. It becomes `ReceivingNo`, the invoice's ext_ref |
+| Is the supplier's `refno` unique? | No: 626 distinct of 634, one of them repeated within a single supplier. It is not a key |
+| What does `postatus` mean? | FS, PS and NS mean all, some or none of the PO's lines received. Checked line by line: 234, 40 and 236 POs |
+| Is `servqty` the received quantity? | Yes: it equals the sum of receipts on all 1,432 PO lines. It becomes `QtyReceived` |
+| Which PO total? | `netcurramt`. It matches the lines on 524 of 526 POs (`netlocamt` on 512), and BizBox's own PO reports read it in 7 of 9 |
+| Which receipt total? | `netlocamt`. It matches the lines on 634 of 634 (`netcurramt` on 613) |
+| Paid or not? | **Not knowable from these tables.** `balance` and `paidamt` are 0 on every receipt row. So an invoice's status is Cancelled, Posted or Draft |
+| `itemSpec`? | Blank on all 1,432 lines, so the description is the item's `itemdesc` |
+| Currency? | PHP on every row |
+| `terms`? | 30, 15, 7, 4, 0 or 60: days. DueDate is the invoice date plus terms |
+| Vendors? | All 169 vendors on POs and receipts resolve to a name, and none is flagged `isDoctor`. One receipt has the AP type "Doctor" (1002); it is included under (b) |
+
+**Before the change.** All MEASURED:
+- `LiveDB_PMC` had no schema `psa` and nothing outside `dbo`;
+- there is no DDL trigger at database or server level;
+- the database is not in an availability group;
+- its last backups were the full at 22:01 on 28 Sep, the differential at 07:00 on 29 Sep and the log at 11:15.
+
+**The change, at 11:20.** One transaction, as SQL01's sysadmin, from `bizbox-step2.py` on SQL01:
+- `CREATE SCHEMA psa AUTHORIZATION dbo`;
+- the four views defined below, with no agreement view.
+
+The views are **not schema-bound**, so they can never block a BizBox upgrade: if an upgrade renames a column, the desk's sync fails and says so, and BizBox is untouched. To reverse: drop the four views, then the schema (`bizbox-step2.py reverse`).
+
+**Pass.** Dada's (b) rewords the Pass "none joins a clinical table" to: none does, except for the supplier's name. That comes from BizBox's own `udf_GetFullName` over `psDatacenter`, reached by the vendor key only.
+
+| View | Rows returned to the desk's own query | Reads | Desk's fence |
+|---|---|---|---|
+| `psa.vw_product` | 5,113 | `iwItems`, `iwPOitem` | PASS |
+| `psa.vw_purchase_order` | 526 | `iwPOinv`, `udf_GetFullName` | PASS |
+| `psa.vw_purchase_order_line` | 1,399 | `iwPOitem`, `iwPOinv`, `iwItems` | PASS |
+| `psa.vw_invoice` | 634 | `iwApinv`, `udf_GetFullName` | PASS |
+
+Three more checks passed:
+- no view has a duplicate key;
+- every PO line's PO and item are in the other two views;
+- no supplier name is blank.
+
+**The map for step 4.** The desk's own `check_map` accepts it. It uses the sample map's column names, except that the invoice's ext_ref is `ReceivingNo`, and it has no `agreement` and no `agreement_ref`.
+
+```sql
+CREATE VIEW psa.vw_product AS            -- stock items, active, plus any still on a PO line
+SELECT CAST(i.PK_iwItems AS nvarchar(64)) AS ItemCode, i.itemdesc AS ItemName,
+       CAST(i.FK_mscItemCategory AS nvarchar(20)) AS Category, i.unit AS Unit, i.avgcost AS UnitCost
+FROM dbo.iwItems AS i
+WHERE i.isInventory = 1
+  AND (i.isactive = 1 OR EXISTS (SELECT 1 FROM dbo.iwPOitem AS l WHERE l.FK_iwItems = i.PK_iwItems));
+
+CREATE VIEW psa.vw_purchase_order AS
+SELECT CAST(p.docno AS nvarchar(20)) AS PONo, dbo.udf_GetFullName(p.FK_faVendors) AS VendorName,
+       p.docdate AS PODate,
+       CASE WHEN p.cancelflag = 1 THEN N'Cancelled'
+            WHEN ISNULL(p.postflag, 0) = 0 AND p.approvalflag = 1 THEN N'Approved'
+            WHEN ISNULL(p.postflag, 0) = 0 THEN N'Draft'
+            WHEN p.postatus = N'FS' THEN N'Received'
+            WHEN p.postatus = N'PS' THEN N'Partly received'
+            ELSE N'Ordered' END AS Status,
+       p.netcurramt AS TotalAmount, p.FK_mscCurrencies AS Currency
+FROM dbo.iwPOinv AS p
+WHERE ISNULL(p.deleteflag, 0) = 0;
+
+CREATE VIEW psa.vw_purchase_order_line AS
+SELECT CAST(l.PK_iwPOitem AS nvarchar(20)) AS LineID, CAST(p.docno AS nvarchar(20)) AS PONo,
+       CAST(ROW_NUMBER() OVER (PARTITION BY l.FK_TRXNO ORDER BY l.PK_iwPOitem) AS int) AS [LineNo],
+       CAST(l.FK_iwItems AS nvarchar(64)) AS ItemCode,
+       COALESCE(NULLIF(LTRIM(RTRIM(l.itemSpec)), N''), i.itemdesc) AS Description,
+       l.qty AS QtyOrdered, l.servqty AS QtyReceived, l.price AS UnitCost
+FROM dbo.iwPOitem AS l
+JOIN dbo.iwPOinv AS p ON p.PK_TRXNO = l.FK_TRXNO
+LEFT JOIN dbo.iwItems AS i ON i.PK_iwItems = l.FK_iwItems
+WHERE ISNULL(p.deleteflag, 0) = 0;
+
+CREATE VIEW psa.vw_invoice AS            -- BizBox's receiving report, which carries the supplier's invoice
+SELECT CAST(a.docno AS nvarchar(20)) AS ReceivingNo, dbo.udf_GetFullName(a.FK_faVendors) AS VendorName,
+       COALESCE(a.refdate, a.docdate) AS InvoiceDate,
+       DATEADD(day, ISNULL(a.terms, 0), COALESCE(a.refdate, a.docdate)) AS DueDate,
+       CASE WHEN a.cancelflag = 1 THEN N'Cancelled' WHEN a.postflag = 1 THEN N'Posted' ELSE N'Draft' END AS Status,
+       a.netlocamt AS TotalAmount, a.FK_mscCurrency AS Currency
+FROM dbo.iwApinv AS a
+WHERE ISNULL(a.deleteflag, 0) = 0;
+```
+
+**Step 3 needs one decision from Dada: which identity reads the views.**
+
+- **As written:** a new SQL login whose password Dada types, kept in `PSA_BIZBOX_ODBC`.
+  - The desk's `PSA_*` settings sit in the PSA-Desk task's PowerShell command line (MEASURED).
+  - `D:\psa\logs\PSA-Desk.log` already prints part of that line on every start, in the `NativeCommandError` wrapper (MEASURED).
+  - So a password kept there could land in a log file (INFERRED). The hourly sync task in step 5 would carry the same string.
+- **SQL01's pick: the desk's own Windows account.**
+  - Create a user for `DND-SQL01\psa_desk` in `LiveDB_PMC` with `GRANT SELECT ON SCHEMA::psa` and nothing else, and set `PSA_BIZBOX_ODBC` with `Trusted_Connection=yes`.
+  - **No password exists anywhere**, and the Pass is the same.
+  - `public` holds no grant on any `dbo` table (MEASURED: its object grants are on 195 `sys` catalog views and on 22 objects the catalog does not list), so the user inherits nothing that reaches a base table.
+  - The desk's code needs no change: `odbc_string` refuses only `sa`.

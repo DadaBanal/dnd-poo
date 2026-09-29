@@ -1410,3 +1410,9 @@ Section "Folded in after part 16 (29 Sep)". Everything below is MEASURED unless 
 - **no `psa.board` row changed** (4 boards, every column compared).
 
 Item 5 is met. What remains open is Dada's checks (item 6) and his approval of BizBox step 1 (item 7).
+
+*Part 18, continued, 11:20 +08:00:* **BizBox step 2 done.** Dada's answer, 29 Sep, verbatim: "b". The list is approved, and supplier names come
+from BizBox's own function, doctors included.
+- SQL01 created schema `psa` and four read-only views in `LiveDB_PMC`, and every Pass was met.
+- The details are in `HANDOFF-cloud-sql01-WS36-20260929-bizbox.md`, Reply part 2.
+- Step 3 waits on one decision of Dada's: the desk's Windows account (SQL01's pick) or a new SQL login with a password.
