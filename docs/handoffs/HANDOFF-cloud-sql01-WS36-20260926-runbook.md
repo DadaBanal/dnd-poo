@@ -891,9 +891,11 @@ sitting-1 road** (`init` is safe to run again; nothing is seeded).
   scope, 580 run, OK, 2 skipped, 14.3 minutes; and with 052 as well,
   586 run, OK, 2 skipped, 14.1 minutes, after a first run whose only two
   errors were the adapter refusal above (all MEASURED, 29 Sep). The drift gate passes; CI runs
-  67 and 68 are green on the pushed heads (the later heads' CI could not be
-  dispatched from this session, its GitHub connection having dropped; the
-  next push runs it).
+  67 and 68 are green on the pushed heads (the workflow runs on a push to
+  main, a pull request, or a manual dispatch; the later heads, `5a6756c`,
+  `a8fa7b0` and 052's, could not be dispatched from this session, its
+  GitHub connection having dropped, so their CI is NOT VERIFIED until
+  someone dispatches it or opens the pull request).
 
 ## When a step does not pass
 
