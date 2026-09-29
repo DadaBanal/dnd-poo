@@ -1618,3 +1618,59 @@ Section "Folded in from part 18 and the BizBox Reply, parts 1–4". Everything b
    - Finance opens on Procurement, with no Agreements tab;
    - Finance › Invoices shows *Supplier's invoice no.*;
    - the tabs count the whole mirror.
+
+### Part 20: 2026-09-29, about 15:20 +08:00. **76d7554 live; schema 045 PASS; `init` as the task account is the operator's**
+
+Section "Folded in from part 19 and the agreements handoff". Everything below is MEASURED unless marked.
+
+1. **The 15:05 BizBox run, the first after the `supplier_ref` fill.**
+   - The invoice line reads "638 rows, 0 new, 1 changed, 637 unchanged, 1 absent". The fill did not repeat.
+   - The 1 changed is a receiving report that BizBox cancelled at 14:32; the mirror now reads Cancelled.
+   - The 1 absent is a draft that BizBox deleted at 14:33. The mirror keeps it and marks it absent.
+   - This is also in the bizbox handoff, Reply part 5, continued.
+2. **The suite ran twice, both in a worktree.**
+   - **At `930c607`** (303bae6's code): **546 run, OK, 2 skipped, 0 errors.**
+   - While the apply ran, WS36 pushed `e80b11d`, merged as `76d7554`. It is one code change: `agreements.py` no longer sums a kind that has no total, since SQL Server refuses SUM(NULL).
+   - The port is identical between the two heads, so the schema applied is `76d7554`'s.
+   - **At `76d7554`**, the code now live: **546 run, OK, 2 skipped, 0 errors** (227 s).
+3. **Schema 045 by the sitting-1 road, in the order: stop, port, pull, start.**
+   - **Backup:** COPY_ONLY, `D:\PMC\backup\PMC_PSA\PMC_PSA_pre045-20260929.bak`, 16.9 MB. `RESTORE VERIFYONLY` says "valid".
+   - **Preview:** 101 tables, 37 indexes, 4 triggers; 103 existing objects.
+   - **Baseline**, after PSA-Desk was stopped at 15:13:36: 99 tables, 4 triggers, 921 columns, 36 indexes, 8,349 rows.
+   - **Apply** at 15:13:46. It printed "Created: 101 tables, 4 triggers, 37 indexes", its gate passed, and it printed "Seeded: nothing".
+   - **Result:**
+     - tables **99 → 101** (`agreement`, `agreement_item`);
+     - columns **921 → 946**;
+     - indexes **36 → 37** (`ix_agreement_item_ref`);
+     - triggers 4 → 4;
+     - **no existing row count changed**.
+   - **Why 946 and not 941.** The 25 new columns are the 20 declared and 5 computed `*_parsed` columns: on `agreement`, for `starts_on`, `ends_on`, `created_at` and `updated_at`; on `agreement_item`, for `added_at`.
+     - The port adds one beside every date or timestamp text column. `psa` holds 109 of them.
+     - The section's first Pass said 941, which counts the declared columns only. SQL01 measured 946 and found the five, and `e80b11d`'s Pass now says 946 for the same reason.
+4. **Pull and start.**
+   - The live tree was pulled at 15:15:24 by rebase, and landed on `76d7554`. SQL01's local copy of `930c607`'s record commit was dropped as already upstream.
+   - PSA-Desk started at 15:15:29: one process, 8085 listening, loopback `/login` 200, `desk.pmcne.ph/login` 200, `help.pmcne.ph/my` 401 (its sign-in page).
+   - The console shows nothing beyond the start-up banner's wrapper.
+   - PSA-Rules on the new code at 15:19: result 0, "0 errors".
+5. **`init` as the task account waits on the operator.**
+   - It runs from `D:\psa\bin\Part20-AsDesk.ps1`, with the same checks as part 18's.
+   - It supersedes Part 19's, which was not run: one `init` after 045 covers 044 as well.
+6. **Dada's checks, from the section:**
+   - Finance opens on Agreements, reading "No agreement yet".
+   - A Service manager creates an agreement and covers a receiving number, a PO number and a product. The totals show against the agreed amount.
+   - The invoice's own page lists the agreement.
+   - A Technician sees all of it, with no New, Add or Remove.
+   - Which roles hold Finance Write is Dada's to set in Setup › Security roles.
+
+*Part 20, continued, 15:23 +08:00:* **the as-desk run PASS.** The operator ran `Part20-AsDesk.ps1` as the task account
+(`D:\psa\logs\Part20-AsDesk.log`):
+- `init` ran twice, exit 0 both times, and printed the same line both times: "ready: SQL Server, …Database=PMC_PSA";
+- **no `psa.board` row changed** (6 boards, every column compared).
+
+**6 boards, not part 18's 4.** SQL01 read the audit trail, because the script compares only the first `init` with the
+second.
+- `IT_CHANGE` and `IT_PROJECTS` were created in Setup by a person at 14:29, one `BOARD_CREATE` and one
+  `BOARD_SETUP` row each. That was before 045 and before this run.
+- `init` created no board.
+
+Item 5 is met. What remains open is Dada's checks (item 6).
