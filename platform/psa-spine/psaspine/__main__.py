@@ -120,7 +120,8 @@ def main(argv: list[str] | None = None) -> int:
     pbz.add_argument("--map", required=True, dest="map_file",
                      help="the map file naming the BizBox views and columns (see bizbox/bizbox-map.sample.json)")
     src = pbz.add_mutually_exclusive_group(required=True)
-    src.add_argument("--csv-dir", help="a folder holding agreement.csv, product.csv, purchase_order.csv, invoice.csv")
+    src.add_argument("--csv-dir", help="a folder holding one <kind>.csv per kind the map names "
+                                       "(product, purchase_order, po_line, invoice, and agreement if mapped)")
     src.add_argument("--odbc", action="store_true",
                      help="read the mapped views through the read-only connection string in PSA_BIZBOX_ODBC")
     pbz.add_argument("--apply", action="store_true", help="write; without it nothing is changed")
@@ -347,6 +348,10 @@ def _run(conn, a) -> int:
         except bizbox.Refused as exc:
             conn.rollback()
             print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        except Exception as exc:                            # the store or the driver said no: a sentence, no traceback
+            conn.rollback()
+            print(f"failed: {type(exc).__name__}: {str(exc)[:300]}", file=sys.stderr)
             return 1
         for kind, c in counts.items():
             print(f"{kind}: {c['rows']} rows, {c['new']} new, {c['changed']} changed, {c['unchanged']} unchanged, "

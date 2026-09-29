@@ -452,7 +452,11 @@ def generate(schema_dir: Path = SCHEMA_DIR, decisions: Path = DECISIONS) -> str:
   ---------------------------------------------------------------------------
   HOW TO RUN IT
 
-      sqlcmd -S "{TARGET_SERVER}" -d {TARGET_DATABASE} -i PMC_PSA_Spine_SqlServer.sql
+      sqlcmd -I -S "{TARGET_SERVER}" -d {TARGET_DATABASE} -i PMC_PSA_Spine_SqlServer.sql
+
+  -I (quoted identifiers on) matters: two filtered UNIQUE indexes below need
+  QUOTED_IDENTIFIER ON, and sqlcmd's default is OFF, so without it the apply
+  stops at the first of them and rolls back. The script also sets it itself.
 
   IT PREVIEWS BY DEFAULT. @Apply is 0 below and nothing is created until you set
   it to 1. That is the discipline this programme uses for anything that touches a
@@ -485,6 +489,9 @@ def generate(schema_dir: Path = SCHEMA_DIR, decisions: Path = DECISIONS) -> str:
 ==============================================================================*/
 
 SET NOCOUNT ON;
+-- A filtered index cannot be created with QUOTED_IDENTIFIER OFF (sqlcmd's
+-- default); the nested EXEC batches inherit this session setting.
+SET QUOTED_IDENTIFIER ON;
 
 -- XACT_ABORT means a failure anywhere in the apply below takes the whole
 -- transaction with it rather than leaving half a schema behind.

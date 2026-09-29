@@ -114,7 +114,7 @@ def run(conn: sqlite3.Connection, dataset: str, columns, group_by: str | None, f
         where.append(f"({ds['board']} IS NULL" + (f" OR {ds['board']} IN ({','.join('?' * len(boards))})" if boards else "") + ")")
     else:
         if not boards:
-            return {"headers": [], "rows": [], "capped": False}
+            return {"headers": [], "rows": [], "capped": False, "boards": {}}
         where.append(f"{ds['board']} IN ({','.join('?' * len(boards))})")
     args += boards
     if filters.get("board"):
@@ -130,17 +130,24 @@ def run(conn: sqlite3.Connection, dataset: str, columns, group_by: str | None, f
         where.append(f"{ds['state']} = ?")
         args.append(filters["state"])
     tail = " WHERE " + " AND ".join(where)
+    # which restricted boards' tickets the rows come from, so the view can audit
+    # the read (§6.1 requirement 4); a project or article list names no ticket
+    per_board = {}
+    if dataset not in ("PROJECTS", "KNOWLEDGE"):
+        per_board = {r[0]: r[1] for r in conn.execute(
+            f"SELECT {ds['board']}, COUNT(*){ds['from']}{tail} GROUP BY {ds['board']}", args)}
     if group_by:
         expr, label = ds["columns"][group_by]
         measures = ["COUNT(*)"] + ([f"SUM({ds['hours']})"] if ds["hours"] else [])
         sql = f"SELECT {expr} AS g, {', '.join(measures)}{ds['from']}{tail} GROUP BY {expr} ORDER BY {expr}"
         headers = [label, "Count"] + (["Hours"] if ds["hours"] else [])
         rows = [[r[0], r[1]] + ([round(float(r[2] or 0), 2)] if ds["hours"] else []) for r in conn.execute(sql, args)]
-        return {"headers": headers, "rows": rows[:MAX_ROWS], "capped": len(rows) > MAX_ROWS}
+        return {"headers": headers, "rows": rows[:MAX_ROWS], "capped": len(rows) > MAX_ROWS, "boards": per_board}
     sel = ", ".join(ds["columns"][c][0] for c in cols)
     sql = f"SELECT {sel}{ds['from']}{tail} ORDER BY {ds['date']} DESC"
     rows = [list(r) for r in conn.execute(sql, args).fetchmany(MAX_ROWS + 1)]
-    return {"headers": [ds["columns"][c][1] for c in cols], "rows": rows[:MAX_ROWS], "capped": len(rows) > MAX_ROWS}
+    return {"headers": [ds["columns"][c][1] for c in cols], "rows": rows[:MAX_ROWS], "capped": len(rows) > MAX_ROWS,
+            "boards": per_board}
 
 
 def as_csv(result: dict) -> str:

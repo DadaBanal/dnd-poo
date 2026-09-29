@@ -16,7 +16,11 @@
   ---------------------------------------------------------------------------
   HOW TO RUN IT
 
-      sqlcmd -S "DND-SQL01\PMC_SS" -d PMC_PSA -i PMC_PSA_Spine_SqlServer.sql
+      sqlcmd -I -S "DND-SQL01\PMC_SS" -d PMC_PSA -i PMC_PSA_Spine_SqlServer.sql
+
+  -I (quoted identifiers on) matters: two filtered UNIQUE indexes below need
+  QUOTED_IDENTIFIER ON, and sqlcmd's default is OFF, so without it the apply
+  stops at the first of them and rolls back. The script also sets it itself.
 
   IT PREVIEWS BY DEFAULT. @Apply is 0 below and nothing is created until you set
   it to 1. That is the discipline this programme uses for anything that touches a
@@ -49,6 +53,9 @@
 ==============================================================================*/
 
 SET NOCOUNT ON;
+-- A filtered index cannot be created with QUOTED_IDENTIFIER OFF (sqlcmd's
+-- default); the nested EXEC batches inherit this session setting.
+SET QUOTED_IDENTIFIER ON;
 
 -- XACT_ABORT means a failure anywhere in the apply below takes the whole
 -- transaction with it rather than leaving half a schema behind.
@@ -225,13 +232,15 @@ BEGIN
     PRINT N'    psa.ix_ext_link_ref';
     PRINT N'    psa.ix_ext_po_line_po';
     PRINT N'    psa.ix_ext_change_ref';
+    PRINT N'    psa.ix_kb_ticket_ticket';
+    PRINT N'    psa.ix_ext_invoice_agreement';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  99 tables, 34 indexes, 4 triggers.';
+    PRINT N'  99 tables, 36 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -2852,6 +2861,9 @@ ALTER TABLE psa.[ticket_schedule] ADD [done_at] NVARCHAR(64) NULL;
 IF COL_LENGTH(N'psa.[ticket_schedule]', N'acknowledged_at') IS NULL
 ALTER TABLE psa.[ticket_schedule] ADD [acknowledged_at] NVARCHAR(64) NULL;
 
+IF COL_LENGTH(N'psa.[ext_invoice]', N'supplier_ref') IS NULL
+ALTER TABLE psa.[ext_invoice] ADD [supplier_ref] NVARCHAR(400) NULL;
+
 -- --------------------------------------------------------------------------
 -- indexes
 
@@ -2960,6 +2972,16 @@ CREATE INDEX [ix_ext_po_line_po] ON psa.[ext_po_line] ([source_id], [po_ref]);
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_change_ref' AND object_id = OBJECT_ID(N'psa.[ext_change]'))
 CREATE INDEX [ix_ext_change_ref] ON psa.[ext_change] ([source_id], [kind], [ext_ref]);
+
+-- Two lookups the primary keys do not serve, found by EXPLAIN on a 50,000-row
+-- mirror: the Knowledge pod on a ticket (kb_ticket by ticket; its key leads
+-- with the article) and the invoices under an agreement. Plain CREATE INDEX:
+-- the port guards every index with its own IF NOT EXISTS.
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_kb_ticket_ticket' AND object_id = OBJECT_ID(N'psa.[kb_ticket]'))
+CREATE INDEX [ix_kb_ticket_ticket] ON psa.[kb_ticket] ([work_item_id]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_invoice_agreement' AND object_id = OBJECT_ID(N'psa.[ext_invoice]'))
+CREATE INDEX [ix_ext_invoice_agreement] ON psa.[ext_invoice] ([source_id], [agreement_ref]);
 
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
@@ -3096,10 +3118,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 99 OR @Triggers <> 4 OR @Indexes < 34
+IF @Tables <> 99 OR @Triggers <> 4 OR @Indexes < 36
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 99), %d triggers (expected 4), %d indexes (expected at least 34). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 99), %d triggers (expected 4), %d indexes (expected at least 36). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;

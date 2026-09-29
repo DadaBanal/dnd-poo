@@ -9,9 +9,21 @@ from __future__ import annotations
 
 import urllib.parse
 
-from ... import reportwriter as rw
+from ... import db, reportwriter as rw
 from .. import templates as t
 from . import common
+
+
+def _audited(ctx, result: dict, how: str) -> dict:
+    """A report that listed a restricted board's tickets is a read of them."""
+    for b, n in sorted(result.get("boards", {}).items()):
+        common.audit_restricted_read(ctx, b, detail=f"report ({how}) listed {n} ticket(s)")
+    return result
+
+
+def _audit_def(ctx, report_id, detail: str) -> None:
+    db.audit(ctx.conn, at=ctx.now.isoformat(sep=" ", timespec="minutes"), actor=ctx.user.id, action="REPORT_DEF",
+             subject_kind="report_def", subject_id=str(report_id), detail=detail)
 
 
 def _back(path: str, **q):
@@ -110,6 +122,7 @@ def run_adhoc(ctx):
         result = rw.run(ctx.conn, dataset, cols, group_by, filters, boards=common.board_ids_for(ctx))
     except rw.Refused as exc:
         return _back("/reports/custom", err=str(exc), dataset=dataset)
+    _audited(ctx, result, "csv" if ctx.request.query.get("format") == "csv" else "page")
     if ctx.request.query.get("format") == "csv":
         return _csv(result, "report")
     qs = ctx.request.query_string
@@ -133,6 +146,7 @@ def create(ctx):
         rid = rw.save(ctx.conn, name=f.get("name", ""), dataset=f.get("dataset", ""), columns=cols,
                       group_by=f.get("group") or None, filters={k: f.get(k, "") for k in ("board", "from", "to", "state")},
                       owner=ctx.user.id, shared=f.get("shared") == "1", at=ctx.now)
+        _audit_def(ctx, rid, f"saved: {' '.join(f.get('name', '').split())[:120]}" + (", shared" if f.get("shared") == "1" else ""))
         ctx.conn.commit()
     except rw.Refused as exc:
         return _back("/reports/custom", err=f"Not saved: {exc}")
@@ -153,7 +167,7 @@ def detail(ctx, report_id):
     row = _load(ctx, report_id)
     cols, group_by, filters = rw.parts(row)
     filters = {k: v for k, v in filters.items() if k != "board" or v in common.board_ids_for(ctx)}
-    result = rw.run(ctx.conn, row["dataset"], cols, group_by, filters, boards=common.board_ids_for(ctx))
+    result = _audited(ctx, rw.run(ctx.conn, row["dataset"], cols, group_by, filters, boards=common.board_ids_for(ctx)), "page")
     q = ctx.request.query
     body = ((f"<div class='banner ok'>{t.esc(q.get('msg', ''))}</div>" if q.get("msg") else "")
             + f"<h1>{t.esc(row['name'])}</h1><p class=sub>{t.esc(rw.DATASETS[row['dataset']]['label'])} · by {t.esc(row['owner'])}"
@@ -167,7 +181,7 @@ def detail_csv(ctx, report_id):
     row = _load(ctx, report_id)
     cols, group_by, filters = rw.parts(row)
     filters = {k: v for k, v in filters.items() if k != "board" or v in common.board_ids_for(ctx)}
-    return _csv(rw.run(ctx.conn, row["dataset"], cols, group_by, filters, boards=common.board_ids_for(ctx)),
+    return _csv(_audited(ctx, rw.run(ctx.conn, row["dataset"], cols, group_by, filters, boards=common.board_ids_for(ctx)), "csv"),
                 f"report-{row['report_id']}")
 
 
@@ -176,8 +190,12 @@ def pin(ctx, report_id):
     row = _load(ctx, report_id)
     ctx.conn.execute("UPDATE report_def SET pinned = ?, shared = CASE WHEN ? = 1 THEN 1 ELSE shared END WHERE report_id = ?",
                      (0 if row["pinned"] else 1, 0 if row["pinned"] else 1, row["report_id"]))
+    # unpinning does not unshare: a report shared before it was pinned stays shared
+    _audit_def(ctx, row["report_id"], ("unpinned; still shared" if row["shared"] else "unpinned") if row["pinned"]
+               else ("pinned" if row["shared"] else "pinned and shared"))
     ctx.conn.commit()
-    return _back("/reports/custom", msg="Unpinned" if row["pinned"] else "Pinned to the Reports page, and shared")
+    return _back("/reports/custom", msg="Unpinned; still shared with everyone who uses Reports" if row["pinned"]
+                 else "Pinned to the Reports page, and shared")
 
 
 def pinned_cards(ctx) -> str:
@@ -186,7 +204,8 @@ def pinned_cards(ctx) -> str:
     for row in ctx.conn.execute("SELECT * FROM report_def WHERE pinned = 1 ORDER BY name").fetchall():
         cols, group_by, filters = rw.parts(row)
         try:
-            result = rw.run(ctx.conn, row["dataset"], cols, group_by, filters, boards=common.board_ids_for(ctx))
+            result = _audited(ctx, rw.run(ctx.conn, row["dataset"], cols, group_by, filters,
+                                          boards=common.board_ids_for(ctx)), "pinned card")
         except rw.Refused:
             continue
         result = dict(result, rows=result["rows"][:12])

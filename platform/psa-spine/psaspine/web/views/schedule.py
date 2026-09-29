@@ -31,6 +31,7 @@ def _back(week: str = "", **q):
 
 def index(ctx):
     from .. import Response
+    common.require_module(ctx, "SCHEDULE")
     boards = common.board_ids_for(ctx)
     q = ctx.request.query
     try:
@@ -144,6 +145,7 @@ def index(ctx):
 
 def book(ctx):
     from .ticket import _load
+    common.require_module(ctx, "SCHEDULE", "WRITE")
     f = ctx.request.form()
     week = f.get("week", "")
     wid = (f.get("work_item_id", "") or "").strip().upper()
@@ -172,6 +174,7 @@ def _may_block(ctx) -> bool:
 
 def block_add(ctx):
     from .. import HttpError
+    common.require_module(ctx, "SCHEDULE", "WRITE")
     if not _may_block(ctx):
         raise HttpError("403 Forbidden", "Only someone who works a board keeps the schedule.")
     f = ctx.request.form()
@@ -190,6 +193,7 @@ def block_add(ctx):
 
 def block_remove(ctx):
     from .. import HttpError
+    common.require_module(ctx, "SCHEDULE", "WRITE")
     if not _may_block(ctx):
         raise HttpError("403 Forbidden", "Only someone who works a board keeps the schedule.")
     f = ctx.request.form()

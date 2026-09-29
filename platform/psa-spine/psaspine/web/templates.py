@@ -810,11 +810,12 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
             "finance": "FINANCE"}
     nav_items = [n for n in nav_items if n[0] not in gate or levels.get(gate[n[0]], "READ") != "NONE"]
     if requester:
-        nav_items = [("my", "/my", "My requests")]
-        active = "my"
+        nav_items = [("my", "/my", "My requests"), ("help", "/my/help", "Help")]
+        if active != "help":
+            active = "my"
     nav = "".join(
         f'<a href="{esc(href)}" title="{esc(label)}"{" class=on aria-current=page" if key == active else ""}>'
-        f'{icon({"admin": "setup", "schedule": "calendar", "projects": "layers", "kb": "note", "finance": "tag"}.get(key, key))}<span class=lbl>{esc(label)}</span></a>'
+        f'{icon({"admin": "setup", "schedule": "calendar", "projects": "layers", "kb": "note", "finance": "tag", "help": "note"}.get(key, key))}<span class=lbl>{esc(label)}</span></a>'
         for key, href, label in nav_items)
     nav += (f'<a class="newbtn" href="/ticket/new" title="New ticket (n)">{icon("plus")} New ticket</a>'
             if user is not None and not requester else "")

@@ -90,7 +90,9 @@ jobs:
           python-version: '3.12'
       - name: ODBC driver and pyodbc
         run: |
-          curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+          # --batch: the ubuntu-24.04 image of 20 Sep 2026 gives gpg no tty, and
+          # without it gpg stops with "cannot open '/dev/tty'" (run 62, 29 Sep).
+          curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
           echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/ubuntu/24.04/prod noble main" | sudo tee /etc/apt/sources.list.d/mssql-release.list
           sudo apt-get update -qq
           sudo ACCEPT_EULA=Y apt-get install -y -qq msodbcsql18 unixodbc-dev

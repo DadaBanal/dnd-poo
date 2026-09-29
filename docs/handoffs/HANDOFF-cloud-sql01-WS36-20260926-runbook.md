@@ -27,8 +27,11 @@ slowed or displaced.** The desk is a guest. Concretely, and in every sitting:
   (and `PMC_PSA_TEST` while step 6 runs), the login the desk uses, the folders
   `D:\psa\` and `D:\PMC\sql\`, ports **8085** and later **8443**, scheduled
   tasks and one Agent job named `PSA-…`, and `pyodbc` inside
-  `C:\PMC\Python312`. If a step would need anything outside that list, the
-  step is not taken: stop, write what it needed, and report BLOCKED.
+  `C:\PMC\Python312`. Since 29 Sep, by Dada's decision (below), also: in
+  `LiveDB_PMC` the schema `psa` with its four read-only views and one database
+  user; the SQL login `psa_bizbox_reader`; the file `D:\psa\bizbox.odbc`. If
+  a step would need anything outside that list, the step is not taken: stop,
+  write what it needed, and report BLOCKED.
 - **Never**: restart or reconfigure the SQL Server instance or IIS; change
   any instance-level setting (`sp_configure`, `max server memory`, the
   `model` database, recovery models of other databases); reboot; edit,
@@ -37,6 +40,15 @@ slowed or displaced.** The desk is a guest. Concretely, and in every sitting:
   `PMC_Reporting`, `ReportServer`, the Orthanc index or any other database;
   bind 8080 or `0.0.0.0`; edit this repo's `.claude/settings.json`; install
   anything system-wide.
+- **The one exception, decided 29 Sep 2026 by Dada** (the BizBox handoff's
+  Reply, parts 1–3: "b", then "use sql to read"): in `LiveDB_PMC`, schema
+  `psa` holding four **non-schema-bound, SELECT-only** views
+  (`vw_product`, `vw_purchase_order`, `vw_purchase_order_line`,
+  `vw_invoice`) and one database user for the SQL login `psa_bizbox_reader`,
+  which has `SELECT ON SCHEMA::psa` and nothing else. Nothing else in that
+  database, ever; no write path exists and none is built without a decision
+  with Dada's name on it. The views cannot block a BizBox upgrade; a renamed
+  column makes the desk's sync fail and say so, and BizBox is untouched.
 - **Read before change, every time.** Each handoff's step 0 and 1b are
   read-only checks; a change step runs only after its check passed in this
   sitting, not a previous one.
@@ -71,11 +83,19 @@ Get-ScheduledTask | Where-Object TaskName -like 'PSA-*' | Unregister-ScheduledTa
 EXEC msdb.dbo.sp_delete_job @job_name = 'PSA-Backup-PMC_PSA';
 ALTER DATABASE PMC_PSA SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE PMC_PSA;
 DROP LOGIN [<psa task account>];          -- only if it was created for the desk
+-- the BizBox side (29 Sep): the desk's views, schema, user and login, and nothing else there
+USE LiveDB_PMC;
+DROP VIEW psa.vw_product, psa.vw_purchase_order, psa.vw_purchase_order_line, psa.vw_invoice;
+DROP SCHEMA psa;
+DROP USER psa_bizbox_reader;
+USE master;
+DROP LOGIN psa_bizbox_reader;
 ```
 
-then `Remove-Item D:\psa -Recurse` and `D:\PMC\sql\PMC_PSA*` after the last
-backup is copied off. Nothing else on the host was ever touched, so nothing
-else is restored.
+then `Remove-Item D:\psa -Recurse` (which takes `D:\psa\bizbox.odbc` with it)
+and `D:\PMC\sql\PMC_PSA*` after the last backup is copied off. Beyond the
+objects above, nothing else on the host was ever touched, so nothing else is
+restored.
 
 ## The order, and a default for every decision
 
@@ -544,6 +564,93 @@ one is new tables only: no `ALTER`, no existing row touched.**
 - **Counts:** 544 tests at this head (SQLite OK; SQL Server OK); the drift gate
   and `tests/smoke.py` pass. **Pass for the suite as SQL01's user:** 544 run,
   0 errors.
+
+## Folded in from part 18 and the BizBox Reply, parts 1–4 (29 Sep): schema 044, the mirror fitted to BizBox
+
+Part 18: 402fb0e live, 039–043 PASS (80 → 99 tables, 745 → 920 columns, no
+row changed), the as-desk run PASS, 544 OK. The BizBox handoff's steps 1–5
+PASS at 4b8b816 and the first hourly run at 12:05 (Reply, parts 1–4). Three
+code points came back with them and the two create-time warnings; all four are
+answered at the head this section arrives with. **One schema step, one
+NULL-able column, by the sitting-1 road** (`init` is safe to run again).
+
+- **Schema 044: `ext_invoice.supplier_ref`**, the supplier's own invoice
+  number (`iwApinv.refno`). It is never the key (626 distinct of 634, part 2),
+  so it sits beside the receiving number. **Apply:** COPY_ONLY backup, preview,
+  stop PSA-Desk, the port as SQL01's sysadmin with `@Apply = 1` and
+  `@AllowExisting = 1`, start. **Pass:** tables **99 → 99**, columns
+  **920 → 921**, indexes **34 → 36** (`ix_kb_ticket_ticket`,
+  `ix_ext_invoice_agreement`), triggers 4 → 4, no existing row count changed,
+  `/login` answers. (MEASURED on the SQL Server test container at this head
+  after the suite applied the port: 99 tables, 921 columns, 4 triggers.) Then
+  `init` as the task account. **Keep this order** (stop, port, pull, start):
+  the reverse, pull and start before the port, answers 500 on every
+  technician page and on `/admin` until the port lands, because the security
+  role is read on every signed-in request.
+- **The view and the map, SQL01's, after the apply:** add
+  `a.refno AS SupplierInvoiceNo` to `psa.vw_invoice` (an `ALTER VIEW`; the
+  view is not schema-bound) and `"supplier_ref": "SupplierInvoiceNo"` to the
+  invoice's columns in `D:\psa\bizbox-map.json`. The next hourly run fills
+  it: **Pass:** that run's invoice line counts every present invoice as
+  changed, once, and the run after says 0 changed; Finance › Invoices shows a
+  *Supplier's invoice no.* column. Until then the column is simply absent, and
+  the sync with 402fb0e's map keeps working unchanged.
+- **"Paid" is not knowable:** nothing to change. The desk shows BizBox's own
+  status word (Draft, Posted, Cancelled) and never says paid or overdue; the
+  Invoices tab now has the same status tiles Procurement has, in those words.
+- **No supplier agreements:** the Finance pages show only the kinds BizBox has
+  rows for. On the live desk that is Procurement, Products and Invoices, with
+  a one-line note under the tabs; the Agreements tab, the Agreement column and
+  the "Agreement" choice on a ticket's Finance pod appear when a source is
+  named. **Pass, for Dada:** Finance opens on Procurement; no Agreements tab.
+- **The two 900-byte warnings (part 18, item 3):** `PK_ext_link` and
+  `PK_ext_po_line` reach 1,184 and 928 bytes only at `REF`'s full 400
+  characters. The columns are not narrowed — the port cannot alter a live
+  column, and a port that said 200 while the server held 400 would drift from
+  the database it describes. Instead the sync skips and counts any key longer
+  than 64 characters (`MAX_KEY`); BizBox's keys are cast to 20 or 64 in
+  SQL01's views, so a longer one is not a BizBox key. The warnings will print
+  again on any fresh create; they describe a case that cannot now occur.
+- **The sample map** in the repo is now the shape SQL01 built: four kinds, the
+  invoice keyed by `ReceivingNo`, no agreement. The real map stays on the host.
+- **Also at this head, from the pre-deployment audit of 039–043** (Cloud
+  Build, 29 Sep: SQL01's road reproduced on the test container from 5163812
+  to 402fb0e, then four reviews, 37 findings confirmed by a second pass, all
+  fixed here). The ones that change what SQL01 or Dada will see:
+  - `/my/help/<id>` let any signed-in person open a *board's* requester
+    article by its sequential id (a dead clause in the check). Fixed; a test
+    pins it. **Pass, for SQL01, one count:** `SELECT COUNT(*) FROM psa.kb_article
+    WHERE board_id IS NOT NULL AND audience = 'REQUESTER'` — expected 0 today
+    (INFERRED: no article has been written yet), so nothing was exposed.
+  - The **Schedule** level in Setup › Security roles was shown but not
+    enforced; `/schedule` now needs Read and booking or blocking needs Write.
+    Technician has Write, so nobody loses a page they had.
+  - The report writer, a project's ticket list and an article's *Used on* now
+    write `RESTRICTED_READ` for the restricted-board tickets they list, as
+    every other list does (§6.1 requirement 4).
+  - **Finance counted at most 500.** On the live desk the tabs read "Products
+    · 500" against 5,113 rows and the Procurement tiles summed 500 of 528 POs.
+    Now every count and tile is over the whole mirror, the lists page by 100
+    ("Showing 1–100 of 5,113"), and a record's page is
+    `/finance/<kind>?ref=…` (a BizBox key holding `/` or `%` could not open
+    from its own link before). Nothing to do on the host; an old-shape
+    bookmark answers 404.
+  - The sync trims `status`, `currency` and `unit` to the port's 32
+    characters instead of failing the run on the host; a refusal names the
+    field and never the cell; `UID={sa}` is refused like `UID=sa`; the intent
+    is forced to ReadOnly whatever the string said.
+  - The starter roles are written `INSERT OR IGNORE`, so two first requests
+    on the threaded server cannot fail each other; one role lookup per
+    request instead of twenty statements.
+  - The port's header now says `sqlcmd -I` and the script sets
+    `QUOTED_IDENTIFIER ON` itself: plain `sqlcmd` failed a fresh apply at the
+    first filtered index (MEASURED on the container). SQL01's road applies
+    through pyodbc, where it is already ON, so this never bit the host.
+  - The 900-byte warnings are **six** on a fresh create (one per `ext_*`
+    key), two on SQL01's apply; the same guard answers all of them.
+- **Counts:** 545 tests at this head (SQLite OK; SQL Server OK); the drift
+  gate and `tests/smoke.py` pass. **Pass for the suite as SQL01's user:** 545
+  run, 0 errors.
 
 ## When a step does not pass
 

@@ -48,7 +48,8 @@ KINDS = {
     "purchase_order": ("ext_purchase_order", {"ext_ref": "text", "vendor": "text", "ordered_on": "date",
                                               "status": "text", "total": "money", "currency": "text"}),
     "invoice": ("ext_invoice", {"ext_ref": "text", "party": "text", "invoiced_on": "date", "due_on": "date",
-                                "status": "text", "total": "money", "currency": "text", "agreement_ref": "text"}),
+                                "status": "text", "total": "money", "currency": "text", "agreement_ref": "text",
+                                "supplier_ref": "text"}),
     "po_line": ("ext_po_line", {"ext_ref": "text", "po_ref": "text", "line_no": "int", "product_ref": "text",
                                 "description": "text", "quantity": "money", "received_qty": "money",
                                 "unit_cost": "money"}),
@@ -57,16 +58,30 @@ LABEL = {"agreement": "Agreements", "product": "Products", "purchase_order": "Pu
 LINK_KIND = {"agreement": "AGREEMENT", "product": "PRODUCT", "purchase_order": "PURCHASE_ORDER", "invoice": "INVOICE"}
 REQUIRED = {"ext_ref", "name"}          # name only where the kind has one
 
-_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}(\.[A-Za-z_][A-Za-z0-9_]{0,127})?$")
-_COL = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+_IDENT = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]{0,127}(\.[A-Za-z_][A-Za-z0-9_]{0,127})?\Z")
+_COL = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]{0,127}\Z")
 # Names that look like a patient's record. Deliberately broad: a false refusal
 # costs a rename on SQL01's side; a false pass costs a patient field on the desk.
 PATIENT_WORDS = re.compile(
-    r"(?i)(patient|pxn|px_|^px|admission|admit|diagnos|philhealth|phic|mrn|case_?no|caseno|chart|"
-    r"birth|dob|ward_?bed|bed_?no|guarantor|physician|doctor|prescri|medic|lab_?result|radiolog|"
-    r"firstname|lastname|middlename|first_name|last_name|middle_name|fullname|full_name)")
+    r"(?i)(patient|pxn|px_|^px|^pt_|pt_?name|admission|admit|diagnos|philhealth|phic|mrn|case_?no|caseno|case_?num|"
+    r"chart|birth|dob|ward_?bed|bed_?n|guarantor|physician|doctor|prescri|medic|lab_?result|laborator|radiolog|"
+    r"firstname|lastname|middlename|first_name|last_name|middle_name|fullname|full_name|surname|given_?name|"
+    r"^f_?name$|^l_?name$|hosp|encounter|visit|discharge|icd|allerg|gender|^sex$|^age$|insur|hmo|member_?no|"
+    r"religion|civil_?status|national|payor|payer|bill_?to|address|contact_?no|mobile)")
 MAX_ROWS = 50_000
 MAX_TEXT = 400
+# Per-field widths that match the SQL Server port (tools/tsql-decisions.json:
+# status, currency and unit are CODE, NVARCHAR(32)). SQLite has no widths, so
+# without this a 37-character BizBox status would pass every test and fail the
+# host's insert with "string or binary data would be truncated".
+WIDTH = {"status": 32, "currency": 32, "unit": 32}
+PAGE = 100
+# The longest key the mirror accepts. SQL Server caps an index key at 900 bytes
+# and warned on the first apply (29 Sep 2026) that ext_link's and ext_po_line's
+# keys could exceed it at REF's full width; BizBox's own keys are cast to 20 or
+# 64 characters in SQL01's views (MEASURED), so a longer one is not a BizBox
+# key. It is skipped and counted, never inserted to fail on the server.
+MAX_KEY = 64
 
 
 class Refused(ValueError):
@@ -144,18 +159,19 @@ def odbc_string(raw: str | None = None) -> str:
     cs = (raw if raw is not None else os.environ.get("PSA_BIZBOX_ODBC", "")).strip()
     if not cs:
         raise Refused("PSA_BIZBOX_ODBC is not set; the connection string lives on the host, never in the repo")
-    if re.search(r"(?i)(^|;)\s*(uid|user id|user)\s*=\s*sa\s*(;|$)", cs):
+    # ODBC lets a value be brace-quoted (UID={sa}); the fence reads it the way the driver does
+    if re.search(r"(?i)(^|;)\s*(uid|user id|user)\s*=\s*\{?\s*sa\s*\}?\s*(;|$)", cs):
         raise Refused("refused: the BizBox login must not be sa; use the read-only login made for the desk")
-    if not re.search(r"(?i)applicationintent\s*=", cs):
-        cs = cs.rstrip(";") + ";ApplicationIntent=ReadOnly"
-    return cs
+    # read-only intent, whatever the string said (a ReadWrite intent is not kept)
+    cs = re.sub(r"(?i)(?:^|;)\s*applicationintent\s*=[^;]*", "", cs).strip(";")
+    return cs + ";ApplicationIntent=ReadOnly"
 
 
 def read_odbc(mapping: dict, *, connection_string: str | None = None) -> dict[str, list[dict]]:
     """SELECT only the mapped columns from only the mapped views. Every name
     was checked by check_map; they are bracketed again here all the same."""
+    cs = odbc_string(connection_string)                      # the refusals first, before any import
     import pyodbc                                            # the host has it; the tests use CSV
-    cs = odbc_string(connection_string)
     out = {}
     con = pyodbc.connect(cs, autocommit=True, readonly=True, timeout=15)
     try:
@@ -176,7 +192,9 @@ def read_odbc(mapping: dict, *, connection_string: str | None = None) -> dict[st
 
 # ------------------------------------------------------------------- values
 
-def _value(v, how: str):
+def _value(v, how: str, field: str = "", cap: int = MAX_TEXT):
+    """A BizBox cell as the mirror keeps it. A refusal names the field, never
+    the cell: the log is counts and names only."""
     if v is None:
         return None
     if how == "money":
@@ -188,7 +206,7 @@ def _value(v, how: str):
         try:
             return round(float(text), 4)
         except ValueError:
-            raise Refused(f"{v!r} is not an amount") from None
+            raise Refused(f"{field or 'a money field'} holds something that is not an amount") from None
     if how == "int":
         if isinstance(v, int):
             return v
@@ -198,7 +216,7 @@ def _value(v, how: str):
         try:
             return int(float(text))
         except ValueError:
-            raise Refused(f"{v!r} is not a whole number") from None
+            raise Refused(f"{field or 'a whole-number field'} holds something that is not a whole number") from None
     if how == "date":
         if isinstance(v, datetime):
             return v.date().isoformat()
@@ -212,9 +230,9 @@ def _value(v, how: str):
         try:
             return date.fromisoformat(text[:10]).isoformat()
         except ValueError:
-            raise Refused(f"{v!r} is not a date") from None
+            raise Refused(f"{field or 'a date field'} holds something that is not a date") from None
     text = " ".join(str(v).split())
-    return text[:MAX_TEXT] or None
+    return text[:cap] or None
 
 
 # --------------------------------------------------------------------- sync
@@ -233,10 +251,11 @@ def sync(conn: sqlite3.Connection, rows_by_kind: dict[str, list[dict]], *, at: d
         c = {"rows": len(rows), "new": 0, "changed": 0, "unchanged": 0, "absent": 0, "skipped": 0, "returned": 0}
         seen = set()
         for raw in rows:
-            rec = {f: _value(raw.get(f), how) for f, how in fields.items() if f in raw}
+            rec = {f: _value(raw.get(f), how, f"{kind}.{f}", WIDTH.get(f, MAX_TEXT)) for f, how in fields.items() if f in raw}
             ref = rec.get("ext_ref")
             if not ref or ("name" in fields and not rec.get("name")) or ref in seen \
-                    or (kind == "po_line" and not rec.get("po_ref")):
+                    or (kind == "po_line" and not rec.get("po_ref")) \
+                    or len(ref) > MAX_KEY or len(rec.get("po_ref") or "") > MAX_KEY:
                 c["skipped"] += 1
                 continue
             seen.add(ref)
@@ -278,18 +297,54 @@ def sync(conn: sqlite3.Connection, rows_by_kind: dict[str, list[dict]], *, at: d
 
 # ------------------------------------------------------------ reading, links
 
-def records(conn, kind: str, *, q: str = "", include_absent: bool = False, limit: int = 500):
+def _like(needle: str) -> str:
+    # SQLite's two wildcards and '[', which SQL Server's LIKE reads as a class
+    return "%" + (needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_").replace("[", "\\[")) + "%"
+
+
+def _filter(kind: str, q: str, include_absent: bool) -> tuple[str, list]:
     table, fields = KINDS[kind]
-    sql, args = [f"SELECT * FROM {table} WHERE source_id = ?"], [SOURCE]
+    sql, args = [f" FROM {table} WHERE source_id = ?"], [SOURCE]
     if not include_absent:
         sql.append(" AND present = 1")
+    text_fields = [f for f, how in fields.items() if how == "text"]
     for word in (q or "").split()[:4]:
-        like = "%" + word.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-        text_fields = [f for f, how in fields.items() if how == "text"]
         sql.append(" AND (" + " OR ".join(f"LOWER(COALESCE({f}, '')) LIKE ? ESCAPE '\\'" for f in text_fields) + ")")
-        args += [like] * len(text_fields)
-    sql.append(" ORDER BY ext_ref DESC")
-    return conn.execute("".join(sql), args).fetchall()[:limit]
+        args += [_like(word.lower())] * len(text_fields)
+    return "".join(sql), args
+
+
+def records(conn, kind: str, *, q: str = "", include_absent: bool = False, limit: int = PAGE, offset: int = 0):
+    """One page of a kind, newest reference first; the limit is in the SQL,
+    so a 50,000-row mirror is never fetched to show 100."""
+    where, args = _filter(kind, q, include_absent)
+    return conn.execute(f"SELECT *{where} ORDER BY ext_ref DESC LIMIT ? OFFSET ?", [*args, limit, offset]).fetchall()
+
+
+def count(conn, kind: str, *, q: str = "", include_absent: bool = False) -> int:
+    where, args = _filter(kind, q, include_absent)
+    return conn.execute(f"SELECT COUNT(*){where}", args).fetchone()[0]
+
+
+def summary(conn, kind: str, *, q: str = "", include_absent: bool = False) -> list:
+    """(status, count, total) per status word, over the whole filtered set."""
+    where, args = _filter(kind, q, include_absent)
+    money = "total" if "total" in KINDS[kind][1] else "amount" if "amount" in KINDS[kind][1] else "0"
+    return conn.execute(f"SELECT COALESCE(status, '(none)') AS status, COUNT(*) AS n, SUM({money}) AS total{where}"
+                        " GROUP BY COALESCE(status, '(none)') ORDER BY 1", args).fetchall()
+
+
+def links_for(conn, kind: str, refs) -> dict[str, list]:
+    """The links of many records in one query (the list page's Linked column)."""
+    refs = [r for r in refs if r]
+    out: dict[str, list] = {r: [] for r in refs}
+    for i in range(0, len(refs), 200):
+        chunk = refs[i:i + 200]
+        for l in conn.execute("SELECT subject_kind, subject_id, ext_ref FROM ext_link WHERE source_id = ? AND kind = ?"
+                              f" AND ext_ref IN ({','.join('?' * len(chunk))}) ORDER BY linked_at",
+                              [SOURCE, LINK_KIND[kind], *chunk]):
+            out[l["ext_ref"]].append(l)
+    return out
 
 
 def get(conn, kind: str, ext_ref: str):
@@ -301,8 +356,21 @@ def status(conn):
     return conn.execute("SELECT * FROM ext_source WHERE source_id = ?", (SOURCE,)).fetchone()
 
 
+def present_kinds(conn) -> list[str]:
+    """The kinds BizBox has given the desk anything for, in the order of KINDS.
+    BizBox holds no supplier agreements (SQL01, 29 Sep 2026, MEASURED), so a
+    Finance page that showed an Agreements tab would show an empty one for
+    ever; the pages show the kinds that have rows, and all of them while the
+    mirror is still empty."""
+    out = []
+    for kind, (table, _) in KINDS.items():
+        if kind in LINK_KIND and conn.execute(f"SELECT 1 FROM {table} WHERE source_id = ? LIMIT 1", (SOURCE,)).fetchone():
+            out.append(kind)
+    return out or list(LINK_KIND)
+
+
 def link(conn, subject_kind: str, subject_id: str, kind: str, ext_ref: str, *, at: datetime, actor: str) -> bool:
-    if kind not in KINDS:
+    if kind not in LINK_KIND:
         raise Refused("No such kind.")
     ext_ref = (ext_ref or "").strip()
     if get(conn, kind, ext_ref) is None:

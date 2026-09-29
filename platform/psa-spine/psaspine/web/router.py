@@ -76,8 +76,8 @@ ROUTES = [
     ("GET", "/dispatch", dispatch.index),
     ("GET", "/schedule", schedule_view.index),
     ("GET", "/finance", finance_view.index),
-    ("GET", "/finance/<kind>/<ext_ref>", finance_view.detail),
-    ("POST", "/finance/<kind>/<ext_ref>/propose", finance_view.propose),
+    ("GET", "/finance/<kind>", finance_view.detail),                    # ?ref=<BizBox reference>
+    ("POST", "/finance/<kind>/propose", finance_view.propose),
     ("POST", "/finance/change/<change_id>/cancel", finance_view.cancel_change),
     ("POST", "/ticket/<work_item_id>/finance/link", finance_view.ticket_link),
     ("POST", "/ticket/<work_item_id>/finance/unlink", finance_view.ticket_unlink),

@@ -141,11 +141,13 @@ def detail(ctx, article_id):
     flagged = knowledge.flags(ctx.conn, row["article_id"])
     flag = ("<div class='banner err'>This article may name a patient (" + t.esc("; ".join(flagged))
             + "). Please rewrite it with the ward, room or machine instead.</div>") if flagged and can_write else ""
-    tickets = ctx.conn.execute("SELECT k.work_item_id FROM kb_ticket k JOIN ticket tk ON tk.work_item_id = k.work_item_id"
-                               " WHERE k.article_id = ? ORDER BY k.linked_at DESC", (row["article_id"],)).fetchall()
+    tickets = ctx.conn.execute("SELECT k.work_item_id, tk.board_id FROM kb_ticket k JOIN ticket tk"
+                               " ON tk.work_item_id = k.work_item_id WHERE k.article_id = ? ORDER BY k.linked_at DESC",
+                               (row["article_id"],)).fetchall()
     seen = common.board_ids_for(ctx)
-    used = [r["work_item_id"] for r in tickets if ctx.conn.execute(
-        "SELECT board_id FROM ticket WHERE work_item_id = ?", (r["work_item_id"],)).fetchone()[0] in seen]
+    used = [r["work_item_id"] for r in tickets if r["board_id"] in seen]
+    common.audit_restricted_reads(ctx, (r["board_id"] for r in tickets[:50] if r["board_id"] in seen),
+                                  detail=f"article {row['article_id']} listed")
     revs = knowledge.revisions(ctx.conn, row["article_id"])
     history = "".join(f"<li>v{r['version']} · {t.esc(r['saved_at'])} · {t.esc(r['saved_by'])}</li>" for r in revs)
     body = ((f"<div class='banner ok'>{t.esc(q.get('msg', ''))}</div>" if q.get("msg") else "")
@@ -250,15 +252,16 @@ def portal_index(ctx):
             f"<form method=get action='/my/help' class='row schedbar'><div style='flex:1 1 240px'><input name=q value='{t.esc(q)}'"
             " placeholder='Search the help'></div><div style='flex:0 0 auto'><button class=ghost type=submit>Search</button></div></form>"
             + (f"<ul class=plain>{items}</ul>" if items else "<div class=muted>Nothing here yet.</div>") + "</div>")
-    return Response(body=t.page("Help", body, user=ctx.user))
+    return Response(body=t.page("Help", body, user=ctx.user, active="help"))
 
 
 def portal_detail(ctx, article_id):
     from .. import HttpError, Response
     row = knowledge.get(ctx.conn, article_id)
-    if row is None or row["status"] != "PUBLISHED" or row["audience"] != "REQUESTER" or row["board_id"] is not None \
-            and False:
+    # The same rule as the list: a board's article is never portal content, so a
+    # requester on no board cannot open one by guessing its sequential id.
+    if row is None or row["status"] != "PUBLISHED" or row["audience"] != "REQUESTER" or row["board_id"] is not None:
         raise HttpError("404 Not Found", "No such help page.")
     body = (f"<h1>{t.esc(row['title'])}</h1><div class=card><div class=md>{t.md_to_html(row['body'])}</div></div>"
             "<p><a href='/my/help'>All help</a> · <a href='/my'>Raise a request</a></p>")
-    return Response(body=t.page(row["title"], body, user=ctx.user))
+    return Response(body=t.page(row["title"], body, user=ctx.user, active="help"))

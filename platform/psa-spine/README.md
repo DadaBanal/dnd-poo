@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 544 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 545 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -407,7 +407,10 @@ All), and each member has one role, or the default. Three starter roles:
 administrator has everything. A role never widens a board: tickets are still
 governed by board membership, and a restricted board stays members-only. The
 nav shows only what the person may open; a refused page says which module and
-level to ask for. Every change is a `SECURITY_ROLE` audit row.
+level to ask for. Every change is a `SECURITY_ROLE` audit row. The Schedule
+level is enforced like the others: Read to see `/schedule`, Write to book or
+to block time. The starter roles are written on first use with `INSERT OR
+IGNORE`, so two first requests on the threaded server cannot trip each other.
 
 ### Projects (`/projects`, 041, 29 Sep 2026)
 
@@ -434,8 +437,36 @@ Dada's direction: these are BizBox's, and Dada PSA makes way for them. The
 Finance pages show a **read-only mirror** of BizBox, in the reference PSA's
 shape: Agreements; **Procurement** (purchase orders with a status summary,
 their lines, and the tickets and projects each serves); Products; Invoices
-(each linked to its agreement). A ticket's *Finance* pod links the PO,
-agreement, product or invoice it concerns. Dada PSA issues no invoice.
+(with a status summary, each linked to its agreement where the source has
+one). A ticket's *Finance* pod links the PO, agreement, product or invoice it
+concerns. Dada PSA issues no invoice.
+
+**What BizBox holds** (SQL01's reading of its catalog, 29 Sep 2026, MEASURED;
+`docs/handoffs/HANDOFF-cloud-sql01-WS36-20260929-bizbox.md`), and how the pages
+follow it:
+
+- **No supplier agreements.** BizBox's contract tables are patient coverage.
+  The pages show only the kinds BizBox has given rows for (all four while the
+  mirror is still empty), so the Agreements tab, the Agreement column and the
+  "Agreement" choice on a ticket's Finance pod appear the day a source is
+  named and not before. Nothing else changes.
+- **An invoice is BizBox's receiving report**, keyed by the receiving number.
+  The supplier's own invoice number is typed by staff and repeats (626
+  distinct of 634), so it is never the key; 044 adds `supplier_ref` for it,
+  shown as *Supplier's invoice no.* when the map fills it.
+- **Paid is not knowable** from those tables (`balance` and `paidamt` are 0 on
+  every row), so an invoice's status is BizBox's own word — Draft, Posted or
+  Cancelled — and the desk never says paid, unpaid or overdue.
+- **Keys are short.** SQL01's views cast them to 20 or 64 characters. SQL
+  Server warned at create that the `ext_*` keys *could* exceed its 900-byte
+  index limit at the columns' full width; the sync skips and counts any key
+  over 64 characters, so no insert can reach that limit. `status`, `currency`
+  and `unit` are trimmed to the port's 32 characters for the same reason.
+- **At scale.** The lists page by 100 and every count and tile is over the
+  whole mirror; a record's page is `/finance/<kind>?ref=<BizBox key>`, the
+  key in the query string so that one holding `/`, `%` or an accent opens.
+  The Linked column is one query for the page. A refusal from the sync names
+  the field, never the cell (the counts-only logging rule).
 
 ```
 psaspine sync-bizbox <db> --map D:\psa\bizbox-map.json --csv-dir <folder>   # from exports

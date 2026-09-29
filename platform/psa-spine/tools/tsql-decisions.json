@@ -778,6 +778,7 @@
     "ext_invoice.status": "CODE",
     "ext_invoice.currency": "CODE",
     "ext_invoice.agreement_ref": "REF",
+    "ext_invoice.supplier_ref": "REF",
     "ext_link.subject_kind": "CODE",
     "ext_link.subject_id": "ID",
     "ext_link.source_id": "ID",

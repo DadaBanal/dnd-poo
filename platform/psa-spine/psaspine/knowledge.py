@@ -143,6 +143,13 @@ def revisions(conn, article_id: str):
     return conn.execute("SELECT * FROM kb_revision WHERE article_id = ? ORDER BY version DESC", (article_id,)).fetchall()
 
 
+def _like(needle: str) -> str:
+    """A contains-match with every wildcard escaped: SQLite's two, and '[',
+    which SQL Server's LIKE reads as a character class (part 12's rule)."""
+    return "%" + (needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                  .replace("[", "\\[")) + "%"
+
+
 def search(conn, *, q: str = "", status: str | None = None, audience: str | None = None,
            board_ids=None, limit: int = 200):
     """Articles matching every word of q in the title or body. `board_ids`
@@ -152,7 +159,7 @@ def search(conn, *, q: str = "", status: str | None = None, audience: str | None
            " WHERE 1 = 1"]
     args: list = []
     for word in [w for w in (q or "").split() if w][:6]:
-        like = "%" + word.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        like = _like(word.lower())
         sql.append(" AND (LOWER(a.title) LIKE ? ESCAPE '\\' OR LOWER(a.body) LIKE ? ESCAPE '\\')")
         args += [like, like]
     if status:
@@ -176,8 +183,26 @@ def suggest(conn, work_item_id: str, *, board_ids, limit: int = 5):
                       " ON w.work_item_id = t.work_item_id WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
     if tk is None:
         return []
-    live = [a for a in search(conn, status="PUBLISHED", board_ids=board_ids)]
     words = {w.lower().strip(".,:;!?()") for w in (tk["name"] or "").split() if len(w) >= 4}
+    # only the columns the ranking reads, and only articles that can score:
+    # the ticket's pair, its board, or a title word in common. Never the bodies.
+    boards = sorted(board_ids) if board_ids is not None else None
+    sql = ["SELECT a.article_id, a.title, a.board_id, a.catalogue_item_id, a.uses FROM kb_article a"
+           " WHERE a.status = 'PUBLISHED'"]
+    args: list = []
+    if boards is not None:
+        sql.append(" AND (a.board_id IS NULL" + (f" OR a.board_id IN ({','.join('?' * len(boards))})" if boards else "") + ")")
+        args += boards
+    hit = ["a.board_id = ?"]
+    args.append(tk["board_id"])
+    if tk["catalogue_item_id"]:
+        hit.append("a.catalogue_item_id = ?")
+        args.append(tk["catalogue_item_id"])
+    for w in sorted(words)[:12]:
+        hit.append("LOWER(a.title) LIKE ? ESCAPE '\\'")
+        args.append(_like(w))
+    sql.append(" AND (" + " OR ".join(hit) + ")")
+    live = conn.execute("".join(sql), args).fetchall()
 
     def score(a):
         s = 0

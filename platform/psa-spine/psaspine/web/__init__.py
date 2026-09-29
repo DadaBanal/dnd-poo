@@ -238,7 +238,7 @@ class Request:
             cookies.load(environ["HTTP_COOKIE"])
         return cls(
             method=environ.get("REQUEST_METHOD", "GET").upper(),
-            path=environ.get("PATH_INFO", "/") or "/",
+            path=(environ.get("PATH_INFO", "/") or "/").encode("latin-1", "replace").decode("utf-8", "replace"),
             query=dict(urllib.parse.parse_qsl(environ.get("QUERY_STRING", ""))),
             headers=headers, cookies=cookies, body=body,
             scheme=environ.get("wsgi.url_scheme", "http"),
@@ -499,7 +499,7 @@ def _route(conn, request: Request, config: Config, now: datetime) -> Response:
     # The security role's level per module (040), read once, so the nav shows
     # only what the person may open and every view asks the same question.
     from .. import security
-    user.modules = {m: security.level(conn, user, m) for m in security.MODULES}
+    user.modules = security.levels(conn, user)
     conn.commit()
     return router.dispatch(ctx)
 

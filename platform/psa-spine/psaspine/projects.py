@@ -124,11 +124,23 @@ def update(conn, project_id: str, *, at: datetime, actor: str, **fields) -> str:
     return words
 
 
-def all_projects(conn, *, status: str | None = None):
-    sql = ("SELECT p.*, (SELECT COUNT(*) FROM project_ticket pt WHERE pt.project_id = p.project_id) AS tickets"
-           " FROM project p")
+def _board_clause(boards) -> tuple[str, list]:
+    """Limit a project's ticket figures to the boards the viewer may see, so a
+    restricted board's tickets do not show through a project's count or hours."""
+    if boards is None:
+        return "", []
+    boards = sorted(boards)
+    if not boards:
+        return " AND 1 = 0", []
+    return f" AND t.board_id IN ({','.join('?' * len(boards))})", boards
+
+
+def all_projects(conn, *, status: str | None = None, boards=None):
+    clause, args = _board_clause(boards)
+    sql = ("SELECT p.*, (SELECT COUNT(*) FROM project_ticket pt JOIN ticket t ON t.work_item_id = pt.work_item_id"
+           f" WHERE pt.project_id = p.project_id{clause}) AS tickets FROM project p")
     rows = conn.execute(sql + (" WHERE p.status = ?" if status else "") + " ORDER BY p.status, p.starts_on, p.name",
-                        (status,) if status else ()).fetchall()
+                        args + ([status] if status else [])).fetchall()
     return rows
 
 
@@ -157,12 +169,12 @@ def add_phase(conn, project_id: str, *, name: str, parent_id: int | None = None,
     return cur.lastrowid
 
 
-def phases(conn, project_id: str) -> list[dict]:
+def phases(conn, project_id: str, *, boards=None) -> list[dict]:
     """The phases in tree order, each with its depth, its predecessors and its
-    actual hours (its tickets' time entries)."""
+    actual hours (its tickets' time entries, on the boards given)."""
     rows = [dict(r) for r in conn.execute("SELECT * FROM project_phase WHERE project_id = ? ORDER BY sort_order",
                                           (project_id,))]
-    actual = hours_by_phase(conn, project_id)
+    actual = hours_by_phase(conn, project_id, boards=boards)
     deps: dict[int, list[int]] = {}
     for d in conn.execute("SELECT d.phase_id, d.depends_on FROM phase_dependency d JOIN project_phase p"
                           " ON p.phase_id = d.phase_id WHERE p.project_id = ?", (project_id,)):
@@ -272,15 +284,27 @@ def _entry_hours():
     return "COALESCE(te.actual_hours, te.band_hours)"
 
 
-def hours_by_phase(conn, project_id: str) -> dict:
+def hours_by_phase(conn, project_id: str, *, boards=None) -> dict:
+    clause, args = _board_clause(boards)
     out: dict = {}
     for r in conn.execute(
             f"SELECT pt.phase_id, SUM({_entry_hours()}) AS h FROM project_ticket pt"
             "  JOIN time_entry te ON te.work_item_id = pt.work_item_id"
-            " WHERE pt.project_id = ? GROUP BY pt.phase_id", (project_id,)):
+            "  JOIN ticket t ON t.work_item_id = pt.work_item_id"
+            f" WHERE pt.project_id = ?{clause} GROUP BY pt.phase_id", [project_id, *args]):
         out[r["phase_id"]] = float(r["h"] or 0)
     return out
 
 
-def actual_hours(conn, project_id: str) -> float:
-    return round(sum(hours_by_phase(conn, project_id).values()), 2)
+def hours_by_project(conn, *, boards=None) -> dict[str, float]:
+    """Actual hours for every project in one query (the list page)."""
+    clause, args = _board_clause(boards)
+    return {r["project_id"]: round(float(r["h"] or 0), 2) for r in conn.execute(
+        f"SELECT pt.project_id, SUM({_entry_hours()}) AS h FROM project_ticket pt"
+        "  JOIN time_entry te ON te.work_item_id = pt.work_item_id"
+        "  JOIN ticket t ON t.work_item_id = pt.work_item_id"
+        f" WHERE 1 = 1{clause} GROUP BY pt.project_id", args)}
+
+
+def actual_hours(conn, project_id: str, *, boards=None) -> float:
+    return round(sum(hours_by_phase(conn, project_id, boards=boards).values()), 2)

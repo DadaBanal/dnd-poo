@@ -43,6 +43,17 @@ def is_restricted(ctx, board_id: str) -> bool:
     return bool(row and row["restricted"])
 
 
+def audit_restricted_reads(ctx, board_ids, *, detail: str) -> None:
+    """One RESTRICTED_READ row per restricted board a list touched, with the
+    count: a report, a project's ticket list or an article's Used-on shows
+    many tickets at once, and one row per board says which and how many."""
+    counts: dict = {}
+    for b in board_ids:
+        counts[b] = counts.get(b, 0) + 1
+    for b, n in sorted(counts.items()):
+        audit_restricted_read(ctx, b, detail=f"{detail} {n} ticket(s)")
+
+
 def audit_restricted_read(ctx, board_id: str, *, subject_id: str | None = None,
                           detail: str | None = None) -> None:
     """§6.1 requirement 4: every read of a restricted ticket is audited.

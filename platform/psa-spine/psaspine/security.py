@@ -41,13 +41,16 @@ class Refused(ValueError):
 
 
 def ensure_roles(conn: sqlite3.Connection) -> None:
+    """The starter roles, written on first use. OR IGNORE: two first requests
+    on the threaded server can both see an empty table, and the second must
+    not fail on the key the first just wrote."""
     if conn.execute("SELECT COUNT(*) FROM security_role").fetchone()[0]:
         return
     for rid, name, default, grants in STARTER:
-        conn.execute("INSERT INTO security_role (role_id, name, is_default, inactive) VALUES (?,?,?,0)",
+        conn.execute("INSERT OR IGNORE INTO security_role (role_id, name, is_default, inactive) VALUES (?,?,?,0)",
                      (rid, name, default))
         for module in MODULES:
-            conn.execute("INSERT INTO role_permission (role_id, module, level) VALUES (?,?,?)",
+            conn.execute("INSERT OR IGNORE INTO role_permission (role_id, module, level) VALUES (?,?,?)",
                          (rid, module, grants.get(module, "NONE")))
 
 
@@ -74,6 +77,20 @@ def level(conn, user, module: str) -> str:
     row = conn.execute("SELECT level FROM role_permission WHERE role_id = ? AND module = ?",
                        (rid, module)).fetchone()
     return row[0] if row else "NONE"
+
+
+def levels(conn, user) -> dict[str, str]:
+    """Every module's level for the user in one role lookup, for the request
+    shell: five calls of level() resolved the same role five times."""
+    if getattr(user, "is_sysadmin", False):
+        return {m: "ADMIN" for m in MODULES}
+    if getattr(user, "requester", False):
+        return {m: "NONE" for m in MODULES}
+    rid = role_of(conn, user.id)
+    if rid is None:
+        return {m: "NONE" for m in MODULES}
+    got = {r[0]: r[1] for r in conn.execute("SELECT module, level FROM role_permission WHERE role_id = ?", (rid,))}
+    return {m: got.get(m, "NONE") for m in MODULES}
 
 
 def allows(conn, user, module: str, need: str = "READ") -> bool:

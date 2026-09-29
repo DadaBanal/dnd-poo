@@ -21,12 +21,44 @@ COLUMNS = {
                        ("total", "Total")),
     "product": (("ext_ref", "Item"), ("name", "Name"), ("category", "Category"), ("unit", "Unit"),
                 ("unit_cost", "Unit cost")),
-    "invoice": (("ext_ref", "Invoice"), ("party", "Party"), ("invoiced_on", "Invoiced"), ("due_on", "Due"),
-                ("status", "Status"), ("total", "Total"), ("agreement_ref", "Agreement")),
+    "invoice": (("ext_ref", "Invoice"), ("supplier_ref", "Supplier's invoice no."), ("party", "Party"),
+                ("invoiced_on", "Invoiced"), ("due_on", "Due"), ("status", "Status"), ("total", "Total"),
+                ("agreement_ref", "Agreement")),
 }
 TABS = (("agreement", "Agreements"), ("purchase_order", "Procurement"), ("product", "Products"),
         ("invoice", "Invoices"))
 ONE = {"agreement": "Agreement", "purchase_order": "Purchase order", "product": "Product", "invoice": "Invoice"}
+# The kinds with a status summary above the list: a tile per status BizBox
+# uses, with the count and the sum. The statuses are BizBox's own words; the
+# desk adds none (it cannot: "paid" is not knowable from BizBox's receiving
+# tables, SQL01 29 Sep 2026, MEASURED, so an invoice is Draft, Posted or Cancelled).
+TILED = ("purchase_order", "invoice")
+
+
+def _kinds(ctx) -> list[str]:
+    """The kinds BizBox has rows for, in the tabs' order: Procurement first."""
+    on = set(bizbox.present_kinds(ctx.conn))
+    return [k for k, _ in TABS if k in on]
+
+
+def _tabs_for(ctx):
+    on = _kinds(ctx)
+    return [(k, v) for k, v in TABS if k in on]
+
+
+def _columns(ctx, kind):
+    """The list's columns: an invoice's Agreement column only when some invoice
+    has one (BizBox has no supplier agreements to point at), and the
+    supplier's invoice number only when the map fills it."""
+    cols = COLUMNS[kind]
+    if kind == "invoice":
+        drop = set()
+        for f in ("agreement_ref", "supplier_ref"):
+            if not ctx.conn.execute(f"SELECT 1 FROM ext_invoice WHERE source_id = ? AND {f} IS NOT NULL LIMIT 1",
+                                    (bizbox.SOURCE,)).fetchone():
+                drop.add(f)
+        cols = tuple(c for c in cols if c[0] not in drop)
+    return cols
 
 
 def _money(v, cur=None) -> str:
@@ -35,8 +67,15 @@ def _money(v, cur=None) -> str:
     return f"{cur + ' ' if cur else ''}{float(v):,.2f}"
 
 
+def _url(kind: str, ref) -> str:
+    """A record's page. The reference travels in the query string, never the
+    path: a WSGI server percent-decodes the path before the router splits it,
+    so a BizBox key holding '/' or '%' would never open from its own link."""
+    return f"/finance/{kind}?" + urllib.parse.urlencode({"ref": ref})
+
+
 def _ref_link(kind: str, ref) -> str:
-    return f"<a href='/finance/{kind}/{urllib.parse.quote(ref, safe='')}'>{t.esc(ref)}</a>" if ref else ""
+    return f"<a href='{t.esc(_url(kind, ref))}'>{t.esc(ref)}</a>" if ref else ""
 
 
 def _cell(rec, field) -> str:
@@ -76,48 +115,51 @@ def index(ctx):
     q = ctx.request.query
     if q.get("tab") == "changes":
         return changes_page(ctx)
-    kind = q.get("tab", "agreement")
-    if kind not in bizbox.KINDS:
-        kind = "agreement"
+    kinds = _kinds(ctx)
+    kind = q.get("tab", kinds[0])
+    if kind not in kinds:
+        kind = kinds[0]
     search = q.get("q", "")
     absent = q.get("absent") == "1"
-    rows = bizbox.records(ctx.conn, kind, q=search, include_absent=absent)
+    page_no = int(q["page"]) if q.get("page", "").isdigit() and int(q["page"]) > 0 else 1
+    total_n = bizbox.count(ctx.conn, kind, q=search, include_absent=absent)
+    rows = bizbox.records(ctx.conn, kind, q=search, include_absent=absent, limit=bizbox.PAGE, offset=(page_no - 1) * bizbox.PAGE)
     tabs = _tabs(ctx, kind)
+    columns = _columns(ctx, kind)
     head = "".join(f"<th{' class=num' if f in ('amount', 'total', 'unit_cost') else ''}>{t.esc(lab)}</th>"
-                   for f, lab in COLUMNS[kind]) + "<th>Linked</th>"
+                   for f, lab in columns) + "<th>Linked</th>"
     seen = common.board_ids_for(ctx)
+    # the tickets and projects each record on this page serves, among those the
+    # viewer may see: one query for the links, one for the tickets' boards, one
+    # for the projects' boards, whatever the page holds
+    links = bizbox.links_for(ctx.conn, kind, [r["ext_ref"] for r in rows])
+    visible = _visible_subjects(ctx, [l for ls in links.values() for l in ls], seen)
 
     def linked_cell(ref):
-        # the tickets this record serves, among those the viewer may see; projects by id
-        out = []
-        for l in bizbox.linked_to(ctx.conn, kind, ref):
-            if l["subject_kind"] == "TICKET":
-                b = ctx.conn.execute("SELECT board_id FROM ticket WHERE work_item_id = ?", (l["subject_id"],)).fetchone()
-                if b is not None and b[0] in seen:
-                    out.append(f"<a href='/ticket/{t.esc(l['subject_id'])}'>{t.esc(l['subject_id'])}</a>")
-            else:
-                out.append(f"<a href='/project/{t.esc(l['subject_id'])}'>{t.esc(l['subject_id'])}</a>")
-        return ", ".join(out)
+        return ", ".join(f"<a href='/{'ticket' if l['subject_kind'] == 'TICKET' else 'project'}/{t.esc(l['subject_id'])}'>"
+                         f"{t.esc(l['subject_id'])}</a>" for l in links.get(ref, [])
+                         if (l["subject_kind"], l["subject_id"]) in visible)
     summary = ""
-    if kind == "purchase_order":
-        by = {}
-        total = {}
-        for r in rows:
-            st = r["status"] or "(none)"
-            by[st] = by.get(st, 0) + 1
-            total[st] = total.get(st, 0) + float(r["total"] or 0)
+    if kind in TILED:
         summary = ("<div class='tiles' style='grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:12px'>"
-                   + "".join(f"<div class=tile><div class=l>{t.esc(st)}</div><div class=n>{n}</div>"
-                             f"<div class=muted>{t.esc(_money(total[st], 'PHP'))}</div></div>" for st, n in sorted(by.items()))
+                   + "".join(f"<div class=tile><div class=l>{t.esc(s['status'])}</div><div class=n>{s['n']}</div>"
+                             f"<div class=muted>{t.esc(_money(s['total'] or 0, 'PHP'))}</div></div>"
+                             for s in bizbox.summary(ctx.conn, kind, q=search, include_absent=absent))
                    + "</div>")
     trs = []
     for r in rows:
         n = linked_cell(r["ext_ref"])
         cells = "".join(
-            (f"<td><a href='/finance/{kind}/{urllib.parse.quote(r['ext_ref'], safe='')}'>{t.esc(r['ext_ref'])}</a>"
+            (f"<td>{_ref_link(kind, r['ext_ref'])}"
              + ("" if r["present"] else " <span class=pill>gone from BizBox</span>") + "</td>")
-            if f == "ext_ref" else _cell(r, f) for f, _ in COLUMNS[kind])
+            if f == "ext_ref" else _cell(r, f) for f, _ in columns)
         trs.append(f"<tr>{cells}<td>{n}</td></tr>")
+    first, last = (page_no - 1) * bizbox.PAGE + 1, min(page_no * bizbox.PAGE, total_n)
+    keep = {"tab": kind, "q": search} | ({"absent": "1"} if absent else {})
+    pager = (f"<div class='row schedbar' style='justify-content:space-between'><div class=muted>Showing {first}–{last} of {total_n}</div><div>"
+             + (f"<a class='ghost small' href='/finance?{urllib.parse.urlencode(keep | {'page': page_no - 1})}'>‹ Previous</a> " if page_no > 1 else "")
+             + (f"<a class='ghost small' href='/finance?{urllib.parse.urlencode(keep | {'page': page_no + 1})}'>Next ›</a>" if last < total_n else "")
+             + "</div></div>") if total_n > bizbox.PAGE else ""
     st = bizbox.status(ctx.conn)
     sync = (f"Last synced {t.esc(st['last_sync_at'])} by {t.esc(st['last_sync_by'])}: {t.esc(st['last_result'] or '')}"
             if st and st["last_sync_at"] else "Not synced yet. SQL01 runs <code>psaspine sync-bizbox</code> once the "
@@ -133,17 +175,43 @@ def index(ctx):
               "Include records gone from BizBox</label></div>"
               "<div style='flex:0 0 auto'><button class=ghost type=submit>Search</button></div></form>"
               + summary + f"<div class=tablewrap><table><thead><tr>{head}</tr></thead><tbody>"
-            + ("".join(trs) or f"<tr><td colspan={len(COLUMNS[kind]) + 1} class=muted>Nothing mirrored yet.</td></tr>")
-            + "</tbody></table></div></div>")
+            + ("".join(trs) or f"<tr><td colspan={len(columns) + 1} class=muted>Nothing mirrored yet.</td></tr>")
+            + "</tbody></table></div>" + pager + "</div>")
     return Response(body=t.page("Finance", body, user=ctx.user, active="finance"))
 
 
+def _visible_subjects(ctx, links, seen) -> set:
+    """(kind, id) of the linked tickets and projects the viewer may see: a
+    ticket by its board, a project by its board or none (views/projects' rule)."""
+    out = set()
+    tickets = sorted({l["subject_id"] for l in links if l["subject_kind"] == "TICKET"})
+    projects_ = sorted({l["subject_id"] for l in links if l["subject_kind"] == "PROJECT"})
+    for i in range(0, len(tickets), 200):
+        chunk = tickets[i:i + 200]
+        for r in ctx.conn.execute(f"SELECT work_item_id, board_id FROM ticket WHERE work_item_id IN ({','.join('?' * len(chunk))})", chunk):
+            if r["board_id"] in seen:
+                out.add(("TICKET", r["work_item_id"]))
+    for i in range(0, len(projects_), 200):
+        chunk = projects_[i:i + 200]
+        for r in ctx.conn.execute(f"SELECT project_id, board_id FROM project WHERE project_id IN ({','.join('?' * len(chunk))})", chunk):
+            if r["board_id"] is None or r["board_id"] in seen:
+                out.add(("PROJECT", r["project_id"]))
+    return out
+
+
 def _tabs(ctx, on: str) -> str:
-    counts = {k: len(bizbox.records(ctx.conn, k)) for k, _ in TABS}
-    pending = len(bizbox.changes(ctx.conn, status="PENDING"))
+    tabs = _tabs_for(ctx)
+    counts = {k: ctx.conn.execute(f"SELECT COUNT(*) FROM {bizbox.KINDS[k][0]} WHERE source_id = ? AND present = 1",
+                                  (bizbox.SOURCE,)).fetchone()[0] for k, _ in tabs}
+    pending = ctx.conn.execute("SELECT COUNT(*) FROM ext_change WHERE source_id = ? AND status = 'PENDING'",
+                               (bizbox.SOURCE,)).fetchone()[0]
+    hidden = [v for k, v in TABS if k not in dict(tabs)]
+    note = (f"<p class=muted style='margin:-4px 0 10px'>BizBox holds no supplier {' or '.join(h.lower() for h in hidden)}; "
+            f"the tab appears when a source is named.</p>" if hidden else "")
     return ("<div class=stabs>" + "".join(
-        f"<a class='{'on' if k == on else ''}' href='/finance?tab={k}'>{v} · {counts[k]}</a>" for k, v in TABS)
-        + f"<a class='{'on' if on == 'changes' else ''}' href='/finance?tab=changes'>Changes to BizBox · {pending}</a></div>")
+        f"<a class='{'on' if k == on else ''}' href='/finance?tab={k}'>{v} · {counts[k]}</a>" for k, v in tabs)
+        + f"<a class='{'on' if on == 'changes' else ''}' href='/finance?tab=changes'>Changes to BizBox · {pending}</a></div>"
+        + note)
 
 
 def changes_page(ctx):
@@ -166,11 +234,11 @@ def changes_page(ctx):
     return Response(body=t.page("Finance", body, user=ctx.user, active="finance"))
 
 
-def detail(ctx, kind, ext_ref):
+def detail(ctx, kind):
     from .. import HttpError, Response
     common.require_module(ctx, "FINANCE")
-    ext_ref = urllib.parse.unquote(ext_ref)
-    if kind not in bizbox.KINDS:
+    ext_ref = ctx.request.query.get("ref", "")
+    if kind not in bizbox.LINK_KIND or not ext_ref:
         raise HttpError("404 Not Found", "No such record.")
     rec = bizbox.get(ctx.conn, kind, ext_ref)
     if rec is None:
@@ -181,14 +249,15 @@ def detail(ctx, kind, ext_ref):
         if f in ("amount", "total", "unit_cost"):
             return t.esc(_money(rec[f], rec["currency"] if "currency" in rec.keys() else None))
         return t.esc(rec[f] or "—")
-    facts = "".join(f"<dt>{t.esc(lab)}</dt><dd>{fact(f)}</dd>" for f, lab in COLUMNS[kind])
+    facts = "".join(f"<dt>{t.esc(lab)}</dt><dd>{fact(f)}</dd>" for f, lab in _columns(ctx, kind))
     seen = common.board_ids_for(ctx)
+    linked = bizbox.linked_to(ctx.conn, kind, ext_ref)
+    visible = _visible_subjects(ctx, linked, seen)
     links = []
-    for l in bizbox.linked_to(ctx.conn, kind, ext_ref):
+    for l in linked:
+        if (l["subject_kind"], l["subject_id"]) not in visible:
+            continue
         if l["subject_kind"] == "TICKET":
-            b = ctx.conn.execute("SELECT board_id FROM ticket WHERE work_item_id = ?", (l["subject_id"],)).fetchone()
-            if b is None or b[0] not in seen:
-                continue
             links.append(f"<li>Ticket <a href='/ticket/{t.esc(l['subject_id'])}'>{t.esc(l['subject_id'])}</a> · "
                          f"{t.esc(l['linked_at'])} · {t.esc(l['linked_by'])}</li>")
         else:
@@ -200,7 +269,7 @@ def detail(ctx, kind, ext_ref):
                                " AND agreement_ref = ? AND present = 1 ORDER BY invoiced_on DESC", (bizbox.SOURCE, ext_ref)).fetchall()
         extra = ("<div class=card><h3>" + t.icon("tag") + "Invoices under this agreement</h3>"
                  + ("<div class=tablewrap><table class=compact><tbody>" + "".join(
-                     f"<tr><td><a href='/finance/invoice/{urllib.parse.quote(i['ext_ref'], safe='')}'>{t.esc(i['ext_ref'])}</a></td>"
+                     f"<tr><td>{_ref_link('invoice', i['ext_ref'])}</td>"
                      f"<td>{t.esc(i['invoiced_on'] or '')}</td><td>{t.esc(i['status'] or '')}</td>"
                      f"<td class=num>{t.esc(_money(i['total'], i['currency']))}</td></tr>" for i in inv) + "</tbody></table></div>"
                     if inv else "<div class=muted>None mirrored.</div>") + "</div>")
@@ -223,7 +292,8 @@ def detail(ctx, kind, ext_ref):
     form = ""
     if can_edit:
         fields = "".join(f"<option value={f}>{bizbox.FIELD_WORDS[f]}</option>" for f in bizbox.EDITABLE[kind])
-        form = (f"<form method=post action='/finance/{kind}/{urllib.parse.quote(ext_ref, safe='')}/propose' class=grid2 style='margin-top:10px'>"
+        form = (f"<form method=post action='/finance/{kind}/propose' class=grid2 style='margin-top:10px'>"
+                f"<input type=hidden name=ref value='{t.esc(ext_ref)}'>"
                 f"<div><label>Field</label><select name=field>{fields}</select></div>"
                 "<div><label>New value</label><input name=new_value required maxlength=200 placeholder='e.g. Approved, or 2026-12-31'></div>"
                 "<div style='grid-column:1/-1'><label>Why</label><input name=reason required maxlength=400 "
@@ -258,8 +328,7 @@ def ticket_card(ctx, tk, *, can_work: bool) -> str:
     rows = bizbox.links(ctx.conn, "TICKET", tk["work_item_id"])
     can_link = can_work
     items = "".join(
-        f"<li>{t.esc(ONE[r['kind']])} <a href='/finance/{r['kind']}/{urllib.parse.quote(r['ext_ref'], safe='')}'>"
-        f"{t.esc(r['ext_ref'])}</a>"
+        f"<li>{t.esc(ONE[r['kind']])} {_ref_link(r['kind'], r['ext_ref'])}"
         + (f" <span class=muted>{t.esc((r['record']['name'] if 'name' in r['record'].keys() else r['record'][list(r['record'].keys())[2]]) or '')}</span>" if r["record"] else "")
         + (f" <form method=post action='/ticket/{wid}/finance/unlink' style='display:inline'><input type=hidden name=kind value={r['kind']}>"
            f"<input type=hidden name=ext_ref value='{t.esc(r['ext_ref'])}'><button class='ghost small' type=submit title='Unlink'>×</button></form>"
@@ -268,8 +337,8 @@ def ticket_card(ctx, tk, *, can_work: bool) -> str:
     if can_link:
         add = (f"<form method=post action='/ticket/{wid}/finance/link' class=row style='margin-top:6px'>"
                "<div style='flex:0 0 150px'><select name=kind aria-label='Kind'>"
-               + "".join(f"<option value={k}>{ONE[k]}</option>" for k, _ in TABS) + "</select></div>"
-               "<div><input name=ext_ref placeholder='PO or agreement number' aria-label='BizBox reference'></div>"
+               + "".join(f"<option value={k}>{ONE[k]}</option>" for k, _ in _tabs_for(ctx)) + "</select></div>"
+               "<div><input name=ext_ref placeholder='PO, item or receiving number' aria-label='BizBox reference'></div>"
                "<div style='flex:0 0 auto'><button class=ghost type=submit>Link</button></div></form>")
     return (f"<div class=card data-pod=finance><h3>{t.icon('tag')}Finance</h3>"
             + (f"<ul class=plain>{items}</ul>" if items else "<div class=muted>No BizBox record linked.</div>")
@@ -301,22 +370,22 @@ def ticket_unlink(ctx, work_item_id):
     return _back(work_item_id, msg="Unlinked")
 
 
-def propose(ctx, kind, ext_ref):
+def propose(ctx, kind):
     from .. import redirect
     common.require_module(ctx, "FINANCE", "WRITE")
-    ext_ref = urllib.parse.unquote(ext_ref)
-    back = f"/finance/{kind}/{urllib.parse.quote(ext_ref, safe='')}"
-    if kind not in bizbox.KINDS:
-        return redirect("/finance")
     f = ctx.request.form()
+    ext_ref = f.get("ref", "")
+    if kind not in bizbox.LINK_KIND or not ext_ref:
+        return redirect("/finance")
+    back = _url(kind, ext_ref)
     try:
         cid = bizbox.propose(ctx.conn, kind, ext_ref, f.get("field", ""), f.get("new_value", ""), reason=f.get("reason", ""),
                              at=ctx.now, actor=ctx.user.id)
         ctx.conn.commit()
     except bizbox.Refused as exc:
         ctx.conn.rollback()
-        return redirect(back + "?" + urllib.parse.urlencode({"err": f"Not proposed: {exc}"}))
-    return redirect(back + "?" + urllib.parse.urlencode({"msg": f"Change #{cid} recorded. BizBox has not changed; it waits "
+        return redirect(back + "&" + urllib.parse.urlencode({"err": f"Not proposed: {exc}"}))
+    return redirect(back + "&" + urllib.parse.urlencode({"msg": f"Change #{cid} recorded. BizBox has not changed; it waits "
                                                                 "for the BizBox write path or for someone to apply it there."}))
 
 

@@ -382,3 +382,67 @@ The desk's own tables were untouched: 4 boards, as before.
 - `ext_source` records the last sync as 12:05.
 
 Step 5's Pass is met, except Dada's look at Finance and Setup › BizBox.
+
+### Cloud Build, 29 Sep, after part 4: the three code points, answered; one small step for SQL01
+
+Read in full; every count above is taken as MEASURED. Steps 1–5 are done.
+The code at the head this arrives with answers parts 1 and 2's three points
+(runbook, "Folded in from part 18 and the BizBox Reply"):
+
+1. **The supplier's invoice number.** Schema 044 adds `ext_invoice.supplier_ref`,
+   NULL-able. After the apply, SQL01 adds one column to one view and one line
+   to the map, and the next hourly run fills it:
+   ```sql
+   ALTER VIEW psa.vw_invoice AS
+   SELECT CAST(a.docno AS nvarchar(20)) AS ReceivingNo, a.refno AS SupplierInvoiceNo,
+          dbo.udf_GetFullName(a.FK_faVendors) AS VendorName,
+          COALESCE(a.refdate, a.docdate) AS InvoiceDate,
+          DATEADD(day, ISNULL(a.terms, 0), COALESCE(a.refdate, a.docdate)) AS DueDate,
+          CASE WHEN a.cancelflag = 1 THEN N'Cancelled' WHEN a.postflag = 1 THEN N'Posted' ELSE N'Draft' END AS Status,
+          a.netlocamt AS TotalAmount, a.FK_mscCurrency AS Currency
+   FROM dbo.iwApinv AS a
+   WHERE ISNULL(a.deleteflag, 0) = 0;
+   ```
+   and in `D:\psa\bizbox-map.json`, under `invoice.columns`:
+   `"supplier_ref": "SupplierInvoiceNo"`. The desk's `check_map` accepts it
+   (the word passes the patient fence). **Pass:** the next run's invoice line
+   counts every present invoice as changed, once; Finance › Invoices shows
+   *Supplier's invoice no.*; the run after says 0 changed.
+2. **Paid.** Nothing to add: the desk shows BizBox's own word and never says
+   paid or overdue. The Invoices tab now summarises by that word.
+3. **Agreements.** The Finance pages show the kinds BizBox has rows for. On
+   the live desk: Procurement, Products, Invoices, and a one-line note. If a
+   source is ever named, the map gains an `agreement` object and the
+   invoice's `agreement_ref`, and the tab appears on the next run.
+
+**One more small step, for the record:** `Invoke-PsaBizboxSync.ps1`,
+`Register-PsaBizboxSync.ps1`, `New-PsaBizboxLogin.ps1` and `bizbox-step2.py`
+exist only in `D:\psa\bin`. Every other task wrapper the desk runs is in
+`platform/psa-spine/scripts/` in the repo, so a rebuilt host can be made from
+it. Please commit those four there (they carry a path to the connection-string
+file and no secret, so the fence allows them), with the same preview-by-default
+header the others have.
+
+**Rollback, which the handoff should have carried** (per the template):
+`Disable-ScheduledTask PSA-BizBox`; then, only if the desk comes off BizBox
+for good, in `LiveDB_PMC` `DROP VIEW` the four views, `DROP SCHEMA psa`,
+`DROP USER psa_bizbox_reader`, then `DROP LOGIN psa_bizbox_reader`, and
+`Remove-Item D:\psa\bizbox.odbc`. The `ext_*` rows in `PMC_PSA` may stay
+(Finance then shows them as of the last sync) or be marked absent by one
+`sync-bizbox --apply` from an empty CSV folder; nothing in the desk depends on
+their being present. Step 4's preview runs as `psa_desk` (the task account),
+which is what `Register-PsaBizboxSync.ps1` did.
+
+**Do NOT decide** (the template's field, late): anything about a write path
+to BizBox (step 6); whether a view may read any table outside `iw*`, `fa*`
+and `udf_GetFullName`; the retention of the mirror. Those are Dada's.
+
+**Step 6 stands as written.** The writer is `NoWriter`; `psa_bizbox_reader`
+can only read; nothing here changes that.
+
+**Two things SQL01 chose that Cloud Build records as right, so nobody undoes
+them:** the connection string in `D:\psa\bizbox.odbc` read at run time (never
+in a task's arguments, since the desk log prints part of that line), and the
+random password nobody saw. The handoff's step 4 said "the same way as the
+other `PSA_*` settings"; SQL01's way is better and is now the way.
+
