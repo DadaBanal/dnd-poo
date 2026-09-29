@@ -10,8 +10,9 @@ full ConnectWise PSA"* and then *"do the gaps"*. The gap assessment named
 eight; all eight were built today, in the order below, each with its schema
 step (046 to 051, and one column on the API token table), its tests on both
 stores, its README section and its runbook Pass line for SQL01. ConnectWise
-Sell (quotes and opportunities) was named as a later option and is **not**
-built.
+Sell (quotes and opportunities) was named as a later option; Dada said *"we
+can add something like connectwise sell if need be"*, and it was built the
+same day as a ninth item (052), in the shape this desk needs and no more.
 
 **How to read it.** As before: each row names a ConnectWise PSA feature, what
 this desk does, and a status.
@@ -44,6 +45,7 @@ tests.
 | Notifications beyond email: Teams, mobile push, on-call escalation | Teams cards and on-call paging (050): a workflow rule notifies a named Teams channel as a card (never the summary, never a note); a page repeats every 5 minutes, 3 times, until the on-call acknowledges it on the ticket, then the duty manager is paged; the webhook address lives only on the host | **Built** (Teams and email; no SMS gateway exists at PMC; whether Teams renders the card as posted is NOT VERIFIED from the cloud) |
 | Knowledge base articles with images and attachments | Pictures and documents on an article (051): kept the way a ticket's files are, reviewed before a requester sees them, shown in the text as `![caption](file:N)` | **Built, stricter** (every file waits for a patient-information review before the portal shows it) |
 | REST API: read and update tickets, configurations, with API keys and security-role scopes | Token scopes (gap 8): RAISE (as before), READ (list and read every ticket on the token's board, and the configurations), WRITE (a note, a status, an owner), one board per token, every read of a restricted board audited | **Built, stricter** (one board per token; never a person's credential) |
+| ConnectWise Sell: opportunities with a stage and probability, quotes with products and totals, a pipeline, a won opportunity converted to an agreement | Sales (052): `OPP-` opportunities Lead → Qualified → Proposal sent → Won / Lost, each stage with a default probability; `Q-` quotes with lines, tax and computed totals, draft → sent → accepted / declined / expired; the pipeline by stage with weighted amounts; a win drafts the agreement (045) from the accepted quote; gated by the Finance level | **Built, smaller** (no product catalogue, no e-signature, no forecast reports beyond the pipeline tiles; lines are typed, since BizBox holds the products and the desk writes nothing there) |
 
 ## Built since 23 September (carried from the 28 Sep record, unchanged)
 
@@ -68,7 +70,6 @@ work types; Setup tables for types, subtypes and items. See that record.
 
 | ConnectWise | Status | Why |
 |---|---|---|
-| ConnectWise Sell: quotes, opportunities, a sales pipeline | **Not built** | Named on 29 Sep as a later option; nothing in the record asks for it yet |
 | Invoicing, products, expenses, finance tabs beyond the BizBox mirror and agreements | **Out of scope** | The spine keeps the commercial basis and hands out no invoices; BizBox is the finance system |
 | Project phases, WBS, budgets, predecessors | **Partly built** | A Project board kind and projects with phases exist (041); predecessors and a Gantt do not |
 | Per-user column choice on the board | **Not built** | Saved views cover the filters; columns are fixed (and fold to cards on a phone) |

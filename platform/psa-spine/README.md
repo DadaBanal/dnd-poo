@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 580 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 586 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -937,6 +937,39 @@ minted deliberately, and every list and read on that board writes
 `RESTRICTED_READ` as a person's does. The wrong scope is a 403 that names
 the scope needed; another board's ticket is a 404 a caller cannot tell from
 none.
+
+## Opportunities and quotes (`/sales`, 052, 29 Sep 2026)
+
+Dada IT proposes work before it does it: a ward's endpoint refresh, a
+retainer, a workstation for radiology. Until now that lived in email and a
+spreadsheet, and the agreement that followed was typed from memory. **Sales**
+is the pipeline (what the reference PSA sells separately as Sell, in the
+shape this desk needs and no more):
+
+- an **opportunity** (`OPP-0001`) names what is proposed, to which company
+  and contact, its owner, an amount, an expected close, and a stage:
+  Lead → Qualified → Proposal sent → Won or Lost. Each stage carries a
+  default probability (10, 40, 70, 100, 0), which can be typed over. A loss
+  says why, so the next one goes better;
+- a **quote** (`Q-0001`) hangs under an opportunity with its lines
+  (description, quantity, unit price), a tax percentage and a validity date.
+  Its subtotal and total are computed from the lines, never typed. A draft
+  is edited; a sent one is frozen (or withdrawn back to draft); a sent one is
+  accepted, declined or expired, and stays decided. Sending a quote moves a
+  lead on to Proposal sent; accepting one makes the opportunity worth the
+  quote's total;
+- **winning drafts the agreement** (045): its name, its party, the accepted
+  quote's total (or the amount, when no quote was accepted) and a note saying
+  which opportunity and quote it came from. The desk lands on the agreement
+  so its term and what it covers are set there and then. A won or lost
+  opportunity is read-only; open a new one.
+
+The Sales page shows the pipeline by stage (count, amount and, for the open
+stages, the amount weighted by probability), then the list with a search and
+a stage filter. It is gated by the **Finance** level of the security role, as
+agreements are: READ to look, WRITE to create, edit, quote and move. Nothing
+here writes an invoice or touches BizBox; the audit says `SALES` with what
+changed. Tables `opportunity`, `quote`, `quote_line` (`schema/052_sales.sql`).
 
 ## HTTPS and the organisation sign-in (26 Sep 2026)
 

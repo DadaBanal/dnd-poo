@@ -878,13 +878,14 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         ("oncall", "/oncall", "On-call"),
         ("reports", "/reports", "Reports"),
         ("finance", "/finance", "Finance"),
+        ("sales", "/sales", "Sales"),
         ("uplift", "/uplift", "Uplift"),
         ("admin", "/admin", "Setup"),
         ("my", "/my", "My requests"),
     ]
     levels = getattr(user, "modules", None) or {}
     gate = {"schedule": "SCHEDULE", "projects": "PROJECTS", "kb": "KNOWLEDGE", "reports": "REPORTS",
-            "finance": "FINANCE", "time": "TIME"}
+            "finance": "FINANCE", "sales": "FINANCE", "time": "TIME"}
     nav_items = [n for n in nav_items if n[0] not in gate or levels.get(gate[n[0]], "READ") != "NONE"]
     if requester:
         nav_items = [("my", "/my", "My requests"), ("approvals", "/my/approvals", "Approvals"), ("help", "/my/help", "Help")]
@@ -892,7 +893,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
             active = "my"
     nav = "".join(
         f'<a href="{esc(href)}" title="{esc(label)}"{" class=on aria-current=page" if key == active else ""}>'
-        f'{icon({"admin": "setup", "schedule": "calendar", "projects": "layers", "kb": "note", "finance": "tag", "help": "note", "time": "clock", "approvals": "check"}.get(key, key))}<span class=lbl>{esc(label)}</span></a>'
+        f'{icon({"admin": "setup", "schedule": "calendar", "projects": "layers", "kb": "note", "finance": "tag", "sales": "briefcase", "help": "note", "time": "clock", "approvals": "check"}.get(key, key))}<span class=lbl>{esc(label)}</span></a>'
         for key, href, label in nav_items)
     nav += (f'<a class="newbtn" href="/ticket/new" title="New ticket (n)">{icon("plus")} New ticket</a>'
             if user is not None and not requester else "")

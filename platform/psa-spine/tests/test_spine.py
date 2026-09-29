@@ -8993,6 +8993,14 @@ class SqlServerDialectTest(unittest.TestCase):
         self.assertIn("Database=PMC_PSA", shown)
         self.assertEqual(db.describe("spine.db"), "spine.db")
 
+    def test_a_table_named_like_a_function_is_still_a_table_after_into(self):
+        # 052's quote table: INSERT INTO quote (...) is a table with a column list,
+        # not SQLite's quote() function; quote(x) anywhere else stays refused.
+        self.assertEqual(self.t("INSERT INTO quote (quote_id, name) VALUES (?, ?)"),
+                         "INSERT INTO quote (quote_id, name) VALUES (?, ?)")
+        with self.assertRaises(self.m.Refused):
+            self.t("SELECT quote(name) FROM quote")
+
     def test_limit_becomes_offset_fetch_and_needs_an_order_by(self):
         self.assertEqual(self.t("SELECT 1 FROM ticket WHERE parent_id = ? LIMIT 1"),
                          "SELECT 1 FROM ticket WHERE parent_id = ?  ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 1 ROWS ONLY")
@@ -10646,6 +10654,244 @@ class ApiScopesTest(unittest.TestCase):
                                                         (f"api:{self.phi_id}", "PHI", f"api read {self.other}")])
         finally:
             conn.close()
+
+
+class SalesTest(unittest.TestCase):
+    """052: opportunities and quotes. The pipeline, quote totals, the stage
+    moves and the agreement a win drafts; the FINANCE gate on the pages."""
+
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+
+    def setUp(self) -> None:
+        WebWSGITest.setUp(self)
+        self.addCleanup(self.tmp.cleanup)
+        self.at = datetime(2026, 9, 29, 10)
+        self.alice = self._cookie_for("alice")
+        self.root = self._cookie_for("root", is_sysadmin=True)
+
+    def _conn(self):
+        conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)
+        return conn
+
+    # ------------------------------------------------------------ engine
+
+    def test_an_opportunity_is_created_edited_and_moved_and_a_loss_says_why(self):
+        from psaspine import sales
+        conn = self._conn()
+        with self.assertRaises(sales.Refused):
+            sales.create(conn, name="", at=self.at, actor="alice")
+        with self.assertRaises(sales.Refused):
+            sales.create(conn, name="Won already", stage="WON", at=self.at, actor="alice")
+        with self.assertRaises(sales.Refused):
+            sales.create(conn, name="Bad company", entity_id="NOPE", at=self.at, actor="alice")
+        with self.assertRaises(sales.Refused):
+            sales.create(conn, name="Bad date", expected_on="soon", at=self.at, actor="alice")
+        with self.assertRaises(sales.Refused):
+            sales.create(conn, name="Bad odds", probability="140", at=self.at, actor="alice")
+        oid = sales.create(conn, name="Ward 3 endpoint refresh", entity_id="PMC", amount="250,000", currency="php",
+                           expected_on="2026-12-15", owner="alice", at=self.at, actor="alice")
+        self.assertEqual(oid, "OPP-0001")
+        o = sales.get(conn, oid)
+        self.assertEqual((o["stage"], o["probability"], o["amount"], o["currency"], o["entity_name"]),
+                         ("LEAD", 10, 250000.0, "PHP", "Premiere Medical Center Nueva Ecija"))
+        self.assertEqual(sales.update(conn, oid, at=self.at, actor="alice", name="Ward 3 endpoint refresh"), [])
+        self.assertEqual(sales.update(conn, oid, at=self.at, actor="alice", probability="25", owner="bob"),
+                         ["probability 10 -> 25", "owner alice -> bob"])
+        self.assertIsNone(sales.move(conn, oid, "QUALIFIED", at=self.at, actor="alice"))
+        self.assertEqual(sales.get(conn, oid)["probability"], 40)                     # the stage's default odds
+        with self.assertRaises(sales.Refused):
+            sales.move(conn, oid, "LOST", at=self.at, actor="alice")                  # a loss says why
+        with self.assertRaises(sales.Refused):
+            sales.move(conn, oid, "SIDEWAYS", at=self.at, actor="alice")
+        self.assertIsNone(sales.move(conn, oid, "LOST", at=self.at, actor="alice", reason="Budget deferred to 2027"))
+        o = sales.get(conn, oid)
+        self.assertEqual((o["stage"], o["probability"], o["lost_reason"]), ("LOST", 0, "Budget deferred to 2027"))
+        self.assertIsNotNone(o["closed_at"])
+        with self.assertRaises(sales.Refused):
+            sales.update(conn, oid, at=self.at, actor="alice", name="Reopened")        # closed stays closed
+        with self.assertRaises(sales.Refused):
+            sales.move(conn, oid, "LEAD", at=self.at, actor="alice")
+        with self.assertRaises(sales.Refused):
+            sales.create_quote(conn, oid, name="Too late", at=self.at, actor="alice")
+        trail = [r["detail"] for r in conn.execute(
+            "SELECT detail FROM audit_event WHERE action = 'SALES' AND subject_id = ? ORDER BY audit_id", (oid,))]
+        self.assertEqual(trail[0], "created (Lead): Ward 3 endpoint refresh")
+        self.assertIn("lost: Budget deferred to 2027", trail)
+
+    def test_a_quote_totals_its_lines_with_tax_and_moves_the_opportunity_as_it_goes(self):
+        from psaspine import agreements, sales
+        conn = self._conn()
+        oid = sales.create(conn, name="Radiology workstation", entity_id="PMC", amount="100000", at=self.at, actor="alice")
+        with self.assertRaises(sales.Refused):
+            sales.create_quote(conn, oid, name="", at=self.at, actor="alice")
+        with self.assertRaises(sales.Refused):
+            sales.create_quote(conn, oid, name="Over", tax_percent="120", at=self.at, actor="alice")
+        qid = sales.create_quote(conn, oid, name="Option A", valid_until="2026-10-31", tax_percent="12", at=self.at, actor="alice")
+        self.assertEqual(qid, "Q-0001")
+        with self.assertRaises(sales.Refused):
+            sales.set_quote_status(conn, qid, "SENT", at=self.at, actor="alice")           # no lines, not sent
+        with self.assertRaises(sales.Refused):
+            sales.add_line(conn, qid, description="", quantity="1", unit_price="10", at=self.at, actor="alice")
+        with self.assertRaises(sales.Refused):
+            sales.add_line(conn, qid, description="Zero", quantity="0", unit_price="10", at=self.at, actor="alice")
+        with self.assertRaises(sales.Refused):
+            sales.add_line(conn, qid, description="Negative", quantity="1", unit_price="-5", at=self.at, actor="alice")
+        with self.assertRaises(sales.Refused):
+            sales.add_line(conn, qid, description="Words", quantity="two", unit_price="5", at=self.at, actor="alice")
+        l1 = sales.add_line(conn, qid, description="Workstation, 32 GB", quantity="2", unit_price="60,000", at=self.at, actor="alice")
+        sales.add_line(conn, qid, description="Monitor, 27in medical", quantity="2", unit_price="25000", at=self.at, actor="alice")
+        l3 = sales.add_line(conn, qid, description="Install and migrate", quantity="1.5", unit_price="4000", at=self.at, actor="alice")
+        q = sales.quote(conn, qid)
+        self.assertEqual((q["subtotal"], q["total"]), (176000.0, 197120.0))                # 176,000 × 1.12
+        self.assertTrue(sales.remove_line(conn, qid, l3, at=self.at, actor="alice"))
+        self.assertFalse(sales.remove_line(conn, qid, 9999, at=self.at, actor="alice"))
+        q = sales.quote(conn, qid)
+        self.assertEqual((q["subtotal"], q["total"]), (170000.0, 190400.0))
+        self.assertEqual([r["line_id"] for r in sales.lines(conn, qid)][0], l1)
+        with self.assertRaises(sales.Refused):
+            sales.set_quote_status(conn, qid, "ACCEPTED", at=self.at, actor="alice")       # a draft is sent first
+        self.assertEqual(sales.set_quote_status(conn, qid, "SENT", at=self.at, actor="alice"), "SENT")
+        self.assertEqual(sales.get(conn, oid)["stage"], "PROPOSAL")                        # sending moves a lead on
+        with self.assertRaises(sales.Refused):
+            sales.add_line(conn, qid, description="Late", quantity="1", unit_price="1", at=self.at, actor="alice")   # sent: frozen
+        self.assertEqual(sales.set_quote_status(conn, qid, "DRAFT", at=self.at, actor="alice"), "DRAFT")           # unless withdrawn
+        self.assertEqual(sales.set_quote_status(conn, qid, "SENT", at=self.at, actor="alice"), "SENT")
+        self.assertEqual(sales.set_quote_status(conn, qid, "ACCEPTED", at=self.at, actor="alice"), "ACCEPTED")
+        self.assertEqual(sales.get(conn, oid)["amount"], 190400.0)                          # the opportunity is worth the quote
+        with self.assertRaises(sales.Refused):
+            sales.set_quote_status(conn, qid, "DECLINED", at=self.at, actor="alice")       # decided is decided
+        aid = sales.move(conn, oid, "WON", at=self.at, actor="alice")
+        self.assertEqual(aid, "AGR-0001")
+        a = agreements.get(conn, aid)
+        self.assertEqual((a["name"], a["party"], a["amount"], a["currency"], a["status"]),
+                         ("Radiology workstation", "Premiere Medical Center Nueva Ecija", 190400.0, "PHP", "DRAFT"))
+        self.assertIn("quote Q-0001", a["notes"])
+        o = sales.get(conn, oid)
+        self.assertEqual((o["stage"], o["probability"], o["agreement_id"], o["agreement_name"]),
+                         ("WON", 100, aid, "Radiology workstation"))
+        # a win with no accepted quote takes the amount
+        oid2 = sales.create(conn, name="Spare parts retainer", amount="36000", currency="PHP", at=self.at, actor="alice")
+        aid2 = sales.move(conn, oid2, "WON", at=self.at, actor="alice")
+        self.assertEqual(agreements.get(conn, aid2)["amount"], 36000.0)
+
+    def test_the_pipeline_counts_and_weights_by_stage_and_the_list_filters(self):
+        from psaspine import sales
+        conn = self._conn()
+        a = sales.create(conn, name="Alpha", amount="1000", at=self.at, actor="alice")
+        b = sales.create(conn, name="Beta", amount="2000", stage="QUALIFIED", owner="bob", at=self.at, actor="alice")
+        c = sales.create(conn, name="Gamma", amount="3000", stage="PROPOSAL", at=self.at, actor="alice")
+        sales.move(conn, c, "LOST", reason="Went elsewhere", at=self.at, actor="alice")
+        by = {p["stage"]: p for p in sales.pipeline(conn)}
+        self.assertEqual([p["stage"] for p in sales.pipeline(conn)], ["LEAD", "QUALIFIED", "PROPOSAL", "WON", "LOST"])
+        self.assertEqual((by["LEAD"]["count"], by["LEAD"]["amount"], by["LEAD"]["weighted"]), (1, 1000.0, 100.0))
+        self.assertEqual((by["QUALIFIED"]["count"], by["QUALIFIED"]["weighted"]), (1, 800.0))
+        self.assertEqual((by["PROPOSAL"]["count"], by["WON"]["count"], by["LOST"]["count"]), (0, 0, 1))
+        self.assertEqual([r["opportunity_id"] for r in sales.all_(conn, stage="OPEN")], [a, b])
+        self.assertEqual([r["opportunity_id"] for r in sales.all_(conn)], [a, b, c])       # lost sorts last
+        self.assertEqual([r["opportunity_id"] for r in sales.all_(conn, stage="LOST")], [c])
+        self.assertEqual([r["opportunity_id"] for r in sales.all_(conn, q="bet")], [b])
+        self.assertEqual([r["opportunity_id"] for r in sales.all_(conn, owner="BOB")], [b])
+
+    # ------------------------------------------------------------ web
+
+    def test_sales_pages_are_gated_by_finance_and_write_is_needed_to_change(self):
+        from psaspine import sales, security
+        conn = self._conn()
+        oid = sales.create(conn, name="Ward 3 endpoint refresh", entity_id="PMC", amount="250000", at=self.at, actor="alice")
+        conn.commit()
+        # Technician: FINANCE READ. Sees, cannot change.
+        status, _, page = self._call("GET", "/sales", cookie=self.alice)
+        self.assertTrue(status.startswith("200"), status)
+        self.assertIn("<h1>Sales</h1>", page)
+        self.assertIn("Ward 3 endpoint refresh", page)
+        self.assertNotIn("New opportunity", page)
+        self.assertIn('href="/sales"', page)                                                  # the nav shows it
+        status, _, page = self._call("GET", f"/sales/{oid}", cookie=self.alice)
+        self.assertTrue(status.startswith("200"), status)
+        self.assertNotIn("/stage", page)
+        status, _, _ = self._call("POST", "/sales/new", cookie=self.alice, form={"name": "Nope"})
+        self.assertTrue(status.startswith("403"), status)
+        status, _, _ = self._call("POST", f"/sales/{oid}/stage", cookie=self.alice, form={"stage": "WON"})
+        self.assertTrue(status.startswith("403"), status)
+        # A requester has no finance at all; a stranger to the record gets 404.
+        status, _, _ = self._call("GET", "/sales", cookie=self._cookie_for("nurse"))
+        self.assertTrue(status.startswith("403"), status)
+        status, _, _ = self._call("GET", "/sales/OPP-9999", cookie=self.alice)
+        self.assertTrue(status.startswith("404"), status)
+        status, _, _ = self._call("GET", "/quote/Q-9999", cookie=self.alice)
+        self.assertTrue(status.startswith("404"), status)
+        security.assign(conn, "alice", "READ_ONLY", at=self.at, actor="root")
+        conn.commit()
+        status, _, _ = self._call("GET", "/sales", cookie=self.alice)
+        self.assertTrue(status.startswith("403"), status)
+        _, _, board = self._call("GET", "/", cookie=self.alice)
+        self.assertNotIn('href="/sales"', board)
+
+    def test_a_service_manager_runs_an_opportunity_to_a_won_agreement_from_the_desk(self):
+        from psaspine import security
+        conn = self._conn()
+        security.ensure_roles(conn)
+        security.assign(conn, "alice", "SERVICE_MANAGER", at=self.at, actor="root")
+        conn.commit()
+        _, h, _ = self._call("POST", "/sales/new", cookie=self.alice, form={"name": "", "amount": "1"})
+        self.assertIn("err=An+opportunity+needs+a+name", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/sales/new", cookie=self.alice,
+                             form={"name": "Ward 3 endpoint refresh", "entity_id": "PMC", "amount": "250000",
+                                   "currency": "PHP", "expected_on": "2026-12-15", "owner": "alice", "notes": "24 endpoints"})
+        self.assertEqual(dict(h)["Location"], "/sales/OPP-0001?msg=OPP-0001+created.")
+        _, _, page = self._call("GET", "/sales/OPP-0001", cookie=self.alice, query="msg=OPP-0001+created.")
+        self.assertIn("OPP-0001 created.", page)
+        self.assertIn("Premiere Medical Center Nueva Ecija", page)
+        self.assertIn("action='/sales/OPP-0001/update'", page)
+        self.assertIn("<input name=amount inputmode=decimal value='250000'>", page)              # never 2.5e+05
+        self.assertIn("value=WON", page)
+        _, h, _ = self._call("POST", "/sales/OPP-0001/update", cookie=self.alice,
+                             form={"name": "Ward 3 endpoint refresh", "entity_id": "PMC", "probability": "30", "amount": "250000",
+                                   "currency": "PHP", "expected_on": "2026-12-15", "owner": "alice", "notes": "24 endpoints"})
+        self.assertIn("msg=Saved.", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/sales/OPP-0001/stage", cookie=self.alice, form={"stage": "LOST", "reason": ""})
+        self.assertIn("err=A+lost+opportunity+says+why", dict(h)["Location"])
+        # a quote, its lines, sent and accepted
+        _, h, _ = self._call("POST", "/sales/OPP-0001/quote", cookie=self.alice,
+                             form={"name": "Option A", "valid_until": "2026-10-31", "tax_percent": "12"})
+        self.assertTrue(dict(h)["Location"].startswith("/quote/Q-0001?msg="), dict(h)["Location"])
+        _, h, _ = self._call("POST", "/quote/Q-0001/status", cookie=self.alice, form={"status": "SENT"})
+        self.assertIn("err=A+quote+with+no+lines+is+not+sent", dict(h)["Location"])
+        self._call("POST", "/quote/Q-0001/line", cookie=self.alice,
+                   form={"description": "Endpoint, 14in, 16 GB", "quantity": "24", "unit_price": "45000"})
+        _, h, _ = self._call("POST", "/quote/Q-0001/line", cookie=self.alice,
+                             form={"description": "Deploy", "quantity": "x", "unit_price": "1"})
+        self.assertIn("err=Quantity+is+a+number", dict(h)["Location"])
+        _, _, page = self._call("GET", "/quote/Q-0001", cookie=self.alice)
+        self.assertIn("Endpoint, 14in, 16 GB", page)
+        self.assertIn("PHP 1,080,000.00", page)                                                 # subtotal
+        self.assertIn("PHP 1,209,600.00", page)                                                 # total with 12% tax
+        self.assertIn("action='/quote/Q-0001/line/remove'", page)
+        _, h, _ = self._call("POST", "/quote/Q-0001/status", cookie=self.alice, form={"status": "SENT"})
+        self.assertIn("msg=Q-0001+is+sent.", dict(h)["Location"])
+        _, _, page = self._call("GET", "/quote/Q-0001", cookie=self.alice)
+        self.assertNotIn("action='/quote/Q-0001/line/remove'", page)                           # sent: frozen
+        self.assertIn("value=ACCEPTED", page)
+        self._call("POST", "/quote/Q-0001/status", cookie=self.alice, form={"status": "ACCEPTED"})
+        _, _, page = self._call("GET", "/sales", cookie=self.alice)
+        self.assertIn("Proposal sent", page)
+        self.assertIn("PHP 1,209,600.00", page)                                                 # the pipeline is worth the quote
+        _, h, _ = self._call("POST", "/sales/OPP-0001/stage", cookie=self.alice, form={"stage": "WON"})
+        loc = dict(h)["Location"]
+        self.assertTrue(loc.startswith("/agreement/AGR-0001?msg=OPP-0001+won."), loc)
+        _, _, page = self._call("GET", "/agreement/AGR-0001", cookie=self.alice)
+        self.assertIn("Ward 3 endpoint refresh", page)
+        self.assertIn("PHP 1,209,600.00", page)
+        _, _, page = self._call("GET", "/sales/OPP-0001", cookie=self.alice)
+        self.assertIn("href='/agreement/AGR-0001'", page)
+        self.assertNotIn("action='/sales/OPP-0001/update'", page)                             # won: read-only
+        _, _, page = self._call("GET", "/sales", cookie=self.alice, query="stage=WON")
+        self.assertIn("OPP-0001", page)
+        _, _, page = self._call("GET", "/sales", cookie=self.alice, query="stage=OPEN")
+        self.assertIn("No opportunity here.", page)
 
 
 if __name__ == "__main__":

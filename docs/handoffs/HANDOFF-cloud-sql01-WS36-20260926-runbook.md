@@ -865,12 +865,35 @@ sitting-1 road** (`init` is safe to run again; nothing is seeded).
   `--scope READ` answers `GET /api/v1/tickets` with the board's open
   tickets; the same call with the old monitoring token answers 403 naming
   the scope; nothing else on the host changes.
-- **Counts:** 580 tests at this head, SQLite OK (1 skipped). The whole suite
+- **Schema 052, later the same day: `opportunity`, `quote`, `quote_line`.**
+  Sales (`/sales`): the pipeline Dada IT proposes from, Lead → Qualified →
+  Proposal sent → Won or Lost, quotes with computed totals under each, and a
+  win that drafts the agreement (045) from the accepted quote. Gated by the
+  Finance level, as agreements are. **Pass after 046 to 052 and the token
+  scope:** tables **101 → 113**, columns **946 → 1122** (052 adds 49: 40
+  declared and 9 parsed dates), indexes **37 → 47** (`ix_opportunity_stage`,
+  `ix_quote_opportunity`, `ix_quote_line_quote` added), triggers 4 → 4, no
+  existing row count changed (MEASURED on the test container at this head
+  after `init --reset` on a spare database: 113 tables, 1122 columns, 47
+  CREATE INDEX, 4 triggers). **Pass, for Dada:** Sales is in the top bar for
+  anyone with Finance; a Service manager creates an opportunity, drafts a
+  quote, adds a line, marks it sent (the opportunity reads *Proposal sent*),
+  accepts it, presses *Won*, and lands on a draft agreement carrying the
+  quote's total; a Technician sees all of it with no form on it. **One
+  adapter fix rode with it:** the SQL Server adapter read `INSERT INTO
+  quote (` as a call to SQLite's `quote()` function and refused it (two
+  errors on the first run, MEASURED); a word after `INTO` is now a table
+  whatever it is called, and a dialect test holds that.
+- **Counts:** 586 tests at this head, SQLite OK (1 skipped). The whole suite
   ran on SQL Server in this container against the port three times today:
   with 046 to 049, 569 run, OK, 2 skipped, 13.5 minutes; with 046 to 050,
   575 run, OK, 2 skipped, 13.8 minutes; with 046 to 051 and the token
-  scope, 580 run, OK, 2 skipped, 14.3 minutes (all MEASURED, 29 Sep). The
-  drift gate passes; CI runs 67 and 68 are green on the pushed heads.
+  scope, 580 run, OK, 2 skipped, 14.3 minutes; and with 052 as well,
+  586 run, OK, 2 skipped, 14.1 minutes, after a first run whose only two
+  errors were the adapter refusal above (all MEASURED, 29 Sep). The drift gate passes; CI runs
+  67 and 68 are green on the pushed heads (the later heads' CI could not be
+  dispatched from this session, its GitHub connection having dropped; the
+  next push runs it).
 
 ## When a step does not pass
 

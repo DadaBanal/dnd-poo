@@ -140,6 +140,34 @@
   "member_capacity.hours_per_week": {
    "sql": "DECIMAL(9,2)",
    "why": "Hours a week a person records against, the denominator of the team's own utilisation figure; a half hour is exact in DECIMAL."
+  },
+  "opportunity.amount": {
+   "sql": "DECIMAL(19,4)",
+   "why": "Money on a quote or an opportunity: a proposal's number is compared with an invoice's, and FLOAT cannot hold a cent exactly."
+  },
+  "quote.subtotal": {
+   "sql": "DECIMAL(19,4)",
+   "why": "Money on a quote or an opportunity: a proposal's number is compared with an invoice's, and FLOAT cannot hold a cent exactly."
+  },
+  "quote.total": {
+   "sql": "DECIMAL(19,4)",
+   "why": "Money on a quote or an opportunity: a proposal's number is compared with an invoice's, and FLOAT cannot hold a cent exactly."
+  },
+  "quote_line.unit_price": {
+   "sql": "DECIMAL(19,4)",
+   "why": "Money on a quote or an opportunity: a proposal's number is compared with an invoice's, and FLOAT cannot hold a cent exactly."
+  },
+  "quote_line.line_total": {
+   "sql": "DECIMAL(19,4)",
+   "why": "Money on a quote or an opportunity: a proposal's number is compared with an invoice's, and FLOAT cannot hold a cent exactly."
+  },
+  "quote.tax_percent": {
+   "sql": "DECIMAL(5,2)",
+   "why": "A VAT rate: 12.00, exact."
+  },
+  "quote_line.quantity": {
+   "sql": "DECIMAL(12,3)",
+   "why": "A count or a length; 0.5 of a day is exact in DECIMAL and not in binary FLOAT."
   }
  },
  "columns": {
@@ -918,6 +946,36 @@
   "kb_file.reviewed_at": "TIMESTAMP_TEXT",
   "kb_file.removed_at": "TIMESTAMP_TEXT",
   "kb_file.removed_by": "PERSON",
-  "api_token.scope": "CODE"
+  "api_token.scope": "CODE",
+  "opportunity.opportunity_id": "ID",
+  "opportunity.name": "NAME",
+  "opportunity.entity_id": "ID",
+  "opportunity.contact_id": "ID",
+  "opportunity.stage": "CODE",
+  "opportunity.expected_on": "DATE_TEXT",
+  "opportunity.currency": "CODE",
+  "opportunity.owner": "PERSON",
+  "opportunity.notes": "FREE",
+  "opportunity.agreement_id": "ID",
+  "opportunity.lost_reason": "NAME",
+  "opportunity.closed_at": "TIMESTAMP_TEXT",
+  "opportunity.created_at": "TIMESTAMP_TEXT",
+  "opportunity.created_by": "PERSON",
+  "opportunity.updated_at": "TIMESTAMP_TEXT",
+  "opportunity.updated_by": "PERSON",
+  "quote.quote_id": "ID",
+  "quote.opportunity_id": "ID",
+  "quote.name": "NAME",
+  "quote.status": "CODE",
+  "quote.valid_until": "DATE_TEXT",
+  "quote.note": "FREE",
+  "quote.sent_at": "TIMESTAMP_TEXT",
+  "quote.decided_at": "TIMESTAMP_TEXT",
+  "quote.created_at": "TIMESTAMP_TEXT",
+  "quote.created_by": "PERSON",
+  "quote.updated_at": "TIMESTAMP_TEXT",
+  "quote.updated_by": "PERSON",
+  "quote_line.quote_id": "ID",
+  "quote_line.description": "NAME"
  }
 }

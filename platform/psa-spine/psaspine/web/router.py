@@ -15,6 +15,7 @@ from .views import approvals as approvals_view
 from .views import paging as paging_view
 from .views import agreements as agreements_view
 from .views import finance as finance_view
+from .views import sales as sales_view
 from .views import kb as kb_view
 from .views import projects as projects_view
 from .views import reportwriter as rw_view
@@ -104,6 +105,16 @@ ROUTES = [
     ("POST", "/agreement/<agreement_id>/status", agreements_view.set_status),
     ("POST", "/agreement/<agreement_id>/item", agreements_view.item_add),
     ("POST", "/agreement/<agreement_id>/item/remove", agreements_view.item_remove),
+    ("GET", "/sales", sales_view.index),                                # ?stage=OPEN|ALL|<stage>&q=
+    ("POST", "/sales/new", sales_view.create),
+    ("GET", "/sales/<opportunity_id>", sales_view.detail),
+    ("POST", "/sales/<opportunity_id>/update", sales_view.update),
+    ("POST", "/sales/<opportunity_id>/stage", sales_view.stage),
+    ("POST", "/sales/<opportunity_id>/quote", sales_view.new_quote),
+    ("GET", "/quote/<quote_id>", sales_view.quote_detail),
+    ("POST", "/quote/<quote_id>/line", sales_view.line_add),
+    ("POST", "/quote/<quote_id>/line/remove", sales_view.line_remove),
+    ("POST", "/quote/<quote_id>/status", sales_view.quote_status),
     ("GET", "/projects", projects_view.index),
     ("POST", "/projects/new", projects_view.create),
     ("GET", "/project/<project_id>", projects_view.detail),

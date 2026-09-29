@@ -340,7 +340,10 @@ def translate(sql: str) -> Plan:
             u = t.upper()
             low = t.lower()
             nxt = next((toks[j] for j in range(i + 1, len(toks)) if not _is_space(toks[j])), "")
-            if nxt == "(" and low in _FUNCTIONS:
+            prev = next((toks[j].upper() for j in range(i - 1, -1, -1) if not _is_space(toks[j])), "")
+            if nxt == "(" and prev == "INTO":
+                out.append(t)          # INSERT INTO quote (...): a table, whatever its name, never a function call
+            elif nxt == "(" and low in _FUNCTIONS:
                 out.append(_FUNCTIONS[low])
             elif nxt == "(" and low in _REFUSED_FUNCTIONS:
                 raise Refused(f"{t}() has no port decided: {sql.strip()[:80]}")

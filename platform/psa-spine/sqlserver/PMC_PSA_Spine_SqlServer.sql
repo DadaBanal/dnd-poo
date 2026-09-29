@@ -208,6 +208,9 @@ BEGIN
     PRINT N'    psa.channel_target';
     PRINT N'    psa.page';
     PRINT N'    psa.kb_file';
+    PRINT N'    psa.opportunity';
+    PRINT N'    psa.quote';
+    PRINT N'    psa.quote_line';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -253,13 +256,16 @@ BEGIN
     PRINT N'    psa.ix_approval_approver';
     PRINT N'    psa.ix_page_open';
     PRINT N'    psa.ix_kb_file_article';
+    PRINT N'    psa.ix_opportunity_stage';
+    PRINT N'    psa.ix_quote_opportunity';
+    PRINT N'    psa.ix_quote_line_quote';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  110 tables, 44 indexes, 4 triggers.';
+    PRINT N'  113 tables, 47 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -2896,6 +2902,91 @@ CREATE TABLE psa.[kb_file] (
 END;
 
 -- --------------------------------------------------------------------------
+-- opportunity   (from schema/052_sales.sql)
+IF OBJECT_ID(N'psa.[opportunity]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[opportunity] (
+    -- 'OPP-0001'
+    [opportunity_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_opportunity] PRIMARY KEY,
+    [name] NVARCHAR(400) NOT NULL,
+    [entity_id] NVARCHAR(64) NULL CONSTRAINT [FK_opportunity_entity_id] REFERENCES psa.[entity]([entity_id]),
+    [contact_id] NVARCHAR(64) NULL CONSTRAINT [FK_opportunity_contact_id] REFERENCES psa.[contact]([contact_id]),
+    [stage] NVARCHAR(32) NOT NULL CONSTRAINT [DF_opportunity_stage] DEFAULT ('LEAD') CONSTRAINT [CK_opportunity_01] CHECK (stage IN ('LEAD', 'QUALIFIED', 'PROPOSAL', 'WON', 'LOST')),
+    [probability] INT NOT NULL CONSTRAINT [DF_opportunity_probability] DEFAULT (10) CONSTRAINT [CK_opportunity_02] CHECK (probability BETWEEN 0 AND 100),
+
+    -- expected close, a day
+    [expected_on] NVARCHAR(32) NULL,
+    [amount] DECIMAL(19,4) NULL,
+    [currency] NVARCHAR(32) NULL,
+    [owner] NVARCHAR(200) NULL,
+    [notes] NVARCHAR(MAX) NULL,
+
+    -- once won
+    [agreement_id] NVARCHAR(64) NULL CONSTRAINT [FK_opportunity_agreement_id] REFERENCES psa.[agreement]([agreement_id]),
+    [lost_reason] NVARCHAR(400) NULL,
+    [closed_at] NVARCHAR(64) NULL,
+    [created_at] NVARCHAR(64) NOT NULL,
+    [created_by] NVARCHAR(200) NOT NULL,
+    [updated_at] NVARCHAR(64) NOT NULL,
+    [updated_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [expected_on_parsed] AS (CASE WHEN [expected_on] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [expected_on], 112) WHEN [expected_on] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [expected_on], 23) END),
+    [closed_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [closed_at], 126), CASE WHEN [closed_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [closed_at], 112) END)),
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END)),
+    [updated_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [updated_at], 126), CASE WHEN [updated_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [updated_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- quote   (from schema/052_sales.sql)
+IF OBJECT_ID(N'psa.[quote]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[quote] (
+    -- 'Q-0001'
+    [quote_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_quote] PRIMARY KEY,
+    [opportunity_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_quote_opportunity_id] REFERENCES psa.[opportunity]([opportunity_id]),
+    [name] NVARCHAR(400) NOT NULL,
+    [status] NVARCHAR(32) NOT NULL CONSTRAINT [DF_quote_status] DEFAULT ('DRAFT') CONSTRAINT [CK_quote_01] CHECK (status IN ('DRAFT', 'SENT', 'ACCEPTED', 'DECLINED', 'EXPIRED')),
+    [valid_until] NVARCHAR(32) NULL,
+    [tax_percent] DECIMAL(5,2) NOT NULL CONSTRAINT [DF_quote_tax_percent] DEFAULT (0) CONSTRAINT [CK_quote_02] CHECK (tax_percent BETWEEN 0 AND 100),
+    [subtotal] DECIMAL(19,4) NOT NULL CONSTRAINT [DF_quote_subtotal] DEFAULT (0),
+    [total] DECIMAL(19,4) NOT NULL CONSTRAINT [DF_quote_total] DEFAULT (0),
+    [note] NVARCHAR(MAX) NULL,
+    [sent_at] NVARCHAR(64) NULL,
+    [decided_at] NVARCHAR(64) NULL,
+    [created_at] NVARCHAR(64) NOT NULL,
+    [created_by] NVARCHAR(200) NOT NULL,
+    [updated_at] NVARCHAR(64) NOT NULL,
+    [updated_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [valid_until_parsed] AS (CASE WHEN [valid_until] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [valid_until], 112) WHEN [valid_until] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [valid_until], 23) END),
+    [sent_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [sent_at], 126), CASE WHEN [sent_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [sent_at], 112) END)),
+    [decided_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [decided_at], 126), CASE WHEN [decided_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [decided_at], 112) END)),
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END)),
+    [updated_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [updated_at], 126), CASE WHEN [updated_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [updated_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- quote_line   (from schema/052_sales.sql)
+IF OBJECT_ID(N'psa.[quote_line]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[quote_line] (
+    [line_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_quote_line] PRIMARY KEY,
+    [quote_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_quote_line_quote_id] REFERENCES psa.[quote]([quote_id]),
+    [sort_order] INT NOT NULL CONSTRAINT [DF_quote_line_sort_order] DEFAULT (0),
+    [description] NVARCHAR(400) NOT NULL,
+    [quantity] DECIMAL(12,3) NOT NULL CONSTRAINT [CK_quote_line_01] CHECK (quantity > 0),
+    [unit_price] DECIMAL(19,4) NOT NULL CONSTRAINT [CK_quote_line_02] CHECK (unit_price >= 0),
+    [line_total] DECIMAL(19,4) NOT NULL
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -3387,6 +3478,15 @@ CREATE INDEX [ix_page_open] ON psa.[page] ([status], [work_item_id]);
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_kb_file_article' AND object_id = OBJECT_ID(N'psa.[kb_file]'))
 CREATE INDEX [ix_kb_file_article] ON psa.[kb_file] ([article_id]);
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_opportunity_stage' AND object_id = OBJECT_ID(N'psa.[opportunity]'))
+CREATE INDEX [ix_opportunity_stage] ON psa.[opportunity] ([stage], [expected_on]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_quote_opportunity' AND object_id = OBJECT_ID(N'psa.[quote]'))
+CREATE INDEX [ix_quote_opportunity] ON psa.[quote] ([opportunity_id]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_quote_line_quote' AND object_id = OBJECT_ID(N'psa.[quote_line]'))
+CREATE INDEX [ix_quote_line_quote] ON psa.[quote_line] ([quote_id]);
+
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
@@ -3522,10 +3622,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 110 OR @Triggers <> 4 OR @Indexes < 44
+IF @Tables <> 113 OR @Triggers <> 4 OR @Indexes < 47
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 110), %d triggers (expected 4), %d indexes (expected at least 44). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 113), %d triggers (expected 4), %d indexes (expected at least 47). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -3576,6 +3676,9 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[quote_line];
+    DROP TABLE IF EXISTS psa.[quote];
+    DROP TABLE IF EXISTS psa.[opportunity];
     DROP TABLE IF EXISTS psa.[kb_file];
     DROP TABLE IF EXISTS psa.[page];
     DROP TABLE IF EXISTS psa.[channel_target];
