@@ -171,6 +171,25 @@ BEGIN
     PRINT N'    psa.schedule_status';
     PRINT N'    psa.service_location';
     PRINT N'    psa.schedule_block';
+    PRINT N'    psa.kb_article';
+    PRINT N'    psa.kb_revision';
+    PRINT N'    psa.kb_ticket';
+    PRINT N'    psa.security_role';
+    PRINT N'    psa.role_permission';
+    PRINT N'    psa.member_role';
+    PRINT N'    psa.project';
+    PRINT N'    psa.project_phase';
+    PRINT N'    psa.phase_dependency';
+    PRINT N'    psa.project_ticket';
+    PRINT N'    psa.report_def';
+    PRINT N'    psa.ext_source';
+    PRINT N'    psa.ext_agreement';
+    PRINT N'    psa.ext_product';
+    PRINT N'    psa.ext_purchase_order';
+    PRINT N'    psa.ext_invoice';
+    PRINT N'    psa.ext_link';
+    PRINT N'    psa.ext_po_line';
+    PRINT N'    psa.ext_change';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -201,13 +220,18 @@ BEGIN
     PRINT N'    psa.ix_department_board_board';
     PRINT N'    psa.ix_schedule_block_day';
     PRINT N'    psa.ix_schedule_block_member';
+    PRINT N'    psa.ix_project_phase_project';
+    PRINT N'    psa.ix_project_ticket_project';
+    PRINT N'    psa.ix_ext_link_ref';
+    PRINT N'    psa.ix_ext_po_line_po';
+    PRINT N'    psa.ix_ext_change_ref';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  80 tables, 29 indexes, 4 triggers.';
+    PRINT N'  99 tables, 34 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -2145,6 +2169,406 @@ CREATE TABLE psa.[schedule_block] (
 END;
 
 -- --------------------------------------------------------------------------
+-- kb_article   (from schema/039_knowledge.sql)
+IF OBJECT_ID(N'psa.[kb_article]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[kb_article] (
+    -- 'KB-0001'
+    [article_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_kb_article] PRIMARY KEY,
+    [title] NVARCHAR(400) NOT NULL,
+    [body] NVARCHAR(MAX) NOT NULL,
+    [audience] NVARCHAR(32) NOT NULL CONSTRAINT [DF_kb_article_audience] DEFAULT ('INTERNAL') CONSTRAINT [CK_kb_article_01] CHECK (audience IN ('INTERNAL', 'REQUESTER')),
+    [status] NVARCHAR(32) NOT NULL CONSTRAINT [DF_kb_article_status] DEFAULT ('DRAFT') CONSTRAINT [CK_kb_article_02] CHECK (status IN ('DRAFT', 'PUBLISHED', 'RETIRED')),
+    [board_id] NVARCHAR(64) NULL CONSTRAINT [FK_kb_article_board_id] REFERENCES psa.[board]([board_id]),
+    [catalogue_item_id] NVARCHAR(64) NULL CONSTRAINT [FK_kb_article_catalogue_item_id] REFERENCES psa.[catalogue_item]([catalogue_item_id]),
+    [version] INT NOT NULL CONSTRAINT [DF_kb_article_version] DEFAULT (1),
+    [uses] INT NOT NULL CONSTRAINT [DF_kb_article_uses] DEFAULT (0),
+    [created_at] NVARCHAR(64) NOT NULL,
+    [created_by] NVARCHAR(200) NOT NULL,
+    [updated_at] NVARCHAR(64) NOT NULL,
+    [updated_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END)),
+    [updated_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [updated_at], 126), CASE WHEN [updated_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [updated_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- kb_revision   (from schema/039_knowledge.sql)
+IF OBJECT_ID(N'psa.[kb_revision]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[kb_revision] (
+    [article_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_kb_revision_article_id] REFERENCES psa.[kb_article]([article_id]),
+    [version] INT NOT NULL,
+    [title] NVARCHAR(400) NOT NULL,
+    [body] NVARCHAR(MAX) NOT NULL,
+    [saved_at] NVARCHAR(64) NOT NULL,
+    [saved_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [saved_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [saved_at], 126), CASE WHEN [saved_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [saved_at], 112) END)),
+    CONSTRAINT [PK_kb_revision] PRIMARY KEY ([article_id], [version])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- kb_ticket   (from schema/039_knowledge.sql)
+IF OBJECT_ID(N'psa.[kb_ticket]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[kb_ticket] (
+    [article_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_kb_ticket_article_id] REFERENCES psa.[kb_article]([article_id]),
+    [work_item_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_kb_ticket_work_item_id] REFERENCES psa.[ticket]([work_item_id]),
+    [linked_at] NVARCHAR(64) NOT NULL,
+    [linked_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [linked_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [linked_at], 126), CASE WHEN [linked_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [linked_at], 112) END)),
+    CONSTRAINT [PK_kb_ticket] PRIMARY KEY ([article_id], [work_item_id])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- security_role   (from schema/040_security_roles.sql)
+IF OBJECT_ID(N'psa.[security_role]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[security_role] (
+    [role_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_security_role] PRIMARY KEY,
+    [name] NVARCHAR(400) NOT NULL,
+    [is_default] INT NOT NULL CONSTRAINT [DF_security_role_is_default] DEFAULT (0) CONSTRAINT [CK_security_role_01] CHECK (is_default IN (0, 1)),
+    [inactive] INT NOT NULL CONSTRAINT [DF_security_role_inactive] DEFAULT (0) CONSTRAINT [CK_security_role_02] CHECK (inactive IN (0, 1))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- role_permission   (from schema/040_security_roles.sql)
+IF OBJECT_ID(N'psa.[role_permission]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[role_permission] (
+    [role_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_role_permission_role_id] REFERENCES psa.[security_role]([role_id]),
+    [module] NVARCHAR(32) NOT NULL CONSTRAINT [CK_role_permission_01] CHECK (module IN ('KNOWLEDGE', 'PROJECTS', 'REPORTS', 'SCHEDULE', 'FINANCE')),
+    [level] NVARCHAR(32) NOT NULL CONSTRAINT [CK_role_permission_02] CHECK (level IN ('NONE', 'READ', 'WRITE', 'ADMIN')),
+    CONSTRAINT [PK_role_permission] PRIMARY KEY ([role_id], [module])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- member_role   (from schema/040_security_roles.sql)
+IF OBJECT_ID(N'psa.[member_role]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[member_role] (
+    [member] NVARCHAR(200) NOT NULL CONSTRAINT [PK_member_role] PRIMARY KEY,
+    [role_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_member_role_role_id] REFERENCES psa.[security_role]([role_id]),
+    [assigned_at] NVARCHAR(64) NOT NULL,
+    [assigned_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [assigned_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [assigned_at], 126), CASE WHEN [assigned_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [assigned_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- project   (from schema/041_projects.sql)
+IF OBJECT_ID(N'psa.[project]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[project] (
+    -- 'PRJ-0001'
+    [project_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_project] PRIMARY KEY,
+    [name] NVARCHAR(400) NOT NULL,
+    [board_id] NVARCHAR(64) NULL CONSTRAINT [FK_project_board_id] REFERENCES psa.[board]([board_id]),
+    [manager] NVARCHAR(200) NULL,
+    [status] NVARCHAR(32) NOT NULL CONSTRAINT [DF_project_status] DEFAULT ('PLANNED') CONSTRAINT [CK_project_01] CHECK (status IN ('PLANNED', 'ACTIVE', 'ON_HOLD', 'DONE', 'CANCELLED')),
+    [starts_on] NVARCHAR(32) NULL,
+    [ends_on] NVARCHAR(32) NULL,
+    [budget_hours] DECIMAL(9,2) NULL,
+    [description] NVARCHAR(MAX) NULL,
+    [created_at] NVARCHAR(64) NOT NULL,
+    [created_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [starts_on_parsed] AS (CASE WHEN [starts_on] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [starts_on], 112) WHEN [starts_on] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [starts_on], 23) END),
+    [ends_on_parsed] AS (CASE WHEN [ends_on] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [ends_on], 112) WHEN [ends_on] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [ends_on], 23) END),
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- project_phase   (from schema/041_projects.sql)
+IF OBJECT_ID(N'psa.[project_phase]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[project_phase] (
+    [phase_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_project_phase] PRIMARY KEY,
+    [project_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_project_phase_project_id] REFERENCES psa.[project]([project_id]),
+    [parent_id] INT NULL CONSTRAINT [FK_project_phase_parent_id] REFERENCES psa.[project_phase]([phase_id]),
+    [name] NVARCHAR(400) NOT NULL,
+    [sort_order] INT NOT NULL CONSTRAINT [DF_project_phase_sort_order] DEFAULT (0),
+    [starts_on] NVARCHAR(32) NULL,
+    [ends_on] NVARCHAR(32) NULL,
+    [budget_hours] DECIMAL(9,2) NULL,
+    [status] NVARCHAR(32) NOT NULL CONSTRAINT [DF_project_phase_status] DEFAULT ('OPEN') CONSTRAINT [CK_project_phase_01] CHECK (status IN ('OPEN', 'DONE')),
+    [created_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [starts_on_parsed] AS (CASE WHEN [starts_on] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [starts_on], 112) WHEN [starts_on] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [starts_on], 23) END),
+    [ends_on_parsed] AS (CASE WHEN [ends_on] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [ends_on], 112) WHEN [ends_on] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [ends_on], 23) END),
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- phase_dependency   (from schema/041_projects.sql)
+IF OBJECT_ID(N'psa.[phase_dependency]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[phase_dependency] (
+    [phase_id] INT NOT NULL CONSTRAINT [FK_phase_dependency_phase_id] REFERENCES psa.[project_phase]([phase_id]),
+    [depends_on] INT NOT NULL CONSTRAINT [FK_phase_dependency_depends_on] REFERENCES psa.[project_phase]([phase_id]),
+    CONSTRAINT [PK_phase_dependency] PRIMARY KEY ([phase_id], [depends_on]),
+    CONSTRAINT [CK_phase_dependency_01] CHECK (phase_id <> depends_on)
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- project_ticket   (from schema/041_projects.sql)
+IF OBJECT_ID(N'psa.[project_ticket]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[project_ticket] (
+    [work_item_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_project_ticket] PRIMARY KEY CONSTRAINT [FK_project_ticket_work_item_id] REFERENCES psa.[ticket]([work_item_id]),
+    [project_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_project_ticket_project_id] REFERENCES psa.[project]([project_id]),
+    [phase_id] INT NULL CONSTRAINT [FK_project_ticket_phase_id] REFERENCES psa.[project_phase]([phase_id]),
+    [linked_at] NVARCHAR(64) NOT NULL,
+    [linked_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [linked_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [linked_at], 126), CASE WHEN [linked_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [linked_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- report_def   (from schema/042_report_defs.sql)
+IF OBJECT_ID(N'psa.[report_def]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[report_def] (
+    [report_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_report_def] PRIMARY KEY,
+    [name] NVARCHAR(400) NOT NULL,
+    [dataset] NVARCHAR(32) NOT NULL CONSTRAINT [CK_report_def_01] CHECK (dataset IN ('TICKETS', 'TIME', 'VISITS', 'PROJECTS', 'KNOWLEDGE')),
+    [columns] NVARCHAR(400) NOT NULL,
+    [group_by] NVARCHAR(64) NULL,
+    [filters] NVARCHAR(400) NULL,
+    [owner] NVARCHAR(200) NOT NULL,
+    [shared] INT NOT NULL CONSTRAINT [DF_report_def_shared] DEFAULT (0) CONSTRAINT [CK_report_def_02] CHECK (shared IN (0, 1)),
+    [pinned] INT NOT NULL CONSTRAINT [DF_report_def_pinned] DEFAULT (0) CONSTRAINT [CK_report_def_03] CHECK (pinned IN (0, 1)),
+    [created_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ext_source   (from schema/043_bizbox_mirror.sql)
+IF OBJECT_ID(N'psa.[ext_source]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_source] (
+    -- 'BIZBOX'
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_ext_source] PRIMARY KEY,
+    [name] NVARCHAR(400) NOT NULL,
+    [last_sync_at] NVARCHAR(64) NULL,
+    [last_sync_by] NVARCHAR(200) NULL,
+    [last_result] NVARCHAR(MAX) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [last_sync_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [last_sync_at], 126), CASE WHEN [last_sync_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [last_sync_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ext_agreement   (from schema/043_bizbox_mirror.sql)
+IF OBJECT_ID(N'psa.[ext_agreement]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_agreement] (
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_agreement_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [name] NVARCHAR(400) NOT NULL,
+    [party] NVARCHAR(400) NULL,
+    [starts_on] NVARCHAR(32) NULL,
+    [ends_on] NVARCHAR(32) NULL,
+    [status] NVARCHAR(32) NULL,
+    [amount] DECIMAL(19,4) NULL,
+    [currency] NVARCHAR(32) NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_ext_agreement_present] DEFAULT (1) CONSTRAINT [CK_ext_agreement_01] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [starts_on_parsed] AS (CASE WHEN [starts_on] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [starts_on], 112) WHEN [starts_on] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [starts_on], 23) END),
+    [ends_on_parsed] AS (CASE WHEN [ends_on] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [ends_on], 112) WHEN [ends_on] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [ends_on], 23) END),
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END)),
+    CONSTRAINT [PK_ext_agreement] PRIMARY KEY ([source_id], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ext_product   (from schema/043_bizbox_mirror.sql)
+IF OBJECT_ID(N'psa.[ext_product]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_product] (
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_product_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [name] NVARCHAR(400) NOT NULL,
+    [category] NVARCHAR(400) NULL,
+    [unit] NVARCHAR(32) NULL,
+    [unit_cost] DECIMAL(19,4) NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_ext_product_present] DEFAULT (1) CONSTRAINT [CK_ext_product_01] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END)),
+    CONSTRAINT [PK_ext_product] PRIMARY KEY ([source_id], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ext_purchase_order   (from schema/043_bizbox_mirror.sql)
+IF OBJECT_ID(N'psa.[ext_purchase_order]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_purchase_order] (
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_purchase_order_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [vendor] NVARCHAR(400) NULL,
+    [ordered_on] NVARCHAR(32) NULL,
+    [status] NVARCHAR(32) NULL,
+    [total] DECIMAL(19,4) NULL,
+    [currency] NVARCHAR(32) NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_ext_purchase_order_present] DEFAULT (1) CONSTRAINT [CK_ext_purchase_order_01] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [ordered_on_parsed] AS (CASE WHEN [ordered_on] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [ordered_on], 112) WHEN [ordered_on] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [ordered_on], 23) END),
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END)),
+    CONSTRAINT [PK_ext_purchase_order] PRIMARY KEY ([source_id], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ext_invoice   (from schema/043_bizbox_mirror.sql)
+IF OBJECT_ID(N'psa.[ext_invoice]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_invoice] (
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_invoice_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [party] NVARCHAR(400) NULL,
+    [invoiced_on] NVARCHAR(32) NULL,
+    [due_on] NVARCHAR(32) NULL,
+    [status] NVARCHAR(32) NULL,
+    [total] DECIMAL(19,4) NULL,
+    [currency] NVARCHAR(32) NULL,
+    [agreement_ref] NVARCHAR(400) NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_ext_invoice_present] DEFAULT (1) CONSTRAINT [CK_ext_invoice_01] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [invoiced_on_parsed] AS (CASE WHEN [invoiced_on] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [invoiced_on], 112) WHEN [invoiced_on] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [invoiced_on], 23) END),
+    [due_on_parsed] AS (CASE WHEN [due_on] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [due_on], 112) WHEN [due_on] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [due_on], 23) END),
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END)),
+    CONSTRAINT [PK_ext_invoice] PRIMARY KEY ([source_id], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ext_link   (from schema/043_bizbox_mirror.sql)
+-- A ticket or a project names the BizBox record it concerns: the PO a
+-- replacement printer was bought on, the agreement a vendor visit is under.
+IF OBJECT_ID(N'psa.[ext_link]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_link] (
+    [subject_kind] NVARCHAR(32) NOT NULL CONSTRAINT [CK_ext_link_01] CHECK (subject_kind IN ('TICKET', 'PROJECT')),
+    [subject_id] NVARCHAR(64) NOT NULL,
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_link_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [kind] NVARCHAR(32) NOT NULL CONSTRAINT [CK_ext_link_02] CHECK (kind IN ('AGREEMENT', 'PRODUCT', 'PURCHASE_ORDER', 'INVOICE')),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [linked_at] NVARCHAR(64) NOT NULL,
+    [linked_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [linked_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [linked_at], 126), CASE WHEN [linked_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [linked_at], 112) END)),
+    CONSTRAINT [PK_ext_link] PRIMARY KEY ([subject_kind], [subject_id], [source_id], [kind], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ext_po_line   (from schema/043_bizbox_mirror.sql)
+-- A purchase order's lines, as the reference PSA shows them under a PO: the
+-- item, its description, quantity ordered and received, and unit cost. Keyed
+-- by BizBox's own line reference; po_ref ties it to its order.
+IF OBJECT_ID(N'psa.[ext_po_line]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_po_line] (
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_po_line_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [po_ref] NVARCHAR(400) NOT NULL,
+    [line_no] INT NULL,
+    [product_ref] NVARCHAR(400) NULL,
+    [description] NVARCHAR(400) NULL,
+    [quantity] DECIMAL(19,4) NULL,
+    [received_qty] DECIMAL(19,4) NULL,
+    [unit_cost] DECIMAL(19,4) NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_ext_po_line_present] DEFAULT (1) CONSTRAINT [CK_ext_po_line_01] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END)),
+    CONSTRAINT [PK_ext_po_line] PRIMARY KEY ([source_id], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ext_change   (from schema/043_bizbox_mirror.sql)
+-- Room for edits back to BizBox, later. A person proposes a change to a
+-- mirrored field; it is recorded here, PENDING, and BizBox is NOT touched. When
+-- a write path is approved (a BizBox API or a stored procedure SQL01 creates),
+-- a writer takes PENDING rows, applies them, and marks each APPLIED or
+-- REJECTED with BizBox's answer; the next sync then shows the new value. Until
+-- then the desk says plainly that BizBox has not changed.
+IF OBJECT_ID(N'psa.[ext_change]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_change] (
+    [change_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_ext_change] PRIMARY KEY,
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_change_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [kind] NVARCHAR(32) NOT NULL CONSTRAINT [CK_ext_change_01] CHECK (kind IN ('AGREEMENT', 'PRODUCT', 'PURCHASE_ORDER', 'INVOICE')),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [field] NVARCHAR(32) NOT NULL,
+    [old_value] NVARCHAR(400) NULL,
+    [new_value] NVARCHAR(400) NULL,
+    [reason] NVARCHAR(MAX) NOT NULL,
+    [status] NVARCHAR(32) NOT NULL CONSTRAINT [DF_ext_change_status] DEFAULT ('PENDING') CONSTRAINT [CK_ext_change_02] CHECK (status IN ('PENDING', 'APPLIED', 'REJECTED', 'CANCELLED')),
+    [requested_at] NVARCHAR(64) NOT NULL,
+    [requested_by] NVARCHAR(200) NOT NULL,
+    [decided_at] NVARCHAR(64) NULL,
+    [decided_by] NVARCHAR(200) NULL,
+    [answer] NVARCHAR(MAX) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [requested_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [requested_at], 126), CASE WHEN [requested_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [requested_at], 112) END)),
+    [decided_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [decided_at], 126), CASE WHEN [decided_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [decided_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -2522,6 +2946,21 @@ CREATE INDEX [ix_schedule_block_day] ON psa.[schedule_block] ([starts_at]);
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_schedule_block_member' AND object_id = OBJECT_ID(N'psa.[schedule_block]'))
 CREATE INDEX [ix_schedule_block_member] ON psa.[schedule_block] ([member]);
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_project_phase_project' AND object_id = OBJECT_ID(N'psa.[project_phase]'))
+CREATE INDEX [ix_project_phase_project] ON psa.[project_phase] ([project_id]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_project_ticket_project' AND object_id = OBJECT_ID(N'psa.[project_ticket]'))
+CREATE INDEX [ix_project_ticket_project] ON psa.[project_ticket] ([project_id]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_link_ref' AND object_id = OBJECT_ID(N'psa.[ext_link]'))
+CREATE INDEX [ix_ext_link_ref] ON psa.[ext_link] ([source_id], [kind], [ext_ref]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_po_line_po' AND object_id = OBJECT_ID(N'psa.[ext_po_line]'))
+CREATE INDEX [ix_ext_po_line_po] ON psa.[ext_po_line] ([source_id], [po_ref]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_change_ref' AND object_id = OBJECT_ID(N'psa.[ext_change]'))
+CREATE INDEX [ix_ext_change_ref] ON psa.[ext_change] ([source_id], [kind], [ext_ref]);
+
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
@@ -2657,10 +3096,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 80 OR @Triggers <> 4 OR @Indexes < 29
+IF @Tables <> 99 OR @Triggers <> 4 OR @Indexes < 34
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 80), %d triggers (expected 4), %d indexes (expected at least 29). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 99), %d triggers (expected 4), %d indexes (expected at least 34). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -2705,6 +3144,25 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[ext_change];
+    DROP TABLE IF EXISTS psa.[ext_po_line];
+    DROP TABLE IF EXISTS psa.[ext_link];
+    DROP TABLE IF EXISTS psa.[ext_invoice];
+    DROP TABLE IF EXISTS psa.[ext_purchase_order];
+    DROP TABLE IF EXISTS psa.[ext_product];
+    DROP TABLE IF EXISTS psa.[ext_agreement];
+    DROP TABLE IF EXISTS psa.[ext_source];
+    DROP TABLE IF EXISTS psa.[report_def];
+    DROP TABLE IF EXISTS psa.[project_ticket];
+    DROP TABLE IF EXISTS psa.[phase_dependency];
+    DROP TABLE IF EXISTS psa.[project_phase];
+    DROP TABLE IF EXISTS psa.[project];
+    DROP TABLE IF EXISTS psa.[member_role];
+    DROP TABLE IF EXISTS psa.[role_permission];
+    DROP TABLE IF EXISTS psa.[security_role];
+    DROP TABLE IF EXISTS psa.[kb_ticket];
+    DROP TABLE IF EXISTS psa.[kb_revision];
+    DROP TABLE IF EXISTS psa.[kb_article];
     DROP TABLE IF EXISTS psa.[schedule_block];
     DROP TABLE IF EXISTS psa.[service_location];
     DROP TABLE IF EXISTS psa.[schedule_status];

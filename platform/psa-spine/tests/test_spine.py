@@ -5441,6 +5441,283 @@ class SchedulingTest(unittest.TestCase):
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'SCHEDULE_CONFIG'").fetchone()[0], 3)
 
 
+class ModulesTest(unittest.TestCase):
+    """039-043: the knowledge base, security roles, projects, the report writer
+    and the read-only BizBox mirror with its change log."""
+
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+
+    def setUp(self) -> None:
+        WebWSGITest.setUp(self)
+        self.addCleanup(self.tmp.cleanup)
+        self.at = datetime(2026, 9, 29, 10)
+        self.alice = self._cookie_for("alice")
+        self.root = self._cookie_for("root", is_sysadmin=True)
+
+    def _conn(self):
+        conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)
+        return conn
+
+    # ------------------------------------------------------------ roles
+
+    def test_roles_gate_the_modules_and_never_open_a_board(self):
+        from psaspine import security
+        from psaspine.web import auth as webauth
+        conn = self._conn()
+        alice = webauth.User(id="alice", name="alice")
+        self.assertEqual(security.level(conn, alice, "KNOWLEDGE"), "WRITE")        # the default role, Technician
+        self.assertEqual(security.level(conn, webauth.User(id="root", name="root", is_sysadmin=True), "FINANCE"), "ADMIN")
+        req = webauth.User(id="nurse", name="nurse")
+        req.requester = True
+        self.assertEqual(security.level(conn, req, "KNOWLEDGE"), "NONE")
+        security.assign(conn, "alice", "READ_ONLY", at=self.at, actor="root")
+        self.assertEqual(security.level(conn, alice, "FINANCE"), "NONE")
+        with self.assertRaises(security.Refused):
+            security.set_inactive(conn, "TECHNICIAN", True, at=self.at, actor="root")   # the default stays
+        self.assertEqual(security.save_grants(conn, "READ_ONLY", {"FINANCE": "READ"}, at=self.at, actor="root"),
+                         "Finance (BizBox) NONE -> READ")
+        conn.commit()
+        status, _, _ = self._call("GET", "/kb/new", cookie=self.alice)                   # READ only: no writing
+        self.assertTrue(status.startswith("403"), status)
+        _, _, page = self._call("GET", "/finance", cookie=self.alice)
+        self.assertIn("<h1>Finance</h1>", page)
+        _, h, _ = self._call("POST", "/admin/roles/assign", cookie=self.root, form={"member": "alice", "role_id": ""})
+        self.assertIn("alice%3A+READ_ONLY+-%3E+default", dict(h)["Location"])
+        status, _, _ = self._call("GET", "/admin/roles", cookie=self.root)
+        self.assertEqual(status, "200 OK")
+        status, _, _ = self._call("GET", "/admin/roles", cookie=self.alice)
+        self.assertTrue(status.startswith("403"))
+        self.assertEqual(self._conn().execute("SELECT COUNT(*) FROM audit_event WHERE action = 'SECURITY_ROLE'").fetchone()[0], 3)
+
+    # --------------------------------------------------------- knowledge
+
+    def test_knowledge_writes_publishes_suggests_links_and_reaches_the_portal(self):
+        from psaspine import knowledge
+        conn = self._conn()
+        conn.execute("UPDATE work_item SET name = 'Label printer prints blank labels' WHERE work_item_id = 'ITO-1'")
+        aid = knowledge.create(conn, title="Label printer prints blank labels", body="1. Check the ribbon.\n2. Recalibrate.",
+                               audience="REQUESTER", at=self.at, actor="alice")
+        self.assertEqual(aid, "KB-0001")
+        with self.assertRaises(knowledge.Refused):
+            knowledge.create(conn, title="", body="x", at=self.at, actor="alice")
+        self.assertEqual(knowledge.save(conn, aid, title="Label printer prints blank labels", body="1. Check the ribbon.\n2. Recalibrate.",
+                                        audience="REQUESTER", board_id=None, catalogue_item_id=None, at=self.at, actor="alice"),
+                         "nothing changed")
+        knowledge.save(conn, aid, title="Label printer prints blank labels", body="1. Check the ribbon.\n2. Recalibrate.\n3. Test print.",
+                       audience="REQUESTER", board_id=None, catalogue_item_id=None, at=self.at, actor="alice")
+        self.assertEqual([r["version"] for r in knowledge.revisions(conn, aid)], [2, 1])
+        self.assertEqual(knowledge.suggest(conn, "ITO-1", board_ids={"IT_HELP"}), [])     # drafts are not suggested
+        knowledge.set_status(conn, aid, "PUBLISHED", at=self.at, actor="alice")
+        self.assertEqual([a["article_id"] for a in knowledge.suggest(conn, "ITO-1", board_ids={"IT_HELP"})], [aid])
+        secret = knowledge.create(conn, title="PHI board runbook", body="steps", board_id="PHI", at=self.at, actor="alice")
+        knowledge.create(conn, title="Flagged", body="Patient: Juan, PhilHealth 12-345678901-2", at=self.at, actor="alice")
+        self.assertTrue(knowledge.flags(conn, "KB-0003"))                                  # flagged, not refused
+        conn.commit()
+        _, h, _ = self._call("POST", "/ticket/ITO-1/kb", cookie=self.alice, form={"article_id": aid.lower()})
+        self.assertIn("linked", dict(h)["Location"])
+        self.assertEqual(self._conn().execute("SELECT uses FROM kb_article WHERE article_id = ?", (aid,)).fetchone()[0], 1)
+        _, _, ticket = self._call("GET", "/ticket/ITO-1", cookie=self.alice)
+        self.assertIn("data-pod=knowledge", ticket)
+        self.assertIn(f"✓ <a href='/kb/{aid}'>", ticket)
+        carol = self._cookie_for("carol")                                                  # not on the PHI board
+        status, _, _ = self._call("GET", f"/kb/{secret}", cookie=carol)
+        self.assertTrue(status.startswith("404"))
+        _, _, page = self._call("GET", "/kb", cookie=carol)
+        self.assertNotIn("PHI board runbook", page)
+        nurse = self._cookie_for("nurse")                                                   # a requester
+        _, _, help_page = self._call("GET", "/my/help", cookie=nurse)
+        self.assertIn("Label printer prints blank labels", help_page)
+        self.assertNotIn("PHI board runbook", help_page)
+        status, _, _ = self._call("GET", "/my/help/KB-0003", cookie=nurse)                  # a draft, internal
+        self.assertTrue(status.startswith("404"))
+        status, _, _ = self._call("GET", "/kb", cookie=nurse)
+        self.assertTrue(status.startswith("403"))
+
+    # ---------------------------------------------------------- projects
+
+    def test_projects_phases_predecessors_tickets_and_actual_hours(self):
+        from psaspine import projects
+        conn = self._conn()
+        pid = projects.create(conn, name="Replace ward 3 switches", manager="alice", budget_hours=40, starts_on="2026-10-01",
+                              ends_on="2026-10-31", at=self.at, actor="alice")
+        with self.assertRaises(projects.Refused):
+            projects.create(conn, name="Backwards", starts_on="2026-10-31", ends_on="2026-10-01", at=self.at, actor="alice")
+        a = projects.add_phase(conn, pid, name="Survey", budget_hours=8, at=self.at, actor="alice")
+        b = projects.add_phase(conn, pid, name="Install", budget_hours=24, at=self.at, actor="alice")
+        c = projects.add_phase(conn, pid, name="Cut over ward 3", parent_id=b, at=self.at, actor="alice")
+        projects.add_dependency(conn, b, a, at=self.at, actor="alice")
+        with self.assertRaises(projects.Refused):
+            projects.add_dependency(conn, a, b, at=self.at, actor="alice")                 # a loop
+        with self.assertRaises(projects.Refused):
+            projects.set_phase_status(conn, b, True, at=self.at, actor="alice")            # waits on Survey
+        projects.set_phase_status(conn, a, True, at=self.at, actor="alice")
+        projects.set_phase_status(conn, b, True, at=self.at, actor="alice")
+        self.assertEqual([(p["name"], p["depth"]) for p in projects.phases(conn, pid)],
+                         [("Survey", 0), ("Install", 0), ("Cut over ward 3", 1)])
+        projects.link_ticket(conn, "ITO-1", pid, a, at=self.at, actor="alice")
+        conn.execute("INSERT INTO time_entry (work_item_id, entity_id, worked_on, band_hours, performed_by, entered_by,"
+                     " charge_method, actual_hours) VALUES ('ITO-1','PMC','2026-10-02',2,'alice','alice','INCLUDED_IN_MONTHLY_FEE',1.5)")
+        self.assertEqual(projects.actual_hours(conn, pid), 1.5)
+        self.assertEqual(projects.phases(conn, pid)[0]["actual_hours"], 1.5)
+        conn.commit()
+        del c
+        _, _, page = self._call("GET", f"/project/{pid}", cookie=self.alice)
+        self.assertIn("1.50 of 40.00 h", page)
+        self.assertIn("waits on Survey", page)
+        _, _, ticket = self._call("GET", "/ticket/ITO-1", cookie=self.alice)
+        self.assertIn(f"<a href='/project/{pid}'>{pid}</a> Replace ward 3 switches · Survey", ticket)
+        _, h, _ = self._call("POST", "/projects/new", cookie=self.alice, form={"name": "Second", "board_id": "NOPE"})
+        self.assertIn("err=", dict(h)["Location"])
+        _, h, _ = self._call("POST", f"/project/{pid}/ticket", cookie=self._cookie_for("carol"), form={"work_item_id": "ITO-1"})
+        self.assertIn("err=No+ticket+ITO-1+that+you+work", dict(h)["Location"])
+
+    # ---------------------------------------------------- report writer
+
+    def test_the_report_writer_groups_filters_and_never_crosses_a_board(self):
+        from psaspine import reportwriter as rw
+        conn = self._conn()
+        grouped = rw.run(conn, "TICKETS", [], "board", {}, boards={"IT_HELP", "PHI"})
+        self.assertEqual(grouped["headers"], ["Board", "Count"])
+        self.assertEqual(sorted(r[0] for r in grouped["rows"]), ["IT Help", "PHI Board"])
+        mine = rw.run(conn, "TICKETS", ["id", "summary"], None, {}, boards={"IT_HELP"})
+        self.assertEqual([r[0] for r in mine["rows"]], ["ITO-1"])                          # PHI's ticket never appears
+        with self.assertRaises(rw.Refused):
+            rw.run(conn, "TICKETS", ["id; DROP TABLE ticket"], "nope", {}, boards={"IT_HELP"})
+        self.assertIn("'=cmd", rw.as_csv({"headers": ["x"], "rows": [["=cmd"]]}))        # no formula in a spreadsheet
+        rid = rw.save(conn, name="By board", dataset="TICKETS", columns=[], group_by="board", filters={"evil": "1"},
+                      owner="alice", shared=True, at=self.at)
+        conn.commit()
+        _, _, page = self._call("GET", f"/reports/custom/{rid}", cookie=self._cookie_for("carol"))
+        self.assertIn("IT Help", page)
+        self.assertNotIn("PHI Board", page)                                                 # carol is not on PHI
+        _, _, adhoc = self._call("GET", "/reports/custom/run", cookie=self.alice,
+                                 query="dataset=TICKETS&col=id&col=state&board=IT_HELP")
+        self.assertIn("<th>Ticket</th><th>State</th>", adhoc)
+        status, headers, body = self._call("GET", f"/reports/custom/{rid}/csv", cookie=self.alice)
+        self.assertIn("text/csv", dict(headers)["Content-Type"])
+        self.assertTrue(body.startswith("Board,Count"))
+        _, h, _ = self._call("POST", f"/reports/custom/{rid}/pin", cookie=self.root)
+        self.assertIn("Pinned", dict(h)["Location"])
+        _, _, reports = self._call("GET", "/reports", cookie=self.alice)
+        self.assertIn(f"/reports/custom/{rid}'>By board</a>", reports)
+
+    # ------------------------------------------------------------ BizBox
+
+    def _csvs(self, rows_po="PONo,VendorName,PODate,Status,TotalAmount,Currency\r\nPO-1,Vendor A,2026-09-02,Approved,1000,PHP\r\n"):
+        folder = Path(self.tmp.name) / "bizbox"
+        folder.mkdir(exist_ok=True)
+        (folder / "agreement.csv").write_text("AgreementNo,AgreementName,VendorName,Status,ContractAmount,Currency,StartDate,EndDate\r\n"
+                                              "AGR-1,Printer care,Vendor A,Active,1200.50,PHP,2026-01-01,20261231\r\n", encoding="utf-8")
+        (folder / "product.csv").write_text("ItemCode,ItemName,Category,Unit,UnitCost\r\nIT-1,Toner,Consumables,pc,\"4,250.00\"\r\n",
+                                            encoding="utf-8")
+        (folder / "purchase_order.csv").write_text(rows_po, encoding="utf-8")
+        (folder / "invoice.csv").write_text("InvoiceNo,VendorName,InvoiceDate,DueDate,Status,TotalAmount,Currency,AgreementNo\r\n"
+                                            "INV-1,Vendor A,2026-09-05,2026-10-05,Unpaid,100,PHP,AGR-1\r\n", encoding="utf-8")
+        (folder / "po_line.csv").write_text("LineID,PONo,LineNo,ItemCode,Description,QtyOrdered,QtyReceived,UnitCost\r\n"
+                                            "L-1,PO-1,1,IT-1,Toner black,2,2,500\r\n", encoding="utf-8")
+        return folder
+
+    def test_the_bizbox_map_refuses_patient_names_sql_and_the_sa_login(self):
+        from psaspine import bizbox
+        good = bizbox.load_map(Path(__file__).parent.parent / "bizbox" / "bizbox-map.sample.json")
+        self.assertIn("po_line", good["objects"])
+        for view, col in (("dbo.Patients", "AgreementNo"), ("psa.vw_agreement", "PatientName"),
+                          ("psa.vw_agreement; DROP TABLE x", "AgreementNo"), ("psa.vw_agreement", "Name]--"),
+                          ("hr.vw_admission", "AgreementNo"), ("psa.vw_agreement", "PhilHealthNo")):
+            with self.assertRaises(bizbox.Refused, msg=(view, col)):
+                bizbox.check_map({"objects": {"agreement": {"view": view, "columns": {"ext_ref": col, "name": "X"}}}})
+        with self.assertRaises(bizbox.Refused):
+            bizbox.check_map({"objects": {"payroll": {"view": "a.b", "columns": {"ext_ref": "X"}}}})
+        for cs in ("Driver=x;Server=h;UID=sa;PWD=p", "Server=h;User ID = SA ;Pwd=p"):
+            with self.assertRaises(bizbox.Refused):
+                bizbox.odbc_string(cs)
+        self.assertIn("ApplicationIntent=ReadOnly", bizbox.odbc_string("Driver=x;Server=h;UID=psa_reader;PWD=p"))
+        with self.assertRaises(bizbox.Refused):
+            bizbox.odbc_string("")
+
+    def test_sync_previews_then_mirrors_marks_absent_and_never_deletes(self):
+        from psaspine import bizbox
+        conn = self._conn()
+        mapping = bizbox.load_map(Path(__file__).parent.parent / "bizbox" / "bizbox-map.sample.json")
+        rows = bizbox.read_csv_dir(self._csvs(), mapping)
+        preview = bizbox.sync(conn, rows, at=self.at, actor="t")
+        self.assertEqual(preview["agreement"]["new"], 1)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM ext_agreement").fetchone()[0], 0)   # preview wrote nothing
+        bizbox.sync(conn, rows, at=self.at, actor="t", apply=True)
+        agr = bizbox.get(conn, "agreement", "AGR-1")
+        self.assertEqual((agr["ends_on"], agr["amount"]), ("2026-12-31", 1200.5))
+        self.assertEqual(bizbox.get(conn, "product", "IT-1")["unit_cost"], 4250.0)
+        self.assertEqual(len(bizbox.po_lines(conn, "PO-1")), 1)
+        bizbox.link(conn, "TICKET", "ITO-1", "purchase_order", "PO-1", at=self.at, actor="alice")
+        conn.commit()
+        rows = bizbox.read_csv_dir(self._csvs("PONo,VendorName,PODate,Status,TotalAmount,Currency\r\n"
+                                              "PO-2,Vendor B,2026-09-10,Draft,50,PHP\r\n"), mapping)
+        c = bizbox.sync(conn, rows, at=self.at, actor="t", apply=True)["purchase_order"]
+        self.assertEqual((c["new"], c["absent"]), (1, 1))
+        gone = bizbox.get(conn, "purchase_order", "PO-1")
+        self.assertEqual(gone["present"], 0)                                                   # kept, marked absent
+        self.assertEqual(len(bizbox.links(conn, "TICKET", "ITO-1")), 1)                         # the link survives
+        with self.assertRaises(bizbox.Refused):
+            bizbox.link(conn, "TICKET", "ITO-1", "invoice", "INV-404", at=self.at, actor="alice")
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'BIZBOX_SYNC'").fetchone()[0], 2)
+
+    def test_finance_pages_links_and_changes_waiting_for_bizbox(self):
+        from psaspine import bizbox
+        conn = self._conn()
+        mapping = bizbox.load_map(Path(__file__).parent.parent / "bizbox" / "bizbox-map.sample.json")
+        bizbox.sync(conn, bizbox.read_csv_dir(self._csvs(), mapping), at=self.at, actor="t", apply=True)
+        for tab in ("agreement", "purchase_order", "product", "invoice", "changes"):
+            status, _, page = self._call("GET", "/finance", cookie=self.alice, query=f"tab={tab}")
+            self.assertEqual(status, "200 OK", tab)
+        _, _, page = self._call("GET", "/finance", cookie=self.alice, query="tab=purchase_order")
+        self.assertIn("<div class=l>Approved</div><div class=n>1</div>", page)                # the procurement summary
+        _, _, page = self._call("GET", "/finance/invoice/INV-1", cookie=self.alice)
+        self.assertIn("<a href='/finance/agreement/AGR-1'>AGR-1</a>", page)                   # an invoice's agreement is a link
+        _, _, page = self._call("GET", "/finance/purchase_order/PO-1", cookie=self.alice)
+        self.assertIn("Toner black", page)
+        self.assertIn("PHP 1,000.00", page)
+        _, h, _ = self._call("POST", "/ticket/ITO-1/finance/link", cookie=self.alice, form={"kind": "purchase_order", "ext_ref": "PO-1"})
+        self.assertIn("Linked", dict(h)["Location"])                                            # a Finance reader links
+        status, _, _ = self._call("POST", "/finance/purchase_order/PO-1/propose", cookie=self.alice,
+                                  form={"field": "status", "new_value": "Received", "reason": "x"})
+        self.assertTrue(status.startswith("403"), status)                                      # but may not propose
+        from psaspine import security
+        security.assign(conn, "alice", "SERVICE_MANAGER", at=self.at, actor="root")
+        conn.commit()
+        _, h, _ = self._call("POST", "/finance/purchase_order/PO-1/propose", cookie=self.alice,
+                             form={"field": "status", "new_value": "Received", "reason": "Delivered to ward 3 today"})
+        self.assertIn("BizBox+has+not+changed", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/finance/purchase_order/PO-1/propose", cookie=self.alice,
+                             form={"field": "status", "new_value": "Closed", "reason": "again"})
+        self.assertIn("already+pending", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/finance/purchase_order/PO-1/propose", cookie=self.alice,
+                             form={"field": "vendor", "new_value": "x", "reason": "y"})
+        self.assertIn("err=", dict(h)["Location"])                                              # not an editable field
+        conn = self._conn()
+        self.assertEqual(bizbox.get(conn, "purchase_order", "PO-1")["status"], "Approved")    # BizBox's value stands
+        self.assertEqual(bizbox.push(conn, at=self.at), {"applied": 0, "rejected": 0, "pending": 1})
+
+        class Fake(bizbox.Writer):
+            def apply(self, change):
+                return "applied by the test writer"
+        self.assertEqual(bizbox.push(conn, Fake(), at=self.at), {"applied": 1, "rejected": 0, "pending": 0})
+        conn.commit()
+        _, _, page = self._call("GET", "/finance", cookie=self.alice, query="tab=changes&status=APPLIED")
+        self.assertIn("Delivered to ward 3 today", page)
+        self.assertIn("Applied in BizBox", page)
+        security_ro = self._conn()
+        from psaspine import security
+        security.assign(security_ro, "alice", "READ_ONLY", at=self.at, actor="root")
+        security_ro.commit()
+        status, _, _ = self._call("GET", "/finance", cookie=self.alice)
+        self.assertTrue(status.startswith("403"))                                               # READ_ONLY has no finance
+        _, _, board = self._call("GET", "/", cookie=self.alice)
+        self.assertNotIn('href="/finance"', board)                                              # and the nav hides it
+
+
 class DatabaseSettingsTest(unittest.TestCase):
     """How the store behaves with more than one person on the desk."""
 

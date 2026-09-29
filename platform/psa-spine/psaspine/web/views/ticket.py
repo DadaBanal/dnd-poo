@@ -492,8 +492,12 @@ def detail(ctx, work_item_id):
     configs = (_change_card(ctx, tk, can_work=can_work) + _family_card(ctx, tk, can_work=can_work)
                + _schedule_card(ctx, tk, can_work=can_work) + _tasks_card(ctx, tk, can_work=can_work)
                + file_views.ticket_card(ctx, tk, can_work=can_work) + _links_card(ctx, tk, can_work=can_work) + configs)
+    from . import finance as finance_views, kb as kb_views
+    from . import projects as project_views
+    configs += (project_views.ticket_card(ctx, tk, can_work=can_work) + kb_views.ticket_card(ctx, tk, can_work=can_work)
+                + finance_views.ticket_card(ctx, tk, can_work=can_work))
     body = header + strip + (f"<div class=rail>{left}<div class=pods data-col=right data-order='ticket,change,family,"
-                             f"schedule,tasks,files,links,configurations,time,commercial,details'>{fields}{configs}{time_card}"
+                             f"schedule,tasks,files,links,configurations,project,knowledge,finance,time,commercial,details'>{fields}{configs}{time_card}"
                              f"{commercial}{details}</div></div>")
     return Response(body=t.page(work_item_id, body, user=ctx.user, active="board"))
 

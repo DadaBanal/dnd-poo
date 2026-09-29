@@ -133,6 +133,8 @@ def _tile(n, label, *, unit="", cls="") -> str:
 def index(ctx):
     from .. import Response
     from ... import itil
+    from . import reportwriter as rw_views
+    common.require_module(ctx, "REPORTS")
     boards, months, board = _args(ctx)
     m = metrics.desk(ctx.conn, boards, now=ctx.now, months=months, board=board)
     names = {r["board_id"]: r["display_name"] for r in ctx.conn.execute(
@@ -170,7 +172,8 @@ def index(ctx):
                  for k in m["months"]) + "</tbody></table></div>")
     body = (
         "<h1>Reports</h1><p class=sub>The month as the Service Manager sees it, computed now from the "
-        "tickets and their clocks; nothing here is a stored figure.</p>" + controls + tiles
+        "tickets and their clocks; nothing here is a stored figure. Build your own in the "
+        "<a href='/reports/custom'>report writer</a>.</p>" + controls + tiles + rw_views.pinned_cards(ctx)
         + "<div class=grid2>"
         f"<div class=card><h3>{t.icon('board')}Opened and closed, by month</h3>{chart_opened_closed(m)}</div>"
         f"<div class=card><h3>{t.icon('clock')}Resolve clock met, by month</h3>{chart_met(m)}"
@@ -188,6 +191,7 @@ def index(ctx):
 
 def export_csv(ctx):
     from .. import Response
+    common.require_module(ctx, "REPORTS")
     boards, months, board = _args(ctx)
     m = metrics.desk(ctx.conn, boards, now=ctx.now, months=months, board=board)
     buf = io.StringIO()

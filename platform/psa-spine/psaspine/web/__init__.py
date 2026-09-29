@@ -193,6 +193,11 @@ class Request:
     body: bytes
     scheme: str = "http"
     remote_addr: str = ""
+    query_string: str = ""
+
+    def query_list(self, name: str) -> list[str]:
+        """Every value of a repeated query key (checkboxes on a GET form)."""
+        return [v for k, v in urllib.parse.parse_qsl(self.query_string) if k == name]
 
     @property
     def secure(self) -> bool:
@@ -237,7 +242,8 @@ class Request:
             query=dict(urllib.parse.parse_qsl(environ.get("QUERY_STRING", ""))),
             headers=headers, cookies=cookies, body=body,
             scheme=environ.get("wsgi.url_scheme", "http"),
-            remote_addr=environ.get("REMOTE_ADDR", ""))
+            remote_addr=environ.get("REMOTE_ADDR", ""),
+            query_string=environ.get("QUERY_STRING", ""))
 
     def _multipart(self):
         """(fields, files) of a multipart/form-data body, parsed with the
@@ -490,6 +496,11 @@ def _route(conn, request: Request, config: Config, now: datetime) -> Response:
     # so every page draws the same shell for the same person.
     from .views import common
     user.requester = portal or not common.board_ids_for(ctx)
+    # The security role's level per module (040), read once, so the nav shows
+    # only what the person may open and every view asks the same question.
+    from .. import security
+    user.modules = {m: security.level(conn, user, m) for m in security.MODULES}
+    conn.commit()
     return router.dispatch(ctx)
 
 

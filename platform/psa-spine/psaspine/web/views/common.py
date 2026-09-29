@@ -78,6 +78,30 @@ def require_board(ctx, board_id: str, *, need: str = "READ",
     audit_restricted_read(ctx, board_id, subject_id=subject_id)
 
 
+def module_level(ctx, module: str) -> str:
+    levels = getattr(ctx.user, "modules", None)
+    if levels is None:
+        from ... import security
+        return security.level(ctx.conn, ctx.user, module)
+    return levels.get(module, "NONE")
+
+
+def allows(ctx, module: str, need: str = "READ") -> bool:
+    from ... import security
+    return security.RANK[module_level(ctx, module)] >= security.RANK[need]
+
+
+def require_module(ctx, module: str, need: str = "READ"):
+    """The security role gate (040). 403 with the module and level in words, so
+    the person knows what to ask their service manager for."""
+    from .. import HttpError
+    from ... import security
+    if not allows(ctx, module, need):
+        words = {"READ": "see", "WRITE": "change", "ADMIN": "administer"}[need]
+        raise HttpError("403 Forbidden", f"Your security role does not let you {words} "
+                                         f"{security.MODULES[module].lower()}. Ask your service manager.")
+
+
 def require_sysadmin(ctx):
     from .. import HttpError
     if not ctx.user.is_sysadmin:

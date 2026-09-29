@@ -113,6 +113,27 @@ def main(argv: list[str] | None = None) -> int:
     pdp.add_argument("database", help=DB_HELP)
     pdp.add_argument("export_csv")
 
+    pbz = sub.add_parser("sync-bizbox",
+                         help="mirror BizBox agreements, products, purchase orders and invoices, read-only, "
+                              "from a folder of CSV exports or from PSA_BIZBOX_ODBC; preview unless --apply")
+    pbz.add_argument("database", help=DB_HELP)
+    pbz.add_argument("--map", required=True, dest="map_file",
+                     help="the map file naming the BizBox views and columns (see bizbox/bizbox-map.sample.json)")
+    src = pbz.add_mutually_exclusive_group(required=True)
+    src.add_argument("--csv-dir", help="a folder holding agreement.csv, product.csv, purchase_order.csv, invoice.csv")
+    src.add_argument("--odbc", action="store_true",
+                     help="read the mapped views through the read-only connection string in PSA_BIZBOX_ODBC")
+    pbz.add_argument("--apply", action="store_true", help="write; without it nothing is changed")
+
+    pbc = sub.add_parser("bizbox-changes",
+                         help="list the changes proposed to BizBox records as JSON, or close one with --decide "
+                              "after it was done in BizBox; nothing here writes to BizBox")
+    pbc.add_argument("database", help=DB_HELP)
+    pbc.add_argument("--status", default="PENDING", choices=["PENDING", "APPLIED", "REJECTED", "CANCELLED"])
+    pbc.add_argument("--decide", type=int, metavar="CHANGE_ID")
+    pbc.add_argument("--as", dest="outcome", choices=["APPLIED", "REJECTED", "CANCELLED"])
+    pbc.add_argument("--answer", default="", help="what BizBox said, or who applied it there")
+
     phl = sub.add_parser("import-holidays",
                          help="add holidays to a holiday list from a CSV (Date, Name, optional AllDay, "
                               "Start, End); a date already on the list is left alone")
@@ -315,6 +336,41 @@ def _run(conn, a) -> int:
             print("REFUSED: a row was neither placed nor counted", file=sys.stderr)
             return 1
         conn.commit()
+        return 0
+
+    if a.cmd == "sync-bizbox":
+        from . import bizbox
+        try:
+            mapping = bizbox.load_map(a.map_file)
+            rows = bizbox.read_csv_dir(a.csv_dir, mapping) if a.csv_dir else bizbox.read_odbc(mapping)
+            counts = bizbox.sync(conn, rows, at=datetime.now(), actor="cli", apply=a.apply)
+        except bizbox.Refused as exc:
+            conn.rollback()
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        for kind, c in counts.items():
+            print(f"{kind}: {c['rows']} rows, {c['new']} new, {c['changed']} changed, {c['unchanged']} unchanged, "
+                  f"{c['absent']} absent, {c['returned']} returned, {c['skipped']} skipped")
+        print("applied" if a.apply else "preview only: nothing was written (add --apply)")
+        return 0
+
+    if a.cmd == "bizbox-changes":
+        import json as _json
+        from . import bizbox
+        if a.decide is not None:
+            if not a.outcome:
+                print("refused: --decide needs --as APPLIED, REJECTED or CANCELLED", file=sys.stderr)
+                return 1
+            try:
+                bizbox.decide(conn, a.decide, a.outcome, answer=a.answer, at=datetime.now(), actor="cli")
+            except bizbox.Refused as exc:
+                print(f"refused: {exc}", file=sys.stderr)
+                return 1
+            conn.commit()
+            print(f"change {a.decide}: {a.outcome.lower()}")
+            return 0
+        rows = [dict(r) for r in bizbox.changes(conn, status=a.status)]
+        print(_json.dumps(rows, indent=2, default=str))
         return 0
 
     if a.cmd == "import-holidays":

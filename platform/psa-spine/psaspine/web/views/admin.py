@@ -94,6 +94,20 @@ def index(ctx):
         _board.ensure_time_vocabulary(ctx.conn)
         n_roles = ctx.conn.execute("SELECT COUNT(*) FROM work_role WHERE inactive = 0").fetchone()[0]
         n_types = ctx.conn.execute("SELECT COUNT(*) FROM work_type WHERE inactive = 0").fetchone()[0]
+        from ... import security as _sec
+        _sec.ensure_roles(ctx.conn)
+        n_roles_sec = ctx.conn.execute("SELECT COUNT(*) FROM security_role WHERE inactive = 0").fetchone()[0]
+        cards.append(
+            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-users></use></svg>Security roles</h3><p class=sub>"
+            "What each role may do in the knowledge base, projects, reports, the schedule and finance.</p>"
+            f"<a class='btn ghost' href='/admin/roles'>Roles ({n_roles_sec})</a></div>")
+        from ... import bizbox as _bz
+        st = _bz.status(ctx.conn)
+        cards.append(
+            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-tag></use></svg>BizBox</h3><p class=sub>"
+            "Agreements, procurement, products and invoices, mirrored read-only by <code>psaspine sync-bizbox</code>.</p>"
+            f"<p class=why>{t.esc('Last synced ' + st['last_sync_at']) if st and st['last_sync_at'] else 'Not synced yet.'}</p>"
+            "<a class='btn ghost' href='/finance'>Finance</a></div>")
         n_cal = ctx.conn.execute("SELECT COUNT(*) FROM calendar WHERE COALESCE(inactive, 0) = 0").fetchone()[0]
         n_hol = ctx.conn.execute("SELECT COUNT(*) FROM holiday").fetchone()[0]
         cards.append(
@@ -1431,6 +1445,119 @@ def schedule_setup_save(ctx):
         return _sched_back(err=f"Not saved: {exc}")
     ctx.conn.commit()
     return _sched_back(msg=f"{kind.title()}: {what}")
+
+
+# ------------------------------------------------------ Setup › Roles
+#
+# The reference PSA's Security Roles setup table (psaspine/security.py): a grid
+# of module by level per role, and which member has which role.
+
+def roles_setup(ctx):
+    from .. import Response
+    from ... import security
+    common.require_sysadmin(ctx)
+    q = ctx.request.query
+    roles = security.roles(ctx.conn)
+    ctx.conn.commit()
+    head = "".join(f"<th>{t.esc(v)}</th>" for v in security.MODULES.values())
+    words = {"NONE": "None", "READ": "Read", "WRITE": "Add and edit", "ADMIN": "All"}
+    rows = []
+    for r in roles:
+        rid = t.esc(r["role_id"])
+        cells = "".join(
+            f"<td><select form='f-{rid}' name='{m}' aria-label='{t.esc(security.MODULES[m])} for {t.esc(r['name'])}'>"
+            + "".join(f"<option value={lv}{' selected' if r['grants'][m] == lv else ''}>{words[lv]}</option>" for lv in security.LEVELS)
+            + "</select></td>" for m in security.MODULES)
+        flags = ("<span class='pill live'>default</span>" if r["is_default"] else "") + (" <span class=pill>retired</span>" if r["inactive"] else "")
+        acts = []
+        if not r["is_default"] and not r["inactive"]:
+            acts.append(f"<button form='f-{rid}' class='ghost small' type=submit formaction='/admin/roles/{rid}/default'>Make default</button>")
+        if not r["is_default"]:
+            acts.append(f"<button form='f-{rid}' class='ghost small' type=submit formaction='/admin/roles/{rid}/{'restore' if r['inactive'] else 'retire'}'>"
+                        f"{'Restore' if r['inactive'] else 'Retire'}</button>")
+        rows.append(f"<tr{' style=opacity:.6' if r['inactive'] else ''}><td><form id='f-{rid}' method=post action='/admin/roles/{rid}/save'></form>"
+                    f"<b>{t.esc(r['name'])}</b> {flags}<div class=muted>{len(r['members'])} member(s)</div></td>"
+                    + cells + f"<td><button class=ghost type=submit form='f-{rid}'>Save</button> " + " ".join(acts) + "</td></tr>")
+    members = sorted({m["member"] for m in ctx.conn.execute("SELECT DISTINCT member FROM board_member")}, key=str.lower)
+    assigned = {r[0].lower(): r[1] for r in ctx.conn.execute("SELECT member, role_id FROM member_role")}
+    names = {r["role_id"]: r["name"] for r in roles}
+    live = [r for r in roles if not r["inactive"]]
+    member_rows = "".join(
+        f"<tr><td>{t.esc(m)}</td><td>{t.esc(names.get(assigned.get(m.lower()), 'the default role'))}</td>"
+        f"<td><form method=post action='/admin/roles/assign' class=row style='margin:0'><input type=hidden name=member value='{t.esc(m)}'>"
+        "<div><select name=role_id aria-label='Role'><option value=''>The default role</option>"
+        + "".join(f"<option value='{t.esc(r['role_id'])}'{' selected' if assigned.get(m.lower()) == r['role_id'] else ''}>{t.esc(r['name'])}</option>" for r in live)
+        + "</select></div><div style='flex:0 0 auto'><button class='ghost small' type=submit>Set</button></div></form></td></tr>" for m in members)
+    body = ((f"<div class='banner ok'>{t.esc(q.get('msg', ''))}</div>" if q.get("msg") else "")
+            + (f"<div class='banner err'>{t.esc(q.get('err', ''))}</div>" if q.get("err") else "")
+            + "<h1>Security roles</h1><p class=sub>What each role may do in the modules that are not boards. A board's "
+              "tickets are still governed by board membership, and a role never opens a restricted board. A member with "
+              "no role has the default role; a system administrator has everything. <a href='/admin'>Setup</a></p>"
+            + f"<div class=card><div class=tablewrap><table><thead><tr><th>Role</th>{head}<th></th></tr></thead><tbody>{''.join(rows)}</tbody></table></div>"
+              "<form method=post action='/admin/roles/add' class=row style='margin-top:10px'>"
+              "<div><input name=name required maxlength=60 placeholder='e.g. Biomedical engineer'></div>"
+              "<div style='flex:0 0 200px'><select name=copy_from aria-label='Start from'><option value=''>Start from nothing</option>"
+              + "".join(f"<option value='{t.esc(r['role_id'])}'>Copy {t.esc(r['name'])}</option>" for r in live)
+              + "</select></div><div style='flex:0 0 auto'><button class=ghost type=submit>" + t.icon("plus") + " Add role</button></div></form></div>"
+            + "<div class=card><h3>" + t.icon("users") + "Members</h3><div class=tablewrap><table><thead><tr><th>Member</th><th>Role</th>"
+              f"<th></th></tr></thead><tbody>{member_rows or '<tr><td colspan=3 class=muted>No board members yet.</td></tr>'}</tbody></table></div></div>")
+    return Response(body=t.page("Security roles", body, user=ctx.user, active="admin"))
+
+
+def _roles_back(**q):
+    from .. import redirect
+    return redirect("/admin/roles?" + urllib.parse.urlencode({k: v for k, v in q.items() if v}))
+
+
+def _roles_try(ctx, fn, ok):
+    from ... import security
+    common.require_sysadmin(ctx)
+    try:
+        r = fn()
+        ctx.conn.commit()
+    except security.Refused as exc:
+        ctx.conn.rollback()
+        return _roles_back(err=str(exc))
+    return _roles_back(msg=ok(r))
+
+
+def roles_add(ctx):
+    from ... import security
+    f = ctx.request.form()
+    return _roles_try(ctx, lambda: security.add_role(ctx.conn, f.get("name", ""), copy_from=f.get("copy_from") or None,
+                                                     at=ctx.now, actor=ctx.user.id), lambda rid: f"Added {rid}")
+
+
+def roles_save(ctx, role_id):
+    from ... import security
+    f = ctx.request.form()
+    return _roles_try(ctx, lambda: security.save_grants(ctx.conn, role_id, {m: f.get(m) for m in security.MODULES},
+                                                        at=ctx.now, actor=ctx.user.id), lambda w: f"{role_id}: {w}")
+
+
+def roles_default(ctx, role_id):
+    from ... import security
+    return _roles_try(ctx, lambda: security.set_default(ctx.conn, role_id, at=ctx.now, actor=ctx.user.id),
+                      lambda _: f"{role_id} is the default role")
+
+
+def roles_retire(ctx, role_id):
+    from ... import security
+    return _roles_try(ctx, lambda: security.set_inactive(ctx.conn, role_id, True, at=ctx.now, actor=ctx.user.id),
+                      lambda _: f"{role_id} retired")
+
+
+def roles_restore(ctx, role_id):
+    from ... import security
+    return _roles_try(ctx, lambda: security.set_inactive(ctx.conn, role_id, False, at=ctx.now, actor=ctx.user.id),
+                      lambda _: f"{role_id} restored")
+
+
+def roles_assign(ctx):
+    from ... import security
+    f = ctx.request.form()
+    return _roles_try(ctx, lambda: security.assign(ctx.conn, f.get("member", ""), f.get("role_id") or None,
+                                                   at=ctx.now, actor=ctx.user.id), lambda w: w)
 
 
 def _local_accounts_card(ctx) -> str:

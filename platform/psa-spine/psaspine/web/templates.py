@@ -388,6 +388,9 @@ em{font-style:italic}
 @media (max-width:1100px){.tablewrap{overflow-x:auto} table.grid thead th{position:static} table.grid td.wrap{white-space:nowrap}}
 @media (max-width:900px){.tiles{grid-template-columns:repeat(2,1fr)}.slastrip{grid-template-columns:1fr}.grid2{grid-template-columns:1fr}.rail{grid-template-columns:1fr}}
 @media (max-width:720px){main{padding:14px 12px}h1{font-size:19px}header.top .who span.name{display:none}.card{padding:12px 14px}.tile .n{font-size:22px}}
+/* a laptop: with every module on, the words no longer fit; the current page keeps its word, the rest show an icon and a title */
+@media (max-width:1400px){header.top nav a .lbl{display:none} header.top nav a.on .lbl{display:inline} header.top nav a .ic{margin-right:0}
+  header.top nav a.on .ic{margin-right:6px}}
 /* a phone: the nav links keep their icon and lose their words, so the header never overlaps itself (SQL01, part 15) */
 @media (max-width:480px){header.top{gap:4px}header.top .brand{margin-right:4px}header.top nav a{padding:6px 8px}header.top nav a .lbl{display:none}
   header.top nav a .ic{margin-right:0}header.top nav a.on::after{left:6px;right:6px}header.top .who{gap:6px}header.top .newbtn{padding:6px 8px}}
@@ -792,19 +795,26 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         ("board", "/", "Service Board"),
         ("dispatch", "/dispatch", "Dispatch"),
         ("schedule", "/schedule", "Schedule"),
+        ("projects", "/projects", "Projects"),
+        ("kb", "/kb", "Knowledge"),
         ("companies", "/companies", "Companies"),
         ("oncall", "/oncall", "On-call"),
         ("reports", "/reports", "Reports"),
+        ("finance", "/finance", "Finance"),
         ("uplift", "/uplift", "Uplift"),
         ("admin", "/admin", "Setup"),
         ("my", "/my", "My requests"),
     ]
+    levels = getattr(user, "modules", None) or {}
+    gate = {"schedule": "SCHEDULE", "projects": "PROJECTS", "kb": "KNOWLEDGE", "reports": "REPORTS",
+            "finance": "FINANCE"}
+    nav_items = [n for n in nav_items if n[0] not in gate or levels.get(gate[n[0]], "READ") != "NONE"]
     if requester:
         nav_items = [("my", "/my", "My requests")]
         active = "my"
     nav = "".join(
-        f'<a href="{esc(href)}"{" class=on aria-current=page" if key == active else ""}>'
-        f'{icon({"admin": "setup", "schedule": "calendar"}.get(key, key))}<span class=lbl>{esc(label)}</span></a>'
+        f'<a href="{esc(href)}" title="{esc(label)}"{" class=on aria-current=page" if key == active else ""}>'
+        f'{icon({"admin": "setup", "schedule": "calendar", "projects": "layers", "kb": "note", "finance": "tag"}.get(key, key))}<span class=lbl>{esc(label)}</span></a>'
         for key, href, label in nav_items)
     nav += (f'<a class="newbtn" href="/ticket/new" title="New ticket (n)">{icon("plus")} New ticket</a>'
             if user is not None and not requester else "")

@@ -1,0 +1,70 @@
+{
+  "_comment": [
+    "Which BizBox views and columns Dada PSA mirrors, read-only. A SAMPLE: every view and column name below is NOT VERIFIED.",
+    "SQL01 replaces them with the finance and procurement views it creates on the BizBox database for the desk's read-only login,",
+    "then keeps the real file on the host (D:\\psa\\bizbox-map.json), not in the repo. psaspine refuses any name that looks like a patient table or field.",
+    "Kinds: agreement, product, purchase_order, invoice. Fields per kind are in psaspine/bizbox.py (KINDS); ext_ref is the key and is required."
+  ],
+  "objects": {
+    "agreement": {
+      "view": "psa.vw_agreement",
+      "columns": {
+        "ext_ref": "AgreementNo",
+        "name": "AgreementName",
+        "party": "VendorName",
+        "starts_on": "StartDate",
+        "ends_on": "EndDate",
+        "status": "Status",
+        "amount": "ContractAmount",
+        "currency": "Currency"
+      }
+    },
+    "product": {
+      "view": "psa.vw_product",
+      "columns": {
+        "ext_ref": "ItemCode",
+        "name": "ItemName",
+        "category": "Category",
+        "unit": "Unit",
+        "unit_cost": "UnitCost"
+      }
+    },
+    "purchase_order": {
+      "view": "psa.vw_purchase_order",
+      "columns": {
+        "ext_ref": "PONo",
+        "vendor": "VendorName",
+        "ordered_on": "PODate",
+        "status": "Status",
+        "total": "TotalAmount",
+        "currency": "Currency"
+      }
+    },
+    "invoice": {
+      "view": "psa.vw_invoice",
+      "columns": {
+        "ext_ref": "InvoiceNo",
+        "party": "VendorName",
+        "invoiced_on": "InvoiceDate",
+        "due_on": "DueDate",
+        "status": "Status",
+        "total": "TotalAmount",
+        "currency": "Currency",
+        "agreement_ref": "AgreementNo"
+      }
+    },
+    "po_line": {
+      "view": "psa.vw_purchase_order_line",
+      "columns": {
+        "ext_ref": "LineID",
+        "po_ref": "PONo",
+        "line_no": "LineNo",
+        "product_ref": "ItemCode",
+        "description": "Description",
+        "quantity": "QtyOrdered",
+        "received_qty": "QtyReceived",
+        "unit_cost": "UnitCost"
+      }
+    }
+  }
+}

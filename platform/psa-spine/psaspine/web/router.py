@@ -9,6 +9,10 @@ context, and return a Response.
 from __future__ import annotations
 
 from .views import schedule as schedule_view
+from .views import finance as finance_view
+from .views import kb as kb_view
+from .views import projects as projects_view
+from .views import reportwriter as rw_view
 from .views import (admin, board, companies, configurations, dispatch, files, loop, oncall,
                     portal, reports, rules, search, ticket, uplift)
 
@@ -20,6 +24,12 @@ ROUTES = [
     ("GET", "/search.json", search.search),
     ("GET", "/reports", reports.index),
     ("GET", "/reports.csv", reports.export_csv),
+    ("GET", "/reports/custom", rw_view.index),
+    ("GET", "/reports/custom/run", rw_view.run_adhoc),
+    ("POST", "/reports/custom/new", rw_view.create),
+    ("GET", "/reports/custom/<report_id>", rw_view.detail),
+    ("GET", "/reports/custom/<report_id>/csv", rw_view.detail_csv),
+    ("POST", "/reports/custom/<report_id>/pin", rw_view.pin),
     ("POST", "/views/save", board.view_save),
     ("POST", "/views/delete", board.view_delete),
     # /ticket/new first: the first matching pattern wins, and <work_item_id>
@@ -65,6 +75,31 @@ ROUTES = [
     ("POST", "/configuration/<configuration_id>/update", configurations.update),
     ("GET", "/dispatch", dispatch.index),
     ("GET", "/schedule", schedule_view.index),
+    ("GET", "/finance", finance_view.index),
+    ("GET", "/finance/<kind>/<ext_ref>", finance_view.detail),
+    ("POST", "/finance/<kind>/<ext_ref>/propose", finance_view.propose),
+    ("POST", "/finance/change/<change_id>/cancel", finance_view.cancel_change),
+    ("POST", "/ticket/<work_item_id>/finance/link", finance_view.ticket_link),
+    ("POST", "/ticket/<work_item_id>/finance/unlink", finance_view.ticket_unlink),
+    ("GET", "/projects", projects_view.index),
+    ("POST", "/projects/new", projects_view.create),
+    ("GET", "/project/<project_id>", projects_view.detail),
+    ("POST", "/project/<project_id>/phase", projects_view.add_phase),
+    ("POST", "/project/<project_id>/phase/status", projects_view.phase_status),
+    ("POST", "/project/<project_id>/ticket", projects_view.link_ticket),
+    ("POST", "/project/<project_id>/update", projects_view.update),
+    ("POST", "/project/<project_id>/finance", projects_view.link_finance),
+    ("POST", "/ticket/<work_item_id>/project", projects_view.ticket_set),
+    ("GET", "/kb", kb_view.index),
+    ("GET", "/kb/new", kb_view.new_form),
+    ("POST", "/kb/new", kb_view.create),
+    ("GET", "/kb/<article_id>", kb_view.detail),
+    ("GET", "/kb/<article_id>/edit", kb_view.edit_form),
+    ("POST", "/kb/<article_id>/save", kb_view.save),
+    ("POST", "/kb/<article_id>/status", kb_view.set_status),
+    ("POST", "/ticket/<work_item_id>/kb", kb_view.link_ticket),
+    ("GET", "/my/help", kb_view.portal_index),
+    ("GET", "/my/help/<article_id>", kb_view.portal_detail),
     ("POST", "/schedule/book", schedule_view.book),
     ("POST", "/schedule/block", schedule_view.block_add),
     ("POST", "/schedule/block/remove", schedule_view.block_remove),
@@ -106,6 +141,13 @@ ROUTES = [
     ("POST", "/admin/calendars/holiday-list/save", admin.holiday_list_save),
     ("POST", "/admin/calendars/holiday", admin.holiday_add),
     ("POST", "/admin/calendars/holiday/remove", admin.holiday_remove),
+    ("GET", "/admin/roles", admin.roles_setup),
+    ("POST", "/admin/roles/add", admin.roles_add),
+    ("POST", "/admin/roles/assign", admin.roles_assign),
+    ("POST", "/admin/roles/<role_id>/save", admin.roles_save),
+    ("POST", "/admin/roles/<role_id>/default", admin.roles_default),
+    ("POST", "/admin/roles/<role_id>/retire", admin.roles_retire),
+    ("POST", "/admin/roles/<role_id>/restore", admin.roles_restore),
     ("GET", "/admin/schedule", admin.schedule_setup),
     ("POST", "/admin/schedule/add", admin.schedule_setup_add),
     ("POST", "/admin/schedule/save", admin.schedule_setup_save),

@@ -502,6 +502,49 @@ section arrives with. Two schema steps, by the sitting-1 road as for 036
   skipped); the drift gate and `tests/smoke.py` pass. **Pass for the suite as
   SQL01's user:** 537 run, 0 errors.
 
+## Folded in after part 16 (29 Sep): knowledge base, security roles, projects, report writer, BizBox mirror (schemas 039–043)
+
+Dada asked for the reference PSA's knowledge base, security roles, projects and
+report writer, and for finance, agreements, procurement and products to come
+from BizBox rather than be kept here. All are built at the head this section
+arrives with. Five schema steps, applied together by the sitting-1 road. **Every
+one is new tables only: no `ALTER`, no existing row touched.**
+
+- **039 knowledge base:** `kb_article`, `kb_revision`, `kb_ticket`. `/kb` for
+  the desk, `/my/help` for requesters (published articles only). An article
+  keeps every revision; linking one to a ticket counts its use.
+- **040 security roles:** `security_role`, `role_permission`, `member_role`.
+  Five modules (Knowledge, Projects, Reports, Schedule, Finance) by four levels
+  (None, Read, Write, Admin). Starter roles are written on first use; a member
+  with no role gets the default (Technician). A sysadmin is Admin everywhere.
+  Setup › Security roles edits them; every change is a `SECURITY_ROLE` audit row.
+- **041 projects:** `project`, `project_phase`, `phase_dependency`,
+  `project_ticket`. Phases nest; a phase cannot start while a predecessor is
+  open; hours come from the linked tickets' time.
+- **042 report writer:** `report_def`. Saved reports over tickets, time,
+  visits, projects and knowledge, board-limited, with CSV out.
+- **043 BizBox mirror:** `ext_source`, `ext_agreement`, `ext_product`,
+  `ext_purchase_order`, `ext_po_line`, `ext_invoice`, `ext_link`, `ext_change`.
+  Read-only copies of BizBox rows, linked to tickets and projects; proposed
+  edits wait in `ext_change` and **nothing writes to BizBox**. Filling it is
+  its own handoff: `HANDOFF-cloud-sql01-WS36-20260929-bizbox.md`. Until that
+  runs, Finance shows empty tabs, which is correct.
+- **Apply.** A COPY_ONLY backup; the preview; stop PSA-Desk; apply the port as
+  SQL01's sysadmin with `@Apply = 1` and `@AllowExisting = 1`; start PSA-Desk.
+  **Pass:** tables **80 → 99** (the 19 above), columns **745 → 920**, triggers
+  4 → 4, no existing row count changed, `/login` answers. (MEASURED on the SQL
+  Server test container at this head: 99 tables, 920 columns, 4 triggers.) This
+  assumes 037 and 038 were applied first; if not, apply part 16's section
+  first, or read the Pass as 77 → 99 tables and 716 → 920 columns. Then `init`
+  as the task account.
+- **Pass, for Dada:** the menu shows Knowledge, Projects and Finance; write and
+  publish one article and see it on `/my/help`; make a project with two phases,
+  make the second depend on the first, and see the second refuse to start;
+  Setup › Security roles shows Technician, Service manager, Read only.
+- **Counts:** 544 tests at this head (SQLite OK; SQL Server OK); the drift gate
+  and `tests/smoke.py` pass. **Pass for the suite as SQL01's user:** 544 run,
+  0 errors.
+
 ## When a step does not pass
 
 Every handoff step has a **Pass** line. This is what to do when it is not

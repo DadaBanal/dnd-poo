@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 537 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 544 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -386,6 +386,78 @@ The reference PSA's schedule, kept to what a hospital desk needs:
   adds, renames and retires a where.
 - **Not built:** reminders and recurring entries. A reminder is an email the
   desk would send on a timer, and a recurring meeting is a Teams invite.
+
+### Knowledge base (`/kb`, 039, 29 Sep 2026)
+
+Articles in Markdown, for the desk or for requesters too, in Draft, Published
+or Retired. An article may belong to a board and a Subtype › Item pair; a
+ticket's *Knowledge* pod offers the published ones for its pair and board
+first, and *It helped* links the article and counts the use. Every save keeps
+the text it replaced (history on the article). A board's own articles are
+shown only to its members. Published requester articles appear on the
+portal's **Help** page (`/my/help`). Patient details are flagged on save, not
+refused.
+
+### Security roles (Setup › Roles, 040, 29 Sep 2026)
+
+The reference PSA's Security Roles: each role grants the Knowledge base,
+Projects, Reports, the Schedule and Finance a level (None, Read, Add and edit,
+All), and each member has one role, or the default. Three starter roles:
+**Technician** (the default), **Service manager**, **Read only**. A system
+administrator has everything. A role never widens a board: tickets are still
+governed by board membership, and a restricted board stays members-only. The
+nav shows only what the person may open; a refused page says which module and
+level to ask for. Every change is a `SECURITY_ROLE` audit row.
+
+### Projects (`/projects`, 041, 29 Sep 2026)
+
+A project has a manager, dates, a status (Planned, Active, On hold, Done,
+Cancelled) and budget hours. Phases break it down, may nest, and may wait on
+one another; a phase cannot be marked done while a predecessor is open, and a
+loop is refused. Tickets are the work: a ticket's *Project* pod puts it on a
+project and phase, and its time entries are the actual hours against each
+budget. A project may link BizBox records too.
+
+### Report writer (`/reports/custom`, 042, 29 Sep 2026)
+
+Pick a dataset (tickets, time, visits, projects, knowledge), columns or a
+grouping (a count, and hours where the dataset has them), and filters; run
+it, download it as CSV, save it, share it. A report administrator pins a
+report to the Reports page as a dashboard tile. No SQL is ever typed or
+stored: each dataset's code writes the query and limits it to the viewer's
+boards. A CSV cell that starts with `=`, `+`, `-` or `@` is quoted so a
+spreadsheet cannot run it.
+
+### Finance: agreements, procurement, products, invoices from BizBox (`/finance`, 043, 29 Sep 2026)
+
+Dada's direction: these are BizBox's, and Dada PSA makes way for them. The
+Finance pages show a **read-only mirror** of BizBox, in the reference PSA's
+shape: Agreements; **Procurement** (purchase orders with a status summary,
+their lines, and the tickets and projects each serves); Products; Invoices
+(each linked to its agreement). A ticket's *Finance* pod links the PO,
+agreement, product or invoice it concerns. Dada PSA issues no invoice.
+
+```
+psaspine sync-bizbox <db> --map D:\psa\bizbox-map.json --csv-dir <folder>   # from exports
+psaspine sync-bizbox <db> --map D:\psa\bizbox-map.json --odbc               # from PSA_BIZBOX_ODBC
+                                                                           # add --apply to write
+```
+
+- **BizBox holds patient records** (the record, §8.1). The connector reads
+  only the views and columns the map names, refuses a name that looks like a
+  patient table or field, refuses the `sa` login, asks for read-only intent,
+  and keeps the connection string on the host.
+- A record gone from BizBox is marked absent, never deleted, so a link to it
+  survives; one that comes back is marked present again.
+- **Room for edits back to BizBox.** On any record, *Propose the change*
+  (Finance, Add and edit) records the field, the new value and why in a change
+  log; **BizBox is not touched**, and the page says so. The *Changes to
+  BizBox* tab lists them. `psaspine bizbox-changes <db>` prints the pending
+  ones as JSON and `--decide <id> --as APPLIED` closes one done in BizBox by
+  hand. A future write path plugs in as a `Writer` (psaspine/bizbox.py); the
+  one in force today refuses everything.
+- The BizBox side (views, a read-only login, the map, the schedule) is
+  SQL01's: `docs/handoffs/HANDOFF-cloud-sql01-WS36-20260929-bizbox.md`.
 
 ### Search, saved views, standard notes (031)
 
