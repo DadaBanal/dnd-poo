@@ -1416,3 +1416,9 @@ from BizBox's own function, doctors included.
 - SQL01 created schema `psa` and four read-only views in `LiveDB_PMC`, and every Pass was met.
 - The details are in `HANDOFF-cloud-sql01-WS36-20260929-bizbox.md`, Reply part 2.
 - Step 3 waits on one decision of Dada's: the desk's Windows account (SQL01's pick) or a new SQL login with a password.
+
+*Part 18, continued, 11:56 +08:00:* **BizBox steps 3, 4 and 5 PASS.**
+- Dada chose a SQL login: `psa_bizbox_reader`, which can read the four `psa` views and nothing else.
+- Task `PSA-BizBox` runs hourly as psa_desk.
+- The mirror holds 5,113 products, 527 POs, 1,400 lines and 636 invoices.
+- The details are in the bizbox handoff, Reply parts 3 and 4. What is left there is the 12:05 read-back and Dada's Finance check.

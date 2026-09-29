@@ -328,3 +328,40 @@ SQL01 read the last one as: a SQL login, as step 3 is written. Two points came u
 - It then switches the task to `-Apply` and runs it once. That is step 5's first apply, and it must add exactly one `BIZBOX_SYNC` audit row.
 - If either run fails, it removes the task again.
 - Its preflight passed at 11:46, with no `BIZBOX_SYNC` audit rows yet.
+
+### Part 4: 2026-09-29, 11:56 +08:00. **Steps 4 and 5 PASS on the live desk. `PSA-BizBox` runs hourly. Step 6 is not started, as the handoff says.**
+
+Dada ran `Register-PsaBizboxSync.ps1` at 11:48. Everything below is MEASURED.
+
+**The task: `PSA-BizBox`.**
+- It runs as `DND-SQL01\psa_desk`, with a stored password and run level Limited.
+- It runs every hour from 12:05, indefinitely, with IgnoreNew and a 10-minute limit.
+- Its action is `Invoke-PsaBizboxSync.ps1 -Apply`. No connection string is in its arguments.
+
+**Step 4's Pass**, the preview through Task Scheduler as psa_desk, 11:48:33 to 11:48:52, result 0:
+- one line per kind: product 5,113, purchase_order 527, po_line 1,400, invoice 636, all new and 0 skipped;
+- then "preview only".
+
+**Step 5's first apply**, 11:49:00 to 11:49:13, result 0:
+- "applied";
+- `BIZBOX_SYNC` audit rows went from 0 to 1;
+- `ext_source` records the last sync as 11:49.
+
+**The mirror in `PMC_PSA`,** read back by SQL01 afterwards:
+
+| Table | Rows, all present |
+|---|---|
+| `ext_product` | 5,113 |
+| `ext_purchase_order` | 527 |
+| `ext_po_line` | 1,400 |
+| `ext_invoice` | 636 |
+| `ext_agreement` | 0 |
+
+The desk's own tables were untouched: 4 boards, as before.
+
+**One reading to disregard.** `Get-ScheduledTaskInfo` shows a last run at 11:49:49. Task Scheduler's own history for the task shows exactly two runs, at 11:48:33 and 11:49:00, and so does the sync log. The 11:49:49 is not a run (INFERRED: a quirk of that field).
+
+**Still open:**
+- **The 12:05 hourly run.** SQL01 reads it back: a new "applied" line and `BIZBOX_SYNC` rows going from 1 to 2.
+- **Dada's check:** Finance on `desk.pmcne.ph` shows the rows, and Setup › BizBox shows the last sync.
+- **Step 6** (edits back to BizBox) is not started, as the handoff says. The desk's writer is still `NoWriter`, and the login can only read.
