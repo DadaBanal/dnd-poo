@@ -476,6 +476,14 @@ def _route(conn, request: Request, config: Config, now: datetime) -> Response:
             return entra.start(request, config)
         return entra.callback(conn, request, config, now)
 
+    # A calendar feed is read by a phone's calendar app, which has no session:
+    # the token in the path is the whole credential, and the view checks it.
+    if request.path.startswith("/calendar/feed/") and request.method == "GET" and not portal:
+        feed_user = auth.User(id="calendar-feed", name="calendar-feed", via="feed")
+        feed_user.requester = True
+        feed_user.modules = {}
+        return router.dispatch(Ctx(conn=conn, request=request, user=feed_user, config=config, now=now))
+
     try:
         user = resolve_user(conn, request, config)
     except auth.Unauthenticated:

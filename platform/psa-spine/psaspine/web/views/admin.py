@@ -61,6 +61,13 @@ def index(ctx):
                     "Set up</a></td></tr>")
     cards = []
     if ctx.user.is_sysadmin:
+        from ... import members as members_engine
+        n_members = len(members_engine.all_(ctx.conn))
+        cards.append(
+            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-users></use></svg>Members</h3>"
+            "<p class=sub>Everyone who works the desk, one page each: the record, the boards they are on, their "
+            "security role, their hours, the break-glass account, and what happens when they leave.</p>"
+            f"<div class=row><div style='flex:0 0 auto'><a class=btn href='/admin/members'>Members ({n_members})</a></div></div></div>")
         n_items = ctx.conn.execute("SELECT COUNT(*) FROM catalogue_item").fetchone()[0]
         cards.append(
             "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-layers></use></svg>Boards and the service catalogue</h3>"
@@ -488,7 +495,12 @@ def _reply_policy_form(ctx, b) -> str:
         f"<div><label>Reopen to</label><select name=reopen_status_id>{st}</select></div>"
         f"<div><label>…only within days (blank: always)</label><input name=days type=number min=1 "
         f"value='{t.esc(b['reopen_within_days'] or '')}'></div>"
-        "<div style='flex:0 0 auto'><button type=submit>Save</button></div></form>")
+        f"<div><label>This board's intake address</label><input name=intake_address maxlength=200 "
+        f"value='{t.esc(b['intake_address'] or '')}' placeholder='biomed@pmcne.ph'></div>"
+        "<div style='flex:0 0 auto'><button type=submit>Save</button></div></form>"
+        "<p class=why style='margin-top:8px'>Mail sent to this address lands on this board, whichever mailbox delivered "
+        "it: alias it onto the helpdesk mailbox in Exchange and one pickup serves every board, or give the board a "
+        "mailbox of its own. Mail from the address never opens a ticket.</p>")
 
 
 def save_reply_policy(ctx, board_id):
@@ -502,12 +514,20 @@ def save_reply_policy(ctx, board_id):
         return _done(board_id, "board", "Not saved: that status is not an open status on this board")
     days = f.get("days", "").strip()
     days = int(days) if days.isdigit() and int(days) > 0 else None
+    address = " ".join(f.get("intake_address", "").split()).lower() or None
+    if address and ("@" not in address or " " in address):
+        return _done(board_id, "board", "Not saved: the intake address does not look like an email address")
+    if address:
+        other = ctx.conn.execute("SELECT display_name FROM board WHERE LOWER(intake_address) = ? AND board_id <> ?",
+                                 (address, board_id)).fetchone()
+        if other:
+            return _done(board_id, "board", f"Not saved: {other['display_name']} already claims {address}")
     ctx.conn.execute("UPDATE board SET closed_reply_policy = ?, reopen_status_id = ?,"
-                     " reopen_within_days = ? WHERE board_id = ?", (policy, status, days, board_id))
+                     " reopen_within_days = ?, intake_address = ? WHERE board_id = ?", (policy, status, days, address, board_id))
     db.audit(ctx.conn, at=ctx.now.isoformat(sep=" ", timespec="minutes"), actor=ctx.user.id,
              action="BOARD_REPLY_POLICY", subject_kind="board", subject_id=board_id,
              detail=f"{policy or 'REOPEN'} to {status or 'default'}"
-                    + (f" within {days} days" if days else ""))
+                    + (f" within {days} days" if days else "") + (f"; intake {address}" if address else "; no intake address"))
     ctx.conn.commit()
     return _done(board_id, "board", "Reply policy saved")
 

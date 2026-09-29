@@ -2,7 +2,12 @@
 
 **Setup and administration: the desk against ConnectWise PSA's System and setup tables.**
 
-**Branch:** `claude/psa-ticketing-build` at `58008d6` (29 Sep 2026).
+**Branch:** `claude/psa-ticketing-build` at `58008d6` (29 Sep 2026); **updated
+the same evening** after 053 built items 1 and 2 and the per-board intake
+address (Dada: *"can we have different intake emails for the service
+boards?"*), which moves the email-connector row below from *Partly built* to
+*Built differently*: a board claims an address, intake routes by the
+recipient, and no connector or credential per board is needed.
 
 **Complements `docs/WS36-connectwise-parity-20260929.md`**, which set the
 desk's *features* against ConnectWise and is kept as written. Dada asked, 29
@@ -53,7 +58,7 @@ the command line. That is the defect Dada named, and it is real.
 
 ## The gaps, in the order I would build them
 
-### 1. Members (System › Members) — **Not built**
+### 1. Members (System › Members) — **Built** (053, the same evening)
 
 ConnectWise's `Member` is 123 fields (VERIFIED). The ones a hospital IT
 desk uses, and the desk's state for each:
@@ -90,7 +95,7 @@ the AD contact import fills a member's name and email when the identifier
 matches; `/my/profile` for the person. Nothing else moves: the string
 identifier stays the key everywhere, so 053 adds a table and changes no row.
 
-### 2. Calendar (the person's calendar, and a month) — **Partly built**
+### 2. Calendar (the person's calendar, and a month) — **Built** (053, the same evening; reminders not built)
 
 Dada: *"there is also no calendar page"*. What exists (MEASURED): **Setup ›
 Calendars** (business hours per calendar, holiday lists, in ConnectWise's
@@ -146,7 +151,7 @@ beyond the token and the reminder column.
 |---|---|---|
 | **Audit trail** (`AuditTrailEntry`, per record, and `TimeEntryAudit` with a source: Member / API / Workflow / Portal / EmailConnector …) | every change writes `audit_event` (actor, action, subject, detail); **no page reads it** except the ticket's history | **Partly built**: a Setup › Audit page (filter by person, action, subject, date; CSV) is the DOH inspection's first ask and is missing. The source of a change is not stored as a column |
 | **API members and keys** (`ApiMember`, `MemberSsoToken`) | `api_token` minted from the command line with a scope; no page | **Partly built**: a Setup › API tokens page (mint, scope, board, revoke, last used) |
-| **Email connector** (`EmailConnector`, parsing rules, `EmailExclusion`, `EmailToken`) | the mail pickup script with its policy in the board's reply-policy tab; exclusions are in code | **Partly built**: no Setup page for the connector's mailbox, exclusions (auto-replies, bounce addresses) or parsing |
+| **Email connector** (`EmailConnector`, one per board with its own mailbox and credential; parsing rules, `EmailExclusion`, `EmailToken`) | a board claims an intake address on its mail-policy tab (053); intake routes by the recipient address, so one mailbox with Exchange aliases serves every board, or a mailbox per board does; the reply policy is per board; auto-reply and bounce exclusions are in code | **Built differently**: an address, not a connector; no Setup page for exclusions or parsing rules |
 | **Notification recipients** (`NotificationRecipient`: owner, team leader, duty manager …) | `notify_role` on a rule action: TEAM_LEADER, OWNER, REQUESTER; a named member; a Teams channel | **Built** |
 | **Reports and custom reports** (`Report`, `CustomReport`, `ReportingService`) | Reports page and the report writer (042) | **Built** |
 | **KPIs** (`KPI`, `KPICategory`) | the Reports tiles | **Built differently** (fixed set) |
@@ -163,10 +168,9 @@ beyond the token and the reminder column.
 
 ## What I recommend building, in order
 
-1. **Members (053)** — the record Dada asked for, with deactivation and the
-   profile page. Everything else in this list hangs a field on it.
-2. **Calendar** — `/calendar` mine / by member, day / week / month, `.ics`
-   feed, reminders.
+1. ~~**Members (053)**~~ — built the same evening.
+2. ~~**Calendar**~~ — built the same evening (day / week / month, `.ics`
+   feed); reminders before a visit are not built.
 3. **Setup › Audit** — read the audit trail the desk already writes, with a
    CSV; add the source of a change (desk, portal, API, email, rules).
 4. **Setup › API tokens** and **Setup › Email connector** — the two

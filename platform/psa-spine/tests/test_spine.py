@@ -10894,5 +10894,321 @@ class SalesTest(unittest.TestCase):
         self.assertIn("No opportunity here.", page)
 
 
+
+
+class MembersTest(unittest.TestCase):
+    """053: a member is a record. The list, the page, the memberships and the
+    role in one place; leaving ends what points at the person and says so."""
+
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+
+    def setUp(self) -> None:
+        WebWSGITest.setUp(self)
+        self.addCleanup(self.tmp.cleanup)
+        self.at = datetime(2026, 9, 29, 10)
+        self.alice = self._cookie_for("alice")
+        self.root = self._cookie_for("root", is_sysadmin=True)
+        conn = self._conn()
+        conn.executescript(
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','bob','WORK');"
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','alice','ADMIN');")
+        conn.commit()
+
+    def _conn(self):
+        conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)
+        return conn
+
+    def test_everyone_the_desk_knows_is_a_member_and_a_record_names_them(self):
+        from psaspine import members, security
+        conn = self._conn()
+        self.assertEqual(members.identifiers(conn), ["alice", "bob", "carol"])
+        self.assertEqual(members.name_of(conn, "bob"), "bob")                          # no record, no contact: the identifier
+        with self.assertRaises(members.Refused):
+            members.add(conn, "bob", at=self.at, actor="root")                          # already known
+        with self.assertRaises(members.Refused):
+            members.add(conn, "j/cruz", at=self.at, actor="root")
+        with self.assertRaises(members.Refused):
+            members.add(conn, "jcruz", email="not an address", at=self.at, actor="root")
+        self.assertEqual(members.add(conn, "jcruz", display_name="Juan Cruz", title="Technician", email="jcruz@pmcne.ph",
+                                     at=self.at, actor="root"), "jcruz")
+        self.assertEqual(members.name_of(conn, "jcruz"), "Juan Cruz")
+        self.assertEqual(members.save(conn, "bob", at=self.at, actor="root", display_name="Bob Santos", mobile="0917 000 0000"),
+                         ["display_name - -> Bob Santos", "mobile - -> 0917 000 0000"])
+        self.assertEqual(members.save(conn, "bob", at=self.at, actor="root", display_name="Bob Santos"), [])
+        with self.assertRaises(members.Refused):
+            members.save(conn, "bob", at=self.at, actor="root", reports_to="bob")          # not to himself
+        with self.assertRaises(members.Refused):
+            members.save(conn, "bob", at=self.at, actor="root", reports_to="nobody")
+        with self.assertRaises(members.Refused):
+            members.save(conn, "bob", at=self.at, actor="root", default_board_id="NOPE")
+        members.save(conn, "bob", at=self.at, actor="root", reports_to="alice", time_approver="alice", default_board_id="IT_HELP")
+        m = members.get(conn, "bob")
+        self.assertEqual((m["display_name"], m["reports_to"], m["time_approver"], m["default_board_name"], m["active"]),
+                         ("Bob Santos", "alice", "alice", "IT Help", True))
+        self.assertEqual([b["board_id"] for b in m["boards"]], ["IT_HELP"])
+        self.assertEqual(members.set_membership(conn, "bob", "IT_HELP", "ADMIN", at=self.at, actor="root"), "bob is ADMIN on IT Help")
+        self.assertEqual(members.set_membership(conn, "bob", "IT_HELP", None, at=self.at, actor="root"), "bob is off IT Help")
+        self.assertEqual(members.get(conn, "bob")["boards"], [])
+        rows = {r["member"]: r for r in members.all_(conn)}
+        self.assertEqual(sorted(rows), ["alice", "bob", "carol", "jcruz"])
+        self.assertEqual(rows["jcruz"]["title"], "Technician")
+        self.assertEqual([r["member"] for r in members.all_(conn, q="santos")], ["bob"])
+        self.assertIsNone(members.get(conn, "nobody"))
+
+    def test_leaving_ends_what_points_at_the_person_and_keeps_the_history(self):
+        from psaspine import members
+        conn = self._conn()
+        members.save(conn, "bob", at=self.at, actor="root", email="bob@pmcne.ph")
+        members.save(conn, "alice", at=self.at, actor="root", reports_to="bob", time_approver="bob")
+        conn.execute("INSERT INTO oncall_slot (slot_id, board_id, member, role, starts_at, ends_at) VALUES"
+                     " ('s-past','IT_HELP','bob','ON_CALL','2026-09-01 00:00','2026-09-02 00:00'),"
+                     " ('s-next','IT_HELP','bob','ON_CALL','2026-10-01 00:00','2026-10-02 00:00')")
+        conn.execute("INSERT INTO department (name, source, created_at, approver) VALUES ('Ward 3', 'MANUAL', '2026-09-29 10:00', 'bob@pmcne.ph')")
+        from psaspine.web import auth as webauth
+        conn.execute("INSERT INTO local_account (username, scrypt_hash, is_sysadmin, disabled, created_at, created_by)"
+                     " VALUES (?,?,0,0,?,'root')", ("bob", webauth.hash_password("x" * 12), "2026-09-29 10:00"))
+        with self.assertRaises(members.Refused):
+            members.deactivate(conn, "bob", at=self.at, actor="bob")                     # not your own
+        done = members.deactivate(conn, "bob", at=self.at, actor="root")
+        self.assertEqual(done, ["taken off 1 board(s): IT Help",
+                                "1 future on-call slot(s) removed; the rota needs someone else there",
+                                "no longer the approver for: Ward 3",
+                                "no longer reported to by: alice",
+                                "no longer the time approver for: alice",
+                                "break-glass account disabled"])
+        m = members.get(conn, "bob")
+        self.assertEqual((m["active"], m["inactive_from"], m["boards"]), (False, "2026-09-29", []))
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM oncall_slot WHERE member = 'bob'").fetchone()[0], 1)   # the past stays
+        self.assertIsNone(conn.execute("SELECT approver FROM department WHERE name = 'Ward 3'").fetchone()[0])
+        self.assertIsNone(members.get(conn, "alice")["reports_to"])
+        self.assertEqual(conn.execute("SELECT disabled FROM local_account WHERE username = 'bob'").fetchone()[0], 1)
+        with self.assertRaises(members.Refused):
+            members.deactivate(conn, "bob", at=self.at, actor="root")                    # once
+        self.assertEqual([r["member"] for r in members.all_(conn)], ["alice", "carol"])  # gone from the list
+        self.assertIn("bob", [r["member"] for r in members.all_(conn, include_inactive=True)])
+        members.reactivate(conn, "bob", at=self.at, actor="root")
+        self.assertTrue(members.get(conn, "bob")["active"])
+        self.assertEqual(members.get(conn, "bob")["boards"], [])                        # memberships are given again on purpose
+
+    def test_setup_members_pages_are_a_system_administrators_and_hold_it_all(self):
+        conn = self._conn()
+        status, _, _ = self._call("GET", "/admin/members", cookie=self.alice)
+        self.assertTrue(status.startswith("403"), status)
+        _, _, page = self._call("GET", "/admin/members", cookie=self.root)
+        self.assertIn("<h1>Members</h1>", page)
+        self.assertIn("href='/admin/member/bob'", page)
+        _, _, setup_page = self._call("GET", "/admin", cookie=self.root)
+        self.assertIn("href='/admin/members'", setup_page)
+        _, h, _ = self._call("POST", "/admin/members/add", cookie=self.root,
+                             form={"member": "jcruz", "display_name": "Juan Cruz", "email": "jcruz@pmcne.ph", "default_board_id": "IT_HELP"})
+        self.assertEqual(dict(h)["Location"], "/admin/member/jcruz?msg=jcruz+added.+Now+put+them+on+their+boards.")
+        _, h, _ = self._call("POST", "/admin/member/jcruz/board", cookie=self.root, form={"board_id": "IT_HELP", "access": "WORK"})
+        self.assertIn("msg=jcruz+is+WORK+on+IT+Help", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/admin/member/jcruz/role", cookie=self.root, form={"role_id": "SERVICE_MANAGER"})
+        self.assertIn("msg=", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/admin/member/jcruz/capacity", cookie=self.root, form={"hours": "36"})
+        self.assertIn("msg=36+hours+a+week.", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/admin/member/jcruz/save", cookie=self.root,
+                             form={"display_name": "Juan Cruz", "title": "Biomedical engineer", "email": "jcruz@pmcne.ph",
+                                   "reports_to": "alice", "time_approver": "alice", "default_board_id": "IT_HELP"})
+        self.assertIn("msg=Saved.", dict(h)["Location"])
+        _, _, page = self._call("GET", "/admin/member/jcruz", cookie=self.root)
+        self.assertIn("<h1>Juan Cruz", page)
+        self.assertIn("Biomedical engineer", page)
+        self.assertIn("value='36'", page)
+        self.assertIn("Service manager", page)
+        self.assertIn("This person has left", page)
+        status, _, _ = self._call("GET", "/admin/member/nobody", cookie=self.root)
+        self.assertTrue(status.startswith("404"), status)
+        _, h, _ = self._call("POST", "/admin/member/jcruz/deactivate", cookie=self.root)
+        self.assertIn("msg=Juan+Cruz+has+left.+taken+off+1+board", dict(h)["Location"])
+        _, _, page = self._call("GET", "/admin/member/jcruz", cookie=self.root)
+        self.assertIn("Back on the desk", page)
+        self.assertNotIn("action='/admin/member/jcruz/board'", page.split("Boards")[1].split("</table>")[1] if "Boards" in page else "")
+        # the member's name reaches the shell: bob signs in and is Bob Santos in the header
+        from psaspine import members
+        members.save(conn, "bob", at=self.at, actor="root", display_name="Bob Santos")
+        conn.commit()
+        _, _, board = self._call("GET", "/", cookie=self._cookie_for("bob"))
+        self.assertIn('<a href="/my/profile" title="My profile">Bob Santos</a>', board)
+
+    def test_my_profile_is_the_persons_own_and_mints_a_calendar_feed(self):
+        from psaspine import members
+        conn = self._conn()
+        members.save(conn, "alice", at=self.at, actor="root", display_name="Alice Reyes", title="Service manager")
+        conn.commit()
+        _, _, page = self._call("GET", "/my/profile", cookie=self.alice)
+        self.assertIn("<h1>Alice Reyes</h1>", page)
+        self.assertIn("Service manager", page)
+        self.assertIn("IT Help", page)
+        self.assertIn("Make a feed address", page)
+        _, h, _ = self._call("POST", "/my/profile/save", cookie=self.alice, form={"phone": "5501", "mobile": "0917 111 2222"})
+        self.assertIn("msg=Saved.", dict(h)["Location"])
+        self.assertEqual(members.get(conn, "alice")["mobile"], "0917 111 2222")
+        _, h, _ = self._call("POST", "/my/profile/feed", cookie=self.alice)
+        token = dict(h)["Location"].split("token=")[1]
+        self.assertTrue(token.startswith("cal_"))
+        _, _, page = self._call("GET", "/my/profile", cookie=self.alice, query=f"token={token}")
+        self.assertIn(f"/calendar/feed/{token}.ics", page)
+        self.assertIn("New feed address", page)
+        self.assertEqual(members.member_for_feed(conn, token), "alice")
+        self.assertIsNone(members.member_for_feed(conn, "cal_wrong"))
+        _, h, _ = self._call("POST", "/my/profile/feed", cookie=self.alice)                 # rotating ends the old one
+        self.assertIsNone(members.member_for_feed(conn, token))
+        status, _, _ = self._call("GET", "/my/profile", cookie=self._cookie_for("nurse"))   # a requester has no profile
+        self.assertTrue(status.startswith("404"), status)
+
+
+class CalendarTest(unittest.TestCase):
+    """053: a person's calendar, three views, and the .ics feed for a phone."""
+
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+
+    def setUp(self) -> None:
+        WebWSGITest.setUp(self)
+        self.addCleanup(self.tmp.cleanup)
+        self.at = datetime(2026, 9, 29, 10)
+        self.alice = self._cookie_for("alice")
+        self.bob = self._cookie_for("bob")
+        conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)
+        self.conn = conn
+        conn.executescript(
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','alice','ADMIN');"
+            "INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','bob','WORK');")
+        from psaspine import schedule, tickets
+        schedule.ensure_vocabulary(conn)
+        self.wid = tickets.open_ticket(conn, board_id="IT_HELP", summary="Printer jams on ward 3", impact="I3", urgency="U3",
+                                       requested_by="ward3@pmcne.ph", at=self.at)
+        schedule.add(conn, self.wid, member="bob", starts_at=datetime(2026, 9, 30, 10), ends_at=datetime(2026, 9, 30, 11),
+                     note="Ward 3", actor="alice", at=self.at)
+        schedule.add_block(conn, member="bob", kind="TIME_OFF", name="Dentist", starts_at=datetime(2026, 10, 2, 13),
+                           ends_at=datetime(2026, 10, 2, 15), actor="bob", at=self.at)
+        conn.execute("INSERT INTO oncall_slot (slot_id, board_id, member, role, starts_at, ends_at) VALUES"
+                     " ('s1','IT_HELP','bob','ON_CALL','2026-10-03 18:00','2026-10-04 08:00')")
+        conn.commit()
+
+    def test_the_three_views_show_visits_blocks_and_on_call_for_one_person(self):
+        _, _, page = self._call("GET", "/calendar", cookie=self.bob, query="date=2026-09-29")
+        self.assertIn("My calendar", page)
+        self.assertIn("Week of 28 Sep 2026", page)
+        self.assertIn(self.wid, page)
+        self.assertIn("Dentist", page)
+        self.assertIn("On call", page)
+        self.assertNotIn("Printer jams on ward 3 x", page)
+        _, _, page = self._call("GET", "/calendar", cookie=self.bob, query="view=day&date=2026-09-30")
+        self.assertIn("Wednesday 30 September 2026", page)
+        self.assertIn(self.wid, page)
+        self.assertNotIn("Dentist", page)
+        _, _, page = self._call("GET", "/calendar", cookie=self.bob, query="view=month&date=2026-10-15")
+        self.assertIn("October 2026", page)
+        self.assertIn("Dentist", page)
+        self.assertIn("On call", page)
+        _, _, page = self._call("GET", "/calendar", cookie=self.bob, query="view=day&date=2026-11-01")
+        self.assertIn("Nothing on this day.", page)
+        _, _, page = self._call("GET", "/", cookie=self.bob)
+        self.assertIn('href="/calendar"', page)
+
+    def test_a_dispatcher_opens_a_colleagues_calendar_and_a_stranger_cannot(self):
+        _, _, page = self._call("GET", "/calendar", cookie=self.alice, query="member=bob&date=2026-09-29")
+        self.assertIn(self.wid, page)
+        self.assertIn("<h1>bob", page)
+        status, _, _ = self._call("GET", "/calendar", cookie=self.alice, query="member=nobody")
+        self.assertTrue(status.startswith("404"), status)
+        status, _, _ = self._call("GET", "/calendar", cookie=self._cookie_for("nurse"))
+        self.assertTrue(status.startswith("403"), status)                              # no Schedule module for a requester
+
+    def test_the_feed_needs_only_its_token_and_never_says_what_a_ticket_says(self):
+        from psaspine import members
+        token = members.new_feed_token(self.conn, "bob", at=self.at)
+        self.conn.commit()
+        status, h, body = self._call("GET", f"/calendar/feed/{token}.ics")
+        self.assertTrue(status.startswith("200"), status)
+        self.assertEqual(dict(h)["Content-Type"], "text/calendar; charset=utf-8")
+        self.assertIn("BEGIN:VCALENDAR", body)
+        self.assertIn(f"SUMMARY:{self.wid} · IT_HELP", body)
+        self.assertIn("DTSTART:20260930T100000", body)
+        self.assertIn("SUMMARY:Time off: Dentist", body)
+        self.assertIn("SUMMARY:On call · IT Help", body)
+        self.assertNotIn("Printer jams", body)                                          # §6.1: the summary stays behind the sign-in
+        self.assertEqual(body.count("BEGIN:VEVENT"), 3)
+        status, _, _ = self._call("GET", "/calendar/feed/cal_nope.ics")
+        self.assertTrue(status.startswith("404"), status)
+        status, _, _ = self._call("GET", f"/calendar/feed/{token}")                       # with or without the suffix
+        self.assertTrue(status.startswith("200"), status)
+        members.deactivate(self.conn, "bob", at=self.at, actor="root")
+        self.conn.commit()
+        status, _, _ = self._call("GET", f"/calendar/feed/{token}.ics")                  # leaving ends the feed
+        self.assertTrue(status.startswith("404"), status)
+
+
+class IntakeRoutingTest(unittest.TestCase):
+    """053: a board claims an address; mail to it lands there, whichever
+    mailbox delivered it. Better than a connector per board: one mailbox
+    with aliases, or one per board, both work."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = _fresh(self.tmp)
+        self.drop = Path(self.tmp.name) / "drop"
+        self.drop.mkdir()
+        self.at = datetime(2026, 9, 29, 9, 0)
+        self.n = 0
+        from psaspine import setup
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        self.conn.execute("INSERT INTO board (board_id, display_name, phase, fulfiller_group, is_live, is_unrouted, intake_address)"
+                          " VALUES ('BIOMED', 'Biomedical', '2', 'Dada', 0, 0, 'Biomed@pmcne.ph')")
+        self.conn.execute("UPDATE board SET intake_address = 'helpdesk@pmcne.ph' WHERE board_id = 'IT_HELP'")
+        setup.apply_starter(self.conn, "BIOMED", actor="t", at=self.at)
+        self.conn.commit()
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _msg(self, *, subject, to="helpdesk@pmcne.ph", cc=None, delivered_to=None, sender="ward3@pmcne.ph"):
+        self.n += 1
+        headers = [f"From: {sender}", f"To: {to}", f"Subject: {subject}", "Date: Tue, 29 Sep 2026 09:00:00 +0800",
+                   f"Message-ID: <r{self.n}@pmcne.ph>"]
+        if cc:
+            headers.append(f"Cc: {cc}")
+        if delivered_to:
+            headers.append(f"Delivered-To: {delivered_to}")
+        (self.drop / f"{self.n:03d}.eml").write_bytes(("\r\n".join(headers) + "\r\n\r\nPlease help.\r\n").encode())
+
+    def _board_of(self, n):
+        return self.conn.execute("SELECT t.board_id, i.to_address FROM intake_message i JOIN ticket t ON t.work_item_id = i.work_item_id"
+                                 " WHERE i.message_id = ?", (f"<r{n}@pmcne.ph>",)).fetchone()
+
+    def test_mail_lands_on_the_board_that_claims_the_address(self):
+        from psaspine import intake
+        self._msg(subject="Infusion pump alarm", to="Nurse Station <ward3@pmcne.ph>, biomed@pmcne.ph")          # To, mixed case claimed
+        self._msg(subject="Printer jams", to="helpdesk@pmcne.ph")
+        self._msg(subject="Aliased on the way in", to="BIOMED@PMCNE.PH", delivered_to="helpdesk@pmcne.ph")      # Exchange alias
+        self._msg(subject="Nobody's address", to="someone@pmcne.ph")
+        self._msg(subject="Copied to biomed", to="someone@pmcne.ph", cc="biomed@pmcne.ph")
+        self._msg(subject="The desk talking", sender="biomed@pmcne.ph", to="ward3@pmcne.ph")                      # a board's own address
+        counts = intake.import_drop(self.conn, self.drop, run_id="r1", at=self.at, board_id="IT_HELP")
+        self.assertEqual((counts["new"], counts["routed_by_address"], counts["loop_guarded"]), (5, 4, 1))
+        self.assertEqual(tuple(self._board_of(1)), ("BIOMED", "biomed@pmcne.ph"))
+        self.assertEqual(tuple(self._board_of(2)), ("IT_HELP", "helpdesk@pmcne.ph"))
+        self.assertEqual(tuple(self._board_of(3)), ("BIOMED", "biomed@pmcne.ph"))
+        self.assertEqual(tuple(self._board_of(4)), ("IT_HELP", None))                    # the run's board, no address decided it
+        self.assertEqual(tuple(self._board_of(5)), ("BIOMED", "biomed@pmcne.ph"))
+        self.assertEqual(self.conn.execute("SELECT disposition FROM intake_message WHERE message_id = '<r6@pmcne.ph>'").fetchone()[0],
+                         "UNCLASSIFIED")
+        # with no run board, an unclaimed address goes to the unrouted queue as before
+        self._msg(subject="Unrouted", to="someone@pmcne.ph")
+        intake.import_drop(self.conn, self.drop, run_id="r2", at=self.at)
+        self.assertEqual(self._board_of(7)["board_id"], self.conn.execute("SELECT board_id FROM board WHERE is_unrouted = 1").fetchone()[0])
+        # a re-run makes no second ticket
+        self.assertEqual(intake.import_drop(self.conn, self.drop, run_id="r3", at=self.at)["new"], 0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

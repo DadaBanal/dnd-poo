@@ -16,6 +16,8 @@ from .views import paging as paging_view
 from .views import agreements as agreements_view
 from .views import finance as finance_view
 from .views import sales as sales_view
+from .views import members as members_view
+from .views import calendar as calendar_view
 from .views import kb as kb_view
 from .views import projects as projects_view
 from .views import reportwriter as rw_view
@@ -105,6 +107,21 @@ ROUTES = [
     ("POST", "/agreement/<agreement_id>/status", agreements_view.set_status),
     ("POST", "/agreement/<agreement_id>/item", agreements_view.item_add),
     ("POST", "/agreement/<agreement_id>/item/remove", agreements_view.item_remove),
+    ("GET", "/admin/members", members_view.index),
+    ("POST", "/admin/members/add", members_view.add),
+    ("GET", "/admin/member/<member>", members_view.detail),
+    ("POST", "/admin/member/<member>/save", members_view.save),
+    ("POST", "/admin/member/<member>/board", members_view.board),
+    ("POST", "/admin/member/<member>/board/remove", members_view.board_remove),
+    ("POST", "/admin/member/<member>/role", members_view.role),
+    ("POST", "/admin/member/<member>/capacity", members_view.capacity),
+    ("POST", "/admin/member/<member>/deactivate", members_view.deactivate),
+    ("POST", "/admin/member/<member>/reactivate", members_view.reactivate),
+    ("GET", "/my/profile", members_view.profile),
+    ("POST", "/my/profile/save", members_view.profile_save),
+    ("POST", "/my/profile/feed", members_view.profile_feed),
+    ("GET", "/calendar", calendar_view.index),                          # ?member=&view=day|week|month&date=
+    ("GET", "/calendar/feed/<token>", calendar_view.feed),              # <token>.ics; no session: the token is the key
     ("GET", "/sales", sales_view.index),                                # ?stage=OPEN|ALL|<stage>&q=
     ("POST", "/sales/new", sales_view.create),
     ("GET", "/sales/<opportunity_id>", sales_view.detail),

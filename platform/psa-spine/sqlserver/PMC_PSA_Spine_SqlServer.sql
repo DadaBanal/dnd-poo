@@ -211,6 +211,8 @@ BEGIN
     PRINT N'    psa.opportunity';
     PRINT N'    psa.quote';
     PRINT N'    psa.quote_line';
+    PRINT N'    psa.member';
+    PRINT N'    psa.calendar_feed';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -259,13 +261,14 @@ BEGIN
     PRINT N'    psa.ix_opportunity_stage';
     PRINT N'    psa.ix_quote_opportunity';
     PRINT N'    psa.ix_quote_line_quote';
+    PRINT N'    psa.ix_calendar_feed_hash';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  113 tables, 47 indexes, 4 triggers.';
+    PRINT N'  115 tables, 48 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -2987,6 +2990,78 @@ CREATE TABLE psa.[quote_line] (
 END;
 
 -- --------------------------------------------------------------------------
+-- member   (from schema/053_members.sql)
+-- 053: members as records, a calendar feed, and a board's own intake address
+--
+-- Until now a member was a string: the sign-in identifier repeated across
+-- board_member, member_role, member_capacity, oncall_slot, time_entry and
+-- local_account, with a name only when the AD contact import happened to
+-- carry it. The reference PSA's Member is a record with 123 fields; a
+-- hospital desk needs about fifteen of them, and one page per person.
+--
+-- The identifier stays the key everywhere. This step adds a table beside the
+-- rows that already exist and changes none of them, so a member who has no
+-- row here is exactly what they were yesterday.
+IF OBJECT_ID(N'psa.[member]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[member] (
+    -- the identifier every other table carries
+    [member] NVARCHAR(200) NOT NULL CONSTRAINT [PK_member] PRIMARY KEY,
+    [display_name] NVARCHAR(400) NULL,
+    [title] NVARCHAR(400) NULL,
+    [email] NVARCHAR(400) NULL,
+    [phone] NVARCHAR(32) NULL,
+    [mobile] NVARCHAR(32) NULL,
+
+    -- a department name, as Setup › Departments has it
+    [department] NVARCHAR(400) NULL,
+
+    -- where Dada IT keeps them: the office, a ward store room
+    [location] NVARCHAR(400) NULL,
+
+    -- a member identifier
+    [reports_to] NVARCHAR(200) NULL,
+    [default_board_id] NVARCHAR(64) NULL CONSTRAINT [FK_member_default_board_id] REFERENCES psa.[board]([board_id]),
+    [work_role_id] NVARCHAR(64) NULL CONSTRAINT [FK_member_work_role_id] REFERENCES psa.[work_role]([work_role_id]),
+
+    -- a member identifier; who approves this person's week
+    [time_approver] NVARCHAR(200) NULL,
+
+    -- the day they left; memberships were ended then
+    [inactive_from] NVARCHAR(32) NULL,
+    [notes] NVARCHAR(MAX) NULL,
+    [created_at] NVARCHAR(64) NOT NULL,
+    [created_by] NVARCHAR(200) NOT NULL,
+    [updated_at] NVARCHAR(64) NOT NULL,
+    [updated_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [inactive_from_parsed] AS (CASE WHEN [inactive_from] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [inactive_from], 112) WHEN [inactive_from] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [inactive_from], 23) END),
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END)),
+    [updated_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [updated_at], 126), CASE WHEN [updated_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [updated_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- calendar_feed   (from schema/053_members.sql)
+-- A person's calendar feed (.ics), for the phone's own calendar app: one
+-- token per member, stored hashed, rotated from their profile. The feed
+-- names tickets, boards and places, never a ticket's summary.
+IF OBJECT_ID(N'psa.[calendar_feed]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[calendar_feed] (
+    [member] NVARCHAR(200) NOT NULL CONSTRAINT [PK_calendar_feed] PRIMARY KEY,
+    [token_hash] NVARCHAR(64) NOT NULL,
+    [created_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -3332,6 +3407,18 @@ ALTER TABLE psa.[workflow_action] ADD [channel] NVARCHAR(32) NULL CONSTRAINT [DF
 IF COL_LENGTH(N'psa.[workflow_action]', N'target_id') IS NULL
 ALTER TABLE psa.[workflow_action] ADD [target_id] NVARCHAR(64) NULL CONSTRAINT [FK_workflow_action_target_id] REFERENCES psa.[channel_target]([target_id]);
 
+-- A board claims an address. Mail to it lands on that board, whichever
+-- mailbox delivered it: Exchange can alias biomed@ onto the one helpdesk
+-- mailbox and one pickup task serves every board, or each board can have a
+-- mailbox of its own with a pickup task each. The reference PSA needs a
+-- connector (a mailbox and a credential) per board; this needs an address.
+IF COL_LENGTH(N'psa.[board]', N'intake_address') IS NULL
+ALTER TABLE psa.[board] ADD [intake_address] NVARCHAR(400) NULL;
+
+-- The address the message was routed by, when one was.
+IF COL_LENGTH(N'psa.[intake_message]', N'to_address') IS NULL
+ALTER TABLE psa.[intake_message] ADD [to_address] NVARCHAR(400) NULL;
+
 IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
 ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
 
@@ -3487,6 +3574,9 @@ CREATE INDEX [ix_quote_opportunity] ON psa.[quote] ([opportunity_id]);
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_quote_line_quote' AND object_id = OBJECT_ID(N'psa.[quote_line]'))
 CREATE INDEX [ix_quote_line_quote] ON psa.[quote_line] ([quote_id]);
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_calendar_feed_hash' AND object_id = OBJECT_ID(N'psa.[calendar_feed]'))
+CREATE INDEX [ix_calendar_feed_hash] ON psa.[calendar_feed] ([token_hash]);
+
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
@@ -3622,10 +3712,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 113 OR @Triggers <> 4 OR @Indexes < 47
+IF @Tables <> 115 OR @Triggers <> 4 OR @Indexes < 48
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 113), %d triggers (expected 4), %d indexes (expected at least 47). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 115), %d triggers (expected 4), %d indexes (expected at least 48). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -3676,6 +3766,8 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[calendar_feed];
+    DROP TABLE IF EXISTS psa.[member];
     DROP TABLE IF EXISTS psa.[quote_line];
     DROP TABLE IF EXISTS psa.[quote];
     DROP TABLE IF EXISTS psa.[opportunity];

@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 586 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 594 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -937,6 +937,57 @@ minted deliberately, and every list and read on that board writes
 `RESTRICTED_READ` as a person's does. The wrong scope is a 403 that names
 the scope needed; another board's ticket is a 404 a caller cannot tell from
 none.
+
+## Members, a calendar, and a board's own address (053, 29 Sep 2026)
+
+Dada, 29 Sep, evening: *"there is no member page as per connectwise"*,
+*"there is also no calendar page"*, and *"can we have different intake
+emails for the service boards?"* Three things, one schema step.
+
+**Members** (Setup › Members). Until now a member was a string: the sign-in
+identifier repeated across board memberships, roles, capacity, the on-call
+rota, time entries and break-glass accounts, with a name only when the AD
+contact import happened to carry it. Now there is a record (`member`):
+name, title, email, phone, mobile, department, location, who they report
+to, default board, default work role, who approves their week, notes. The
+identifier stays the key everywhere, so 053 changes no existing row. Setup ›
+Members lists everyone the desk knows, however it came to know them; the
+page per person holds the record, the boards they are on (add, change
+access, take off), the security role, the hours a week, the break-glass
+account and their history, where before those were four pages and a
+command line. **Leaving** (*This person has left*) ends the board
+memberships, the future on-call slots, the departments they approve for,
+who reports to them, whose time they approve, and the break-glass account,
+and lists what it did; tickets, notes and time keep the name. Coming back
+gives no membership back: those are given again on purpose. The desk shows
+the record's name everywhere the sign-in name used to appear, and the name
+in the header opens **My profile** (`/my/profile`): what the desk holds on
+you, your own phone numbers, your boards and role, and the calendar feed.
+
+**Calendar** (`/calendar`). The Schedule is the dispatcher's week of everyone;
+this is one person's: visits, time off, meetings and on-call shifts, by day,
+week or month. Yours by default; a member of a board opens the calendar of
+anyone who works it. Visits name tickets, so on a restricted board each
+listing is an audited read, as the Schedule's are. **A feed for the phone**:
+*Make a feed address* on My profile mints a private `.ics` address
+(`/calendar/feed/<token>.ics`, 30 days back, 90 ahead) a phone's calendar app
+subscribes to with no sign-in. Only the token's hash is kept, a new one ends
+the old, and leaving ends it. The feed names the ticket, the board and the
+place, never what a ticket says (§6.1).
+
+**A board's own intake address.** The reference PSA needs an email connector
+(a mailbox and a credential) per board. Here a board **claims an address** on
+its mail-policy tab (`biomed@pmcne.ph`), and intake routes every message by
+its recipients: To and Cc as the sender wrote them, then what the mail
+system stamped (Delivered-To, X-Original-To, Envelope-To), so Exchange can
+alias `biomed@` onto the one helpdesk mailbox and **one pickup task serves
+every board**, or a board can have a mailbox and a pickup of its own with
+`--board-id`; both work, and a message copied to two boards' addresses goes
+to the first named. An unclaimed address goes to the run's board, else the
+unrouted queue, as before. A board's address is the desk's own: mail from it
+never opens a ticket. `intake_message.to_address` records which address
+decided it, and `import-mail` counts `routed_by_address`. Two addresses
+cannot be claimed by two boards.
 
 ## Opportunities and quotes (`/sales`, 052, 29 Sep 2026)
 

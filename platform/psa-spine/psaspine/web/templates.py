@@ -871,6 +871,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         ("board", "/", "Service Board"),
         ("dispatch", "/dispatch", "Dispatch"),
         ("schedule", "/schedule", "Schedule"),
+        ("calendar", "/calendar", "Calendar"),
         ("time", "/time", "Time"),
         ("projects", "/projects", "Projects"),
         ("kb", "/kb", "Knowledge"),
@@ -885,7 +886,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
     ]
     levels = getattr(user, "modules", None) or {}
     gate = {"schedule": "SCHEDULE", "projects": "PROJECTS", "kb": "KNOWLEDGE", "reports": "REPORTS",
-            "finance": "FINANCE", "sales": "FINANCE", "time": "TIME"}
+            "finance": "FINANCE", "sales": "FINANCE", "time": "TIME", "calendar": "SCHEDULE"}
     nav_items = [n for n in nav_items if n[0] not in gate or levels.get(gate[n[0]], "READ") != "NONE"]
     if requester:
         nav_items = [("my", "/my", "My requests"), ("approvals", "/my/approvals", "Approvals"), ("help", "/my/help", "Help")]
@@ -893,7 +894,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
             active = "my"
     nav = "".join(
         f'<a href="{esc(href)}" title="{esc(label)}"{" class=on aria-current=page" if key == active else ""}>'
-        f'{icon({"admin": "setup", "schedule": "calendar", "projects": "layers", "kb": "note", "finance": "tag", "sales": "briefcase", "help": "note", "time": "clock", "approvals": "check"}.get(key, key))}<span class=lbl>{esc(label)}</span></a>'
+        f'{icon({"admin": "setup", "schedule": "grip", "projects": "layers", "kb": "note", "finance": "tag", "sales": "briefcase", "help": "note", "time": "clock", "approvals": "check"}.get(key, key))}<span class=lbl>{esc(label)}</span></a>'
         for key, href, label in nav_items)
     nav += (f'<a class="newbtn" href="/ticket/new" title="New ticket (n)">{icon("plus")} New ticket</a>'
             if user is not None and not requester else "")
@@ -906,7 +907,8 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
                      f' aria-label="Search and commands">{icon("search")}<span class=kbd>⌘K</span></button>'
                      '<button class="iconbtn" type="button" popovertarget="keys" title="Keyboard shortcuts (?)"'
                      f' aria-label="Keyboard shortcuts">{icon("keyboard")}</button>')
-        who = (f'<div class="who">{glass}<span class=name>{esc(user.name)}</span>'
+        shown_name = esc(user.name) if requester else f'<a href="/my/profile" title="My profile">{esc(user.name)}</a>'
+        who = (f'<div class="who">{glass}<span class=name>{shown_name}</span>'
                f'<span class=sep> · </span><a href="/logout">sign out</a>' + tools +
                f'<button class="iconbtn" id="theme" type="button" title="Light / dark (t)"'
                f' aria-label="Toggle light or dark">{icon("sun")}</button></div>')

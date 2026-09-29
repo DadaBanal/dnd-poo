@@ -347,7 +347,12 @@ def user_from_session(conn: sqlite3.Connection, payload: dict) -> User:
     """Rebuild the acting user from a validated session payload, re-reading the
     board roles from the database rather than trusting the cookie for them — a
     cookie says who you are, the database says what you may touch."""
-    return User(id=payload["sub"], name=payload.get("name", payload["sub"]),
+    # The member record (053) names the person; the door's name is the
+    # fallback for anyone without one.
+    row = conn.execute("SELECT display_name FROM member WHERE LOWER(member) = LOWER(?)",
+                       (payload["sub"],)).fetchone()
+    name = row["display_name"] if row and row["display_name"] else payload.get("name", payload["sub"])
+    return User(id=payload["sub"], name=name,
                 email=payload.get("email"), via=payload.get("via", "entra"),
                 is_sysadmin=bool(payload.get("sysadmin")),
                 roles=board_roles(conn, payload["sub"]), department=payload.get("dept"))

@@ -233,3 +233,12 @@ def human_age(opened_at: str, *, now: datetime) -> str:
     if minutes < 60 * 48:
         return f"{minutes // 60}h"
     return f"{minutes // (60 * 24)}d"
+
+
+def public_url(ctx) -> str:
+    """The desk's address as a person types it: the deployment's public URL
+    when one is named, else the host this request came to."""
+    base = getattr(ctx.config, "public_url", None)
+    if base:
+        return base.rstrip("/")
+    return f"{ctx.request.scheme}://{ctx.request.public_host}"

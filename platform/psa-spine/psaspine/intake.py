@@ -245,6 +245,41 @@ def loop_guard(message, sender: str, own_addresses=()) -> str | None:
 _TOKEN = re.compile(r"\b([A-Z]{2,10}-\d{4,})\b")
 
 
+def recipients_of(message) -> list[str]:
+    """Every address the message was delivered to, lower case, in header
+    order: To and Cc as the sender wrote them, then what the mail system
+    stamped (Delivered-To, X-Original-To, Envelope-To, Resent-To). The
+    stamped ones matter when Exchange aliased biomed@ onto the helpdesk
+    mailbox: To still says biomed@, and that is the board's address."""
+    out: list[str] = []
+    for header in ("To", "Cc", "Delivered-To", "X-Original-To", "Envelope-To", "Resent-To", "X-Delivered-To"):
+        for raw in message.get_all(header, []):
+            for _, addr in email.utils.getaddresses([_decode(raw)]):
+                a = (addr or "").strip().lower()
+                if a and a not in out:
+                    out.append(a)
+    return out
+
+
+def board_addresses(conn: sqlite3.Connection) -> dict[str, str]:
+    """address (lower case) -> board_id, for every live board that claims one."""
+    return {r["intake_address"].strip().lower(): r["board_id"] for r in conn.execute(
+        "SELECT board_id, intake_address FROM board WHERE intake_address IS NOT NULL AND COALESCE(inactive, 0) = 0")
+        if r["intake_address"] and r["intake_address"].strip()}
+
+
+def route(conn: sqlite3.Connection, message, *, fallback: str | None) -> tuple[str | None, str | None]:
+    """(board_id, the address that decided it). A board that claims one of
+    the message's recipient addresses wins; else the board the run was
+    given; else the unrouted board. A message to two boards' addresses goes
+    to the first named in the headers, and the ticket says which."""
+    claims = board_addresses(conn)
+    for addr in recipients_of(message):
+        if addr in claims:
+            return claims[addr], addr
+    return fallback, None
+
+
 def subject_token(work_item_id: str) -> str:
     """What outbound mail puts in its subject so a reply can find its ticket."""
     return f"[{work_item_id}]"
@@ -322,6 +357,10 @@ def import_drop(conn: sqlite3.Connection, drop_dir, *, run_id: str,
         row = conn.execute(
             "SELECT board_id FROM board WHERE is_unrouted = 1").fetchone()
         board_id = row["board_id"] if row else None
+    run_board = board_id
+    # A board's own address is the desk's own address too: mail from it is
+    # the desk talking, and never opens a ticket (the loop guard).
+    own_addresses = list(own_addresses) + list(board_addresses(conn))
 
     counts = {"files": len(files), "new": 0, "appended": 0, "duplicate": 0,
               "unclassified": 0, "already_seen": 0, "phi_flagged": 0,
@@ -344,6 +383,9 @@ def import_drop(conn: sqlite3.Connection, drop_dir, *, run_id: str,
         when = received_at(message, fallback=at)
         stamp = when.isoformat(sep=" ", timespec="minutes")
         body = body_of(message)
+        board_id, to_address = route(conn, message, fallback=run_board)
+        if to_address:
+            counts["routed_by_address"] = counts.get("routed_by_address", 0) + 1
 
         for code, severity, detail in phi.scan_fields(
                 {"subject": subject, "body": body}):
@@ -385,7 +427,7 @@ def import_drop(conn: sqlite3.Connection, drop_dir, *, run_id: str,
                 _keep_files(conn, message, ticket_id, sender=sender, at=when, run_id=run_id,
                             counts=counts)
                 _record(conn, mid, stamp, sender, subject, channel, "NEW_TICKET",
-                        ticket_id, parent_id, run_id)
+                        ticket_id, parent_id, run_id, to_address)
                 counts["new"] += 1
                 counts["reply_to_closed"] += 1
                 continue
@@ -433,7 +475,7 @@ def import_drop(conn: sqlite3.Connection, drop_dir, *, run_id: str,
         _keep_files(conn, message, ticket_id, sender=sender, at=when, run_id=run_id,
                     counts=counts)
         _record(conn, mid, stamp, sender, subject, channel, "NEW_TICKET",
-                ticket_id, None, run_id)
+                ticket_id, None, run_id, to_address)
         counts["new"] += 1
 
     conn.commit()
@@ -472,10 +514,10 @@ def _append_note(conn: sqlite3.Connection, work_item_id: str, body: str,
 def _record(conn: sqlite3.Connection, message_id: str, stamp: str, sender: str,
             subject: str, channel: str, disposition: str,
             work_item_id: str | None, duplicate_of: str | None,
-            run_id: str) -> None:
+            run_id: str, to_address: str | None = None) -> None:
     conn.execute(
         "INSERT INTO intake_message (message_id, received_at, from_address,"
-        " subject, channel, disposition, work_item_id, duplicate_of, run_id)"
-        " VALUES (?,?,?,?,?,?,?,?,?)",
+        " subject, channel, disposition, work_item_id, duplicate_of, run_id, to_address)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?)",
         (message_id, stamp, sender or None, subject or None, channel,
-         disposition, work_item_id, duplicate_of, run_id))
+         disposition, work_item_id, duplicate_of, run_id, to_address))

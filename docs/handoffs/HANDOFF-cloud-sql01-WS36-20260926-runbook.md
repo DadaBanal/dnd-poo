@@ -884,13 +884,39 @@ sitting-1 road** (`init` is safe to run again; nothing is seeded).
   quote (` as a call to SQLite's `quote()` function and refused it (two
   errors on the first run, MEASURED); a word after `INTO` is now a table
   whatever it is called, and a dialect test holds that.
-- **Counts:** 586 tests at this head, SQLite OK (1 skipped). The whole suite
+- **Schema 053, evening: `member`, `calendar_feed`, `board.intake_address`,
+  `intake_message.to_address`.** Dada's three asks of the evening: a member
+  page as ConnectWise has (Setup › Members, a page per person, *This person
+  has left*, My profile), a Calendar page (one person's day, week or month,
+  and a private `.ics` feed for a phone), and a different intake address per
+  board (a board claims an address on its mail-policy tab; intake routes by
+  the recipient, so Exchange aliases onto the one helpdesk mailbox and one
+  pickup serves every board). No existing row changes; a member without a
+  record is what they were yesterday. **Pass after 046 to 053 and the token
+  scope:** tables **101 → 115**, columns **946 → 1149** (053 adds 27: 18 in
+  `member` and 3 parsed dates, 3 in `calendar_feed` and 1 parsed, 1 on
+  `board`, 1 on `intake_message`), indexes **37 → 48**
+  (`ix_calendar_feed_hash` added), triggers 4 → 4, no existing row count
+  changed (MEASURED on the test container at this head after `init --reset`
+  on a spare database: 115 tables, 1149 columns, 48 CREATE INDEX, 4
+  triggers). **Nothing on the host for the mailboxes:** to give a board its
+  own address, create the alias in Exchange onto the helpdesk mailbox and
+  type the address on the board's mail-policy tab; PSA-Mail is unchanged.
+  **Pass, for Dada:** Setup shows *Members*; your own page names you, and
+  the header shows that name; a colleague's *This person has left* lists
+  what it ended; Calendar in the top bar shows your week, *Month* shows the
+  month, and the feed address from My profile opens in the phone's calendar
+  app; a test mail to the biomedical board's address lands on that board
+  with *routed by* its address in the intake table, and one to the helpdesk
+  address lands where it always did.
+- **Counts:** 594 tests at this head, SQLite OK (1 skipped). The whole suite
   ran on SQL Server in this container against the port three times today:
   with 046 to 049, 569 run, OK, 2 skipped, 13.5 minutes; with 046 to 050,
   575 run, OK, 2 skipped, 13.8 minutes; with 046 to 051 and the token
-  scope, 580 run, OK, 2 skipped, 14.3 minutes; and with 052 as well,
+  scope, 580 run, OK, 2 skipped, 14.3 minutes; with 052 as well,
   586 run, OK, 2 skipped, 14.1 minutes, after a first run whose only two
-  errors were the adapter refusal above (all MEASURED, 29 Sep). The drift gate passes; CI runs
+  errors were the adapter refusal above; and with 053, 594 run, OK, 2 skipped, 12.6 minutes
+  (all MEASURED, 29 Sep). The drift gate passes; CI runs
   67, 68 and 69 are green (MEASURED: run 69 on `a2ef6f6`, the head that
   carries 046 to 052, finished success at 17:47 UTC on 29 Sep, dispatched
   once this session's GitHub connection returned; the workflow runs on a
