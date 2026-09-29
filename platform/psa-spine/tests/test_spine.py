@@ -5769,9 +5769,11 @@ class ModulesTest(unittest.TestCase):
             status, _, page = self._call("GET", "/finance", cookie=self.alice, query=f"tab={tab}")
             self.assertEqual(status, "200 OK", tab)
         _, _, page = self._call("GET", "/finance", cookie=self.alice, query="tab=agreement")
-        self.assertNotIn("href='/finance?tab=agreement'", page)                                 # BizBox holds no agreements: no tab
-        self.assertIn("BizBox holds no supplier agreements", page)
-        self.assertIn("<a class='on' href='/finance?tab=purchase_order'>", page)                # so the first kind it has is shown
+        self.assertIn("<a class='on' href='/finance?tab=agreement'>Agreements · 0</a>", page)   # the desk's own tab (045), empty
+        self.assertIn("No agreement yet.", page)
+        self.assertNotIn("<h3><svg class=ic aria-hidden=true><use href=#i-plus></use></svg>New agreement", page)  # READ: no form
+        _, _, page = self._call("GET", "/finance", cookie=self.alice)
+        self.assertIn("<a class='on' href='/finance?tab=agreement'>", page)                     # and Finance opens on it
         _, _, page = self._call("GET", "/finance", cookie=self.alice, query="tab=purchase_order")
         self.assertIn("<div class=l>Approved</div><div class=n>1</div>", page)                # the procurement summary
         _, _, page = self._call("GET", "/finance", cookie=self.alice, query="tab=invoice")
@@ -5838,6 +5840,97 @@ class ModulesTest(unittest.TestCase):
         self.assertTrue(status.startswith("403"))                                               # READ_ONLY has no finance
         _, _, board = self._call("GET", "/", cookie=self.alice)
         self.assertNotIn('href="/finance"', board)                                              # and the nav hides it
+
+    def test_agreements_are_the_desks_own_and_cover_what_bizbox_holds(self):
+        from psaspine import agreements, bizbox, security
+        conn = self._conn()
+        mapping = bizbox.load_map(Path(__file__).parent.parent / "bizbox" / "bizbox-map.sample.json")
+        bizbox.sync(conn, bizbox.read_csv_dir(self._csvs(), mapping), at=self.at, actor="t", apply=True)
+        with self.assertRaises(agreements.Refused):
+            agreements.create(conn, name="", at=self.at, actor="alice")
+        with self.assertRaises(agreements.Refused):
+            agreements.create(conn, name="Backwards", starts_on="2026-12-31", ends_on="2026-01-01", at=self.at, actor="alice")
+        with self.assertRaises(agreements.Refused):
+            agreements.create(conn, name="Words", amount="ten", at=self.at, actor="alice")
+        aid = agreements.create(conn, name="Printer care 2026", party="Vendor A", starts_on="2026-01-01", ends_on="2026-12-31",
+                                amount="120,000", currency="php", at=self.at, actor="alice")
+        self.assertEqual(aid, "AGR-0001")
+        a = agreements.get(conn, aid)
+        self.assertEqual((a["status"], a["amount"], a["currency"]), ("DRAFT", 120000.0, "PHP"))
+        self.assertEqual(agreements.update(conn, aid, at=self.at, actor="alice", name="Printer care 2026"), "nothing changed")
+        self.assertEqual(agreements.update(conn, aid, at=self.at, actor="alice", status="ACTIVE", party="Vendor A Inc"),
+                         "Party Vendor A -> Vendor A Inc; Status DRAFT -> ACTIVE")
+        self.assertTrue(agreements.add_item(conn, aid, "invoice", "INV-1", at=self.at, actor="alice"))
+        self.assertFalse(agreements.add_item(conn, aid, "invoice", "INV-1", at=self.at, actor="alice"))   # once
+        self.assertTrue(agreements.add_item(conn, aid, "purchase_order", "PO-1", note="the toner order", at=self.at, actor="alice"))
+        self.assertTrue(agreements.add_item(conn, aid, "product", "IT-1", at=self.at, actor="alice"))
+        with self.assertRaises(agreements.Refused):
+            agreements.add_item(conn, aid, "invoice", "INV-404", at=self.at, actor="alice")             # not in the mirror
+        with self.assertRaises(agreements.Refused):
+            agreements.add_item(conn, aid, "po_line", "L-1", at=self.at, actor="alice")                  # a line is not covered on its own
+        items = agreements.items(conn, aid)
+        self.assertEqual([(i["kind"], i["ext_ref"], i["present"]) for i in items],
+                         [("INVOICE", "INV-1", True), ("PRODUCT", "IT-1", True), ("PURCHASE_ORDER", "PO-1", True)])
+        self.assertEqual(items[2]["record"]["vendor"], "Vendor A")
+        tot = agreements.totals(conn, aid)
+        self.assertEqual((tot["INVOICE"], tot["PURCHASE_ORDER"], tot["PRODUCT"]),
+                         ({"n": 1, "total": 100.0}, {"n": 1, "total": 1000.0}, {"n": 1, "total": None}))
+        self.assertEqual([r["agreement_id"] for r in agreements.covering(conn, "invoice", "INV-1")], [aid])
+        self.assertEqual(agreements.covering_for(conn, "purchase_order", ["PO-1", "PO-9"])["PO-9"], [])
+        # the hourly sync marks PO-1 absent; the agreement and its covering survive, and the page says so
+        bizbox.sync(conn, bizbox.read_csv_dir(self._csvs("PONo,VendorName,PODate,Status,TotalAmount,Currency\r\n"
+                                                         "PO-2,Vendor B,2026-09-10,Draft,50,PHP\r\n"), mapping),
+                    at=self.at, actor="t", apply=True)
+        self.assertEqual([(i["ext_ref"], i["present"]) for i in agreements.items(conn, aid) if i["kind"] == "PURCHASE_ORDER"],
+                         [("PO-1", False)])
+        self.assertEqual(agreements.totals(conn, aid)["PURCHASE_ORDER"], {"n": 1, "total": 1000.0})     # covered is covered
+        self.assertTrue(agreements.remove_item(conn, aid, "product", "IT-1", at=self.at, actor="alice"))
+        self.assertFalse(agreements.remove_item(conn, aid, "product", "IT-1", at=self.at, actor="alice"))
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'AGREEMENT'").fetchone()[0], 6)
+        conn.commit()
+        # the pages: Finance READ sees, WRITE changes; who has WRITE is set in Setup › Security roles
+        _, _, page = self._call("GET", "/finance", cookie=self.alice, query="tab=agreement")
+        self.assertIn("Agreements · 1</a>", page)
+        self.assertIn(f"<a href='/agreement/{aid}'>{aid}</a></td><td><b>Printer care 2026</b></td><td>Vendor A Inc</td>", page)
+        self.assertIn("<td class=center>2</td>", page)                                                 # covers two records
+        status, _, _ = self._call("POST", "/agreements/new", cookie=self.alice, form={"name": "Nope"})
+        self.assertTrue(status.startswith("403"), status)                                              # Technician: READ only
+        _, _, page = self._call("GET", f"/agreement/{aid}", cookie=self.alice)
+        self.assertIn("<a href='/finance/invoice?ref=INV-1'>INV-1</a>", page)
+        self.assertIn("<span class=pill>gone from BizBox</span>", page)                                # PO-1, kept and marked
+        self.assertIn("<div class=l>Invoices</div><div class=n>1</div><div class=muted>PHP 100.00</div>", page)
+        self.assertNotIn("/agreement/AGR-0001/item/remove", page)                                      # READ: no remove buttons
+        status, _, _ = self._call("GET", f"/agreement/{aid}", cookie=self._cookie_for("nurse"))
+        self.assertTrue(status.startswith("403"), status)                                              # a requester has no Finance
+        security.assign(conn, "alice", "SERVICE_MANAGER", at=self.at, actor="root")
+        conn.commit()
+        _, h, _ = self._call("POST", "/agreements/new", cookie=self.alice,
+                             form={"name": "Network switches, ward 3", "party": "Vendor B", "amount": "50000", "currency": "PHP"})
+        self.assertIn("/agreement/AGR-0002?msg=", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/agreement/AGR-0002/item", cookie=self.alice, form={"kind": "invoice", "ext_ref": "INV-1"})
+        self.assertIn("INV-1+is+now+covered", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/agreement/AGR-0002/item", cookie=self.alice, form={"kind": "invoice", "ext_ref": "INV-9"})
+        self.assertIn("err=No+invoice", dict(h)["Location"])
+        _, _, page = self._call("GET", "/agreement/AGR-0002", cookie=self.alice, query="find=product&fq=toner")
+        self.assertIn("<a href='/finance/product?ref=IT-1'>IT-1</a>", page)                            # found in the mirror
+        self.assertIn("<button class='ghost small' type=submit>Add</button>", page)
+        _, _, page = self._call("GET", "/finance/invoice", cookie=self.alice, query="ref=INV-1")
+        self.assertIn(f"<a href='/agreement/{aid}'>{aid}</a> Printer care 2026", page)                # covered by both, on the record's page
+        self.assertIn("<a href='/agreement/AGR-0002'>AGR-0002</a> Network switches, ward 3", page)
+        _, _, page = self._call("GET", "/finance", cookie=self.alice, query="tab=invoice")
+        self.assertIn(f"<a href='/agreement/{aid}' title='Printer care 2026'>{aid}</a>", page)      # and in the list's Linked column
+        _, h, _ = self._call("POST", "/agreement/AGR-0002/status", cookie=self.alice, form={"status": "CANCELLED"})
+        self.assertIn("Now+cancelled", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/agreement/AGR-0002/item", cookie=self.alice, form={"kind": "product", "ext_ref": "IT-1"})
+        self.assertIn("cancelled+agreement", dict(h)["Location"])                                      # covers nothing new
+        _, _, page = self._call("GET", "/finance", cookie=self.alice, query="tab=agreement")
+        self.assertIn("Agreements · 1</a>", page)                                                      # a cancelled one is not counted
+        _, h, _ = self._call("POST", f"/agreement/{aid}/update", cookie=self.alice,
+                             form={"name": "Printer care 2026", "party": "Vendor A Inc", "starts_on": "2026-01-01", "ends_on": "2025-01-01",
+                                   "amount": "120000", "currency": "PHP", "notes": ""})
+        self.assertIn("err=An+agreement+ends+after+it+starts", dict(h)["Location"])
+        status, _, _ = self._call("GET", "/agreement/AGR-0404", cookie=self.alice)
+        self.assertTrue(status.startswith("404"))
 
     def test_finance_pages_count_the_whole_mirror_and_open_every_key(self):
         import threading

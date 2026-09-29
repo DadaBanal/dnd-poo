@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 545 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 546 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -446,10 +446,9 @@ concerns. Dada PSA issues no invoice.
 follow it:
 
 - **No supplier agreements.** BizBox's contract tables are patient coverage.
-  The pages show only the kinds BizBox has given rows for (all four while the
-  mirror is still empty), so the Agreements tab, the Agreement column and the
-  "Agreement" choice on a ticket's Finance pod appear the day a source is
-  named and not before. Nothing else changes.
+  So agreements are the desk's own (045, below); the mirror's other kinds
+  show only when BizBox has given rows for them, and a ticket's Finance pod
+  links to mirrored records only.
 - **An invoice is BizBox's receiving report**, keyed by the receiving number.
   The supplier's own invoice number is typed by staff and repeats (626
   distinct of 634), so it is never the key; 044 adds `supplier_ref` for it,
@@ -467,6 +466,28 @@ follow it:
   key in the query string so that one holding `/`, `%` or an accent opens.
   The Linked column is one query for the page. A refusal from the sync names
   the field, never the cell (the counts-only logging rule).
+
+### Agreements, made on the desk (`/finance?tab=agreement`, 045, 29 Sep 2026)
+
+Dada's direction, 29 Sep: "the agreements need to exist they can add it on
+the psa … and add the needed invoices and whatever is exisitng on bizbox".
+BizBox holds no supplier agreements, so an agreement is the desk's own record,
+in the reference PSA's shape: a name, the party, a term, a status (Draft,
+Active, Inactive, Cancelled), an amount and notes. Its page names the
+mirrored BizBox **invoices, purchase orders and products** it covers — typed
+by number or found in the mirror with a search — and shows them with their
+totals against the agreed amount. A mirrored record's page lists the
+agreements covering it and adds it to one; the Finance lists show them in the
+Linked column. Coverings live in the desk's own table, so the hourly sync
+never touches an agreement or a covering: a covered record that BizBox drops
+is kept and marked *gone from BizBox*. Nothing here writes to BizBox or to
+the mirror. Every create, edit, status change and covering is an `AGREEMENT`
+audit row.
+
+**Rights:** Finance *Read* sees agreements; Finance *Write* creates, edits
+and covers. Which roles hold Write is set in Setup › Security roles and is
+Dada's decision; as shipped, Service manager has it and Technician does not.
+A cancelled agreement covers nothing new until it is reopened.
 
 ```
 psaspine sync-bizbox <db> --map D:\psa\bizbox-map.json --csv-dir <folder>   # from exports

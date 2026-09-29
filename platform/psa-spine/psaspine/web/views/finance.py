@@ -1,4 +1,5 @@
-"""Finance: agreements, procurement, products and invoices from BizBox (043).
+"""Finance: procurement, products and invoices from BizBox (043); agreements
+made on the desk (045, views/agreements.py).
 
 A read-only view of the BizBox mirror, gated by the security role's FINANCE
 level: READ to look and to link a record to a ticket you work (a link is the
@@ -10,7 +11,7 @@ from __future__ import annotations
 
 import urllib.parse
 
-from ... import bizbox
+from ... import agreements, bizbox
 from .. import templates as t
 from . import common
 
@@ -35,14 +36,26 @@ ONE = {"agreement": "Agreement", "purchase_order": "Purchase order", "product": 
 TILED = ("purchase_order", "invoice")
 
 
-def _kinds(ctx) -> list[str]:
-    """The kinds BizBox has rows for, in the tabs' order: Procurement first."""
+def _mirror_kinds(ctx) -> list[str]:
+    """The mirror kinds BizBox has rows for, in the tabs' order."""
     on = set(bizbox.present_kinds(ctx.conn))
-    return [k for k, _ in TABS if k in on]
+    return [k for k, _ in TABS if k in on and k != "agreement"]
+
+
+def _kinds(ctx) -> list[str]:
+    """The tabs: Agreements first (the desk's own, since 045), then the mirror
+    kinds BizBox has rows for."""
+    return ["agreement", *_mirror_kinds(ctx)]
 
 
 def _tabs_for(ctx):
     on = _kinds(ctx)
+    return [(k, v) for k, v in TABS if k in on]
+
+
+def _mirror_tabs(ctx):
+    """The kinds a ticket or project links to: mirrored records only."""
+    on = _mirror_kinds(ctx)
     return [(k, v) for k, v in TABS if k in on]
 
 
@@ -119,6 +132,9 @@ def index(ctx):
     kind = q.get("tab", kinds[0])
     if kind not in kinds:
         kind = kinds[0]
+    if kind == "agreement":
+        from . import agreements as agreements_view
+        return agreements_view.tab(ctx)
     search = q.get("q", "")
     absent = q.get("absent") == "1"
     page_no = int(q["page"]) if q.get("page", "").isdigit() and int(q["page"]) > 0 else 1
@@ -134,11 +150,14 @@ def index(ctx):
     # for the projects' boards, whatever the page holds
     links = bizbox.links_for(ctx.conn, kind, [r["ext_ref"] for r in rows])
     visible = _visible_subjects(ctx, [l for ls in links.values() for l in ls], seen)
+    covered = agreements.covering_for(ctx.conn, kind, [r["ext_ref"] for r in rows])
 
     def linked_cell(ref):
-        return ", ".join(f"<a href='/{'ticket' if l['subject_kind'] == 'TICKET' else 'project'}/{t.esc(l['subject_id'])}'>"
-                         f"{t.esc(l['subject_id'])}</a>" for l in links.get(ref, [])
-                         if (l["subject_kind"], l["subject_id"]) in visible)
+        return ", ".join([f"<a href='/{'ticket' if l['subject_kind'] == 'TICKET' else 'project'}/{t.esc(l['subject_id'])}'>"
+                          f"{t.esc(l['subject_id'])}</a>" for l in links.get(ref, [])
+                          if (l["subject_kind"], l["subject_id"]) in visible]
+                         + [f"<a href='/agreement/{t.esc(a['agreement_id'])}' title='{t.esc(a['name'])}'>{t.esc(a['agreement_id'])}</a>"
+                            for a in covered.get(ref, [])])
     summary = ""
     if kind in TILED:
         summary = ("<div class='tiles' style='grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:12px'>"
@@ -202,16 +221,15 @@ def _visible_subjects(ctx, links, seen) -> set:
 def _tabs(ctx, on: str) -> str:
     tabs = _tabs_for(ctx)
     counts = {k: ctx.conn.execute(f"SELECT COUNT(*) FROM {bizbox.KINDS[k][0]} WHERE source_id = ? AND present = 1",
-                                  (bizbox.SOURCE,)).fetchone()[0] for k, _ in tabs}
+                                  (bizbox.SOURCE,)).fetchone()[0] for k, _ in tabs if k != "agreement"}
+    # the desk's own agreements (045); a mirrored agreement, if a source is ever named, counts too
+    counts["agreement"] = (ctx.conn.execute("SELECT COUNT(*) FROM agreement WHERE status <> 'CANCELLED'").fetchone()[0]
+                           + bizbox.count(ctx.conn, "agreement"))
     pending = ctx.conn.execute("SELECT COUNT(*) FROM ext_change WHERE source_id = ? AND status = 'PENDING'",
                                (bizbox.SOURCE,)).fetchone()[0]
-    hidden = [v for k, v in TABS if k not in dict(tabs)]
-    note = (f"<p class=muted style='margin:-4px 0 10px'>BizBox holds no supplier {' or '.join(h.lower() for h in hidden)}; "
-            f"the tab appears when a source is named.</p>" if hidden else "")
     return ("<div class=stabs>" + "".join(
         f"<a class='{'on' if k == on else ''}' href='/finance?tab={k}'>{v} · {counts[k]}</a>" for k, v in tabs)
-        + f"<a class='{'on' if on == 'changes' else ''}' href='/finance?tab=changes'>Changes to BizBox · {pending}</a></div>"
-        + note)
+        + f"<a class='{'on' if on == 'changes' else ''}' href='/finance?tab=changes'>Changes to BizBox · {pending}</a></div>")
 
 
 def changes_page(ctx):
@@ -304,7 +322,8 @@ def detail(ctx, kind):
                     "someone applies it in BizBox; BizBox itself has not changed.</p>"
                     + (_changes_table(ctx, proposals, with_record=False) if proposals else "") + form + "</div>"
                     if (can_edit or proposals) else "")
-    extra += changes_card
+    from . import agreements as agreements_view
+    extra = agreements_view.covering_card(ctx, kind, ext_ref) + extra + changes_card
     q = ctx.request.query
     body = ((f"<div class='banner ok'>{t.esc(q.get('msg', ''))}</div>" if q.get("msg") else "")
             + (f"<div class='banner err'>{t.esc(q.get('err', ''))}</div>" if q.get("err") else "")
@@ -337,7 +356,7 @@ def ticket_card(ctx, tk, *, can_work: bool) -> str:
     if can_link:
         add = (f"<form method=post action='/ticket/{wid}/finance/link' class=row style='margin-top:6px'>"
                "<div style='flex:0 0 150px'><select name=kind aria-label='Kind'>"
-               + "".join(f"<option value={k}>{ONE[k]}</option>" for k, _ in _tabs_for(ctx)) + "</select></div>"
+               + "".join(f"<option value={k}>{ONE[k]}</option>" for k, _ in _mirror_tabs(ctx)) + "</select></div>"
                "<div><input name=ext_ref placeholder='PO, item or receiving number' aria-label='BizBox reference'></div>"
                "<div style='flex:0 0 auto'><button class=ghost type=submit>Link</button></div></form>")
     return (f"<div class=card data-pod=finance><h3>{t.icon('tag')}Finance</h3>"

@@ -652,6 +652,48 @@ NULL-able column, by the sitting-1 road** (`init` is safe to run again).
   gate and `tests/smoke.py` pass. **Pass for the suite as SQL01's user:** 545
   run, 0 errors.
 
+## Folded in from part 19 and the agreements handoff (29 Sep): schema 045, agreements made on the desk
+
+Part 19: 23caa5f live, 044 PASS (99 → 99 tables, 920 → 921 columns, 34 → 36
+indexes, no row changed), the view and the map done, the 14:05 run PASS, the
+kb count 0, the four scripts in the repo. Then SQL01's handoff
+`HANDOFF-sql01-cloud-WS36-20260929-agreements.md`: Dada wants agreements
+created on the desk, since BizBox has none, and from one the BizBox invoices,
+POs and products it covers. Built at the head this section arrives with.
+**One schema step, two new tables, by the sitting-1 road** (`init` is safe to
+run again; there is nothing to seed).
+
+- **Schema 045: `agreement` and `agreement_item`.** An agreement is the
+  desk's own record (`AGR-0001`: name, party, term, status, amount, notes,
+  who and when). `agreement_item` names the mirrored records it covers, by
+  the mirror's own key, in the desk's own table: the sync never touches it,
+  and nothing is written to BizBox or to the `ext_*` tables. `ext_agreement`
+  stays a mirror kind for a source that may one day be named. The item key is
+  `KEY` width (200), so no 900-byte warning.
+- **Apply.** A COPY_ONLY backup; the preview; stop PSA-Desk; the port as
+  SQL01's sysadmin with `@Apply = 1` and `@AllowExisting = 1`; pull; start.
+  **Pass:** tables **99 → 101**, columns **921 → 941**, indexes **36 → 37**
+  (`ix_agreement_item_ref`), triggers 4 → 4, no existing row count changed,
+  `/login` answers. (MEASURED on the SQL Server test container at this head:
+  see the line below this list.) Then `init` as the task account. The order
+  matters as before: Finance › Agreements reads `agreement` on every visit.
+- **Pass, for Dada:** Finance opens on **Agreements** (empty, "No agreement
+  yet"); a Service manager creates one, opens it, types a receiving number
+  and a PO number, finds a product with the search, and sees the three under
+  "What it covers" with the invoice and PO totals against the agreed amount;
+  the invoice's own page lists the agreement; a Technician sees all of it and
+  has no New, Add or Remove.
+- **Who may create or cover** is not decided here. The gate is Finance Write,
+  and Setup › Security roles is where Dada gives it to a role (Service
+  manager has it as shipped; Technician has Read). Nothing goes to BizBox;
+  step 6 of the BizBox handoff stands.
+- **Counts:** 546 tests at this head. SQLite OK (MEASURED). The SQL Server run
+  here was cut short when the test container's Docker daemon died mid-run (the
+  environment, not the code; the errors are login failures); it is being rerun,
+  and Cloud Build amends this line when it passes. **SQL01's own worktree run is
+  the Pass, as always:** 546 run, 0 errors. The drift gate and `tests/smoke.py`
+  pass.
+
 ## When a step does not pass
 
 Every handoff step has a **Pass** line. This is what to do when it is not

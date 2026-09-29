@@ -197,6 +197,8 @@ BEGIN
     PRINT N'    psa.ext_link';
     PRINT N'    psa.ext_po_line';
     PRINT N'    psa.ext_change';
+    PRINT N'    psa.agreement';
+    PRINT N'    psa.agreement_item';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -234,13 +236,14 @@ BEGIN
     PRINT N'    psa.ix_ext_change_ref';
     PRINT N'    psa.ix_kb_ticket_ticket';
     PRINT N'    psa.ix_ext_invoice_agreement';
+    PRINT N'    psa.ix_agreement_item_ref';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  99 tables, 36 indexes, 4 triggers.';
+    PRINT N'  101 tables, 37 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -2578,6 +2581,61 @@ CREATE TABLE psa.[ext_change] (
 END;
 
 -- --------------------------------------------------------------------------
+-- agreement   (from schema/045_agreements.sql)
+IF OBJECT_ID(N'psa.[agreement]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[agreement] (
+    -- AGR-0001
+    [agreement_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_agreement] PRIMARY KEY,
+    [name] NVARCHAR(400) NOT NULL,
+
+    -- the supplier, as BizBox names it
+    [party] NVARCHAR(400) NULL,
+    [starts_on] NVARCHAR(32) NULL,
+    [ends_on] NVARCHAR(32) NULL,
+    [status] NVARCHAR(32) NOT NULL CONSTRAINT [DF_agreement_status] DEFAULT ('DRAFT') CONSTRAINT [CK_agreement_01] CHECK (status IN ('DRAFT', 'ACTIVE', 'INACTIVE', 'CANCELLED')),
+    [amount] DECIMAL(19,4) NULL,
+    [currency] NVARCHAR(32) NULL,
+    [notes] NVARCHAR(MAX) NULL,
+    [created_at] NVARCHAR(64) NOT NULL,
+    [created_by] NVARCHAR(200) NOT NULL,
+    [updated_at] NVARCHAR(64) NOT NULL,
+    [updated_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [starts_on_parsed] AS (CASE WHEN [starts_on] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [starts_on], 112) WHEN [starts_on] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [starts_on], 23) END),
+    [ends_on_parsed] AS (CASE WHEN [ends_on] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [ends_on], 112) WHEN [ends_on] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [ends_on], 23) END),
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END)),
+    [updated_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [updated_at], 126), CASE WHEN [updated_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [updated_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- agreement_item   (from schema/045_agreements.sql)
+-- What an agreement covers: a mirrored BizBox invoice, purchase order or
+-- product, by the mirror's own key. A row here is the desk's; the sync
+-- marks a mirrored record absent but never removes it, so a covering
+-- survives, and the page says the record is gone from BizBox.
+IF OBJECT_ID(N'psa.[agreement_item]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[agreement_item] (
+    [agreement_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_agreement_item_agreement_id] REFERENCES psa.[agreement]([agreement_id]),
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_agreement_item_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [kind] NVARCHAR(32) NOT NULL CONSTRAINT [CK_agreement_item_01] CHECK (kind IN ('INVOICE', 'PURCHASE_ORDER', 'PRODUCT')),
+    [ext_ref] NVARCHAR(200) NOT NULL,
+    [added_at] NVARCHAR(64) NOT NULL,
+    [added_by] NVARCHAR(200) NOT NULL,
+    [note] NVARCHAR(MAX) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [added_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [added_at], 126), CASE WHEN [added_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [added_at], 112) END)),
+    CONSTRAINT [PK_agreement_item] PRIMARY KEY ([agreement_id], [source_id], [kind], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -2983,6 +3041,9 @@ CREATE INDEX [ix_kb_ticket_ticket] ON psa.[kb_ticket] ([work_item_id]);
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_invoice_agreement' AND object_id = OBJECT_ID(N'psa.[ext_invoice]'))
 CREATE INDEX [ix_ext_invoice_agreement] ON psa.[ext_invoice] ([source_id], [agreement_ref]);
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_agreement_item_ref' AND object_id = OBJECT_ID(N'psa.[agreement_item]'))
+CREATE INDEX [ix_agreement_item_ref] ON psa.[agreement_item] ([source_id], [kind], [ext_ref]);
+
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
@@ -3118,10 +3179,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 99 OR @Triggers <> 4 OR @Indexes < 36
+IF @Tables <> 101 OR @Triggers <> 4 OR @Indexes < 37
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 99), %d triggers (expected 4), %d indexes (expected at least 36). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 101), %d triggers (expected 4), %d indexes (expected at least 37). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -3166,6 +3227,8 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[agreement_item];
+    DROP TABLE IF EXISTS psa.[agreement];
     DROP TABLE IF EXISTS psa.[ext_change];
     DROP TABLE IF EXISTS psa.[ext_po_line];
     DROP TABLE IF EXISTS psa.[ext_link];

@@ -132,6 +132,10 @@
     "ext_po_line.unit_cost": {
       "sql": "DECIMAL(19,4)",
       "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "agreement.amount": {
+      "sql": "DECIMAL(19,4)",
+      "why": "The agreed amount, typed on the desk and compared with the sum of BizBox's totals; money, so exact."
     }
   },
   "columns": {
@@ -804,6 +808,25 @@
     "ext_change.requested_by": "PERSON",
     "ext_change.decided_at": "TIMESTAMP_TEXT",
     "ext_change.decided_by": "PERSON",
-    "ext_change.answer": "FREE"
+    "ext_change.answer": "FREE",
+    "agreement.agreement_id": "ID",
+    "agreement.name": "NAME",
+    "agreement.party": "NAME",
+    "agreement.starts_on": "DATE_TEXT",
+    "agreement.ends_on": "DATE_TEXT",
+    "agreement.status": "CODE",
+    "agreement.currency": "CODE",
+    "agreement.notes": "FREE",
+    "agreement.created_at": "TIMESTAMP_TEXT",
+    "agreement.created_by": "PERSON",
+    "agreement.updated_at": "TIMESTAMP_TEXT",
+    "agreement.updated_by": "PERSON",
+    "agreement_item.agreement_id": "ID",
+    "agreement_item.source_id": "ID",
+    "agreement_item.kind": "CODE",
+    "agreement_item.ext_ref": "KEY",
+    "agreement_item.added_at": "TIMESTAMP_TEXT",
+    "agreement_item.added_by": "PERSON",
+    "agreement_item.note": "FREE"
   }
 }

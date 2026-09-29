@@ -9,6 +9,7 @@ context, and return a Response.
 from __future__ import annotations
 
 from .views import schedule as schedule_view
+from .views import agreements as agreements_view
 from .views import finance as finance_view
 from .views import kb as kb_view
 from .views import projects as projects_view
@@ -81,6 +82,12 @@ ROUTES = [
     ("POST", "/finance/change/<change_id>/cancel", finance_view.cancel_change),
     ("POST", "/ticket/<work_item_id>/finance/link", finance_view.ticket_link),
     ("POST", "/ticket/<work_item_id>/finance/unlink", finance_view.ticket_unlink),
+    ("POST", "/agreements/new", agreements_view.create),
+    ("GET", "/agreement/<agreement_id>", agreements_view.detail),
+    ("POST", "/agreement/<agreement_id>/update", agreements_view.update),
+    ("POST", "/agreement/<agreement_id>/status", agreements_view.set_status),
+    ("POST", "/agreement/<agreement_id>/item", agreements_view.item_add),
+    ("POST", "/agreement/<agreement_id>/item/remove", agreements_view.item_remove),
     ("GET", "/projects", projects_view.index),
     ("POST", "/projects/new", projects_view.create),
     ("GET", "/project/<project_id>", projects_view.detail),

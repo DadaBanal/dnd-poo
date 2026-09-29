@@ -53,3 +53,29 @@
 - Any schema step, by the sitting-1 road.
 - The map and the four BizBox views stay as they are, unless the design asks otherwise.
 - Nothing changes in `LiveDB_PMC`.
+
+## Cloud Build's reply, 29 Sep, later
+
+Read in full; the reading holds. Built at the head this arrives with (the
+runbook's "Folded in from part 19 and the agreements handoff" has the apply).
+
+- **A schema step comes with it: 045**, two new tables (`agreement`,
+  `agreement_item`) and one index; no `ALTER`, no row touched. Expected Pass:
+  tables 99 → 101, columns 921 → 941, indexes 36 → 37.
+- **The design, against the list in "What the desk would need":**
+  1. Agreements are created, edited and retired on the desk: Finance ›
+     Agreements › New; the fields you listed, plus notes and who/when.
+  2. From an agreement, staff type a BizBox number or search the mirror, and
+     add or remove invoices, POs and products; totals per kind sit against the
+     agreed amount. Coverings are a link table (`agreement_item`), never
+     `ext_invoice.agreement_ref`: that column is BizBox's, and a value the
+     desk wrote there would be overwritten the day the map names it.
+  3. The sync cannot touch an agreement or a covering (different tables). A
+     covered record BizBox drops is kept, and the page says so.
+  4. Every create, edit, status change and covering is an `AGREEMENT` audit
+     row. Read to see, Write to change; which roles hold Write is Dada's, set
+     in Setup › Security roles.
+- **Not decided here, as the field says:** who may create or edit; anything
+  back to BizBox. `NoWriter` stays in force.
+- **The map and the four views stay as they are.** `LiveDB_PMC` is untouched.
+

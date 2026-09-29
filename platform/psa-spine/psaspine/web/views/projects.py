@@ -163,7 +163,7 @@ def detail(ctx, project_id):
         items = "".join(f"<li>{t.esc(r['kind'].replace('_', ' '))} {finance_view._ref_link(r['kind'], r['ext_ref'])}</li>" for r in fl)
         link = (f"<form method=post action='/project/{pid}/finance' class=row style='margin-top:6px'>"
                 "<div style='flex:0 0 160px'><select name=kind>"
-                + "".join(f"<option value={k}>{finance_view.ONE[k]}</option>" for k, _ in finance_view._tabs_for(ctx)) + "</select></div>"
+                + "".join(f"<option value={k}>{finance_view.ONE[k]}</option>" for k, _ in finance_view._mirror_tabs(ctx)) + "</select></div>"
                 "<div><input name=ext_ref placeholder='BizBox number'></div><div style='flex:0 0 auto'><button class=ghost type=submit>Link</button></div></form>"
                 if can else "")
         finance = ("<div class=card><h3>" + t.icon("tag") + "Finance (BizBox)</h3>"
