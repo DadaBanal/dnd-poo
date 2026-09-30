@@ -11625,10 +11625,12 @@ class SmallSetupTest(unittest.TestCase):
         _, h, _ = self._call("POST", "/admin/board/IT_HELP/emails", cookie=self.alice,
                              form={"kind": "CLOSED", "subject": "Closed: {ticket}", "body": "{board} closed it."})
         self.assertIn("own+words", dict(h)["Location"])
-        self.assertTrue(outbox.template(db.connect(self.db_path), "IT_HELP", "CLOSED")["custom"])
+        conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)
+        self.assertTrue(outbox.template(conn, "IT_HELP", "CLOSED")["custom"])
         _, h, _ = self._call("POST", "/admin/board/IT_HELP/emails", cookie=self.alice,
                              form={"kind": "CLOSED", "subject": "x", "body": "y", "reset": "1"})
-        self.assertFalse(outbox.template(db.connect(self.db_path), "IT_HELP", "CLOSED")["custom"])
+        self.assertFalse(outbox.template(conn, "IT_HELP", "CLOSED")["custom"])
         status, _, _ = self._call("GET", "/admin/board/IT_HELP", cookie=self._cookie_for("carol"), query="tab=emails")
         self.assertTrue(status.startswith("404"), status)                                    # a reader: not a board admin
 
