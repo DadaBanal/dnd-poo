@@ -1040,8 +1040,11 @@ first is the audit trail's page, with one schema step by the sitting-1 road
   your name on Schedule.
 - **Counts:** 610 tests at this head (SQLite OK, 1 skipped). The whole
   suite ran on SQL Server in this container with 054 to 057: 610 run, OK, 2
-  skipped, 12.0 minutes (MEASURED, 30 Sep). The drift gate passes; CI is
-  dispatched on this head and its run number follows once it is green.
+  skipped, 12.0 minutes (MEASURED, 30 Sep). The drift gate passes. CI run 73
+  on `d5f1bea` was red on its Windows job only, with part 24's teardown
+  error (610 run, 1 error, 2 skipped; MEASURED from the job log): the test's
+  own two unclosed connections, fixed at `fbc5162`. CI run 74 on `fbc5162`
+  is green on all four jobs (MEASURED, finished 05:40 UTC).
 
 ## When a step does not pass
 
