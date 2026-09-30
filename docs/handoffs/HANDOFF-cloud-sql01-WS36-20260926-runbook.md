@@ -2354,3 +2354,12 @@ Section "Folded in after part 22 (30 Sep)", the 057 bullet. Everything below is 
    - the Board tab has the survey box ticked;
    - Setup shows *Knowledge categories* and *Company status and type*;
    - the Schedule bar has *In / out*, and saying *Out* there puts the word under your name on Schedule.
+
+*Part 24, continued, 13:16 +08:00:* **the as-desk run PASS.** The operator ran `Part24-AsDesk.ps1` as the task account
+(`D:\psa\logs\Part24-AsDesk.log`, read back by SQL01):
+- `init` ran twice, exit 0 both times, and printed the same line both times: "ready: SQL Server, …Database=PMC_PSA";
+- **no `psa.board` row changed** (6 boards, every column compared).
+
+Item 4 is met. What remains open:
+- the suite's one Windows teardown error (item 1), for WS36;
+- Dada's checks (item 7).
