@@ -1,13 +1,16 @@
-# The guide library's source
+# The guide's source
 
-The fourteen `PMC_Dada_PSA_*_Guide_20260930.html` files one level up are
-generated. Edit these files, not the HTML.
+`PMC_Dada_PSA_Guides_20260930.html` one level up is generated: one file with a
+front page and all fourteen guides inside it. It supersedes the fourteen
+separate guide files of the same date (removed; they are in the history).
+Edit these files, not the HTML.
 
 - `g_*.py` hold each guide's words and try-it tools; `g_common.py` the helpers.
-- `lib.js` is the one script every guide carries (search, progress, tours,
-  and the interactive tools); `shell.html` the page, in the PMC 2026 theme.
-- `build_all.py` embeds the screenshots and writes the HTML. It reads the
+- `lib.js` holds the interactive tools; `chrome_one.js` the front page, the
+  switching between guides, the contents rail and search across every guide.
+- `shell.html` is the page, in the PMC 2026 theme.
+- `build_one.py` embeds each screenshot once and writes the HTML. It reads the
   screenshots and hotspot positions from the session scratchpad it was built
   in; those come from a demonstration desk with made-up staff and records.
 
-Every guide is self-contained: no CDN, no web font, no external request.
+The file is self-contained: no CDN, no web font, no external request.
