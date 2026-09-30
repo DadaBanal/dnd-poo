@@ -917,9 +917,10 @@ sitting-1 road** (`init` is safe to run again; nothing is seeded).
   586 run, OK, 2 skipped, 14.1 minutes, after a first run whose only two
   errors were the adapter refusal above; and with 053, 594 run, OK, 2 skipped, 12.6 minutes
   (all MEASURED, 29 Sep). The drift gate passes; CI runs
-  67, 68 and 69 are green (MEASURED: run 69 on `a2ef6f6`, the head that
-  carries 046 to 052, finished success at 17:47 UTC on 29 Sep, dispatched
-  once this session's GitHub connection returned; the workflow runs on a
+  67, 68, 69 and 70 are green (MEASURED: run 69 on `a2ef6f6`, the head that
+  carries 046 to 052, finished success at 17:47 UTC on 29 Sep; run 70 on
+  `de4f9ee`, with 053, finished success at 23:52 UTC, its Windows job
+  taking 16 minutes; the workflow runs on a
   push to main, a pull request, or a manual dispatch, never on a push to
   this branch).
 
