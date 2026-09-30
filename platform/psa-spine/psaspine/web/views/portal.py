@@ -310,7 +310,7 @@ def detail(ctx, work_item_id):
         stars = "".join(
             f"<label><input type=radio name=score value={n} required aria-label='{n} out of 5'>"
             f"{t.icon('star')}</label>" for n in range(1, 6))
-        extra = ("<div class='card'><h3>" + t.icon("star") + "How did we do?</h3>"
+        extra = ("<div class='card'><h3>" + t.icon("star") + t.esc(_survey.question(ctx.conn, work_item_id)) + "</h3>"
                  f"<form class='stack' method='post' action='/my/{t.esc(work_item_id)}/survey' style='max-width:none'>"
                  f"<div class=stars>{stars}</div>"
                  "<textarea name='comment' placeholder='A sentence if you like: what went well, or what "

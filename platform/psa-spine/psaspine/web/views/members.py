@@ -301,7 +301,7 @@ def profile(ctx):
             "calendar can subscribe to: your visits, time off, meetings and on-call shifts. It names tickets and places, "
             "never what a ticket says. Making a new one stops the old one.</p>"
             f"<form method=post action='/my/profile/feed'><button class=ghost type=submit>{'New feed address' if members.has_feed(ctx.conn, m['member']) else 'Make a feed address'}</button></form>"
-            f"<p style='margin-top:10px'><a href='/calendar'>Open my calendar</a></p></div></div>")
+            f"<p style='margin-top:10px'><a href='/calendar'>Open my calendar</a> · <a href='/inout'>Say where I am</a></p></div></div>")
     return Response(body=t.page("My profile", body, user=ctx.user, active=""))
 
 

@@ -39,16 +39,23 @@ def index(ctx):
     common.require_module(ctx, "KNOWLEDGE")
     q = ctx.request.query
     status = q.get("status", "") if q.get("status", "") in knowledge.STATUSES else ""
-    rows = knowledge.search(ctx.conn, q=q.get("q", ""), status=status or None, board_ids=common.board_ids_for(ctx))
+    cats = knowledge.categories(ctx.conn)
+    cat = q.get("category", "") if q.get("category", "") in {c["category_id"] for c in cats} else ""
+    rows = knowledge.search(ctx.conn, q=q.get("q", ""), status=status or None, board_ids=common.board_ids_for(ctx),
+                            category_id=cat or None)
     if not status:
         rows = [r for r in rows if r["status"] != "RETIRED"]
     trs = "".join(
         f"<tr><td><a href='/kb/{t.esc(r['article_id'])}'>{t.esc(r['article_id'])}</a></td>"
         f"<td><b>{t.esc(r['title'])}</b></td><td>{t.chip(STATUS_WORDS[r['status']])}</td>"
         f"<td>{t.esc(knowledge.AUDIENCES[r['audience']])}</td><td>{t.esc(r['board_name'] or 'Every board')}</td>"
+        f"<td>{t.esc(r['category_name'] or '')}</td>"
         f"<td class=center>{r['uses']}</td><td class=muted>{t.esc(r['updated_at'])}</td></tr>" for r in rows)
     opts = "<option value=''>Drafts and published</option>" + "".join(
         f"<option value='{k}'{' selected' if k == status else ''}>{v}</option>" for k, v in STATUS_WORDS.items())
+    cat_opts = ("<option value=''>Every category</option>" + "".join(
+        f"<option value='{t.esc(c['category_id'])}'{' selected' if c['category_id'] == cat else ''}>{t.esc(c['name'])}</option>" for c in cats)
+        if cats else "")
     write = ("<a class=btn href='/kb/new'>" + t.icon("plus") + " Write an article</a>"
              if common.allows(ctx, "KNOWLEDGE", "WRITE") else "")
     body = ((f"<div class='banner ok'>{t.esc(q.get('msg', ''))}</div>" if q.get("msg") else "")
@@ -58,10 +65,11 @@ def index(ctx):
             + "<div class=card><form method=get action='/kb' class='row schedbar'>"
               f"<div style='flex:1 1 260px'><input name=q value='{t.esc(q.get('q', ''))}' placeholder='Search titles and words'></div>"
               f"<div style='flex:0 0 200px'><select name=status>{opts}</select></div>"
-              "<div style='flex:0 0 auto'><button class=ghost type=submit>Search</button></div>"
+            + (f"<div style='flex:0 0 200px'><select name=category aria-label='Category'>{cat_opts}</select></div>" if cat_opts else "")
+            + "<div style='flex:0 0 auto'><button class=ghost type=submit>Search</button></div>"
               f"<div style='flex:0 0 auto'>{write}</div></form>"
               "<div class=tablewrap><table><thead><tr><th>Article</th><th>Title</th><th>Status</th><th>For</th><th>Board</th>"
-              f"<th>Uses</th><th>Updated</th></tr></thead><tbody>{trs or '<tr><td colspan=7 class=muted>No articles yet.</td></tr>'}"
+              f"<th>Category</th><th>Uses</th><th>Updated</th></tr></thead><tbody>{trs or '<tr><td colspan=8 class=muted>No articles yet.</td></tr>'}"
               "</tbody></table></div></div>")
     return Response(body=t.page("Knowledge", body, user=ctx.user, active="kb"))
 
@@ -78,6 +86,10 @@ def _form(ctx, row=None, *, error: str = "", values: dict | None = None) -> str:
         f"{t.esc(c['label'])}</option>" for c in setup.catalogue_choices(ctx.conn))
     aud = "".join(f"<option value='{k}'{' selected' if k == v.get('audience') else ''}>{t.esc(w)}</option>"
                   for k, w in knowledge.AUDIENCES.items())
+    cats = knowledge.categories(ctx.conn)
+    cat_field = ("<div><label>Category</label><select name=category_id><option value=''>(none)</option>" + "".join(
+        f"<option value='{t.esc(c['category_id'])}'{' selected' if c['category_id'] == v.get('category_id') else ''}>{t.esc(c['name'])}</option>"
+        for c in cats) + "</select></div>") if cats else ""
     action = f"/kb/{t.esc(row['article_id'])}/save" if row is not None else "/kb/new"
     return ((f"<div class='banner err'>{t.esc(error)}</div>" if error else "")
             + f"<div class=card><form method=post action='{action}' class=stack style='max-width:none'>"
@@ -86,7 +98,8 @@ def _form(ctx, row=None, *, error: str = "", values: dict | None = None) -> str:
               "<div class=grid2>"
               f"<div><label>For</label><select name=audience>{aud}</select></div>"
               f"<div><label>Board</label><select name=board_id>{board_opts}</select></div>"
-              f"<div style='grid-column:1/-1'><label>Subtype › Item</label><select name=catalogue_item_id>{pairs}</select></div></div>"
+              f"<div{'' if cat_field else ' style=grid-column:1/-1'}><label>Subtype › Item</label><select name=catalogue_item_id>{pairs}</select></div>"
+              f"{cat_field}</div>"
               "<label>The fix, step by step (Markdown: # heading, - list, **bold**, `code`; a picture from Files as "
               "![caption](file:3), a link as [words](https://…))"
               f"<textarea name=body required style='min-height:320px'>{t.esc(v.get('body') or '')}</textarea></label>"
@@ -110,7 +123,8 @@ def create(ctx):
     try:
         aid = knowledge.create(ctx.conn, title=f.get("title", ""), body=f.get("body", ""),
                                audience=f.get("audience", "INTERNAL"), board_id=f.get("board_id") or None,
-                               catalogue_item_id=f.get("catalogue_item_id") or None, at=ctx.now, actor=ctx.user.id)
+                               catalogue_item_id=f.get("catalogue_item_id") or None, category_id=f.get("category_id") or None,
+                               at=ctx.now, actor=ctx.user.id)
         ctx.conn.commit()
     except knowledge.Refused as exc:
         ctx.conn.rollback()
@@ -155,7 +169,8 @@ def detail(ctx, article_id):
             + (f"<div class='banner err'>{t.esc(q.get('err', ''))}</div>" if q.get("err") else "") + flag
             + f"<h1>{t.esc(row['title'])}</h1><p class=sub>{aid} · {t.chip(STATUS_WORDS[row['status']])} · "
               f"{t.esc(knowledge.AUDIENCES[row['audience']])} · {t.esc(row['board_name'] or 'Every board')} · "
-              f"version {row['version']} · used on {row['uses']} ticket(s) · <a href='/kb'>Knowledge</a></p>"
+            + (f"{t.esc(row['category_name'])} · " if row["category_name"] else "")
+            + f"version {row['version']} · used on {row['uses']} ticket(s) · <a href='/kb'>Knowledge</a></p>"
             + actions + "<div class=card><div class=md>"
             + t.md_to_html(row["body"], file_url=kbfiles.resolver(ctx.conn, row["article_id"], portal=False, base=f"/kb/{aid}/file/"))
             + "</div></div>" + _files_card(ctx, row, can_write=can_write)
@@ -184,7 +199,8 @@ def save(ctx, article_id):
     try:
         what = knowledge.save(ctx.conn, article_id, title=f.get("title", ""), body=f.get("body", ""),
                               audience=f.get("audience", "INTERNAL"), board_id=f.get("board_id") or None,
-                              catalogue_item_id=f.get("catalogue_item_id") or None, at=ctx.now, actor=ctx.user.id)
+                              catalogue_item_id=f.get("catalogue_item_id") or None, category_id=f.get("category_id") or None,
+                              at=ctx.now, actor=ctx.user.id)
         ctx.conn.commit()
     except knowledge.Refused as exc:
         ctx.conn.rollback()

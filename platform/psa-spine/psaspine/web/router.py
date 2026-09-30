@@ -22,6 +22,8 @@ from .views import audit as audit_view
 from .views import tokens as tokens_view
 from .views import mail as mail_view
 from .views import cmdbsetup as cmdbsetup_view
+from .views import smallsetup as smallsetup_view
+from .views import inout as inout_view
 from .views import kb as kb_view
 from .views import projects as projects_view
 from .views import reportwriter as rw_view
@@ -119,6 +121,17 @@ ROUTES = [
     ("POST", "/admin/configuration-types/status", cmdbsetup_view.status_add),
     ("POST", "/admin/configuration-types/status/<status_id>", cmdbsetup_view.status_save),
     ("POST", "/admin/configuration-types/question/<question_id>", cmdbsetup_view.question_save),
+    ("GET", "/admin/kb-categories", smallsetup_view.kb_index),
+    ("POST", "/admin/kb-categories", smallsetup_view.kb_add),
+    ("POST", "/admin/kb-categories/<category_id>", smallsetup_view.kb_save),
+    ("GET", "/admin/companies", smallsetup_view.co_index),
+    ("POST", "/admin/companies/status", smallsetup_view.co_list_add_status),
+    ("POST", "/admin/companies/type", smallsetup_view.co_list_add_type),
+    ("POST", "/admin/companies/status/<ident>", smallsetup_view.co_list_save_status),
+    ("POST", "/admin/companies/type/<ident>", smallsetup_view.co_list_save_type),
+    ("POST", "/admin/companies/<entity_id>", smallsetup_view.co_set),
+    ("GET", "/inout", inout_view.index),
+    ("POST", "/inout/me", inout_view.me),
     ("GET", "/admin/mail", mail_view.index),
     ("POST", "/admin/mail/exclude", mail_view.exclude),
     ("POST", "/admin/mail/exclude/remove", mail_view.exclude_remove),
@@ -266,6 +279,10 @@ ROUTES = [
     ("POST", "/admin/board/<board_id>/status/add", admin.add_board_status),
     ("POST", "/admin/board/<board_id>/sla", admin.save_sla),
     ("POST", "/admin/board/<board_id>/roles", admin.save_roles),
+    ("POST", "/admin/board/<board_id>/emails", admin.save_emails),
+    ("POST", "/admin/board/<board_id>/assign", admin.save_auto_assign),
+    ("POST", "/admin/board/<board_id>/assign/rule", admin.save_auto_assign_rule),
+    ("POST", "/admin/board/<board_id>/assign/rule/remove", admin.remove_auto_assign_rule),
 ]
 
 

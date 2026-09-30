@@ -946,6 +946,58 @@ minted deliberately, and every list and read on that board writes
 the scope needed; another board's ticket is a 404 a caller cannot tell from
 none.
 
+## The small setup tables (057, 30 Sep 2026)
+
+The 29 Sep parity check left six small setup items; each is its own
+decision in the reference PSA and each is small here: a table or a column,
+a page or a tab, nothing seeded, nothing that changes an existing row. A
+board that has said nothing behaves exactly as it did yesterday.
+
+- **Emails per board** (`mail_template`; the board's **Emails** tab). The
+  reference PSA's service email templates: the subject and body of each
+  kind of email the board sends (opened, updated and closed to the
+  requester; assigned to the owner; a visit booked to the member; approval
+  asked of the approver). Four placeholders, `{ticket}`, `{board}`,
+  `{actor}` and `{when}`, and no other: there is no `{summary}` and no
+  `{note}`, because a subject and a body leave the building and the words
+  stay behind the sign-in. The sender still adds the reference and the
+  portal link. A board with no words of its own uses the desk's, shown on
+  the tab; a save with an unknown placeholder is refused; going back to the
+  desk's words is one button. Audited as `MAIL_TEMPLATE`.
+- **The survey per board** (`board.survey_enabled`, `board.survey_question`;
+  the Board tab). A board switches the closing survey off, or asks its own
+  question on the portal in place of *How did we do?*. Unset is on, as it
+  always was.
+- **Knowledge categories** (`kb_category`, `kb_article.category_id`;
+  **Setup › Knowledge categories**, `/admin/kb-categories`). A name a
+  reader browses by; an article may have one; the Knowledge list filters by
+  it and shows it. Retiring a category keeps it on the articles that have
+  it and offers it to no new one. Audited as `KB_CATEGORY`.
+- **Company status and type** (`company_status`, `company_type`,
+  `entity.status_id`, `entity.type_id`; **Setup › Companies**,
+  `/admin/companies`). Words on a company (a customer, a former customer, a
+  prospect; a hospital department, a supplier, a partner), shown as chips
+  on the company's page and the list. Words, not rules: coverage is still
+  the executed instrument. Every company's status and type are set on the
+  one setup page, so the company page stays a reader's page. Audited as
+  `COMPANY_SETUP`; every value is checked before anything is written.
+- **Auto-assign** (`board.auto_assign`, `board_auto_assign`; the board's
+  **Auto-assign** tab). A ticket that arrives on the board with nobody
+  named is given an owner in `board.admit`: a rule for its Subtype › Item
+  pair names the member; with no rule, the board's mode, *least loaded*
+  (the WORK or ADMIN member with the fewest open tickets on the board,
+  then by name) or *the default team's leader*. A ticket that arrives with
+  an owner keeps it, a member who has left the board or been deactivated
+  is never assigned, the assignment is a ticket event by `auto-assign`,
+  and the owner is emailed when the board emails owners. No mode, or OFF,
+  assigns nobody, as before.
+- **The in/out board** (`member_presence`; `/inout`, under the Schedule
+  module). Where each member is right now, said by themselves: in, out, on
+  site, working remotely or on leave, a note and when they are back. A
+  person sets only their own line. The Schedule page carries the word
+  under each name, and My profile links to it. It changes no ticket and no
+  visit.
+
 ## Configuration types, statuses and questions (056, 30 Sep 2026)
 
 021 fixed seven configuration types and three statuses in a CHECK. A

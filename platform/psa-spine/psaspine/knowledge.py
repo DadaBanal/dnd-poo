@@ -42,7 +42,7 @@ def _next_id(conn) -> str:
     return f"KB-{n + 1:04d}"
 
 
-def _clean(title, body, audience, board_id, catalogue_item_id, conn):
+def _clean(title, body, audience, board_id, catalogue_item_id, conn, category_id=None):
     title = " ".join((title or "").split())
     body = (body or "").replace("\r\n", "\n").strip()
     if not title:
@@ -60,6 +60,9 @@ def _clean(title, body, audience, board_id, catalogue_item_id, conn):
     if catalogue_item_id and not conn.execute("SELECT 1 FROM catalogue_item WHERE catalogue_item_id = ?",
                                               (catalogue_item_id,)).fetchone():
         raise Refused("No such Subtype › Item pair.")
+    if category_id and not conn.execute("SELECT 1 FROM kb_category WHERE category_id = ? AND inactive = 0",
+                                        (category_id,)).fetchone():
+        raise Refused("No such category.")
     return title, body
 
 
@@ -79,14 +82,14 @@ def flags(conn, article_id: str) -> list[str]:
 
 
 def create(conn, *, title: str, body: str, audience: str = "INTERNAL", board_id: str | None = None,
-           catalogue_item_id: str | None = None, at: datetime, actor: str) -> str:
-    title, body = _clean(title, body, audience, board_id, catalogue_item_id, conn)
+           catalogue_item_id: str | None = None, category_id: str | None = None, at: datetime, actor: str) -> str:
+    title, body = _clean(title, body, audience, board_id, catalogue_item_id, conn, category_id)
     aid = _next_id(conn)
     stamp = _stamp(at)
     conn.execute(
-        "INSERT INTO kb_article (article_id, title, body, audience, status, board_id, catalogue_item_id, version,"
-        " uses, created_at, created_by, updated_at, updated_by) VALUES (?,?,?,?, 'DRAFT', ?,?,1,0,?,?,?,?)",
-        (aid, title, body, audience, board_id or None, catalogue_item_id or None, stamp, actor, stamp, actor))
+        "INSERT INTO kb_article (article_id, title, body, audience, status, board_id, catalogue_item_id, category_id, version,"
+        " uses, created_at, created_by, updated_at, updated_by) VALUES (?,?,?,?, 'DRAFT', ?,?,?,1,0,?,?,?,?)",
+        (aid, title, body, audience, board_id or None, catalogue_item_id or None, category_id or None, stamp, actor, stamp, actor))
     conn.execute("INSERT INTO kb_revision (article_id, version, title, body, saved_at, saved_by) VALUES (?,1,?,?,?,?)",
                  (aid, title, body, stamp, actor))
     _flag(conn, aid, title, body)
@@ -97,25 +100,27 @@ def create(conn, *, title: str, body: str, audience: str = "INTERNAL", board_id:
 
 def get(conn, article_id: str):
     return conn.execute(
-        "SELECT a.*, b.display_name AS board_name FROM kb_article a LEFT JOIN board b ON b.board_id = a.board_id"
+        "SELECT a.*, b.display_name AS board_name, c.name AS category_name FROM kb_article a"
+        " LEFT JOIN board b ON b.board_id = a.board_id LEFT JOIN kb_category c ON c.category_id = a.category_id"
         " WHERE a.article_id = ?", (article_id,)).fetchone()
 
 
 def save(conn, article_id: str, *, title: str, body: str, audience: str, board_id: str | None,
-         catalogue_item_id: str | None, at: datetime, actor: str) -> str:
+         catalogue_item_id: str | None, category_id: str | None = None, at: datetime, actor: str) -> str:
     row = get(conn, article_id)
     if row is None:
         raise Refused("No such article.")
-    title, body = _clean(title, body, audience, board_id, catalogue_item_id, conn)
+    title, body = _clean(title, body, audience, board_id, catalogue_item_id, conn, category_id)
     same = (title == row["title"] and body == row["body"] and audience == row["audience"]
-            and (board_id or None) == row["board_id"] and (catalogue_item_id or None) == row["catalogue_item_id"])
+            and (board_id or None) == row["board_id"] and (catalogue_item_id or None) == row["catalogue_item_id"]
+            and (category_id or None) == row["category_id"])
     if same:
         return "nothing changed"
     version = row["version"] + 1
     stamp = _stamp(at)
-    conn.execute("UPDATE kb_article SET title = ?, body = ?, audience = ?, board_id = ?, catalogue_item_id = ?,"
+    conn.execute("UPDATE kb_article SET title = ?, body = ?, audience = ?, board_id = ?, catalogue_item_id = ?, category_id = ?,"
                  " version = ?, updated_at = ?, updated_by = ? WHERE article_id = ?",
-                 (title, body, audience, board_id or None, catalogue_item_id or None, version, stamp, actor, article_id))
+                 (title, body, audience, board_id or None, catalogue_item_id or None, category_id or None, version, stamp, actor, article_id))
     conn.execute("INSERT INTO kb_revision (article_id, version, title, body, saved_at, saved_by) VALUES (?,?,?,?,?,?)",
                  (article_id, version, title, body, stamp, actor))
     _flag(conn, article_id, title, body)
@@ -151,13 +156,17 @@ def _like(needle: str) -> str:
 
 
 def search(conn, *, q: str = "", status: str | None = None, audience: str | None = None,
-           board_ids=None, limit: int = 200):
+           board_ids=None, category_id: str | None = None, limit: int = 200):
     """Articles matching every word of q in the title or body. `board_ids`
     limits a board's own articles to the boards the reader sees; an article on
-    no board is everyone's."""
-    sql = ["SELECT a.*, b.display_name AS board_name FROM kb_article a LEFT JOIN board b ON b.board_id = a.board_id"
+    no board is everyone's. `category_id` (057) keeps one category."""
+    sql = ["SELECT a.*, b.display_name AS board_name, c.name AS category_name FROM kb_article a"
+           " LEFT JOIN board b ON b.board_id = a.board_id LEFT JOIN kb_category c ON c.category_id = a.category_id"
            " WHERE 1 = 1"]
     args: list = []
+    if category_id:
+        sql.append(" AND a.category_id = ?")
+        args.append(category_id)
     for word in [w for w in (q or "").split() if w][:6]:
         like = _like(word.lower())
         sql.append(" AND (LOWER(a.title) LIKE ? ESCAPE '\\' OR LOWER(a.body) LIKE ? ESCAPE '\\')")
@@ -234,3 +243,51 @@ def linked(conn, work_item_id: str):
     return conn.execute("SELECT a.article_id, a.title, a.status FROM kb_ticket k JOIN kb_article a"
                         " ON a.article_id = k.article_id WHERE k.work_item_id = ? ORDER BY k.linked_at",
                         (work_item_id,)).fetchall()
+
+
+# 057: categories. The reference PSA's KnowledgeBaseCategory: a name a reader
+# browses by. A system administrator keeps the list; an article may have one.
+
+def categories(conn, *, all_rows: bool = False):
+    return [dict(r) for r in conn.execute(
+        "SELECT c.*, (SELECT COUNT(*) FROM kb_article a WHERE a.category_id = c.category_id) AS used FROM kb_category c"
+        + ("" if all_rows else " WHERE c.inactive = 0") + " ORDER BY c.sort_order, c.name")]
+
+
+def add_category(conn, name: str, *, at: datetime, actor: str) -> str:
+    import re
+    n = " ".join(str(name or "").split())[:80]
+    if not n:
+        raise Refused("A category needs a name.")
+    if conn.execute("SELECT 1 FROM kb_category WHERE LOWER(name) = LOWER(?)", (n,)).fetchone():
+        raise Refused("A category with that name exists.")
+    base = re.sub(r"[^A-Z0-9]+", "_", n.upper()).strip("_")[:40]
+    cid = f"KC_{base}" if base else "KC"
+    if conn.execute("SELECT 1 FROM kb_category WHERE category_id = ?", (cid,)).fetchone():
+        raise Refused("That name is too close to one that exists.")
+    order = conn.execute("SELECT COALESCE(MAX(sort_order), 0) + 10 FROM kb_category").fetchone()[0]
+    conn.execute("INSERT INTO kb_category (category_id, name, inactive, sort_order) VALUES (?,?,0,?)", (cid, n, order))
+    db.audit(conn, at=_stamp(at), actor=actor, action="KB_CATEGORY", subject_kind="kb_category", subject_id=cid,
+             detail=f"added {n}")
+    return cid
+
+
+def save_category(conn, category_id: str, *, at: datetime, actor: str, name=None, inactive=None) -> str:
+    row = conn.execute("SELECT * FROM kb_category WHERE category_id = ?", (category_id,)).fetchone()
+    if row is None:
+        raise Refused("No such category.")
+    changes = []
+    if name is not None:
+        n = " ".join(str(name).split())[:80]
+        if not n:
+            raise Refused("A category needs a name.")
+        if n != row["name"]:
+            changes.append(("name", n))
+    if inactive is not None and int(bool(inactive)) != row["inactive"]:
+        changes.append(("inactive", int(bool(inactive))))
+    for col, val in changes:
+        conn.execute(f"UPDATE kb_category SET {col} = ? WHERE category_id = ?", (val, category_id))
+    if changes:
+        db.audit(conn, at=_stamp(at), actor=actor, action="KB_CATEGORY", subject_kind="kb_category", subject_id=category_id,
+                 detail="; ".join(f"{c} -> {v}" for c, v in changes))
+    return "saved" if changes else "nothing changed"

@@ -92,7 +92,9 @@ def index(ctx):
             "<button class=ghost type=submit>Load the Dada PSA template</button></form></div>"
             f"<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/catalogue'>Catalogue: Type / Subtype / "
             f"Item ({n_items})</a></div>"
-            "<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/configuration-types'>Configuration types</a></div></div>"
+            "<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/configuration-types'>Configuration types</a></div>"
+            "<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/kb-categories'>Knowledge categories</a></div>"
+            "<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/companies'>Company status and type</a></div></div>"
             "<p class=why style='margin-top:10px'>The template is Dada's design on the "
             "ITIL model: IT Help as the service board with his Subtype › Item catalogue, plus an "
             "IT Change board and an IT Projects board. His Request-board SLA numbers become "
@@ -193,7 +195,8 @@ def index(ctx):
 
 
 TABS = (("board", "Board"), ("types", "Types"), ("statuses", "Statuses"), ("sla", "SLA"),
-        ("templates", "Templates"), ("notes", "Standard notes"), ("members", "Members & roles"))
+        ("templates", "Templates"), ("notes", "Standard notes"), ("members", "Members & roles"),
+        ("emails", "Emails"), ("assign", "Auto-assign"))
 ROLES = ("SERVICE_MANAGER", "DISPATCH", "ON_CALL", "DUTY_MANAGER")
 TYPE_HELP = {
     "INCIDENT": "Something is broken: restore the service.",
@@ -259,6 +262,10 @@ def board_setup(ctx, board_id):
             f"{_time_opts(ctx, 'work_role', b['default_work_role_id'])}</select></div>"
             f"<div><label>… and this work type</label><select name=default_work_type_id>"
             f"{_time_opts(ctx, 'work_type', b['default_work_type_id'])}</select></div>"
+            "<div>" + chk("survey_enabled", b["survey_enabled"] != 0,
+                          "Ask the requester how we did once their ticket is closed (on the portal, one to five)") + "</div>"
+            f"<div><label>The survey's question</label><input name=survey_question maxlength=120"
+            f" value='{t.esc(b['survey_question'] or '')}' placeholder='How did we do?'></div>"
             "</div><div style='margin-top:12px'><button type=submit>Save board</button></div></form>"
             + _reply_policy_form(ctx, b) +
             f"<form method=post action='/admin/board/{bid}/calendar' class=row style='margin-top:14px'>"
@@ -415,6 +422,64 @@ def board_setup(ctx, board_id):
             "answer). The rota on the On-call page overrides the named On-Call.</p>"
             f"<form method=post action='/admin/board/{bid}/roles'><div class=grid2>{role_rows}</div>"
             "<div style='margin-top:12px'><button type=submit>Save roles</button></div></form></div>")
+    elif tab == "emails":
+        from ... import outbox as _outbox
+        blocks = []
+        for kind, label in _outbox.TEMPLATE_KINDS.items():
+            tpl = _outbox.template(ctx.conn, board_id, kind)
+            blocks.append(
+                f"<div class=card><h3>{t.icon('mail')}{t.esc(label)}"
+                + (f" <span class=pill>the board's own words · {t.esc(tpl['updated_at'])} · {t.esc(tpl['updated_by'])}</span>"
+                   if tpl["custom"] else " <span class=muted style='font-weight:400;font-size:.85em'>the desk's words</span>") + "</h3>"
+                f"<form method=post action='/admin/board/{bid}/emails' class=stack style='max-width:none'>"
+                f"<input type=hidden name=kind value='{kind}'>"
+                f"<label>Subject (after the ticket's reference)<input name=subject required maxlength=120 value='{t.esc(tpl['subject'])}'></label>"
+                f"<label>Body<textarea name=body required style='min-height:90px'>{t.esc(tpl['body'])}</textarea></label>"
+                "<div><button type=submit>Save</button> "
+                + (f"<button class=ghost type=submit name=reset value=1>Back to the desk's words</button>" if tpl["custom"] else "")
+                + "</div></form></div>")
+        content = ("<div class=card><h3>" + t.icon("mail") + "What this board's emails say</h3><p class=why>The reference PSA's "
+                   "service email templates, one per kind. Placeholders: <code>{ticket}</code> the reference, <code>{board}</code> "
+                   "this board's name, <code>{actor}</code> who did it, <code>{when}</code> the visit's time. There is no "
+                   "placeholder for the summary or a note: a subject and a body leave the building, and the words stay "
+                   "behind the sign-in. The portal link and the reference are added by the sender. A board with no words "
+                   "of its own uses the desk's, shown here.</p></div>" + "".join(blocks))
+    elif tab == "assign":
+        from ... import board as _board
+        from ... import setup as _setup
+        mode = b["auto_assign"] or "OFF"
+        modes = "".join(f"<label style='display:block;margin-top:6px'><input type=radio name=mode value={k} style='width:auto'"
+                        f"{' checked' if k == mode else ''}> {t.esc(v)}</label>" for k, v in _board.AUTO_ASSIGN_MODES.items())
+        working = _board._working_members(ctx.conn, board_id)
+        who = "".join(f"<option value='{t.esc(m)}'>" for m in working)
+        rules = _board.auto_assign_rules(ctx.conn, board_id)
+        rule_rows = "".join(
+            f"<tr><td>{t.esc(r['label'])}</td><td>{t.esc(r['member'])}"
+            + ("" if r["member"].lower() in {w.lower() for w in working} else " <span class=pill>no longer works this board</span>")
+            + f"</td><td><form method=post action='/admin/board/{bid}/assign/rule/remove' class=inline>"
+            f"<input type=hidden name=catalogue_item_id value='{t.esc(r['catalogue_item_id'])}'>"
+            "<button class='ghost small' type=submit>Remove</button></form></td></tr>" for r in rules)
+        pairs = "".join(f"<option value='{t.esc(c['catalogue_item_id'])}'>{t.esc(c['label'])}</option>"
+                        for c in _setup.catalogue_choices(ctx.conn, board_id))
+        leader = ctx.conn.execute("SELECT team_leader FROM board_team WHERE board_id = ? AND is_default = 1", (board_id,)).fetchone()
+        content = (
+            "<div class=card><h3>" + t.icon("users") + "Who a new ticket goes to</h3><p class=why>The reference PSA's "
+            "auto-assign: a ticket that arrives on the board with nobody named is given an owner. A rule for its "
+            "Subtype › Item pair names the member; with no rule, the board's mode below. A ticket that arrives with an "
+            "owner keeps it, and a member who leaves the board is never assigned. The owner is emailed when the board "
+            "emails owners.</p>"
+            f"<form method=post action='/admin/board/{bid}/assign'>{modes}"
+            + (f"<p class=muted style='margin-top:6px'>The default team's leader is {t.esc(leader['team_leader'])}.</p>"
+               if leader and leader["team_leader"] else
+               "<p class=muted style='margin-top:6px'>No default team names a leader yet (Members &amp; roles).</p>")
+            + "<div style='margin-top:10px'><button type=submit>Save</button></div></form></div>"
+            "<div class=card><h3>" + t.icon("tag") + "By Subtype › Item</h3>"
+            "<div class=tablewrap><table><thead><tr><th>Subtype › Item</th><th>Goes to</th><th></th></tr></thead><tbody>"
+            + (rule_rows or "<tr><td colspan=3 class=muted>No rule yet: the mode above decides.</td></tr>") + "</tbody></table></div>"
+            f"<form method=post action='/admin/board/{bid}/assign/rule' class=row style='margin-top:10px'>"
+            f"<div style='flex:1 1 260px'><label>Subtype › Item</label><select name=catalogue_item_id>{pairs}</select></div>"
+            f"<div style='flex:1 1 180px'><label>Goes to</label><input name=member list=assignwho required><datalist id=assignwho>{who}</datalist></div>"
+            "<div style='flex:0 0 auto;align-self:end'><button class=ghost type=submit>Add rule</button></div></form></div>")
     else:
         statuses = ctx.conn.execute(
             "SELECT * FROM board_status WHERE board_id = ? ORDER BY inactive, sort_order, name",
@@ -828,6 +893,9 @@ def save_settings(ctx, board_id):
              1 if f.get("closed_loop_required") == "1" else 0, live, inactive,
              1 if f.get("notify_requester") == "1" else 0, 1 if f.get("notify_owner") == "1" else 0,
              f.get("default_work_role_id") or None, f.get("default_work_type_id") or None, board_id))
+        ctx.conn.execute("UPDATE board SET survey_enabled = ?, survey_question = ? WHERE board_id = ?",
+                         (1 if f.get("survey_enabled") == "1" else 0,
+                          " ".join(f.get("survey_question", "").split())[:120] or None, board_id))
         _audit(ctx, board_id, "settings saved: " + _changes(before, dict(ctx.conn.execute(
             "SELECT * FROM board WHERE board_id = ?", (board_id,)).fetchone())))
         ctx.conn.commit()
@@ -841,7 +909,7 @@ SETTING_WORDS = {"display_name": "name", "fulfiller_group": "group", "owner": "o
                  "description": "description", "restricted": "restricted", "closed_loop_required": "closed loop",
                  "is_live": "live", "inactive": "retired", "notify_requester": "email the requester",
                  "notify_owner": "email the owner", "default_work_role_id": "work role",
-                 "default_work_type_id": "work type"}
+                 "default_work_type_id": "work type", "survey_enabled": "survey", "survey_question": "survey question"}
 
 
 def _changes(before: dict, after: dict) -> str:
@@ -1965,3 +2033,64 @@ def departments_add(ctx):
         return _dept_back(err=str(exc))
     ctx.conn.commit()
     return _dept_back(msg=f"Added {name}. Tick its boards and save.")
+
+
+# 057: the board's emails and its auto-assign.
+
+def save_emails(ctx, board_id):
+    from ... import outbox as _outbox
+    common.require_board(ctx, board_id, need="ADMIN")
+    f = ctx.request.form()
+    kind = f.get("kind", "")
+    try:
+        if f.get("reset") == "1":
+            _outbox.reset_template(ctx.conn, board_id, kind, at=ctx.now, actor=ctx.user.id)
+            msg = "Back to the desk's words"
+        else:
+            _outbox.set_template(ctx.conn, board_id, kind, subject=f.get("subject", ""), body=f.get("body", ""),
+                                 at=ctx.now, actor=ctx.user.id)
+            msg = "Saved: the board's own words from the next email"
+        ctx.conn.commit()
+    except ValueError as exc:
+        ctx.conn.rollback()
+        return _done(board_id, "emails", f"Not saved: {exc}")
+    return _done(board_id, "emails", msg)
+
+
+def save_auto_assign(ctx, board_id):
+    from ... import board as _board
+    common.require_board(ctx, board_id, need="ADMIN")
+    try:
+        _board.set_auto_assign(ctx.conn, board_id, ctx.request.form().get("mode", ""), at=ctx.now, actor=ctx.user.id)
+        ctx.conn.commit()
+    except ValueError as exc:
+        ctx.conn.rollback()
+        return _done(board_id, "assign", f"Not saved: {exc}")
+    return _done(board_id, "assign", "Saved")
+
+
+def save_auto_assign_rule(ctx, board_id):
+    from ... import board as _board
+    common.require_board(ctx, board_id, need="ADMIN")
+    f = ctx.request.form()
+    try:
+        _board.set_auto_assign_rule(ctx.conn, board_id, f.get("catalogue_item_id", ""), f.get("member", ""),
+                                    at=ctx.now, actor=ctx.user.id)
+        ctx.conn.commit()
+    except ValueError as exc:
+        ctx.conn.rollback()
+        return _done(board_id, "assign", f"Not saved: {exc}")
+    return _done(board_id, "assign", "Rule added")
+
+
+def remove_auto_assign_rule(ctx, board_id):
+    from ... import board as _board
+    common.require_board(ctx, board_id, need="ADMIN")
+    f = ctx.request.form()
+    try:
+        _board.set_auto_assign_rule(ctx.conn, board_id, f.get("catalogue_item_id", ""), None, at=ctx.now, actor=ctx.user.id)
+        ctx.conn.commit()
+    except ValueError as exc:
+        ctx.conn.rollback()
+        return _done(board_id, "assign", f"Not removed: {exc}")
+    return _done(board_id, "assign", "Rule removed")

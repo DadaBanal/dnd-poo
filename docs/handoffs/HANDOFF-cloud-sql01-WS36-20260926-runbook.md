@@ -1016,10 +1016,32 @@ first is the audit trail's page, with one schema step by the sitting-1 road
   add a pump by hand on Configurations and its page shows an *Infusion pump
   details* card that refuses to save without the tag; the Configurations
   tiles show *Infusion pump* once one exists.
-- **Counts:** 604 tests at this head (SQLite OK, 1 skipped). The whole suite
-  ran on SQL Server in this container with 054 to 056: 604 run, OK, 2
-  skipped, 13.6 minutes (MEASURED, 30 Sep). The drift gate passes; CI run
-  72 on `12f9322` is green on all four jobs (MEASURED, finished 02:44 UTC).
+- **Schema 057, in the same sitting (Dada: *"all of them"*): the six small
+  setup items the parity check left.** `mail_template` (the board's Emails
+  tab: subject and body per kind, four placeholders, no summary or note);
+  `board.survey_enabled` and `board.survey_question` (the survey per board,
+  unset is on); `kb_category` and `kb_article.category_id` (Setup ›
+  Knowledge categories); `company_status`, `company_type`,
+  `entity.status_id` and `entity.type_id` (Setup › Companies);
+  `board.auto_assign` and `board_auto_assign` (the board's Auto-assign tab:
+  a rule per Subtype › Item, else least loaded or the default team's
+  leader, applied in `admit` to a ticket that arrives unowned);
+  `member_presence` (`/inout`, the in/out board). Nothing seeded; a board
+  that has said nothing behaves as it did. **Pass after 054 to 057:**
+  tables **120 → 126**, columns **1179 → 1215**, indexes 52 → 52,
+  triggers 4 → 4, no existing row count changed (MEASURED on the test
+  container at this head after `init --reset` on a spare database:
+  126 tables, 1215 columns, 52 CREATE INDEX, 4 triggers). **Pass, for
+  Dada:** the helpdesk board's Setup page has *Emails* and *Auto-assign*
+  tabs; Emails shows six kinds each marked *the desk's words*; saving one
+  with `{summary}` is refused; the Board tab has the survey box ticked;
+  Setup shows *Knowledge categories* and *Company status and type*; the
+  Schedule bar has *In / out*, and saying *Out* there puts the word under
+  your name on Schedule.
+- **Counts:** 610 tests at this head (SQLite OK, 1 skipped). The whole
+  suite ran on SQL Server in this container with 054 to 057: 610 run, OK, 2
+  skipped, 12.0 minutes (MEASURED, 30 Sep). The drift gate passes; CI is
+  dispatched on this head and its run number follows once it is green.
 
 ## When a step does not pass
 

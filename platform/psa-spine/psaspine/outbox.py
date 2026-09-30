@@ -36,18 +36,106 @@ REQUESTER = "REQUESTER"
 # Where a new ticket did come from a person who expects to hear back. API
 # tickets come from monitoring; imported ones are history.
 NOTIFY_ON_OPEN = ("PORTAL", "EMAIL", "PHONE", "WALK_UP", "DESK")
-REQUESTER_WORDS = {
+# The desk's own words per kind, when a board has not written its own (057:
+# Setup > board > Emails). {board} is the name of the board that owns the
+# request: a request may be for any department, so the email never says "IT".
+# {ticket} is the reference, {actor} who did it, {when} the visit's time.
+# There is no {summary} and no {note}: a subject and a body leave the building.
+TEMPLATE_KINDS = {
+    "OPENED": "Ticket opened, to the requester",
+    "UPDATED": "Ticket updated, to the requester",
+    "CLOSED": "Ticket closed, to the requester",
+    "ASSIGNED": "Assigned, to the owner",
+    "SCHEDULED": "A visit booked, to the member",
+    "APPROVAL": "Approval asked, to the approver",
+}
+PLACEHOLDERS = ("ticket", "board", "actor", "when")
+DEFAULTS = {
     "OPENED": ("We have your request",
                "We have your request and it is in the queue. You do not need to do "
                "anything; we will update you here as it moves."),
-    # {board} is the name of the board that owns the request: a request may be
-    # for any department, so the email never says "IT".
     "UPDATED": ("Your request has been updated",
                 "{board} has added an update to your request. Sign in to the portal to read it."),
     "CLOSED": ("Your request is closed",
                "{board} has closed your request. If it is not fixed, reply to this email and it "
                "reopens. On the portal you can tell us how we did, one to five."),
+    "ASSIGNED": ("Assigned to you on {board}", "{ticket} on {board} was assigned to you by {actor}."),
+    "SCHEDULED": ("Scheduled for you on {board}", "{ticket} on {board}: a visit booked for you by {actor}, {when}."),
+    "APPROVAL": ("A request needs your approval",
+                 "A request on the desk waits for your approval before the work is done. Sign in to the portal and "
+                 "open Approvals to read it and decide, with a reason."),
 }
+REQUESTER_WORDS = {k: DEFAULTS[k] for k in ("OPENED", "UPDATED", "CLOSED")}   # kept for readers of 03x
+
+
+class _Fill(dict):
+    def __missing__(self, key):
+        return "{" + key + "}"
+
+
+def _placeholders(text: str) -> set[str]:
+    import string
+    names = set()
+    for _, field, _, _ in string.Formatter().parse(text):
+        if field is not None:
+            names.add(field)
+    return names
+
+
+def template(conn: sqlite3.Connection, board_id: str, kind: str) -> dict:
+    """The words a board uses for one kind: its own row, else the desk's."""
+    if kind not in TEMPLATE_KINDS:
+        raise ValueError("no such email kind")
+    row = conn.execute("SELECT subject, body, updated_at, updated_by FROM mail_template WHERE board_id = ? AND kind = ?",
+                       (board_id, kind)).fetchone()
+    if row is None:
+        subject, body = DEFAULTS[kind]
+        return {"kind": kind, "subject": subject, "body": body, "custom": False, "updated_at": None, "updated_by": None}
+    return {"kind": kind, "subject": row["subject"], "body": row["body"], "custom": True,
+            "updated_at": row["updated_at"], "updated_by": row["updated_by"]}
+
+
+def set_template(conn: sqlite3.Connection, board_id: str, kind: str, *, subject: str, body: str,
+                 at: datetime, actor: str) -> None:
+    """A board writes its own words for one kind. Only the four placeholders
+    are allowed: nothing here can pull a summary or a note into an email."""
+    from . import db
+    if kind not in TEMPLATE_KINDS:
+        raise ValueError("no such email kind")
+    subj = " ".join(str(subject or "").split())[:120]
+    text = str(body or "").replace("\r\n", "\n").strip()[:2000]
+    if not subj or not text:
+        raise ValueError("an email needs a subject and a body")
+    try:
+        unknown = (_placeholders(subj) | _placeholders(text)) - set(PLACEHOLDERS)
+    except ValueError:
+        raise ValueError("a placeholder is {ticket}, {board}, {actor} or {when}; a brace on its own is written {{ }}")
+    if unknown:
+        raise ValueError("a placeholder is {ticket}, {board}, {actor} or {when}; not " + ", ".join(sorted("{" + u + "}" for u in unknown)))
+    stamp = at.isoformat(sep=" ", timespec="minutes")
+    conn.execute("DELETE FROM mail_template WHERE board_id = ? AND kind = ?", (board_id, kind))
+    conn.execute("INSERT INTO mail_template (board_id, kind, subject, body, updated_at, updated_by) VALUES (?,?,?,?,?,?)",
+                 (board_id, kind, subj, text, stamp, actor))
+    db.audit(conn, at=stamp, actor=actor, action="MAIL_TEMPLATE", subject_kind="board", subject_id=board_id,
+             detail=f"{kind} email: own words")
+
+
+def reset_template(conn: sqlite3.Connection, board_id: str, kind: str, *, at: datetime, actor: str) -> bool:
+    from . import db
+    if kind not in TEMPLATE_KINDS:
+        raise ValueError("no such email kind")
+    cur = conn.execute("DELETE FROM mail_template WHERE board_id = ? AND kind = ?", (board_id, kind))
+    if cur.rowcount:
+        db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor, action="MAIL_TEMPLATE",
+                 subject_kind="board", subject_id=board_id, detail=f"{kind} email: the desk's words")
+    return bool(cur.rowcount)
+
+
+def words(conn: sqlite3.Connection, board_id: str, kind: str, **values) -> tuple[str, str]:
+    """(subject without the reference token, body) with the placeholders filled."""
+    tpl = template(conn, board_id, kind)
+    fill = _Fill(values)
+    return tpl["subject"].format_map(fill), tpl["body"].format_map(fill)
 
 
 def queue_requester(conn: sqlite3.Connection, work_item_id: str, reason: str, *,
@@ -56,7 +144,7 @@ def queue_requester(conn: sqlite3.Connection, work_item_id: str, reason: str, *,
     from .board import _event
     from .intake import subject_token
     row = conn.execute(
-        "SELECT t.requested_by, t.intake_source, b.notify_requester, b.display_name FROM ticket t"
+        "SELECT t.requested_by, t.intake_source, t.board_id, b.notify_requester, b.display_name FROM ticket t"
         " JOIN board b ON b.board_id = t.board_id WHERE t.work_item_id = ?",
         (work_item_id,)).fetchone()
     if row is None or not row["notify_requester"] or not row["requested_by"]:
@@ -65,8 +153,7 @@ def queue_requester(conn: sqlite3.Connection, work_item_id: str, reason: str, *,
         return False
     if not address_for(conn, row["requested_by"]):
         return False                          # only an address we can resolve now
-    headline, said = REQUESTER_WORDS[reason]
-    said = said.format(board=row["display_name"])
+    headline, said = words(conn, row["board_id"], reason, ticket=work_item_id, board=row["display_name"], actor="desk", when="")
     stamp = at.isoformat(sep=" ", timespec="minutes")
     pending = conn.execute("SELECT notification_id FROM notification WHERE work_item_id = ? AND"
                            " recipient = ? AND recipient_role = ? AND status = 'PENDING'",
@@ -113,11 +200,11 @@ def queue_owner(conn: sqlite3.Connection, work_item_id: str, *, at: datetime, ac
                     " AND status = 'PENDING'", (work_item_id, row["owner"], OWNER)).fetchone():
         return False
     stamp = at.isoformat(sep=" ", timespec="minutes")
+    headline, said = words(conn, row["board_id"], "ASSIGNED", ticket=work_item_id, board=row["display_name"], actor=actor, when="")
     conn.execute(
         "INSERT INTO notification (work_item_id, recipient, recipient_role, subject, body, created_at, status)"
         " VALUES (?,?,?,?,?,?,'PENDING')",
-        (work_item_id, row["owner"], OWNER, f"{subject_token(work_item_id)} Assigned to you on {row['display_name']}",
-         f"{work_item_id} on {row['display_name']} was assigned to you by {actor}.", stamp))
+        (work_item_id, row["owner"], OWNER, f"{subject_token(work_item_id)} {headline}", said, stamp))
     _event(conn, work_item_id, stamp, "NOTIFY", "desk", f"email to the owner queued: assigned to {row['owner']}")
     return True
 
@@ -137,12 +224,14 @@ def queue_approver(conn: sqlite3.Connection, work_item_id: str, approver: str, *
                     " AND status = 'PENDING'", (work_item_id, approver, APPROVER)).fetchone():
         return False
     stamp = at.isoformat(sep=" ", timespec="minutes")
+    b = conn.execute("SELECT t.board_id, b.display_name FROM ticket t JOIN board b ON b.board_id = t.board_id"
+                     " WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
+    headline, said = words(conn, b["board_id"] if b else "", "APPROVAL", ticket=work_item_id,
+                           board=b["display_name"] if b else "", actor="desk", when="")
     conn.execute(
         "INSERT INTO notification (work_item_id, recipient, recipient_role, subject, body, created_at, status)"
         " VALUES (?,?,?,?,?,?,'PENDING')",
-        (work_item_id, approver, APPROVER, f"{subject_token(work_item_id)} A request needs your approval",
-         "A request on the desk waits for your approval before the work is done. Sign in to the portal and "
-         "open Approvals to read it and decide, with a reason.", stamp))
+        (work_item_id, approver, APPROVER, f"{subject_token(work_item_id)} {headline}", said, stamp))
     _event(conn, work_item_id, stamp, "NOTIFY", "desk", f"email to the approver queued: {approver}")
     return True
 
@@ -158,7 +247,7 @@ def queue_scheduled(conn: sqlite3.Connection, schedule_id: int, *, at: datetime,
     from .board import _event
     from .intake import subject_token
     row = conn.execute(
-        "SELECT s.member, s.starts_at, s.ends_at, s.work_item_id, b.notify_owner, b.display_name"
+        "SELECT s.member, s.starts_at, s.ends_at, s.work_item_id, t.board_id, b.notify_owner, b.display_name"
         "  FROM ticket_schedule s JOIN ticket t ON t.work_item_id = s.work_item_id"
         "  JOIN board b ON b.board_id = t.board_id WHERE s.schedule_id = ?", (schedule_id,)).fetchone()
     if row is None or not row["notify_owner"]:
@@ -171,11 +260,11 @@ def queue_scheduled(conn: sqlite3.Connection, schedule_id: int, *, at: datetime,
                     " AND status = 'PENDING' AND body LIKE ?", (wid, row["member"], SCHEDULED, f"%{when}%")).fetchone():
         return False
     stamp = at.isoformat(sep=" ", timespec="minutes")
+    headline, said = words(conn, row["board_id"], "SCHEDULED", ticket=wid, board=row["display_name"], actor=actor, when=when)
     conn.execute(
         "INSERT INTO notification (work_item_id, recipient, recipient_role, subject, body, created_at, status)"
         " VALUES (?,?,?,?,?,?,'PENDING')",
-        (wid, row["member"], SCHEDULED, f"{subject_token(wid)} Scheduled for you on {row['display_name']}",
-         f"{wid} on {row['display_name']}: a visit booked for you by {actor}, {when}.", stamp))
+        (wid, row["member"], SCHEDULED, f"{subject_token(wid)} {headline}", said, stamp))
     _event(conn, wid, stamp, "NOTIFY", "desk", f"email to {row['member']} queued: a visit {when}")
     return True
 

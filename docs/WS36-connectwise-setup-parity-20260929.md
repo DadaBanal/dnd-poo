@@ -5,7 +5,9 @@
 **Branch:** `claude/psa-ticketing-build` at `58008d6` (29 Sep 2026); **updated
 on 30 Sep** after 054, 055 and 056 built items 3, 4 and 5 (Audit, API
 tokens, the email connector's settings, configuration types with
-questions); **updated the same evening** after 053 built items 1 and 2 and the per-board intake
+questions) and again after 057 built item 6 (emails per board, the survey
+per board, knowledge categories, company status and type, auto-assign,
+the in/out board); **updated the same evening** after 053 built items 1 and 2 and the per-board intake
 address (Dada: *"can we have different intake emails for the service
 boards?"*), which moves the email-connector row below from *Partly built* to
 *Built differently*: a board claims an address, intake routes by the
@@ -129,19 +131,19 @@ beyond the token and the reminder column.
 | `Source` (how a ticket arrived) | `ticket.source` is a fixed vocabulary; email, portal, desk, API, register | **Built differently**: no setup page, and none is wanted (each source is code) |
 | `ServiceLocation` (on site / remote / in house) | Setup › Schedule › locations | **Built** |
 | `BoardStatus`, `BoardType`, `BoardSubType`, `BoardItem`, associations, `BoardTeam`, `BoardAutoTemplate`, `BoardNotification` | the board page's tabs, the catalogue, rules | **Built** |
-| `BoardExcludedMember`, `BoardAutoAssignResource` | membership is the inclusion; no auto-assign | **Not built**: auto-assign by type or by round robin. INFERRED wanted once the desk has three or more technicians on one board |
-| `ServiceEmailTemplate` (the wording of the emails a board sends) | fixed wording in code; a rule's own words | **Not built**: a template per board and event, editable in Setup |
-| `ServiceSurvey`, `ServiceSurveyQuestion`, `ServiceSurveyQuestionOption` | one fixed survey on close (`survey_response`) | **Partly built**: no Setup page, one question set, no per-board choice |
+| `BoardExcludedMember`, `BoardAutoAssignResource` | membership is the inclusion; the board's Auto-assign tab (057, 30 Sep): a rule per Subtype › Item names the member, else the mode (least loaded, or the default team's leader); a ticket that arrives with an owner keeps it | **Built** (auto-assign); membership stays the exclusion |
+| `ServiceEmailTemplate` (the wording of the emails a board sends) | the board's Emails tab (057, 30 Sep): subject and body per kind, four placeholders and no summary or note, the desk's words when the board has none | **Built** |
+| `ServiceSurvey`, `ServiceSurveyQuestion`, `ServiceSurveyQuestionOption` | one survey on close (`survey_response`); per board, off or on with the board's own question (057, 30 Sep) | **Built differently**: one question, a score and a sentence, by the record's §6.1; no question sets |
 | `Calendar`, `Holiday`, `HolidayList` | Setup › Calendars | **Built** |
 | `SLA`, `SLAPriority` | SLA targets per board × record type × priority × clock | **Built differently** (the clocks are the record's five, not ConnectWise's three) |
 | `WorkRole`, `WorkType`, `WorkRoleLocation`, `WorkRoleExemption` | Setup › Time | **Built** (no per-location rates: out of scope with billing) |
 | `Workflow*` | Setup › Workflow rules | **Built** |
 | `ConfigurationType`, `ConfigurationStatus`, `ConfigurationTypeQuestion` | Setup › Configuration types (056, 30 Sep): types and statuses as setup tables, each counting as one of 021's codes so every reader keeps its meaning; questions per type (text, number, date, yes/no, needed or not) answered on the configuration's page | **Built** |
-| `CompanyStatus`, `CompanyType`, `CompanyNoteType`, `CompanyTeam`, `CompanyGroup` | `entity` has a name and a covered flag | **Not built** (status and type); **Out of scope** (groups, teams, note types: a hospital has one company and a few suppliers) |
+| `CompanyStatus`, `CompanyType`, `CompanyNoteType`, `CompanyTeam`, `CompanyGroup` | Setup › Companies (057, 30 Sep): status and type lists, set per company, chips on the company's page | **Built** (status and type); **Out of scope** (groups, teams, note types: a hospital has one company and a few suppliers) |
 | `ContactType`, `ContactRelationship`, `ContactDepartment`, `CommunicationType` | a contact has one email, one phone, a department string | **Partly built**: no types, no second number; the AD import is the source, so a Setup page would fight it |
 | `Country`, `State`, `AddressFormat`, `CwTimeZone` | none; the desk is one country and one time zone | **Out of scope** |
 | `PortalConfiguration`, `PortalSecurityLevel`, `PortalReport` | the requester portal is one shape for everyone; the door gates it | **Built differently**: the record's §6.1 fixed what a requester sees |
-| `KnowledgeBaseCategory`, `KnowledgeBaseSubCategory` | articles have a category text | **Partly built**: no Setup page for categories |
+| `KnowledgeBaseCategory`, `KnowledgeBaseSubCategory` | Setup › Knowledge categories (057, 30 Sep); an article has one; the list filters by it | **Built** (categories); no sub-categories, on purpose |
 | `Link` (links out per screen) | Setup › Integrations › links | **Built** |
 | `UserDefinedField`, `CustomFieldValue` | none | **Out of scope** (the 28 Sep record: each would be its own decision) |
 | `StatusIndicator` (a colour per status) | colour is the clock's | **Not built**, on purpose |
@@ -161,7 +163,7 @@ beyond the token and the reminder column.
 | **Mass maintenance / import** (`ImportMassMaintenance`) | the desk export importer and the AD imports, command line | **Built differently** |
 | **Allowed file types, allowed origins** (`AllowedFileType`, `AllowedOrigin`) | fixed in code (attachments refuse executables; CORS is none) | **Built differently**: not editable, on purpose |
 | **My company** (`MyCompany*` roles: president, controller, service manager, dispatch, duty manager) | none | **Not built**: the desk names a duty manager per board's rota, not for the company |
-| **In/out board** (`InOutType`, `InOutBoard`: who is in, out, on site) | none | **Not built**; INFERRED useful with the on-call rota, small |
+| **In/out board** (`InOutType`, `InOutBoard`: who is in, out, on site) | `/inout` (057, 30 Sep): in, out, on site, remote, on leave, a note, back at; set by each person for themselves; the word under each name on Schedule | **Built** |
 | **Menu entries** (`MenuEntry`) | none | **Out of scope** |
 | **Two-factor / auth services** (`AuthAnvil`, Google Authenticator) | Entra sign-in carries the tenant's MFA; local accounts have none | **Built differently** (MFA is Entra's), with a gap: a local break-glass account has no second factor |
 | **SSO / LDAP configuration pages** | Entra and Windows configured on the host by environment | **Built differently**: not a page, by the credential fence |
@@ -178,9 +180,9 @@ beyond the token and the reminder column.
    (054, 055).
 5. ~~**Setup › Configuration types and statuses**, with typed questions~~ —
    built 30 Sep (056).
-6. **Email templates per board**, **survey setup**, **KB categories**,
-   **company status and type**, **auto-assign**, **in/out board** — each
-   small; each its own decision.
+6. ~~**Email templates per board**, **survey setup**, **KB categories**,
+   **company status and type**, **auto-assign**, **in/out board**~~ — built
+   30 Sep (057), each as its own table or column, nothing seeded.
 
 Everything marked *Out of scope* or *Built differently, on purpose* stays as
 it is unless Dada says otherwise; the reasons are the record's, not mine.

@@ -109,6 +109,8 @@ def index(ctx):
     marks = ",".join("?" * len(shown)) or "''"
     rows = ctx.conn.execute(
         "SELECT e.entity_id, e.name, e.is_covered,"
+        " (SELECT s.name FROM company_status s WHERE s.status_id = e.status_id) AS status_name,"
+        " (SELECT y.name FROM company_type y WHERE y.type_id = e.type_id) AS type_name,"
         " (SELECT COUNT(*) FROM contact c WHERE c.entity_id = e.entity_id"
         "   AND c.inactive = 0) AS contacts,"
         " (SELECT COUNT(*) FROM ticket t JOIN work_item w ON w.work_item_id = t.work_item_id"
@@ -118,7 +120,7 @@ def index(ctx):
         shown).fetchall()
     body_rows = "".join(
         f"<tr><td><a href='/company/{t.esc(r['entity_id'])}'>{t.esc(r['entity_id'])}</a></td>"
-        f"<td>{t.esc(r['name'])}</td>"
+        f"<td>{t.esc(r['name'])}" + "".join(f" {t.chip(w)}" for w in (r["status_name"], r["type_name"]) if w) + "</td>"
         f"<td>{'Covered' if r['is_covered'] else '<span class=muted>Not covered</span>'}</td>"
         f"<td>{r['contacts']}</td><td>{r['open_tickets']}</td></tr>" for r in rows)
     body = (
@@ -144,8 +146,10 @@ def detail(ctx, entity_id: str):
     people = directory.search(ctx.conn, q, entity_id=entity_id, include_inactive=True)
     table, hidden = _tickets(ctx, boards, where="w.entity_id = ?", params=[entity_id])
     new_link = "/ticket/new?" + urllib.parse.urlencode({"entity_id": entity_id})
+    from ... import companies as _companies
+    words = "".join(f" {t.chip(w)}" for w in _companies.words(ctx.conn, company) if w)
     body = (
-        f"<h1>{t.esc(company['name'])} <span class=muted>· {t.esc(company['entity_id'])}</span></h1>"
+        f"<h1>{t.esc(company['name'])} <span class=muted>· {t.esc(company['entity_id'])}</span>{words}</h1>"
         f"<p class=sub>{'Covered by an executed instrument.' if company['is_covered'] else 'Not covered by an executed instrument.'}"
         f" <a href='{t.esc(new_link)}'>+ New ticket for this company</a></p>"
         "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-ticket></use></svg>Open tickets</h3>" + table + _hidden_note(hidden) + "</div>"

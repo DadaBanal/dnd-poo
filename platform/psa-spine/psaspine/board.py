@@ -337,7 +337,7 @@ def admit(conn: sqlite3.Connection, work_item_id: str, *, at: datetime) -> dict:
     """
     ticket = conn.execute(
         "SELECT t.board_id, t.board_status_id, t.opened_at, t.contact_id,"
-        "       t.requested_by, b.calendar_id"
+        "       t.requested_by, t.owner, t.catalogue_item_id, b.calendar_id, b.auto_assign"
         "  FROM ticket t JOIN board b ON b.board_id = t.board_id"
         " WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
     if ticket is None:
@@ -374,9 +374,95 @@ def admit(conn: sqlite3.Connection, work_item_id: str, *, at: datetime) -> dict:
         opened = clocks.parse_instant(ticket["opened_at"])
         started = open_clocks(conn, work_item_id, at=opened,
                               calendar_id=ticket["calendar_id"])
+
+    # 057: auto-assign. A ticket that arrives with an owner keeps it.
+    assigned = None
+    if not ticket["owner"]:
+        assigned = auto_assignee(conn, ticket["board_id"], ticket["catalogue_item_id"])
+        if assigned:
+            from . import outbox
+            stamp = at.isoformat(sep=" ", timespec="minutes")
+            conn.execute("UPDATE ticket SET owner = ? WHERE work_item_id = ?", (assigned, work_item_id))
+            _event(conn, work_item_id, stamp, "ASSIGN", "auto-assign", f"owner - -> {assigned} (the board's auto-assign)")
+            outbox.queue_owner(conn, work_item_id, at=at, actor="auto-assign")
     touch(conn, work_item_id, at)
     return {"work_item_id": work_item_id, "board_status_id": landed,
-            "contact_id": contact_id, "clocks_started": len(started)}
+            "contact_id": contact_id, "clocks_started": len(started), "owner": assigned}
+
+
+AUTO_ASSIGN_MODES = {"OFF": "Nobody: the queue is worked by hand",
+                     "LEAST_LOADED": "The working member with the fewest open tickets on the board",
+                     "TEAM_LEADER": "The default team's leader"}
+
+
+def _working_members(conn: sqlite3.Connection, board_id: str) -> list[str]:
+    """Who may take work on the board: WORK or ADMIN, and not a deactivated member."""
+    return [r["member"] for r in conn.execute(
+        "SELECT bm.member FROM board_member bm LEFT JOIN member m ON LOWER(m.member) = LOWER(bm.member)"
+        " WHERE bm.board_id = ? AND bm.access IN ('WORK', 'ADMIN') AND m.inactive_from IS NULL ORDER BY bm.member",
+        (board_id,))]
+
+
+def auto_assignee(conn: sqlite3.Connection, board_id: str, catalogue_item_id: str | None) -> str | None:
+    """057: who a new unowned ticket goes to. A rule for its Subtype > Item pair
+    names the member, if they still work the board; else the board's mode. A
+    board with no mode (or OFF) assigns nobody, as it always did."""
+    working = _working_members(conn, board_id)
+    lower = {w.lower(): w for w in working}
+    if catalogue_item_id:
+        rule = conn.execute("SELECT member FROM board_auto_assign WHERE board_id = ? AND catalogue_item_id = ?",
+                            (board_id, catalogue_item_id)).fetchone()
+        if rule and rule["member"].lower() in lower:
+            return lower[rule["member"].lower()]
+    mode = conn.execute("SELECT auto_assign FROM board WHERE board_id = ?", (board_id,)).fetchone()
+    mode = mode["auto_assign"] if mode else None
+    if mode == "LEAST_LOADED" and working:
+        load = {r["owner"].lower(): r["n"] for r in conn.execute(
+            "SELECT LOWER(owner) AS owner, COUNT(*) AS n FROM ticket WHERE board_id = ? AND owner IS NOT NULL"
+            " AND state NOT IN ('RESOLVED', 'CLOSED', 'CANCELLED') GROUP BY LOWER(owner)", (board_id,))}
+        return min(working, key=lambda m: (load.get(m.lower(), 0), m.lower()))
+    if mode == "TEAM_LEADER":
+        team = conn.execute("SELECT team_leader FROM board_team WHERE board_id = ? AND is_default = 1", (board_id,)).fetchone()
+        if team and team["team_leader"] and team["team_leader"].lower() in lower:
+            return lower[team["team_leader"].lower()]
+    return None
+
+
+def set_auto_assign(conn: sqlite3.Connection, board_id: str, mode: str, *, at: datetime, actor: str) -> None:
+    from . import db
+    if mode not in AUTO_ASSIGN_MODES:
+        raise ValueError("no such auto-assign mode")
+    conn.execute("UPDATE board SET auto_assign = ? WHERE board_id = ?", (mode, board_id))
+    db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor, action="BOARD_CONFIG",
+             subject_kind="board", subject_id=board_id, detail=f"auto-assign: {mode}")
+
+
+def auto_assign_rules(conn: sqlite3.Connection, board_id: str) -> list[dict]:
+    from . import setup
+    labels = {c["catalogue_item_id"]: c["label"] for c in setup.catalogue_choices(conn)}
+    return [{"catalogue_item_id": r["catalogue_item_id"], "member": r["member"],
+             "label": labels.get(r["catalogue_item_id"], r["catalogue_item_id"])}
+            for r in conn.execute("SELECT catalogue_item_id, member FROM board_auto_assign WHERE board_id = ?"
+                                  " ORDER BY catalogue_item_id", (board_id,))]
+
+
+def set_auto_assign_rule(conn: sqlite3.Connection, board_id: str, catalogue_item_id: str, member: str | None, *,
+                         at: datetime, actor: str) -> None:
+    """Name who takes a Subtype > Item pair on the board; None removes the rule."""
+    from . import db
+    if not conn.execute("SELECT 1 FROM catalogue_item WHERE catalogue_item_id = ?", (catalogue_item_id or "",)).fetchone():
+        raise ValueError("no such Subtype > Item pair")
+    conn.execute("DELETE FROM board_auto_assign WHERE board_id = ? AND catalogue_item_id = ?", (board_id, catalogue_item_id))
+    m = (member or "").strip()
+    if m:
+        lower = {w.lower(): w for w in _working_members(conn, board_id)}
+        if m.lower() not in lower:
+            raise ValueError(f"{m} does not work this board")
+        conn.execute("INSERT INTO board_auto_assign (board_id, catalogue_item_id, member) VALUES (?,?,?)",
+                     (board_id, catalogue_item_id, lower[m.lower()]))
+    db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor, action="BOARD_CONFIG",
+             subject_kind="board", subject_id=board_id,
+             detail=f"auto-assign rule {catalogue_item_id}: " + (lower[m.lower()] if m else "removed"))
 
 
 def move(conn: sqlite3.Connection, work_item_id: str, to_board_id: str, *,

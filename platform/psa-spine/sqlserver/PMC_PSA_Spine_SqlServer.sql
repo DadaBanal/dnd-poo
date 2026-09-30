@@ -218,6 +218,12 @@ BEGIN
     PRINT N'    psa.configuration_status';
     PRINT N'    psa.configuration_question';
     PRINT N'    psa.configuration_answer';
+    PRINT N'    psa.mail_template';
+    PRINT N'    psa.kb_category';
+    PRINT N'    psa.company_status';
+    PRINT N'    psa.company_type';
+    PRINT N'    psa.board_auto_assign';
+    PRINT N'    psa.member_presence';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -277,7 +283,7 @@ BEGIN
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  120 tables, 52 indexes, 4 triggers.';
+    PRINT N'  126 tables, 52 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -3172,6 +3178,110 @@ CREATE TABLE psa.[configuration_answer] (
 END;
 
 -- --------------------------------------------------------------------------
+-- mail_template   (from schema/057_small_setup.sql)
+-- 057: the small setup tables the parity check left: emails per board, the
+-- survey per board, knowledge categories, company status and type,
+-- auto-assign on a board, and an in/out board.
+--
+-- Each is its own decision in the reference PSA (ServiceEmailTemplate,
+-- ServiceSurvey, KnowledgeBaseCategory, CompanyStatus / CompanyType,
+-- BoardAutoAssignResource, InOutBoard) and each is small here: a table or a
+-- column, a page or a tab, nothing seeded, nothing that changes an existing
+-- row. A board with no template, no survey setting and no auto-assign mode
+-- behaves exactly as it did yesterday.
+
+-- The wording of the emails a board sends, per kind. No row: the desk's own
+-- words. Placeholders: {ticket}, {board}, {actor}, {when}. There is no
+-- {summary} and no {note}: a subject and a body leave the building (6.1).
+IF OBJECT_ID(N'psa.[mail_template]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[mail_template] (
+    [board_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_mail_template_board_id] REFERENCES psa.[board]([board_id]),
+    [kind] NVARCHAR(32) NOT NULL CONSTRAINT [CK_mail_template_01] CHECK (kind IN ('OPENED', 'UPDATED', 'CLOSED', 'ASSIGNED', 'SCHEDULED', 'APPROVAL')),
+    [subject] NVARCHAR(400) NOT NULL,
+    [body] NVARCHAR(MAX) NOT NULL,
+    [updated_at] NVARCHAR(64) NOT NULL,
+    [updated_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [updated_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [updated_at], 126), CASE WHEN [updated_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [updated_at], 112) END)),
+    CONSTRAINT [PK_mail_template] PRIMARY KEY ([board_id], [kind])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- kb_category   (from schema/057_small_setup.sql)
+-- Knowledge categories: a name a reader browses by; an article may have one.
+IF OBJECT_ID(N'psa.[kb_category]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[kb_category] (
+    [category_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_kb_category] PRIMARY KEY,
+    [name] NVARCHAR(400) NOT NULL,
+    [inactive] INT NOT NULL CONSTRAINT [DF_kb_category_inactive] DEFAULT (0) CONSTRAINT [CK_kb_category_01] CHECK (inactive IN (0, 1)),
+    [sort_order] INT NOT NULL CONSTRAINT [DF_kb_category_sort_order] DEFAULT (0)
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- company_status   (from schema/057_small_setup.sql)
+-- A company's status (a customer, a former customer, a prospect) and type (a
+-- hospital department, a supplier, a partner): words, not rules.
+IF OBJECT_ID(N'psa.[company_status]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[company_status] (
+    [status_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_company_status] PRIMARY KEY,
+    [name] NVARCHAR(400) NOT NULL,
+    [inactive] INT NOT NULL CONSTRAINT [DF_company_status_inactive] DEFAULT (0) CONSTRAINT [CK_company_status_01] CHECK (inactive IN (0, 1)),
+    [sort_order] INT NOT NULL CONSTRAINT [DF_company_status_sort_order] DEFAULT (0)
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- company_type   (from schema/057_small_setup.sql)
+IF OBJECT_ID(N'psa.[company_type]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[company_type] (
+    [type_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_company_type] PRIMARY KEY,
+    [name] NVARCHAR(400) NOT NULL,
+    [inactive] INT NOT NULL CONSTRAINT [DF_company_type_inactive] DEFAULT (0) CONSTRAINT [CK_company_type_01] CHECK (inactive IN (0, 1)),
+    [sort_order] INT NOT NULL CONSTRAINT [DF_company_type_sort_order] DEFAULT (0)
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- board_auto_assign   (from schema/057_small_setup.sql)
+IF OBJECT_ID(N'psa.[board_auto_assign]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[board_auto_assign] (
+    [board_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_board_auto_assign_board_id] REFERENCES psa.[board]([board_id]),
+    [catalogue_item_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_board_auto_assign_catalogue_item_id] REFERENCES psa.[catalogue_item]([catalogue_item_id]),
+    [member] NVARCHAR(200) NOT NULL,
+    CONSTRAINT [PK_board_auto_assign] PRIMARY KEY ([board_id], [catalogue_item_id])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- member_presence   (from schema/057_small_setup.sql)
+-- The in/out board: where each member is right now, said by themselves.
+IF OBJECT_ID(N'psa.[member_presence]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[member_presence] (
+    [member] NVARCHAR(200) NOT NULL CONSTRAINT [PK_member_presence] PRIMARY KEY,
+    [state] NVARCHAR(32) NOT NULL CONSTRAINT [CK_member_presence_01] CHECK (state IN ('IN', 'OUT', 'ON_SITE', 'REMOTE', 'LEAVE')),
+    [note] NVARCHAR(400) NULL,
+    [back_at] NVARCHAR(64) NULL,
+    [set_at] NVARCHAR(64) NOT NULL,
+    [set_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [back_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [back_at], 126), CASE WHEN [back_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [back_at], 112) END)),
+    [set_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [set_at], 126), CASE WHEN [set_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [set_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -3549,6 +3659,30 @@ ALTER TABLE psa.[configuration] ADD [type_id] NVARCHAR(64) NULL CONSTRAINT [FK_c
 IF COL_LENGTH(N'psa.[configuration]', N'status_id') IS NULL
 ALTER TABLE psa.[configuration] ADD [status_id] NVARCHAR(64) NULL CONSTRAINT [FK_configuration_status_id] REFERENCES psa.[configuration_status]([status_id]);
 
+-- The survey per board: NULL is on, as it always was; the question is the
+-- board's own words, else the desk's.
+IF COL_LENGTH(N'psa.[board]', N'survey_enabled') IS NULL
+ALTER TABLE psa.[board] ADD [survey_enabled] INT NULL CONSTRAINT [CK_board_survey_enabled_01] CHECK (survey_enabled IN (0, 1));
+
+IF COL_LENGTH(N'psa.[board]', N'survey_question') IS NULL
+ALTER TABLE psa.[board] ADD [survey_question] NVARCHAR(400) NULL;
+
+IF COL_LENGTH(N'psa.[kb_article]', N'category_id') IS NULL
+ALTER TABLE psa.[kb_article] ADD [category_id] NVARCHAR(64) NULL CONSTRAINT [FK_kb_article_category_id] REFERENCES psa.[kb_category]([category_id]);
+
+IF COL_LENGTH(N'psa.[entity]', N'status_id') IS NULL
+ALTER TABLE psa.[entity] ADD [status_id] NVARCHAR(64) NULL CONSTRAINT [FK_entity_status_id] REFERENCES psa.[company_status]([status_id]);
+
+IF COL_LENGTH(N'psa.[entity]', N'type_id') IS NULL
+ALTER TABLE psa.[entity] ADD [type_id] NVARCHAR(64) NULL CONSTRAINT [FK_entity_type_id] REFERENCES psa.[company_type]([type_id]);
+
+-- Auto-assign: a rule per Subtype > Item pair names the member; with no rule,
+-- the board's mode: nobody (NULL or OFF), the member with the fewest open
+-- tickets on the board, or the default team's leader. A ticket that arrives
+-- with an owner keeps it.
+IF COL_LENGTH(N'psa.[board]', N'auto_assign') IS NULL
+ALTER TABLE psa.[board] ADD [auto_assign] NVARCHAR(32) NULL CONSTRAINT [CK_board_auto_assign_01] CHECK (auto_assign IN ('OFF', 'LEAST_LOADED', 'TEAM_LEADER'));
+
 IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
 ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
 
@@ -3854,10 +3988,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 120 OR @Triggers <> 4 OR @Indexes < 52
+IF @Tables <> 126 OR @Triggers <> 4 OR @Indexes < 52
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 120), %d triggers (expected 4), %d indexes (expected at least 52). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 126), %d triggers (expected 4), %d indexes (expected at least 52). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -3885,6 +4019,9 @@ PRINT N'target is enforced until somebody with the authority says so.';
     DROP TRIGGER IF EXISTS psa.[ticket_close_requires_a_variation];
     DROP TRIGGER IF EXISTS psa.[patient_reference_needs_a_restricted_board];
     DROP TRIGGER IF EXISTS psa.[patient_reference_stays_on_a_restricted_board];
+    ALTER TABLE psa.[entity] DROP CONSTRAINT IF EXISTS [FK_entity_type_id];
+    ALTER TABLE psa.[entity] DROP CONSTRAINT IF EXISTS [FK_entity_status_id];
+    ALTER TABLE psa.[kb_article] DROP CONSTRAINT IF EXISTS [FK_kb_article_category_id];
     ALTER TABLE psa.[configuration] DROP CONSTRAINT IF EXISTS [FK_configuration_status_id];
     ALTER TABLE psa.[configuration] DROP CONSTRAINT IF EXISTS [FK_configuration_type_id];
     ALTER TABLE psa.[workflow_action] DROP CONSTRAINT IF EXISTS [FK_workflow_action_target_id];
@@ -3910,6 +4047,12 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[member_presence];
+    DROP TABLE IF EXISTS psa.[board_auto_assign];
+    DROP TABLE IF EXISTS psa.[company_type];
+    DROP TABLE IF EXISTS psa.[company_status];
+    DROP TABLE IF EXISTS psa.[kb_category];
+    DROP TABLE IF EXISTS psa.[mail_template];
     DROP TABLE IF EXISTS psa.[configuration_answer];
     DROP TABLE IF EXISTS psa.[configuration_question];
     DROP TABLE IF EXISTS psa.[configuration_status];

@@ -17,9 +17,11 @@ CLOSED = ("RESOLVED", "CLOSED", "CANCELLED")
 
 def pending(conn: sqlite3.Connection, work_item_id: str) -> bool:
     """Is the ticket closed, unmerged, and still unanswered?"""
-    row = conn.execute("SELECT state, closed_at, merged_into FROM ticket WHERE work_item_id = ?",
-                       (work_item_id,)).fetchone()
+    row = conn.execute("SELECT t.state, t.closed_at, t.merged_into, b.survey_enabled FROM ticket t"
+                       " JOIN board b ON b.board_id = t.board_id WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
     if row is None or row["merged_into"] or not (row["closed_at"] or row["state"] in CLOSED):
+        return False
+    if row["survey_enabled"] == 0:            # 057: a board may switch it off; unset is on, as it always was
         return False
     return conn.execute("SELECT 1 FROM survey_response WHERE work_item_id = ?",
                         (work_item_id,)).fetchone() is None
@@ -44,3 +46,13 @@ def answer(conn: sqlite3.Connection, work_item_id: str, *, score: int, comment: 
         conn.execute("INSERT INTO data_quality (run_id, subject_kind, subject_id, code, detail,"
                      " severity) VALUES (?,?,?,?,?,?)", ("survey", "ticket", work_item_id, code, detail, severity))
     return findings
+
+
+DEFAULT_QUESTION = "How did we do?"
+
+
+def question(conn: sqlite3.Connection, work_item_id: str) -> str:
+    """The board's own question (057), else the desk's."""
+    row = conn.execute("SELECT b.survey_question FROM ticket t JOIN board b ON b.board_id = t.board_id"
+                       " WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
+    return (row["survey_question"] if row and row["survey_question"] else DEFAULT_QUESTION)

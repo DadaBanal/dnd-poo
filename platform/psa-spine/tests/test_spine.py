@@ -11547,5 +11547,309 @@ class ConfigurationTypesTest(unittest.TestCase):
         self.assertNotIn("PUMP-W3-01", page)
 
 
+class SmallSetupTest(unittest.TestCase):
+    """057: the six small setup items the parity check left: emails per board,
+    the survey per board, knowledge categories, company status and type,
+    auto-assign on a board, and the in/out board. A board that has said nothing
+    behaves as it did yesterday."""
+
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+
+    def setUp(self) -> None:
+        WebWSGITest.setUp(self)
+        self.addCleanup(self.tmp.cleanup)
+        self.at = datetime(2026, 9, 30, 9)
+        self.root = self._cookie_for("root", is_sysadmin=True)
+        self.alice = self._cookie_for("alice")
+        self.conn = db.connect(self.db_path)
+        self.addCleanup(self.conn.close)
+        self.conn.execute(
+            "INSERT INTO contact (contact_id, entity_id, display_name, email, sam_account, source, inactive,"
+            " created_at) VALUES ('C_BOB', 'PMC', 'Bob', 'bob@pmcne.ph', 'bob', 'AD', 0, '2026')")
+        self.conn.execute("INSERT OR REPLACE INTO board_member (board_id, member, access) VALUES ('IT_HELP', 'bob', 'WORK')")
+        self.conn.commit()
+
+    def _open(self, **kw):
+        args = dict(board_id="IT_HELP", summary="Printer down", impact="I3", urgency="U3",
+                    requested_by="ward@pmcne.ph", at=self.at, entity_id="PMC")
+        args.update(kw)
+        return tickets.open_ticket(self.conn, **args)
+
+    def _mails(self, role):
+        return self.conn.execute("SELECT recipient, subject, body FROM notification WHERE recipient_role = ?"
+                                 " ORDER BY notification_id", (role,)).fetchall()
+
+    # ------------------------------------------------------------ emails per board
+
+    def test_a_board_writes_its_own_email_words_and_only_four_placeholders(self):
+        from psaspine import outbox
+        self.conn.execute("UPDATE board SET notify_requester = 1, notify_owner = 1 WHERE board_id = 'IT_HELP'")
+        with self.assertRaises(ValueError):
+            outbox.set_template(self.conn, "IT_HELP", "OPENED", subject="Got it", body="{summary} is in the queue",
+                                at=self.at, actor="alice")                                  # no summary leaves the desk
+        with self.assertRaises(ValueError):
+            outbox.set_template(self.conn, "IT_HELP", "NEWSLETTER", subject="x", body="y", at=self.at, actor="alice")
+        with self.assertRaises(ValueError):
+            outbox.set_template(self.conn, "IT_HELP", "OPENED", subject="", body="y", at=self.at, actor="alice")
+        self.assertFalse(outbox.template(self.conn, "IT_HELP", "OPENED")["custom"])
+        outbox.set_template(self.conn, "IT_HELP", "OPENED", subject="{board} has {ticket}",
+                            body="Thanks. {board} has your request {ticket} and will be in touch.", at=self.at, actor="alice")
+        outbox.set_template(self.conn, "IT_HELP", "ASSIGNED", subject="Yours: {ticket}",
+                            body="{actor} gave you {ticket} on {board}.", at=self.at, actor="alice")
+        wid = self._open()
+        mails = self._mails("REQUESTER")
+        self.assertEqual(mails[0]["subject"], f"[{wid}] IT Help has {wid}")
+        self.assertEqual(mails[0]["body"], f"Thanks. IT Help has your request {wid} and will be in touch.")
+        board.update_fields(self.conn, wid, at=self.at, actor="alice", owner="bob")
+        owner = self._mails("OWNER")
+        self.assertEqual((owner[0]["subject"], owner[0]["body"]), (f"[{wid}] Yours: {wid}", f"alice gave you {wid} on IT Help."))
+        # the PHI board said nothing: the desk's words, as before
+        self.assertEqual(outbox.words(self.conn, "PHI", "ASSIGNED", ticket="X", board="PHI Board", actor="a", when="")[0],
+                         "Assigned to you on PHI Board")
+        # back to the desk's words
+        self.assertTrue(outbox.reset_template(self.conn, "IT_HELP", "OPENED", at=self.at, actor="alice"))
+        self.assertFalse(outbox.reset_template(self.conn, "IT_HELP", "OPENED", at=self.at, actor="alice"))
+        self.assertEqual(outbox.template(self.conn, "IT_HELP", "OPENED")["subject"], "We have your request")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'MAIL_TEMPLATE'").fetchone()[0], 3)
+        self.conn.commit()
+        # the tab: a board administrator's; saves and resets through the form
+        _, _, page = self._call("GET", "/admin/board/IT_HELP", cookie=self.alice, query="tab=emails")
+        self.assertIn("What this board's emails say", page)
+        self.assertIn("Yours: {ticket}", page)
+        self.assertIn("the desk's words", page)
+        _, h, _ = self._call("POST", "/admin/board/IT_HELP/emails", cookie=self.alice,
+                             form={"kind": "CLOSED", "subject": "Closed: {ticket}", "body": "{board} closed it. {note}"})
+        self.assertIn("Not+saved", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/admin/board/IT_HELP/emails", cookie=self.alice,
+                             form={"kind": "CLOSED", "subject": "Closed: {ticket}", "body": "{board} closed it."})
+        self.assertIn("own+words", dict(h)["Location"])
+        self.assertTrue(outbox.template(db.connect(self.db_path), "IT_HELP", "CLOSED")["custom"])
+        _, h, _ = self._call("POST", "/admin/board/IT_HELP/emails", cookie=self.alice,
+                             form={"kind": "CLOSED", "subject": "x", "body": "y", "reset": "1"})
+        self.assertFalse(outbox.template(db.connect(self.db_path), "IT_HELP", "CLOSED")["custom"])
+        status, _, _ = self._call("GET", "/admin/board/IT_HELP", cookie=self._cookie_for("carol"), query="tab=emails")
+        self.assertTrue(status.startswith("404"), status)                                    # a reader: not a board admin
+
+    # ------------------------------------------------------------ the survey per board
+
+    def test_a_board_switches_the_survey_off_or_asks_its_own_question(self):
+        from psaspine import survey
+        self.conn.execute("UPDATE ticket SET requested_by = 'bob@pmcne.ph', state = 'CLOSED', closed_at = '2026-09-17 09:00'"
+                          " WHERE work_item_id = 'ITO-1'")
+        self.conn.commit()
+        self.assertTrue(survey.pending(self.conn, "ITO-1"))                                 # unset is on, as it always was
+        self.assertEqual(survey.question(self.conn, "ITO-1"), "How did we do?")
+        bob = self._cookie_for("bob", email="bob@pmcne.ph")
+        base = {"display_name": "IT Help", "fulfiller_group": "Dada", "owner": "a", "deputy": "b", "is_live": "1",
+                "closed_loop_required": "1"}
+        self._call("POST", "/admin/board/IT_HELP/settings", cookie=self.alice,
+                   form=base | {"survey_enabled": "1", "survey_question": "Was the printer fixed to your liking?"})
+        _, _, page = self._call("GET", "/my/ITO-1", cookie=bob)
+        self.assertIn("Was the printer fixed to your liking?", page)
+        self.assertNotIn("How did we do?", page)
+        self._call("POST", "/admin/board/IT_HELP/settings", cookie=self.alice, form=base)         # the box unticked: off
+        conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)
+        self.assertEqual(conn.execute("SELECT survey_enabled, survey_question FROM board WHERE board_id = 'IT_HELP'").fetchone()[:],
+                         (0, None))
+        self.assertFalse(survey.pending(conn, "ITO-1"))
+        _, _, page = self._call("GET", "/my/ITO-1", cookie=bob)
+        self.assertNotIn("How did we do?", page)
+        self.assertNotIn("/my/ITO-1/survey", page)
+        status, _, _ = self._call("POST", "/my/ITO-1/survey", cookie=bob, form={"score": "5"})
+        self.assertFalse(conn.execute("SELECT 1 FROM survey_response").fetchone())
+        detail = conn.execute("SELECT detail FROM audit_event WHERE action = 'BOARD_CONFIG' ORDER BY audit_id DESC LIMIT 1").fetchone()[0]
+        self.assertIn("survey", detail)
+
+    # ------------------------------------------------------------ knowledge categories
+
+    def test_knowledge_categories_are_kept_in_setup_and_filter_the_list(self):
+        from psaspine import knowledge
+        with self.assertRaises(ValueError):
+            knowledge.add_category(self.conn, "  ", at=self.at, actor="root")
+        printers = knowledge.add_category(self.conn, "Printers", at=self.at, actor="root")
+        accounts = knowledge.add_category(self.conn, "Accounts", at=self.at, actor="root")
+        with self.assertRaises(ValueError):
+            knowledge.add_category(self.conn, "printers", at=self.at, actor="root")
+        self.assertEqual((printers, accounts), ("KC_PRINTERS", "KC_ACCOUNTS"))
+        a1 = knowledge.create(self.conn, title="Blank labels", body="Restart it.", category_id=printers, at=self.at, actor="alice")
+        a2 = knowledge.create(self.conn, title="Locked out", body="Unlock in AD.", category_id=accounts, at=self.at, actor="alice")
+        with self.assertRaises(ValueError):
+            knowledge.create(self.conn, title="x", body="y", category_id="KC_NOPE", at=self.at, actor="alice")
+        self.assertEqual([r["article_id"] for r in knowledge.search(self.conn, category_id=printers)], [a1])
+        self.assertEqual(knowledge.get(self.conn, a2)["category_name"], "Accounts")
+        self.assertEqual(knowledge.save_category(self.conn, accounts, at=self.at, actor="root", inactive=True), "saved")
+        self.assertEqual([c["category_id"] for c in knowledge.categories(self.conn)], [printers])       # retired: not offered
+        with self.assertRaises(ValueError):
+            knowledge.save(self.conn, a1, title="Blank labels", body="Restart it.", audience="INTERNAL", board_id=None,
+                           catalogue_item_id=None, category_id=accounts, at=self.at, actor="alice")
+        self.assertEqual(knowledge.get(self.conn, a2)["category_name"], "Accounts")                 # kept where it was
+        self.assertEqual(knowledge.categories(self.conn, all_rows=True)[0]["used"], 1)
+        self.conn.commit()
+        status, _, _ = self._call("GET", "/admin/kb-categories", cookie=self.alice)
+        self.assertTrue(status.startswith("403"), status)
+        _, _, page = self._call("GET", "/admin/kb-categories", cookie=self.root)
+        self.assertIn("<h1>Knowledge categories</h1>", page)
+        self.assertIn("value='Printers'", page)
+        self.assertIn("Restore", page)                                                        # the retired one
+        self._call("POST", "/admin/kb-categories", cookie=self.root, form={"name": "Clinical systems"})
+        self._call("POST", "/admin/kb-categories/KC_PRINTERS", cookie=self.root, form={"name": "Printing"})
+        conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)
+        self.assertEqual([c["name"] for c in knowledge.categories(conn)], ["Printing", "Clinical systems"])
+        _, _, page = self._call("GET", "/kb", cookie=self.alice, query="category=KC_PRINTERS")
+        self.assertIn("Blank labels", page)
+        self.assertNotIn("Locked out", page)
+        self.assertIn("<td>Printing</td>", page)
+        _, _, page = self._call("GET", "/kb/new", cookie=self.alice)
+        self.assertIn("<select name=category_id>", page)
+
+    # ------------------------------------------------------------ company status and type
+
+    def test_company_status_and_type_are_words_a_system_administrator_keeps(self):
+        from psaspine import companies
+        cust = companies.add(self.conn, "status", "Customer", at=self.at, actor="root")
+        dept = companies.add(self.conn, "type", "Hospital department", at=self.at, actor="root")
+        supplier = companies.add(self.conn, "type", "Supplier", at=self.at, actor="root")
+        self.assertEqual((cust, dept, supplier), ("CS_CUSTOMER", "CT_HOSPITAL_DEPARTMENT", "CT_SUPPLIER"))
+        with self.assertRaises(ValueError):
+            companies.add(self.conn, "status", "customer", at=self.at, actor="root")
+        with self.assertRaises(ValueError):
+            companies.set_company(self.conn, "PMC", at=self.at, actor="root", status_id="CS_NOPE")
+        with self.assertRaises(ValueError):
+            companies.set_company(self.conn, "NOBODY", at=self.at, actor="root", status_id=cust)
+        self.assertEqual(companies.set_company(self.conn, "PMC", at=self.at, actor="root", status_id=cust, type_id=dept),
+                         ["status - -> CS_CUSTOMER", "type - -> CT_HOSPITAL_DEPARTMENT"])
+        self.assertEqual(companies.set_company(self.conn, "PMC", at=self.at, actor="root", status_id=cust, type_id=dept), [])
+        row = self.conn.execute("SELECT * FROM entity WHERE entity_id = 'PMC'").fetchone()
+        self.assertEqual(companies.words(self.conn, row), ("Customer", "Hospital department"))
+        self.assertEqual(companies.save(self.conn, "type", supplier, at=self.at, actor="root", inactive=True), "saved")
+        with self.assertRaises(ValueError):
+            companies.set_company(self.conn, "PMC", at=self.at, actor="root", type_id=supplier)   # retired: not offered
+        self.assertEqual(companies.rows(self.conn, "type")[0]["used"], 1)
+        self.conn.commit()
+        _, _, page = self._call("GET", "/company/PMC", cookie=self.alice)
+        self.assertIn('<span class="chip">Customer</span>', page)
+        self.assertIn('<span class="chip">Hospital department</span>', page)
+        _, _, page = self._call("GET", "/companies", cookie=self.alice)
+        self.assertIn('<span class="chip">Customer</span>', page)
+        status, _, _ = self._call("GET", "/admin/companies", cookie=self.alice)
+        self.assertTrue(status.startswith("403"), status)
+        _, _, page = self._call("GET", "/admin/companies", cookie=self.root)
+        self.assertIn("<h1>Companies</h1>", page)
+        self.assertIn("value='CS_CUSTOMER' selected", page)
+        self._call("POST", "/admin/companies/status", cookie=self.root, form={"name": "Prospect"})
+        self._call("POST", "/admin/companies/PMC", cookie=self.root, form={"status_id": "CS_PROSPECT", "type_id": ""})
+        conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)
+        self.assertEqual(conn.execute("SELECT status_id, type_id FROM entity WHERE entity_id = 'PMC'").fetchone()[:], ("CS_PROSPECT", None))
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'COMPANY_SETUP'").fetchone()[0], 7)
+
+    # ------------------------------------------------------------ auto-assign
+
+    def test_auto_assign_gives_an_unowned_ticket_an_owner_by_rule_or_mode(self):
+        from psaspine import members
+        setup.apply_template(self.conn, actor="t", at=self.at)
+        pairs = setup.catalogue_choices(self.conn, "IT_HELP")
+        self.assertTrue(pairs)
+        item = pairs[0]["catalogue_item_id"]
+        # nothing said: nobody, as it always was
+        self.assertIsNone(board.auto_assignee(self.conn, "IT_HELP", item))
+        w0 = self._open(catalogue_item_id=item)
+        self.assertIsNone(self.conn.execute("SELECT owner FROM ticket WHERE work_item_id = ?", (w0,)).fetchone()[0])
+        # least loaded among WORK/ADMIN members: alice (ADMIN), bob (WORK); carol reads only
+        board.set_auto_assign(self.conn, "IT_HELP", "LEAST_LOADED", at=self.at, actor="alice")
+        with self.assertRaises(ValueError):
+            board.set_auto_assign(self.conn, "IT_HELP", "RANDOM", at=self.at, actor="alice")
+        board.update_fields(self.conn, w0, at=self.at, actor="alice", owner="alice")
+        w1 = self._open()
+        self.assertEqual(self.conn.execute("SELECT owner FROM ticket WHERE work_item_id = ?", (w1,)).fetchone()[0], "bob")
+        w2 = self._open()                                                                    # 1 each: alphabetical
+        self.assertEqual(self.conn.execute("SELECT owner FROM ticket WHERE work_item_id = ?", (w2,)).fetchone()[0], "alice")
+        kinds = [r[0] for r in self.conn.execute("SELECT kind FROM ticket_event WHERE work_item_id = ? AND kind = 'ASSIGN'", (w2,))]
+        self.assertEqual(kinds, ["ASSIGN"])
+        # a ticket that arrives with an owner keeps it
+        w3 = self._open(owner="carol")
+        self.assertEqual(self.conn.execute("SELECT owner FROM ticket WHERE work_item_id = ?", (w3,)).fetchone()[0], "carol")
+        # a rule for the pair outranks the mode, and names only someone who works the board
+        with self.assertRaises(ValueError):
+            board.set_auto_assign_rule(self.conn, "IT_HELP", item, "carol", at=self.at, actor="alice")
+        with self.assertRaises(ValueError):
+            board.set_auto_assign_rule(self.conn, "IT_HELP", "NO_SUCH_PAIR", "bob", at=self.at, actor="alice")
+        board.set_auto_assign_rule(self.conn, "IT_HELP", item, "BOB", at=self.at, actor="alice")
+        self.assertEqual(board.auto_assign_rules(self.conn, "IT_HELP")[0]["member"], "bob")
+        w4 = self._open(catalogue_item_id=item)
+        self.assertEqual(self.conn.execute("SELECT owner FROM ticket WHERE work_item_id = ?", (w4,)).fetchone()[0], "bob")
+        # the owner is emailed when the board emails owners (bob has an address)
+        self.conn.execute("UPDATE board SET notify_owner = 1 WHERE board_id = 'IT_HELP'")
+        w5 = self._open(catalogue_item_id=item)
+        self.assertEqual([m["recipient"] for m in self._mails("OWNER")], ["bob"])
+        self.assertIn("auto-assign", self._mails("OWNER")[0]["body"])
+        # a member who left the board is never assigned: the rule falls through to the mode
+        members.deactivate(self.conn, "bob", at=self.at, actor="root")
+        self.assertEqual(board.auto_assignee(self.conn, "IT_HELP", item), "alice")
+        # the default team's leader
+        self.conn.execute("INSERT INTO board_team (team_id, board_id, name, team_leader, is_default) VALUES ('T1','IT_HELP','Desk','alice',1)")
+        board.set_auto_assign(self.conn, "IT_HELP", "TEAM_LEADER", at=self.at, actor="alice")
+        self.assertEqual(board.auto_assignee(self.conn, "IT_HELP", None), "alice")
+        self.conn.execute("UPDATE board_team SET team_leader = 'carol' WHERE team_id = 'T1'")   # reads only: nobody
+        self.assertIsNone(board.auto_assignee(self.conn, "IT_HELP", None))
+        board.set_auto_assign_rule(self.conn, "IT_HELP", item, None, at=self.at, actor="alice")
+        self.assertEqual(board.auto_assign_rules(self.conn, "IT_HELP"), [])
+        self.conn.commit()
+        # the tab
+        _, _, page = self._call("GET", "/admin/board/IT_HELP", cookie=self.alice, query="tab=assign")
+        self.assertIn("Who a new ticket goes to", page)
+        self.assertIn("value=TEAM_LEADER style='width:auto' checked", page)
+        _, h, _ = self._call("POST", "/admin/board/IT_HELP/assign", cookie=self.alice, form={"mode": "LEAST_LOADED"})
+        self.assertIn("msg=Saved", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/admin/board/IT_HELP/assign/rule", cookie=self.alice,
+                             form={"catalogue_item_id": item, "member": "alice"})
+        self.assertIn("Rule+added", dict(h)["Location"])
+        _, _, page = self._call("GET", "/admin/board/IT_HELP", cookie=self.alice, query="tab=assign")
+        self.assertIn(f"value='{item}'", page)
+        _, h, _ = self._call("POST", "/admin/board/IT_HELP/assign/rule/remove", cookie=self.alice, form={"catalogue_item_id": item})
+        self.assertIn("Rule+removed", dict(h)["Location"])
+
+    # ------------------------------------------------------------ the in/out board
+
+    def test_the_in_out_board_is_said_by_each_person_for_themselves(self):
+        from psaspine import presence
+        with self.assertRaises(ValueError):
+            presence.set_state(self.conn, "alice", "GONE", at=self.at)
+        with self.assertRaises(ValueError):
+            presence.set_state(self.conn, "alice", "OUT", at=self.at, back_at="soon")
+        presence.set_state(self.conn, "alice", "OUT", at=self.at, note="ward 3", back_at="2026-09-30T14:00")
+        presence.set_state(self.conn, "Alice", "ON_SITE", at=self.at, note="ward 3")           # the same person, once
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM member_presence").fetchone()[0], 1)
+        self.assertEqual(presence.word(presence.current(self.conn, "alice")), "On site: ward 3")
+        presence.set_state(self.conn, "bob", "OUT", at=self.at, back_at="2026-09-30 14:00")
+        self.assertEqual(presence.word(presence.current(self.conn, "bob")), "Out until 14:00")
+        presence.set_state(self.conn, "bob", "LEAVE", at=self.at, back_at="2026-10-05 08:00")
+        self.assertEqual(presence.word(presence.current(self.conn, "bob")), "On leave until 2026-10-05 08:00")
+        self.assertEqual(presence.all_(self.conn, ["carol"]), {"carol": None})
+        self.conn.commit()
+        _, _, page = self._call("GET", "/inout", cookie=self.alice)
+        self.assertIn("<h1>In / out</h1>", page)
+        self.assertIn("On leave", page)
+        self.assertIn("ward 3", page)
+        self.assertIn("not said", page)                                                       # carol
+        _, h, _ = self._call("POST", "/inout/me", cookie=self.alice, form={"state": "IN", "note": "", "back_at": ""})
+        self.assertIn("msg=Said", dict(h)["Location"])
+        conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)
+        self.assertEqual(conn.execute("SELECT state, note, set_by FROM member_presence WHERE member = 'alice'").fetchone()[:],
+                         ("IN", None, "alice"))
+        _, _, page = self._call("GET", "/schedule", cookie=self.alice, query="week=2026-09-28")
+        self.assertIn("On leave until 2026-10-05 08:00", page)
+        self.assertIn("href='/inout'", page)
+        _, _, page = self._call("GET", "/my/profile", cookie=self.alice)
+        self.assertIn("Say where I am", page)
+        status, _, _ = self._call("GET", "/inout", cookie=self._cookie_for("nobody"))
+        self.assertTrue(status.startswith("403") or status.startswith("404"), status)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

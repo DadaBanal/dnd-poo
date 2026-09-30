@@ -82,7 +82,11 @@ def index(ctx):
         return f"<td class='{'today' if d == ctx.now.date() else ''}'>{''.join(chips)}</td>"
 
     head = "".join(f"<th class='{'today' if d == ctx.now.date() else ''}'>{d.strftime('%a %d %b')}</th>" for d in days)
-    body_rows = "".join(f"<tr><th class=who>{t.esc(m)}</th>{''.join(cell(m, d) for d in days)}</tr>" for m in people)
+    from ... import presence as _presence
+    where = _presence.all_(ctx.conn, people)
+    body_rows = "".join(
+        f"<tr><th class=who>{t.esc(m)}" + (f"<div class=muted style='font-weight:400'>{t.esc(_presence.word(where[m]))}</div>" if where[m] else "")
+        + f"</th>{''.join(cell(m, d) for d in days)}</tr>" for m in people)
     board_opts = "<option value=''>All my boards</option>" + "".join(
         f"<option value='{t.esc(b['board_id'])}'{' selected' if b['board_id'] == board else ''}>{t.esc(b['display_name'])}</option>"
         for b in ctx.conn.execute("SELECT board_id, display_name FROM board WHERE COALESCE(inactive, 0) = 0"
@@ -97,7 +101,8 @@ def index(ctx):
            f"<div style='flex:0 0 200px'><select name=board aria-label='Board'>{board_opts}</select></div>"
            f"<div style='flex:0 0 auto'><label><input type=checkbox name=mine value=1{' checked' if mine else ''}> Only me</label></div>"
            "<div style='flex:0 0 auto'><button class=ghost type=submit>Show</button></div>"
-           f"<div style='flex:0 0 auto'><a class='btn ghost' href='/schedule?{qs(week=_monday(ctx.now.date()).isoformat())}'>This week</a></div></form>")
+           f"<div style='flex:0 0 auto'><a class='btn ghost' href='/schedule?{qs(week=_monday(ctx.now.date()).isoformat())}'>This week</a></div>"
+           "<div style='flex:0 0 auto'><a class='btn ghost' href='/inout'>In / out</a></div></form>")
     grid = (f"<div class=schedwrap><table class=schedgrid><thead><tr><th>Who</th>{head}</tr></thead>"
             f"<tbody>{body_rows or '<tr><td colspan=8 class=muted>Nobody works these boards yet.</td></tr>'}</tbody></table></div>")
     forms = ""
