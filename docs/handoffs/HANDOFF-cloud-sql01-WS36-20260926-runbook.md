@@ -2197,3 +2197,69 @@ Section "Folded in from part 21 (30 Sep)". Everything below is MEASURED.
      - the channel named in Setup › Integrations › Teams channels;
      - the task's action switched to `-Apply`, which needs psa_desk's password again.
    - Whether Teams renders the card as posted is still this sitting's to say, once one is posted.
+
+### Part 23: 2026-09-30, about 10:50 +08:00. **12f9322 live; 054–056 PASS; `init` as the task account is the operator's**
+
+Section "Folded in after part 22 (30 Sep)". Everything below is MEASURED.
+
+1. **The starting count was 115 tables, not 116.** Read at 10:42, before anything ran: 115 tables and 1,149 columns,
+   with no table made since part 21.
+   - The message relaying this sitting said "116 → 120", which is 056's own step.
+   - The section's steps begin at 115: 054 keeps 115, 055 makes 116, and 056 makes 120.
+   - So the Pass for the whole sitting is **115 → 120**.
+2. **The suite first, in a separate worktree of `12f9322`: 604 run, OK, 2 skipped, 0 errors** (307 s).
+   - The live tree stayed at `902d995` (c666b8e's code) while it ran.
+   - The worktree was removed afterwards.
+3. **054, 055 and 056 together, once, by the sitting-1 road: stop, port, pull, start.**
+   - **Backup:** COPY_ONLY, `D:\PMC\backup\PMC_PSA\PMC_PSA_pre054-056-20260930.bak`, 17.9 MB. `RESTORE VERIFYONLY`
+     says "valid".
+   - **Preview**, from the worktree's port: 120 tables, 52 indexes, 4 triggers; 119 existing objects.
+   - **Baseline**, after PSA-Desk was stopped at 10:47:54 with 8085 closed: 115 tables, 4 triggers, 1,149 columns,
+     48 indexes, 8,497 rows.
+   - **Apply** at 10:48:04, as SQL01's sysadmin with the switches set in memory. It printed "Created: 120 tables,
+     4 triggers, 52 indexes", its gate passed, and it printed "Seeded: nothing".
+   - **Result, all met:**
+     - tables **115 → 120** (`mail_exclusion`, `configuration_type`, `configuration_status`,
+       `configuration_question`, `configuration_answer`);
+     - columns **1,149 → 1,179**;
+     - indexes **48 → 52** (`ix_audit_event_when`, `ix_audit_event_actor`, `ix_audit_event_subject`,
+       `ix_configuration_question_type`);
+     - triggers 4 → 4;
+     - **no existing row count changed**;
+     - no column gone from any existing table.
+   - **Each step's own count, from the catalog:**
+
+     | Step | Section says | Measured | |
+     |---|---|---|---|
+     | 054 | 1 column, 3 indexes | `audit_event.source`; the three `ix_audit_event_*` | met |
+     | 055 | 7 | `mail_exclusion` 7 | met |
+     | 056 | 22, 1 index | `configuration_type` 5, `configuration_status` 5, `configuration_question` 7, `configuration_answer` 3, `configuration.type_id` and `status_id`; `ix_configuration_question_type` | met |
+
+   - **All 3 columns added to existing tables are NULL-able.**
+4. **Pull and start.**
+   - The live tree was pulled at 10:48:05 by fast-forward, and landed on `12f9322`. The pull and the start this time
+     followed the verify directly, so the desk was down 14 seconds (10:47:54 to 10:48:08), not part 21's 14 minutes.
+   - PSA-Desk started at 10:48:08: one process, 8085 listening, loopback `/login` 200, `desk.pmcne.ph/login` 200,
+     `help.pmcne.ph/my` 401 (its sign-in page).
+   - The console shows nothing beyond the start-up banner's wrapper.
+   - **PSA-Rules** on the new code at 10:49:49: result 0, "0 errors".
+   - **PSA-Teams** on the new code at 10:50:02: result 0, "PREVIEW: 0 card(s) due … Nothing posted". Task Scheduler's
+     history holds 61 of its runs, all with result 0.
+   - (`PSA-Teams.log` is UTF-16, as PowerShell 5.1's `*>` writes it. Read it with `Get-Content`, not `grep`.)
+5. **`init` as the task account waits on the operator:** `D:\psa\bin\Part23-AsDesk.ps1`, with the same checks as
+   part 21's.
+6. **Nothing else on the host**, as the section says. PSA-Mail is still not registered.
+7. **Dada's checks, from the section:**
+   - **054:**
+     - Setup shows *Audit and API tokens*;
+     - Audit lists today's changes, with *DESK* in the Source column for desk changes and blank for older rows;
+     - a CSV downloads;
+     - API tokens shows the gap-8 monitoring token with its scope, and *Mint* shows a new token once.
+   - **055:**
+     - Setup › Email connector lists the helpdesk board's address;
+     - *Exclude* a vendor's domain, and the row appears with who added it.
+   - **056:**
+     - Setup › Configuration types lists the seven, each *counts as itself*;
+     - add *Infusion pump*, counting as *Other*, with a needed *Asset tag* question;
+     - a pump added by hand shows an *Infusion pump details* card that refuses to save without the tag;
+     - the Configurations tiles show *Infusion pump*.
