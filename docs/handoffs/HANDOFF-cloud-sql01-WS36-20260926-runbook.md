@@ -2285,3 +2285,72 @@ Section "Folded in after part 22 (30 Sep)". Everything below is MEASURED.
      - add *Infusion pump*, counting as *Other*, with a needed *Asset tag* question;
      - a pump added by hand shows an *Infusion pump details* card that refuses to save without the tag;
      - the Configurations tiles show *Infusion pump*.
+
+### Part 24: 2026-09-30, about 13:15 +08:00. **d5f1bea live; schema 057 PASS; the suite 609 OK and 1 Windows-only teardown error, in the test harness**
+
+Section "Folded in after part 22 (30 Sep)", the 057 bullet. Everything below is MEASURED unless marked.
+
+1. **The suite first, in a separate worktree of `d5f1bea`: 610 run, 2 skipped, 1 error** (314 s). The Pass wants
+   0 errors, so this line is **not met as written**.
+   - **The error:** `SmallSetupTest.test_a_board_writes_its_own_email_words_and_only_four_placeholders`.
+     - Every assertion in the test passed. It fails in clean-up: `[WinError 32]` on the test's own `spine.db`, when
+       the temporary folder is deleted.
+     - This is the class of Windows-only teardown defect part 15 found and `02627d2` fixed. Linux deletes an open file,
+       so the container's run does not see it.
+   - **It repeats:** the test alone fails the same way twice. The other 5 tests in its class pass on the same fixture,
+     and the fixture closes its own connection before the folder goes.
+   - **What holds the file:**
+     - Python gives no "unclosed database" warning.
+     - At clean-up, one connection object is alive, and it is already closed.
+     - **With one `gc.collect()` just before the folder is deleted, the test passes, 0 errors.**
+     - So a connection opened in this test, most likely by one of its requests to the desk, is never closed
+       explicitly. A reference cycle keeps it until Python's collector runs.
+     - Which request is INFERRED, not measured. The new Emails tab's save and "Not saved" paths are the first
+       candidates.
+   - INFERRED, for the live desk: such a connection is freed late, at the next collection, not lost for good.
+   - **SQL01 applied all the same**, as part 15 did with its teardown error. The schema is additive and reversible
+     from the backup, the fault is in releasing a connection, not in behaviour, and it is reported here.
+   - The worktree was removed afterwards.
+2. **Schema 057 by the sitting-1 road: stop, port, pull, start.** Timed after PSA-BizBox's 13:05 run had finished
+   (exit 0, 13:05:06), because that run writes rows.
+   - **Backup:** COPY_ONLY, `D:\PMC\backup\PMC_PSA\PMC_PSA_pre057-20260930.bak`, 19.0 MB. `RESTORE VERIFYONLY` says
+     "valid".
+   - **Preview**, from the worktree's port: 126 tables, 52 indexes, 4 triggers; 124 existing objects.
+   - **Baseline**, after PSA-Desk was stopped at 13:05:23 with 8085 closed: 120 tables, 4 triggers, 1,179 columns,
+     52 indexes, 8,561 rows.
+   - **Apply** at 13:05:32, as SQL01's sysadmin with the switches set in memory. It printed "Created: 126 tables,
+     4 triggers, 52 indexes", its gate passed, and it printed "Seeded: nothing".
+   - **Result, all met:**
+     - tables **120 → 126**;
+     - columns **1,179 → 1,215**;
+     - indexes **52 → 52**;
+     - triggers 4 → 4;
+     - **no existing row count changed**;
+     - no column gone from any existing table.
+   - **The 36 columns, against the section's own list: every figure met.**
+     - New tables: `mail_template` 7, `kb_category` 4, `company_status` 4, `company_type` 4, `board_auto_assign` 3,
+       `member_presence` 8.
+     - On existing tables: `board` 3 (`survey_enabled`, `survey_question`, `auto_assign`), `kb_article` 1
+       (`category_id`), `entity` 2 (`status_id`, `type_id`).
+     - **All 6 columns added to existing tables are NULL-able.**
+3. **Pull and start.**
+   - The live tree was pulled at 13:05:33 by fast-forward, and landed on `d5f1bea`.
+   - PSA-Desk started at 13:05:36: one process, 8085 listening, loopback `/login` 200, `desk.pmcne.ph/login` 200,
+     `help.pmcne.ph/my` 401 (its sign-in page). **The desk was down 13 seconds.**
+   - The console shows nothing beyond the start-up banner's wrapper.
+   - **On the new code at 13:14:14, both with result 0:**
+     - PSA-Rules: "0 errors";
+     - PSA-Teams: "PREVIEW: 0 card(s) due".
+4. **`init` as the task account waits on the operator:** `D:\psa\bin\Part24-AsDesk.ps1`, with the same checks as
+   part 23's.
+5. **Nothing else on the host**, as the section says.
+6. **For WS36:**
+   - close the connection in that test's path explicitly, rather than leaving it to the collector;
+   - then SQL01 reruns the suite at the head that carries it.
+7. **Dada's checks, from the section:**
+   - the helpdesk board's Setup page has *Emails* and *Auto-assign* tabs;
+   - Emails shows six kinds, each marked *the desk's words*;
+   - saving one with `{summary}` is refused;
+   - the Board tab has the survey box ticked;
+   - Setup shows *Knowledge categories* and *Company status and type*;
+   - the Schedule bar has *In / out*, and saying *Out* there puts the word under your name on Schedule.
