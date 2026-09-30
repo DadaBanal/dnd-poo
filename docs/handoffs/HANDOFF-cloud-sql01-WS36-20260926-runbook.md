@@ -962,6 +962,8 @@ changed. Three things come back from it.
   names the sending mailbox and the helpdesk mailbox's certificate.
 - **Counts:** 597 tests at this head (SQLite OK, 1 skipped; the three new
   tests read the scripts, so the SQL Server run is unchanged in substance).
+  CI run 71 on `c666b8e` is green on all four jobs, the Windows one
+  included (MEASURED, finished 01:00 UTC, 30 Sep).
 
 ## When a step does not pass
 
