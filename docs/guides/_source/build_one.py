@@ -14,7 +14,9 @@ GROUPS = [("For everyone", ["Staff", "PMC_Requests"]),
 ROLES = {"Staff": "R T M A", "PMC_Requests": "R", "Service_Desk": "T M", "Dispatch_OnCall": "T M", "Change": "T M", "Scheduling": "T M",
          "Time": "T M", "Knowledge": "T M", "Companies_Configurations": "T M", "Projects": "M T", "Reports": "M", "Finance": "M",
          "Sales": "M", "Setup": "A"}
-OUT = pathlib.Path("/home/user/dnd-poo/docs/guides/PMC_Dada_PSA_Guides_20260930.html")
+import os
+OUT = pathlib.Path(os.environ.get("GUIDE_OUT", "/home/user/dnd-poo/docs/guides/PMC_Dada_PSA_Guides_20260930.html"))
+IMGDIR, IMGEXT, IMGMIME = os.environ.get("GUIDE_IMGDIR", "img"), os.environ.get("GUIDE_IMGEXT", "jpg"), os.environ.get("GUIDE_IMGMIME", "jpeg")
 
 shell = (S / "shell.html").read_text()
 lib = (S / "lib.js").read_text()
@@ -92,7 +94,7 @@ chips = ('<div class="roles" role="group" aria-label="Show guides for"><span>Sho
          '<button class="chip" data-role="all" aria-pressed="true">Everyone</button><button class="chip" data-role="R" aria-pressed="false">Ward staff</button>'
          '<button class="chip" data-role="T" aria-pressed="false">Technicians</button><button class="chip" data-role="M" aria-pressed="false">Managers</button>'
          '<button class="chip" data-role="A" aria-pressed="false">Administrators</button></div>')
-data = {"spots": SPOTS, "tours": TOURS, "quiz": quiz, "images": {n: "data:image/jpeg;base64," + base64.b64encode((S / "img" / f"{n}.jpg").read_bytes()).decode() for n in sorted(images)},
+data = {"spots": SPOTS, "tours": TOURS, "quiz": quiz, "images": {n: f"data:image/{IMGMIME};base64," + base64.b64encode((S / IMGDIR / f"{n}.{IMGEXT}").read_bytes()).decode() for n in sorted(images)},
         "guides": [{"slug": g["slug"], "title": g["title"].replace(" (start here)", "")} for g in C.GUIDES]}
 foot = ("Dada PSA guides · Premiere Medical Center Nueva Ecija · Dada IT · 30 September 2026. Screens are from a demonstration desk with made-up staff, "
         "tickets and supplier records; your boards, names and numbers will differ. SLA targets are set per board by its service manager.")
