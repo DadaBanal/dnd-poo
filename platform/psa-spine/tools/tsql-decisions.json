@@ -999,6 +999,12 @@
   "calendar_feed.token_hash": "HASH",
   "calendar_feed.created_at": "TIMESTAMP_TEXT",
   "board.intake_address": "NAME",
-  "intake_message.to_address": "NAME"
+  "intake_message.to_address": "NAME",
+  "audit_event.source": "CODE",
+  "mail_exclusion.kind": "CODE",
+  "mail_exclusion.pattern": "NAME",
+  "mail_exclusion.note": "NAME",
+  "mail_exclusion.created_at": "TIMESTAMP_TEXT",
+  "mail_exclusion.created_by": "PERSON"
  }
 }

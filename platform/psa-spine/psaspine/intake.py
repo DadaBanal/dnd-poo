@@ -280,6 +280,60 @@ def route(conn: sqlite3.Connection, message, *, fallback: str | None) -> tuple[s
     return fallback, None
 
 
+EXCLUSION_KINDS = {"ADDRESS": "an address", "DOMAIN": "a domain", "SUBJECT": "a phrase in the subject"}
+
+
+def exclusions(conn: sqlite3.Connection) -> list[dict]:
+    return [dict(r) for r in conn.execute("SELECT * FROM mail_exclusion ORDER BY kind, pattern")]
+
+
+def add_exclusion(conn: sqlite3.Connection, kind: str, pattern: str, *, note=None, at: datetime, actor: str) -> int:
+    """A rule made once: mail from this address or domain, or with this
+    phrase in its subject, is recorded and opens nothing."""
+    kind = (kind or "").upper()
+    if kind not in EXCLUSION_KINDS:
+        raise ValueError("An exclusion is an ADDRESS, a DOMAIN or a SUBJECT phrase.")
+    pat = " ".join(str(pattern or "").split()).lower()[:200]
+    if not pat or (kind == "ADDRESS" and "@" not in pat) or (kind == "DOMAIN" and ("@" in pat or "." not in pat)):
+        raise ValueError({"ADDRESS": "An address looks like someone@somewhere.", "DOMAIN": "A domain looks like somewhere.com.",
+                          "SUBJECT": "A subject phrase is a few words."}[kind])
+    if conn.execute("SELECT 1 FROM mail_exclusion WHERE kind = ? AND pattern = ?", (kind, pat)).fetchone():
+        raise ValueError("That exclusion already exists.")
+    cur = conn.execute("INSERT INTO mail_exclusion (kind, pattern, note, created_at, created_by) VALUES (?,?,?,?,?)",
+                       (kind, pat, (note or "").strip()[:400] or None, at.isoformat(sep=" ", timespec="minutes"), actor))
+    from . import db
+    db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor, action="MAIL_EXCLUSION_ADD",
+             subject_kind="mail_exclusion", subject_id=str(cur.lastrowid), detail=f"{kind} {pat}")
+    return cur.lastrowid
+
+
+def remove_exclusion(conn: sqlite3.Connection, exclusion_id: int, *, at: datetime, actor: str) -> bool:
+    row = conn.execute("SELECT kind, pattern FROM mail_exclusion WHERE exclusion_id = ?", (exclusion_id,)).fetchone()
+    if row is None:
+        return False
+    conn.execute("DELETE FROM mail_exclusion WHERE exclusion_id = ?", (exclusion_id,))
+    from . import db
+    db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor, action="MAIL_EXCLUSION_REMOVE",
+             subject_kind="mail_exclusion", subject_id=str(exclusion_id), detail=f"{row['kind']} {row['pattern']}")
+    return True
+
+
+def excluded_by(sender: str, subject: str, rules) -> str | None:
+    """Why this message opens nothing under Setup > Email connector's
+    exclusions, or None."""
+    s = (sender or "").lower()
+    subj = (subject or "").lower()
+    for r in rules:
+        k, pat = r["kind"], r["pattern"]
+        if k == "ADDRESS" and s == pat:
+            return f"excluded address {pat}"
+        if k == "DOMAIN" and (s.endswith("@" + pat) or s.endswith("." + pat)):
+            return f"excluded domain {pat}"
+        if k == "SUBJECT" and pat in subj:
+            return f"excluded subject phrase '{pat}'"
+    return None
+
+
 def subject_token(work_item_id: str) -> str:
     """What outbound mail puts in its subject so a reply can find its ticket."""
     return f"[{work_item_id}]"
@@ -358,6 +412,7 @@ def import_drop(conn: sqlite3.Connection, drop_dir, *, run_id: str,
             "SELECT board_id FROM board WHERE is_unrouted = 1").fetchone()
         board_id = row["board_id"] if row else None
     run_board = board_id
+    rules = exclusions(conn)
     # A board's own address is the desk's own address too: mail from it is
     # the desk talking, and never opens a ticket (the loop guard).
     own_addresses = list(own_addresses) + list(board_addresses(conn))
@@ -395,7 +450,7 @@ def import_drop(conn: sqlite3.Connection, drop_dir, *, run_id: str,
                 (run_id, "intake_message", mid, code, detail, severity))
             counts["phi_flagged"] += 1
 
-        guarded = loop_guard(message, sender, own_addresses)
+        guarded = loop_guard(message, sender, own_addresses) or excluded_by(sender, subject, rules)
         if guarded:
             # Recorded and counted like everything else; it just opens nothing.
             _record(conn, mid, stamp, sender, subject, channel, "UNCLASSIFIED",
@@ -403,10 +458,13 @@ def import_drop(conn: sqlite3.Connection, drop_dir, *, run_id: str,
             conn.execute(
                 "INSERT INTO data_quality (run_id, subject_kind, subject_id, code,"
                 " detail, severity) VALUES (?,?,?,?,?,?)",
-                (run_id, "intake_message", mid, "MAIL_LOOP_GUARD",
+                (run_id, "intake_message", mid, "MAIL_EXCLUDED" if guarded.startswith("excluded") else "MAIL_LOOP_GUARD",
                  f"not turned into a ticket: {guarded}", "INFO"))
             counts["unclassified"] += 1
-            counts["loop_guarded"] += 1
+            if guarded.startswith("excluded"):
+                counts["excluded"] = counts.get("excluded", 0) + 1
+            else:
+                counts["loop_guarded"] += 1
             continue
 
         parents = thread_parents(message)

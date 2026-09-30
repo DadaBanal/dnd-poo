@@ -363,11 +363,31 @@ def annex_b_categories() -> list[dict]:
     return _seed_rows("annex_b_categories.csv")
 
 
+# Where a change came from (054): set once by the entry point (the desk per
+# request, the portal, the API, a command on the host) and read by every audit
+# row written under it. A context variable, so the threaded server's requests
+# never see each other's value.
+import contextvars as _contextvars
+
+SOURCES = ("DESK", "PORTAL", "API", "INTAKE", "RULES", "BIZBOX", "CLI")
+_SOURCE: _contextvars.ContextVar = _contextvars.ContextVar("psa_audit_source", default=None)
+
+
+def set_source(source: str | None) -> None:
+    if source is not None and source not in SOURCES:
+        raise ValueError(f"no such audit source: {source}")
+    _SOURCE.set(source)
+
+
+def current_source() -> str | None:
+    return _SOURCE.get()
+
+
 def audit(conn: sqlite3.Connection, *, at: str, actor: str, action: str,
           subject_kind: str, subject_id: str | None = None,
           detail: str | None = None, override_reason: str | None = None) -> None:
     conn.execute(
-        "INSERT INTO audit_event (occurred_at, actor, action, subject_kind, subject_id, detail, override_reason)"
-        " VALUES (?,?,?,?,?,?,?)",
-        (at, actor, action, subject_kind, subject_id, detail, override_reason),
+        "INSERT INTO audit_event (occurred_at, actor, action, subject_kind, subject_id, detail, override_reason, source)"
+        " VALUES (?,?,?,?,?,?,?,?)",
+        (at, actor, action, subject_kind, subject_id, detail, override_reason, _SOURCE.get()),
     )

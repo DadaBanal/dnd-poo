@@ -221,6 +221,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="declared available capacity per month — the uplift denominator")
 
     a = p.parse_args(argv)
+    db.set_source({"import-mail": "INTAKE", "run-rules": "RULES", "sync-bizbox": "BIZBOX",
+                   "bizbox-changes": "BIZBOX", "serve": "DESK"}.get(a.cmd, "CLI"))
 
     if a.cmd == "backup":
         # Before connect(): a backup must not create the database it was asked

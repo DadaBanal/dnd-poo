@@ -965,6 +965,40 @@ changed. Three things come back from it.
   CI run 71 on `c666b8e` is green on all four jobs, the Windows one
   included (MEASURED, finished 01:00 UTC, 30 Sep).
 
+## Folded in after part 22 (30 Sep): schema 054, Setup › Audit and API tokens
+
+Dada, 30 Sep: *"do it now"*, on the setup gap record's next items. The
+first is the audit trail's page, with one schema step by the sitting-1 road
+(`init` is safe to run again; nothing is seeded).
+
+- **Schema 054: `audit_event.source`, and three indexes on `audit_event`.**
+  Every audit row now says where the change came from (DESK, PORTAL, API,
+  INTAKE, RULES, BIZBOX, CLI), stamped by the entry point; older rows read
+  as unknown. Setup › Audit reads the trail with filters and a CSV; Setup ›
+  API tokens mints and disables tokens on a page. **Pass:** tables 115 → 115,
+  columns **1149 → 1150**, indexes **48 → 51** (`ix_audit_event_when`,
+  `ix_audit_event_actor`, `ix_audit_event_subject`), triggers 4 → 4, no
+  existing row count changed (MEASURED on the test container at this head
+  after `init --reset` on a spare database: 115 tables, 1150 columns, 51 CREATE INDEX, 4 triggers, before 055). The
+  index on `occurred_at` builds over every audit row the host has; on 8,472
+  rows that is instant, and the port applies it in the same transaction as
+  the rest. **Pass, for Dada:** Setup shows *Audit and API tokens*; Audit
+  lists today's changes with *DESK* in the Source column for the ones made
+  on the desk and blank for older rows; a CSV downloads; API tokens shows
+  the monitoring token from gap 8 with its scope, and *Mint* shows a new
+  token once.
+- **Schema 055, in the same sitting: `mail_exclusion`.** Setup › Email
+  connector: the boards' addresses, what never opens a ticket (an address,
+  a domain, a subject phrase; imported and recorded, opens nothing), and the
+  last seven days' dispositions, senders by domain only, never a subject.
+  Nothing on the host: PSA-Mail is unchanged, and is still not registered.
+  **Pass after 054 and 055:** tables **115 → 116**, columns **1149 → 1157**
+  (055 adds 7: 6 in `mail_exclusion` and 1 parsed date), indexes 48 → 51,
+  triggers 4 → 4 (MEASURED on the test container at this head after `init
+  --reset` on a spare database: 116 tables, 1157 columns, 51 CREATE INDEX, 4 triggers). **Pass, for Dada:**
+  Setup › Email connector lists the helpdesk board's address; *Exclude* a
+  vendor's domain and the row appears with who added it.
+
 ## When a step does not pass
 
 Every handoff step has a **Pass** line. This is what to do when it is not

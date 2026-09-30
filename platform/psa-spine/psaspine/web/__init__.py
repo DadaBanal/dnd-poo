@@ -406,6 +406,7 @@ def make_app(db_path: str, *, config: Config | None = None, clock=datetime.now):
             response = Response(exc.status, f"<h1>{exc.status}</h1><p>{exc.message}</p>")
         finally:
             db.close(conn)
+            db.set_source(None)           # the request's audit source never outlives it
         if (request is not None and config.secure_cookie(request)
                 and not any(k.lower() == "strict-transport-security" for k, _ in response.headers)):
             # The world reaches the desk over TLS (its own, or the proxy's, by
@@ -427,6 +428,8 @@ def _route(conn, request: Request, config: Config, now: datetime) -> Response:
     # Decided before identity: a technician path on the portal host is not
     # there, for anyone, and the answer that reveals least is the plain 404.
     portal = config.is_portal_host(request)
+    from .. import db as _db
+    _db.set_source("API" if request.path.startswith("/api/") else ("PORTAL" if portal else "DESK"))
     if portal:
         if request.path == "/":
             return redirect("/my")

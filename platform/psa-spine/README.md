@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 597 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 602 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -945,6 +945,45 @@ minted deliberately, and every list and read on that board writes
 `RESTRICTED_READ` as a person's does. The wrong scope is a 403 that names
 the scope needed; another board's ticket is a 404 a caller cannot tell from
 none.
+
+## Setup › Email connector (055, 30 Sep 2026)
+
+The reference PSA's Email Connector is a page per board holding the mailbox,
+its credential, parsing rules and exclusions. On this desk the mailbox and
+its certificate live on the host, in the pickup task, and the page
+(`/admin/mail`) holds what belongs to the desk: **which board claims which
+address** (053, with the unrouted queue and each board's reply policy),
+**what never opens a ticket**, and **how the last seven days' mail was
+placed**. An exclusion (`mail_exclusion`) is made once: mail from an address
+or a domain, or whose subject contains a phrase (a vendor's newsletter, a
+scanner's "document attached", an out-of-office), is still imported and
+recorded (intake has always dropped nothing) and opens nothing, with the
+reason on the data-quality finding (`MAIL_EXCLUDED`) and counted by
+`import-mail` as `excluded`. Delivery-system senders and auto-replies stay
+excluded by the desk itself. The page shows senders by domain only and never
+a subject: a subject can carry a patient's words, and a system administrator
+is not a member of every board.
+
+## Setup › Audit and Setup › API tokens (054, 30 Sep 2026)
+
+The desk has written an audit row for every change since day one; nothing
+read it but a ticket's own history. **Setup › Audit** (`/admin/audit`) reads
+the trail: who, when, what, on which record, and since 054 **where from**
+(`audit_event.source`: DESK, PORTAL, API, INTAKE, RULES, BIZBOX or CLI,
+stamped once by the entry point, never by the engine that made the change;
+rows from before 054 read as unknown, which is the truth). Filter by person,
+action, record kind, record, source, date and words in the detail; page
+through; export the answer as CSV, which is itself audited (`AUDIT_EXPORT`).
+A row about a ticket on a restricted board the reader is not a member of
+shows its number and the action, never its detail: a system administrator
+is not a member of a restricted board by being an administrator (§6.1).
+Three indexes carry the filters.
+
+**Setup › API tokens** (`/admin/api-tokens`) puts gap 8's tokens on a page:
+mint one (label, board, scope; the token is shown once and only its hash is
+kept), see every token with its board, scope, maker and last use, and
+disable or re-enable one. `create-api-token` on the host still works and
+lands in the same list.
 
 ## Members, a calendar, and a board's own address (053, 29 Sep 2026)
 

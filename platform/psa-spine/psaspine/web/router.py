@@ -18,6 +18,9 @@ from .views import finance as finance_view
 from .views import sales as sales_view
 from .views import members as members_view
 from .views import calendar as calendar_view
+from .views import audit as audit_view
+from .views import tokens as tokens_view
+from .views import mail as mail_view
 from .views import kb as kb_view
 from .views import projects as projects_view
 from .views import reportwriter as rw_view
@@ -107,6 +110,14 @@ ROUTES = [
     ("POST", "/agreement/<agreement_id>/status", agreements_view.set_status),
     ("POST", "/agreement/<agreement_id>/item", agreements_view.item_add),
     ("POST", "/agreement/<agreement_id>/item/remove", agreements_view.item_remove),
+    ("GET", "/admin/mail", mail_view.index),
+    ("POST", "/admin/mail/exclude", mail_view.exclude),
+    ("POST", "/admin/mail/exclude/remove", mail_view.exclude_remove),
+    ("GET", "/admin/audit", audit_view.index),
+    ("GET", "/admin/audit.csv", audit_view.export),
+    ("GET", "/admin/api-tokens", tokens_view.index),
+    ("POST", "/admin/api-tokens/new", tokens_view.create),
+    ("POST", "/admin/api-tokens/<token_id>/toggle", tokens_view.toggle),
     ("GET", "/admin/members", members_view.index),
     ("POST", "/admin/members/add", members_view.add),
     ("GET", "/admin/member/<member>", members_view.detail),

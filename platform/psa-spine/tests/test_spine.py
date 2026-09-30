@@ -11239,5 +11239,200 @@ class IntakeRoutingTest(unittest.TestCase):
         self.assertEqual(intake.import_drop(self.conn, self.drop, run_id="r3", at=self.at)["new"], 0)
 
 
+
+
+class AuditPageTest(unittest.TestCase):
+    """054: Setup > Audit reads the trail, with the source of each change,
+    filters, a CSV, and a mask on restricted boards; API tokens on a page."""
+
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+
+    def setUp(self) -> None:
+        WebWSGITest.setUp(self)
+        self.addCleanup(self.tmp.cleanup)
+        self.at = datetime(2026, 9, 30, 9)
+        self.alice = self._cookie_for("alice")
+        self.root = self._cookie_for("root", is_sysadmin=True)
+
+    def _conn(self):
+        conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)
+        return conn
+
+    def test_every_change_says_where_it_came_from(self):
+        conn = self._conn()
+        db.set_source(None)
+        db.audit(conn, at="2026-09-30 08:00", actor="t", action="TEST", subject_kind="x", detail="from nowhere")
+        db.set_source("CLI")
+        db.audit(conn, at="2026-09-30 08:01", actor="t", action="TEST", subject_kind="x", detail="from a command")
+        with self.assertRaises(ValueError):
+            db.set_source("ELSEWHERE")
+        db.set_source(None)
+        conn.commit()
+        rows = {r["detail"]: r["source"] for r in conn.execute("SELECT detail, source FROM audit_event WHERE action = 'TEST'")}
+        self.assertEqual(rows, {"from nowhere": None, "from a command": "CLI"})
+        # a desk request stamps DESK; a portal request stamps PORTAL; the API stamps API
+        self._call("POST", "/admin/members/add", cookie=self.root, form={"member": "jcruz", "display_name": "Juan Cruz"})
+        self.assertEqual(conn.execute("SELECT source FROM audit_event WHERE action = 'MEMBER' AND subject_id = 'jcruz'").fetchone()[0], "DESK")
+        self.assertIsNone(db.current_source())                                            # nothing leaks into the test thread
+
+    def test_the_audit_page_filters_exports_and_masks_a_restricted_board(self):
+        from psaspine import tickets
+        conn = self._conn()
+        conn.execute("INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','root','ADMIN')")
+        wid = tickets.open_ticket(conn, board_id="PHI", summary="A patient's chart will not open", impact="I3", urgency="U3",
+                                  requested_by="ward3@pmcne.ph", at=self.at)
+        db.audit(conn, at="2026-09-30 08:02", actor="alice", action="STATUS", subject_kind="ticket", subject_id=wid,
+                 detail="the chart words")
+        db.audit(conn, at="2026-09-30 08:03", actor="bob", action="STATUS", subject_kind="ticket", subject_id="PMC-999999",
+                 detail="an ordinary line")
+        conn.commit()
+        status, _, _ = self._call("GET", "/admin/audit", cookie=self.alice)
+        self.assertTrue(status.startswith("403"), status)
+        _, _, page = self._call("GET", "/admin/audit", cookie=self.root)
+        self.assertIn("<h1>Audit</h1>", page)
+        self.assertIn("an ordinary line", page)
+        self.assertNotIn("the chart words", page)                                           # root is not on PHI
+        self.assertIn("(a restricted board you are not on)", page)
+        _, _, page = self._call("GET", "/admin/audit", cookie=self.root, query="actor=bob")
+        self.assertIn("an ordinary line", page)
+        self.assertNotIn("restricted board you are not on", page)
+        _, _, page = self._call("GET", "/admin/audit", cookie=self.root, query="action=STATUS&since=2026-10-01")
+        self.assertIn("Nothing matches.", page)
+        _, h, body = self._call("GET", "/admin/audit.csv", cookie=self.root, query="action=STATUS")
+        self.assertEqual(dict(h)["Content-Type"], "text/csv; charset=utf-8")
+        self.assertIn("occurred_at,actor,action", body)
+        self.assertIn("an ordinary line", body)
+        self.assertNotIn("the chart words", body)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'AUDIT_EXPORT'").fetchone()[0], 1)
+        _, _, setup_page = self._call("GET", "/admin", cookie=self.root)
+        self.assertIn("href='/admin/audit'", setup_page)
+
+    def test_api_tokens_are_minted_shown_once_and_disabled_on_a_page(self):
+        conn = self._conn()
+        status, _, _ = self._call("GET", "/admin/api-tokens", cookie=self.alice)
+        self.assertTrue(status.startswith("403"), status)
+        _, _, page = self._call("GET", "/admin/api-tokens", cookie=self.root)
+        self.assertIn("No token yet.", page)
+        _, h, _ = self._call("POST", "/admin/api-tokens/new", cookie=self.root, form={"label": "", "board_id": "IT_HELP", "scope": "READ"})
+        self.assertIn("err=", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/admin/api-tokens/new", cookie=self.root,
+                             form={"label": "Orthanc monitoring", "board_id": "IT_HELP", "scope": "READ"})
+        loc = dict(h)["Location"]
+        token = _urlparse.parse_qs(loc.split("?", 1)[1])["token"][0]
+        self.assertTrue(token.startswith("psa_"))
+        _, _, page = self._call("GET", "/admin/api-tokens", cookie=self.root, query=loc.split("?", 1)[1])
+        self.assertIn(token, page)
+        self.assertIn("Orthanc monitoring", page)
+        self.assertIn("<span class=pill>READ</span>", page)
+        row = conn.execute("SELECT token_id, token_sha256 FROM api_token").fetchone()
+        self.assertNotIn(token, row["token_sha256"])                                       # only the hash is kept
+        _, _, page = self._call("GET", "/admin/api-tokens", cookie=self.root)
+        self.assertNotIn(token, page)                                                      # shown once
+        _, h, _ = self._call("POST", f"/admin/api-tokens/{row['token_id']}/toggle", cookie=self.root)
+        self.assertIn("disabled", dict(h)["Location"])
+        self.assertEqual(conn.execute("SELECT disabled FROM api_token").fetchone()[0], 1)
+        status, _, _ = self._call("GET", "/api/v1/tickets", cookie=None, headers={"Authorization": f"Bearer {token}"})
+        self.assertTrue(status.startswith("401"), status)                                  # a disabled token is refused
+        status, _, _ = self._call("POST", "/admin/api-tokens/tok_nope/toggle", cookie=self.root)
+        self.assertTrue(status.startswith("404"), status)
+
+
+
+
+class MailSetupTest(unittest.TestCase):
+    """055: Setup > Email connector. Exclusions made once on the desk; mail
+    from them is recorded and opens nothing; the page shows addresses,
+    exclusions and the week's dispositions without subjects."""
+
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+
+    def setUp(self) -> None:
+        WebWSGITest.setUp(self)
+        self.addCleanup(self.tmp.cleanup)
+        self.at = datetime(2026, 9, 30, 9)
+        self.root = self._cookie_for("root", is_sysadmin=True)
+        self.alice = self._cookie_for("alice")
+        self.drop = Path(self.tmp.name) / "drop"
+        self.drop.mkdir()
+        self.n = 0
+
+    def _conn(self):
+        conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)
+        return conn
+
+    def _msg(self, *, subject, sender):
+        self.n += 1
+        raw = f"From: {sender}\r\nTo: helpdesk@pmcne.ph\r\nSubject: {subject}\r\nDate: Wed, 30 Sep 2026 09:00:00 +0800\r\nMessage-ID: <x{self.n}@pmcne.ph>\r\n\r\nHello.\r\n"
+        (self.drop / f"{self.n:03d}.eml").write_bytes(raw.encode())
+
+    def test_excluded_mail_is_recorded_and_opens_nothing(self):
+        from psaspine import intake
+        conn = self._conn()
+        with self.assertRaises(ValueError):
+            intake.add_exclusion(conn, "ADDRESS", "not-an-address", at=self.at, actor="root")
+        with self.assertRaises(ValueError):
+            intake.add_exclusion(conn, "DOMAIN", "someone@vendor.com", at=self.at, actor="root")
+        with self.assertRaises(ValueError):
+            intake.add_exclusion(conn, "ELSE", "x", at=self.at, actor="root")
+        intake.add_exclusion(conn, "ADDRESS", "Newsletter@Vendor.com", note="monthly", at=self.at, actor="root")
+        intake.add_exclusion(conn, "DOMAIN", "spam.example", at=self.at, actor="root")
+        intake.add_exclusion(conn, "SUBJECT", "Out of Office", at=self.at, actor="root")
+        with self.assertRaises(ValueError):
+            intake.add_exclusion(conn, "DOMAIN", "spam.example", at=self.at, actor="root")             # once
+        self.assertEqual([(r["kind"], r["pattern"]) for r in intake.exclusions(conn)],
+                         [("ADDRESS", "newsletter@vendor.com"), ("DOMAIN", "spam.example"), ("SUBJECT", "out of office")])
+        self._msg(subject="September offers", sender="newsletter@vendor.com")
+        self._msg(subject="Buy now", sender="bot@mail.spam.example")
+        self._msg(subject="Automatic reply: Out of office until Monday", sender="ward3@pmcne.ph")
+        self._msg(subject="Printer jams", sender="ward3@pmcne.ph")
+        counts = intake.import_drop(conn, self.drop, run_id="e1", at=self.at, board_id="IT_HELP")
+        self.assertEqual((counts["new"], counts["unclassified"], counts["excluded"], counts["loop_guarded"]), (1, 3, 3, 0))
+        why = [r[0] for r in conn.execute("SELECT detail FROM data_quality WHERE code = 'MAIL_EXCLUDED' ORDER BY finding_id")]
+        self.assertEqual(why, ["not turned into a ticket: excluded address newsletter@vendor.com",
+                               "not turned into a ticket: excluded domain spam.example",
+                               "not turned into a ticket: excluded subject phrase 'out of office'"])
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM intake_message").fetchone()[0], 4)   # nothing dropped
+        eid = intake.exclusions(conn)[0]["exclusion_id"]
+        self.assertTrue(intake.remove_exclusion(conn, eid, at=self.at, actor="root"))
+        self.assertFalse(intake.remove_exclusion(conn, eid, at=self.at, actor="root"))
+
+    def test_the_email_connector_page_is_a_system_administrators(self):
+        from psaspine import intake
+        conn = self._conn()
+        conn.execute("UPDATE board SET intake_address = 'helpdesk@pmcne.ph' WHERE board_id = 'IT_HELP'")
+        conn.commit()
+        self._msg(subject="A patient's chart will not open", sender="nurse@pmcne.ph")
+        intake.import_drop(conn, self.drop, run_id="e2", at=self.at, board_id="IT_HELP")
+        conn.commit()
+        status, _, _ = self._call("GET", "/admin/mail", cookie=self.alice)
+        self.assertTrue(status.startswith("403"), status)
+        _, _, page = self._call("GET", "/admin/mail", cookie=self.root)
+        self.assertIn("<h1>Email connector</h1>", page)
+        self.assertIn("helpdesk@pmcne.ph", page)
+        self.assertIn("unrouted queue", page)
+        self.assertIn("…@pmcne.ph", page)                                                   # the domain, not the person
+        self.assertNotIn("nurse@pmcne.ph", page)
+        self.assertNotIn("patient's chart", page)                                           # never the subject
+        self.assertIn("opened a ticket", page)
+        _, h, _ = self._call("POST", "/admin/mail/exclude", cookie=self.root, form={"kind": "DOMAIN", "pattern": "vendor.com", "note": "newsletters"})
+        self.assertIn("msg=Excluded", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/admin/mail/exclude", cookie=self.root, form={"kind": "ADDRESS", "pattern": "nope"})
+        self.assertIn("err=An+address+looks+like", dict(h)["Location"])
+        _, _, page = self._call("GET", "/admin/mail", cookie=self.root)
+        self.assertIn("<code>vendor.com</code>", page)
+        eid = intake.exclusions(conn)[0]["exclusion_id"]
+        _, h, _ = self._call("POST", "/admin/mail/exclude/remove", cookie=self.root, form={"exclusion_id": str(eid)})
+        self.assertIn("msg=Removed.", dict(h)["Location"])
+        self.assertEqual(intake.exclusions(conn), [])
+        _, _, setup_page = self._call("GET", "/admin", cookie=self.root)
+        self.assertIn("href='/admin/mail'", setup_page)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

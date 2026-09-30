@@ -213,6 +213,7 @@ BEGIN
     PRINT N'    psa.quote_line';
     PRINT N'    psa.member';
     PRINT N'    psa.calendar_feed';
+    PRINT N'    psa.mail_exclusion';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -262,13 +263,16 @@ BEGIN
     PRINT N'    psa.ix_quote_opportunity';
     PRINT N'    psa.ix_quote_line_quote';
     PRINT N'    psa.ix_calendar_feed_hash';
+    PRINT N'    psa.ix_audit_event_when';
+    PRINT N'    psa.ix_audit_event_actor';
+    PRINT N'    psa.ix_audit_event_subject';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  115 tables, 48 indexes, 4 triggers.';
+    PRINT N'  116 tables, 51 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -3062,6 +3066,40 @@ CREATE TABLE psa.[calendar_feed] (
 END;
 
 -- --------------------------------------------------------------------------
+-- mail_exclusion   (from schema/055_mail_setup.sql)
+-- 055: the email connector's settings on the desk
+--
+-- What arrives by mail is decided by three things: which board claims the
+-- address it was sent to (053), the board's reply policy (023), and what
+-- must never open a ticket. The third lived in code: delivery-system senders
+-- and auto-replies (the loop guard), and the desk's own addresses passed on
+-- the command line. A hospital mailbox also gets vendor newsletters, a
+-- monitoring system's digests and a scanner's "document attached" mail, and
+-- each of those is a decision a person makes once, here, not a code change.
+--
+-- A row is an exclusion: mail from an ADDRESS, from a DOMAIN, or whose
+-- SUBJECT contains a phrase, is imported and recorded (nothing is dropped,
+-- as intake has always promised) but opens nothing, with the reason on the
+-- data-quality finding.
+IF OBJECT_ID(N'psa.[mail_exclusion]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[mail_exclusion] (
+    [exclusion_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_mail_exclusion] PRIMARY KEY,
+    [kind] NVARCHAR(32) NOT NULL CONSTRAINT [CK_mail_exclusion_01] CHECK (kind IN ('ADDRESS', 'DOMAIN', 'SUBJECT')),
+
+    -- lower case; an address, a domain, or a phrase
+    [pattern] NVARCHAR(400) NOT NULL,
+    [note] NVARCHAR(400) NULL,
+    [created_at] NVARCHAR(64) NOT NULL,
+    [created_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -3419,6 +3457,18 @@ ALTER TABLE psa.[board] ADD [intake_address] NVARCHAR(400) NULL;
 IF COL_LENGTH(N'psa.[intake_message]', N'to_address') IS NULL
 ALTER TABLE psa.[intake_message] ADD [to_address] NVARCHAR(400) NULL;
 
+-- 054: the source of a change on the audit trail, and the indexes a reader needs
+--
+-- Setup > Audit reads audit_event, which every change has written since 003.
+-- What it could not say is WHERE a change came from: the desk, the portal, the
+-- API, the mail pickup, the rules runner, or a command on the host. The
+-- reference PSA's audit entry carries a source (Member / API / Workflow /
+-- Portal / EmailConnector ...); this adds the same, stamped by the entry point
+-- and never by the engine that made the change. Rows from before this step
+-- read as unknown, which is the truth.
+IF COL_LENGTH(N'psa.[audit_event]', N'source') IS NULL
+ALTER TABLE psa.[audit_event] ADD [source] NVARCHAR(32) NULL;
+
 IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
 ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
 
@@ -3577,6 +3627,15 @@ CREATE INDEX [ix_quote_line_quote] ON psa.[quote_line] ([quote_id]);
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_calendar_feed_hash' AND object_id = OBJECT_ID(N'psa.[calendar_feed]'))
 CREATE INDEX [ix_calendar_feed_hash] ON psa.[calendar_feed] ([token_hash]);
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_audit_event_when' AND object_id = OBJECT_ID(N'psa.[audit_event]'))
+CREATE INDEX [ix_audit_event_when] ON psa.[audit_event] ([occurred_at]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_audit_event_actor' AND object_id = OBJECT_ID(N'psa.[audit_event]'))
+CREATE INDEX [ix_audit_event_actor] ON psa.[audit_event] ([actor]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_audit_event_subject' AND object_id = OBJECT_ID(N'psa.[audit_event]'))
+CREATE INDEX [ix_audit_event_subject] ON psa.[audit_event] ([subject_kind], [subject_id]);
+
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
@@ -3712,10 +3771,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 115 OR @Triggers <> 4 OR @Indexes < 48
+IF @Tables <> 116 OR @Triggers <> 4 OR @Indexes < 51
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 115), %d triggers (expected 4), %d indexes (expected at least 48). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 116), %d triggers (expected 4), %d indexes (expected at least 51). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -3766,6 +3825,7 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[mail_exclusion];
     DROP TABLE IF EXISTS psa.[calendar_feed];
     DROP TABLE IF EXISTS psa.[member];
     DROP TABLE IF EXISTS psa.[quote_line];

@@ -68,6 +68,15 @@ def index(ctx):
             "<p class=sub>Everyone who works the desk, one page each: the record, the boards they are on, their "
             "security role, their hours, the break-glass account, and what happens when they leave.</p>"
             f"<div class=row><div style='flex:0 0 auto'><a class=btn href='/admin/members'>Members ({n_members})</a></div></div></div>")
+        n_audit = ctx.conn.execute("SELECT COUNT(*) FROM audit_event").fetchone()[0]
+        n_tokens = ctx.conn.execute("SELECT COUNT(*) FROM api_token WHERE disabled = 0").fetchone()[0]
+        cards.append(
+            "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-shield></use></svg>Audit and API tokens</h3>"
+            "<p class=sub>Every change the desk has written: who, when, what, where from; filter and export it. "
+            "And the machine credentials: one board and one scope each, minted here and shown once.</p>"
+            f"<div class=row><div style='flex:0 0 auto'><a class=btn href='/admin/audit'>Audit ({n_audit})</a></div>"
+            f"<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/api-tokens'>API tokens ({n_tokens} live)</a></div>"
+            "<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/mail'>Email connector</a></div></div></div>")
         n_items = ctx.conn.execute("SELECT COUNT(*) FROM catalogue_item").fetchone()[0]
         cards.append(
             "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-layers></use></svg>Boards and the service catalogue</h3>"
