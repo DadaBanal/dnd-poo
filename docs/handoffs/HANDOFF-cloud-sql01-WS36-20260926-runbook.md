@@ -1891,3 +1891,162 @@ second.
 - `init` created no board.
 
 Item 5 is met. What remains open is Dada's checks (item 6).
+
+### Part 21: 2026-09-30, about 08:15 +08:00. **de4f9ee live; 046–053 and the token scope PASS; KB folder and webhook file made; PSA-Teams held on three measured defects**
+
+Section "Folded in after part 20 (29 Sep, later)". Everything below is MEASURED unless marked.
+
+1. **The suite first, in a separate worktree of `de4f9ee`: 594 run, OK, 2 skipped, 0 errors** (265 s). The live tree
+   stayed at `1119b09` (76d7554's code) while it ran. The worktree was removed afterwards.
+2. **All eight schema steps and the token scope, once, by the sitting-1 road: stop, port, pull, start.**
+   - **Backup:** COPY_ONLY, `D:\PMC\backup\PMC_PSA\PMC_PSA_pre046-053-20260930.bak`, 17.9 MB. `RESTORE VERIFYONLY`
+     says "valid".
+   - **Preview**, from the worktree's port: 115 tables, 48 indexes, 4 triggers; 105 existing objects.
+   - **Baseline**, after PSA-Desk was stopped at 07:54:11 with 8085 closed: 101 tables, 4 triggers, 946 columns,
+     37 indexes, 8,472 rows.
+   - **Apply** at 07:54:19, as SQL01's sysadmin with the switches set in memory. It printed "Created: 115 tables,
+     4 triggers, 48 indexes", its gate passed, and it printed "Seeded: nothing".
+   - **Result, the section's end state, all met:**
+     - tables **101 → 115**;
+     - columns **946 → 1149**;
+     - indexes **37 → 48**;
+     - triggers 4 → 4;
+     - **no existing row count changed**;
+     - no column gone from any existing table.
+   - **The 203 new columns:** 184 in the 14 new tables, and 19 added to existing tables. **All 19 are NULL-able.**
+   - **Each step's own count, from the catalog, against the section:**
+
+     | Step | Section says | Measured | |
+     |---|---|---|---|
+     | 046 | 30 | `timesheet` 14, `timesheet_event` 7, `member_capacity` 5, `role_grant` 3, `time_entry.timesheet_id` | 30, met |
+     | 047 | 23 | `recurrence` 22, `ticket.recurrence_id` | 23, met |
+     | 048 | 7 | `configuration.` purchased_on, warranty_ends_on, installed_on, vendor, purchase_ref, location, agreement_id | 7, met |
+     | 049 | 15 | `approval` 13, `department.approver`, `catalogue_item.needs_approval` | 15, met |
+     | 050 | 31 | `channel_target` 9, `page` 17, `notification.` channel, target_id, page_id, `workflow_action.` channel, target_id | 31, met |
+     | 051 | 20 | `kb_file` 20 | 20, met |
+     | gap 8 | 1 | `api_token.scope` | 1, met |
+     | 052 | 49 | `opportunity` 22, `quote` 20, `quote_line` 7 | 49, met |
+     | 053 | 27 | `member` 21, `calendar_feed` 4, `board.intake_address`, `intake_message.to_address` | 27, met |
+
+   - **The 11 new indexes:**
+     - `ix_timesheet_event_sheet`, `ix_time_entry_sheet`, `ix_recurrence_due`;
+     - `ix_approval_ticket`, `ix_approval_approver`, `ix_page_open`, `ix_kb_file_article`;
+     - `ix_opportunity_stage`, `ix_quote_opportunity`, `ix_quote_line_quote`, `ix_calendar_feed_hash`.
+   - SQL01's verify script ended with a traceback of its own: a loop variable reused a name, *after* every check had
+     printed. It did not touch the database.
+3. **Pull and start.**
+   - The live tree was pulled at 08:08:21 by fast-forward, and landed on `de4f9ee`.
+   - PSA-Desk started at 08:08:23: one process, 8085 listening, loopback `/login` 200, `desk.pmcne.ph/login` 200,
+     `help.pmcne.ph/my` 401 (its sign-in page).
+   - The console shows nothing beyond the start-up banner's wrapper.
+   - **The desk was down 14 minutes, 07:54:11 to 08:08:23**, where earlier sittings took about one. The apply and
+     verify finished at 07:54:20. The rest was SQL01's own gap before the pull, not a failure.
+   - **In that gap the old code ran against the new schema, and nothing failed.** Task Scheduler's history:
+     - PSA-Rules ran 15 times between 07:54:36 and 08:08:36, all with result 0;
+     - PSA-BizBox's 08:05 run exited 0, with ordinary counts.
+   - **PSA-Rules on the new code at 08:08:36** reports "0 errors; recurring: 0 raised, 0 failed; pages: 0 open".
+4. **`init` as the task account waits on the operator:** `D:\psa\bin\Part21-AsDesk.ps1`, with the same checks as
+   part 20's.
+5. **Host step for 051: the KB folder is `D:\psa\files-kb`, not `D:\psa\attachments-kb`.**
+   - `kbfiles.kb_dir()` uses `PSA_KB_DIR` if set, otherwise the attachment folder's name plus `-kb`. Every PSA task
+     on this host sets `PSA_ATTACHMENT_DIR = D:\psa\files`, and there is no `D:\psa\attachments`.
+   - Created at 07:52. Its ACL is identical to `D:\psa\files`: only the entries it inherits from `D:\psa` (SYSTEM
+     and Administrators full, the task account Modify). No task needed a change.
+   - **"Added to the same backup": nothing from inside this host backs up `D:\psa\files`.** Checked:
+     - no scheduled task names `D:\psa`, except the PSA tasks themselves (680 tasks read, elevated);
+     - no SQL Agent step names it (19 steps read);
+     - neither Windows Server Backup, nor the Azure Backup agent, nor a Veeam agent is present (control: W3SVC found);
+     - a backup taken from the hypervisor would not be visible from here: NOT VERIFIED either way.
+6. **Host step for 050: `D:\psa\teams-webhooks.json` is made and PSA-Teams is not registered.**
+   - The file holds `{}`, with inheritance off: SYSTEM and Administrators full, the task account read. No address is
+     in it; the channel addresses are Dada's to paste. It is not in the repository.
+   - **There is no PSA-Notify task on this host, nor PSA-Mail, nor `D:\psa\mail-state`** (the same elevated read,
+     with a control). "Beside PSA-Notify" has nothing to stand beside; the desk sends no email from this host yet.
+   - **Three defects in `scripts/Send-PsaTeamsNotifications.ps1` at `de4f9ee`, each measured here:**
+     - **(a) It posts only to addresses that no longer work.** `Test-WebhookUrl` accepts `*.webhook.office.com` or
+       `*.logic.azure.com`, and marks anything else FAILED without posting. Both are retired. VERIFIED on
+       learn.microsoft.com, 30 Sep:
+       - Office 365 connectors (the classic incoming webhook) retired on 30 April 2026 (Microsoft Q&A answers), and
+         Microsoft's Azure Databricks page says the classic Incoming Webhook connector has been retired;
+       - Power Automate trigger URLs on `logic.azure.com` stopped working on 30 November 2025, per "Troubleshoot
+         Power Automate trigger problems".
+       - A Teams Workflows webhook made today is on `*.environment.api.powerplatform.com`: a Microsoft Q&A answer
+         shows one, and Power Automate's IP page lists `*.api.powerplatform.com` for that trigger.
+       - Tested in preview against a scratch desk, with made-up addresses in a scratch copy of the file. The card
+         itself is an Adaptive Card in the `attachments` envelope, which Workflows accepts (VERIFIED, the same pages).
+     - **(b) Under Windows PowerShell 5.1 with `-File`, it cannot start with its default `-SpineDir`.**
+       `$PSScriptRoot` is empty inside the `param()` default, so `Join-Path` refuses before anything runs. Through
+       `-Command "& '…'"` it is set.
+     - **(c) Under Windows PowerShell 5.1, every pass with nothing due fails.**
+       - `outbox-pending` prints `[]`, and `@('[]' | ConvertFrom-Json)` has one element, an empty array.
+       - Reading `.target` on it fails under `Set-StrictMode 2.0`: "The property 'target' cannot be found on this
+         object".
+       - Measured on 5.1.20348.5499. The control, pwsh 7.6.4 on the same host, gives 0 and passes. A one-item list
+         gives 1 on both.
+   - **The task is held.** With these defects its preview Pass cannot be met, and registering it costs Dada
+     psa_desk's password for a FAIL.
+   - `D:\psa\bin\Register-PsaTeams.ps1` is ready, and committed as `scripts/Register-PsaTeams.ps1`, preview by
+     default. Its preflight passes (08:11). It registers PSA-Teams every minute in PREVIEW, with `-SpineDir` passed
+     explicitly, and removes the task again if the Pass is not met.
+   - **To run after the fix lands.** Why a minute's trigger and not `-Loop`: a loop that dies stops silently, and
+     nothing on this host watches the PSA tasks.
+   - Also VERIFIED on the same Teams pages: Workflows cannot post as the flow bot into a **private** channel yet. The
+     channel must be a standard or shared one.
+7. **Host step for 053: nothing, as the section says.**
+   - PSA-Mail does not exist on this host (item 6), so the per-board intake address has no pickup to route yet.
+   - Dada's mail check for 053 waits until one runs.
+
+**For WS36:**
+- **(a):** accept `*.api.powerplatform.com`; the exact suffix is WS36's call.
+- **(b):** resolve `-SpineDir` in the body, not in `param()`.
+- **(c):** handle an empty list under Windows PowerShell 5.1, which is the runtime on these servers.
+
+SQL01 registers PSA-Teams at the head that carries them.
+
+**Dada's checks, per step. His; not done by SQL01:**
+
+- **Members (053), his alone:**
+  - Setup › Members shows everyone;
+  - he opens his own page and saves a name;
+  - the header shows it.
+- **046:**
+  - Time is in the menu, and his week lists the time he booked;
+  - *Submit for approval* locks the week;
+  - a Service manager who is not him approves it, and he cannot approve his own;
+  - Setup › Security roles has a Timesheets column;
+  - Reports shows *Utilisation, by member* once time is booked.
+- **047:**
+  - Setup shows *Recurring tickets (0 active)*;
+  - one added with a first due day of today is raised by the next PSA-Rules run, tasks and all, with *Raised by the
+    recurrence …*;
+  - *Run now* raises one at once.
+- **048:**
+  - a printer's page takes a warranty end date;
+  - the list counts it under *Warranty ends in 90 days* or *Out of warranty*;
+  - *Maintenance record (CSV)* downloads.
+- **049:**
+  - Setup › Departments has an Approver column;
+  - a pair set to *Approval: yes* makes a ticket record the request;
+  - the approver decides on the portal's Approvals page;
+  - a board parks the ticket in Awaiting approval only once Dada adds that status there, with *Waiting* ticked.
+- **Gap 5:** on a phone on the hospital Wi-Fi, the board is cards with a bar at the foot, and a ticket's bar has
+  *Note*, *Ticket*, and *Call* when the contact has a number.
+- **050:**
+  - Setup › Integrations shows *Teams channels*;
+  - *Page the on-call* puts *Paging <name>: attempt 1 of 3* on a ticket;
+  - the card itself waits on the three fixes and on a Workflows webhook in a standard channel.
+- **051:**
+  - an article shows *Files*;
+  - a screenshot appears where `![caption](file:1)` is pasted, and on the portal only after *Clear*;
+  - a `.exe` is refused;
+  - `D:\psa\files-kb` holds one file afterwards.
+- **Gap 8:** a token minted `--scope READ` answers `GET /api/v1/tickets`, and the old monitoring token answers 403
+  naming the scope.
+- **052:**
+  - Sales is in the top bar;
+  - opportunity, then quote, line, sent, accepted and *Won*, lands on a draft agreement with the quote's total;
+  - a Technician sees it with no form.
+- **053, the rest:**
+  - Calendar shows his week and the month;
+  - the feed from My profile opens on a phone;
+  - the mail routing waits on PSA-Mail (item 7).
