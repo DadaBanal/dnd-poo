@@ -2363,3 +2363,25 @@ Section "Folded in after part 22 (30 Sep)", the 057 bullet. Everything below is 
 Item 4 is met. What remains open:
 - the suite's one Windows teardown error (item 1), for WS36;
 - Dada's checks (item 7).
+
+### Part 25: 2026-09-30, about 13:37 +08:00. **fbc5162: the suite 610 run, OK, 0 errors on SQL01; part 24's one open Pass is met**
+
+Cloud Build's note after part 24: the connection was the test's own, not the Emails tab. Everything below is MEASURED.
+
+1. **Where `fbc5162` stands.** It was already in the live tree. It came in underneath SQL01's `2126370` with part 24's
+   continued rebase-pull.
+   - It changes `tests/test_spine.py` only, 4 lines in and 2 out.
+   - The desk's code, the port and the scripts are identical to `d5f1bea`'s, which has been live since 13:05. So the
+     running desk did not change, and nothing was stopped or restarted.
+2. **The suite, in a separate worktree of `fbc5162`: 610 run, OK, 2 skipped, 0 errors** (335 s).
+   - `SmallSetupTest.test_a_board_writes_its_own_email_words_and_only_four_placeholders`, run alone twice: OK both
+     times.
+   - The worktree was removed afterwards.
+3. **Part 24, item 1 is now met.** Its line "610 run, 0 errors" holds on SQL01, at the head whose code is live.
+4. **Correction to part 24, item 1.** Its INFERRED clause, "most likely by one of its requests to the desk … the new
+   Emails tab's save and 'Not saved' paths", was wrong.
+   - Cloud Build found two inline `db.connect(self.db_path)` calls in the test itself, never closed.
+   - The desk's request path closes its connection in `application`'s `finally`, as before.
+   - What part 24 measured still stands: the connection outlived the test until the collector ran. Only the guess at
+     whose it was is withdrawn.
+5. **Nothing else on the host**, as asked.
