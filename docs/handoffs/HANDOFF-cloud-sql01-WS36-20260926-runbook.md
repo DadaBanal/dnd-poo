@@ -1018,7 +1018,8 @@ first is the audit trail's page, with one schema step by the sitting-1 road
   tiles show *Infusion pump* once one exists.
 - **Counts:** 604 tests at this head (SQLite OK, 1 skipped). The whole suite
   ran on SQL Server in this container with 054 to 056: 604 run, OK, 2
-  skipped, 13.6 minutes (MEASURED, 30 Sep). The drift gate passes.
+  skipped, 13.6 minutes (MEASURED, 30 Sep). The drift gate passes; CI run
+  72 on `12f9322` is green on all four jobs (MEASURED, finished 02:44 UTC).
 
 ## When a step does not pass
 
