@@ -44,7 +44,7 @@ param(
     [Parameter(Mandatory = $true)] [string] $StateDir,
     [string] $AllowedDomain = 'pmcne.ph',
     [string] $PortalUrl,
-    [string] $SpineDir = (Join-Path $PSScriptRoot '..'),
+    [string] $SpineDir,
     [string] $PythonExe = 'C:\PMC\Python312\python.exe',
     [int] $IntervalSeconds = 60,
     [switch] $Loop,
@@ -53,6 +53,10 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+# The repository root, one above scripts\. Not a param() default: under Windows
+# PowerShell 5.1 run with -File, $PSScriptRoot is empty while the defaults are
+# evaluated (MEASURED on DND-SQL01, part 21), so the default is resolved here.
+if (-not $SpineDir) { $SpineDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path) }
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $Graph = 'https://graph.microsoft.com/v1.0'
@@ -177,8 +181,16 @@ function Invoke-Pass {
     if ($PortalUrl) { $args1 += @('--portal-url', $PortalUrl) }
     $r = Invoke-Spine $args1
     if ($r.Code -ne 0) { throw "outbox-pending failed (exit $($r.Code))" }
+    # Under Windows PowerShell 5.1, '[]' | ConvertFrom-Json is ONE object (an
+    # empty array), so @(...) counts 1 and .id fails on it (MEASURED on
+    # DND-SQL01, part 21). foreach enumerates the array's elements on 5.1 and
+    # 7 alike, so an idle pass counts 0 on both.
     $items = @()
-    if ($r.Out) { $items = @($r.Out | ConvertFrom-Json) }
+    if ($r.Out) {
+        foreach ($x in ($r.Out | ConvertFrom-Json)) {
+            if ($null -ne $x -and $x.PSObject.Properties['id']) { $items += $x }
+        }
+    }
 
     if (-not $Apply) {
         # Signing in proves the certificate and the scope before anything is sent.

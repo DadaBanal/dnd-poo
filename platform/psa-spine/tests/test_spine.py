@@ -6849,6 +6849,35 @@ class NotificationSenderScriptTest(unittest.TestCase):
                 self.assertNotIn("$item.subject", line)
 
 
+class TeamsSenderScriptTest(unittest.TestCase):
+    """scripts/Send-PsaTeamsNotifications.ps1 and its siblings, after SQL01's
+    part 21 measured three defects under Windows PowerShell 5.1 on the host."""
+
+    SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
+
+    def _text(self, name):
+        return (self.SCRIPTS / name).read_bytes().decode("ascii")
+
+    def test_a_teams_workflows_webhook_is_allowed_and_nothing_else_is(self):
+        text = self._text("Send-PsaTeamsNotifications.ps1")
+        self.assertIn("EndsWith('.api.powerplatform.com')", text)               # (a) the shape made today
+        self.assertIn("$u.Scheme -ne 'https'", text)
+        self.assertLess(text.index("function Test-WebhookUrl"), text.index("Send-Card $item $url"))
+
+    def test_no_script_reads_psscriptroot_in_a_param_default(self):
+        for name in ("Send-PsaTeamsNotifications.ps1", "Send-PmcNotifications.ps1", "Invoke-PmcMailPickup.ps1"):
+            text = self._text(name)
+            head = text[:text.index("Set-StrictMode")]                          # the param() block and the help
+            self.assertNotIn("$PSScriptRoot", head, name)                        # (b) empty under 5.1 -File
+            self.assertIn("$MyInvocation.MyCommand.Path", text, name)
+
+    def test_an_idle_pass_counts_zero_on_windows_powershell(self):
+        for name in ("Send-PsaTeamsNotifications.ps1", "Send-PmcNotifications.ps1"):
+            text = self._text(name)
+            self.assertNotIn("@($r.Out | ConvertFrom-Json)", text, name)       # (c) one element on 5.1
+            self.assertIn("foreach ($x in ($r.Out | ConvertFrom-Json))", text, name)
+
+
 class TasksTemplatesTest(unittest.TestCase):
     """026 and psaspine.tasks: a ticket's checklist, and board templates."""
 

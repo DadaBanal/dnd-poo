@@ -924,6 +924,45 @@ sitting-1 road** (`init` is safe to run again; nothing is seeded).
   push to main, a pull request, or a manual dispatch, never on a push to
   this branch).
 
+## Folded in from part 21 (30 Sep): 046-053 live; the Teams sender's three defects fixed; the KB folder's name
+
+SQL01's part 21: `de4f9ee` live, every Pass met, 594 OK on the host, no row
+changed. Three things come back from it.
+
+- **The Teams sender, three defects, all fixed at this head** (each MEASURED
+  by SQL01 under Windows PowerShell 5.1 on DND-SQL01, part 21 item 6):
+  - **(a)** `Test-WebhookUrl` now accepts `*.api.powerplatform.com`, where a
+    Teams Workflows webhook made today lives (`*.environment.api.powerplatform.com`),
+    beside the two retired shapes, which stay allowed and simply fail;
+  - **(b)** `-SpineDir` is no longer a `param()` default built from
+    `$PSScriptRoot`; the script resolves the repository root from its own
+    path after `param()`, so `-File` works with no `-SpineDir`. **The same
+    defect was in `Send-PmcNotifications.ps1` and `Invoke-PmcMailPickup.ps1`**,
+    neither registered on the host yet; both are fixed the same way.
+    `Register-PsaTeams.ps1` passing `-SpineDir` explicitly still works;
+  - **(c)** the JSON from `outbox-pending` is read with `foreach`, never
+    `@(... | ConvertFrom-Json)`, so an idle pass counts 0 on 5.1 and 7 alike.
+    The same shape was in `Send-PmcNotifications.ps1`; fixed there too.
+  - The script is now pure ASCII, as its siblings are held to be; a
+    `TeamsSenderScriptTest` (3 tests) pins the three fixes.
+  - **Pass, SQL01:** with the pull, `Register-PsaTeams.ps1 -Apply` registers
+    PSA-Teams in PREVIEW and its first pass logs a PREVIEW line with "0
+    card(s) due" and task result 0. **Posting a card is a later switch**, and
+    whether Teams renders it as posted is still only this sitting's to say.
+- **The KB folder is `D:\psa\files-kb`**, the attachment folder's name with
+  `-kb` as the rule says; the runbook's `attachments-kb` assumed an
+  attachment folder it does not have. The README now says so. **Nothing on
+  the host backs up `D:\psa\files` or `D:\psa\files-kb`** (SQL01 read every
+  scheduled task and SQL Agent step; a hypervisor backup is NOT VERIFIED
+  from there). That is Dada's to settle: the attachments are the desk's
+  evidence, and the database backup does not carry them.
+- **No PSA-Notify, no PSA-Mail on the host yet**: the desk sends no email
+  from DND-SQL01. The notification and mail-pickup scripts are ready and now
+  start under 5.1 `-File`; registering them is the next host step once Dada
+  names the sending mailbox and the helpdesk mailbox's certificate.
+- **Counts:** 597 tests at this head (SQLite OK, 1 skipped; the three new
+  tests read the scripts, so the SQL Server run is unchanged in substance).
+
 ## When a step does not pass
 
 Every handoff step has a **Pass** line. This is what to do when it is not

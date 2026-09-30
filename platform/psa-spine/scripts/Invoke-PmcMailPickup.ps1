@@ -57,7 +57,7 @@ param(
     [Parameter(Mandatory = $true)] [string] $Database,
     [Parameter(Mandatory = $true)] [string] $DropDir,
     [Parameter(Mandatory = $true)] [string] $StateDir,
-    [string] $SpineDir = (Join-Path $PSScriptRoot '..'),
+    [string] $SpineDir,
     [string] $PythonExe = 'C:\PMC\Python312\python.exe',
     [string] $Channel = 'helpdesk',
     [datetime] $Since = (Get-Date),
@@ -69,6 +69,10 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+# The repository root, one above scripts\. Not a param() default: under Windows
+# PowerShell 5.1 run with -File, $PSScriptRoot is empty while the defaults are
+# evaluated (MEASURED on DND-SQL01, part 21), so the default is resolved here.
+if (-not $SpineDir) { $SpineDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path) }
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $Graph = 'https://graph.microsoft.com/v1.0'

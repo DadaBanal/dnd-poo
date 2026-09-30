@@ -6,16 +6,17 @@
     Runs on DND-SQL01 beside Send-PmcNotifications.ps1, which sends the email
     channel; this one takes the TEAMS channel and nothing else. Once a minute:
       1. asks `psaspine outbox-pending --channel TEAMS` for the cards that are due,
-         each keyed by the channel's short name (Setup › Integrations › Teams channels);
+         each keyed by the channel's short name (Setup > Integrations > Teams channels);
       2. looks the name up in -WebhookFile, a JSON object { "<name>": "https://..." }
          that lives only on this host (D:\psa\teams-webhooks.json), never in the
          repository and never in the database;
       3. posts the card to that URL and reports the result with `psaspine outbox-mark`.
 
-    A URL is posted to only when it is https:// and on a Microsoft host
-    (*.webhook.office.com, or *.logic.azure.com for a Power Automate "post to a
-    channel" workflow). Anything else is marked FAILED and never posted: a card
-    carries a ticket number and a priority, and those do not leave the tenant.
+    A URL is posted to only when it is https:// and on a Microsoft host: a Teams
+    Workflows "post to a channel" webhook on *.environment.api.powerplatform.com
+    (the shape made today), or the retired *.webhook.office.com and
+    *.logic.azure.com shapes. Anything else is marked FAILED and never posted: a
+    card carries a ticket number and a priority, and those do not leave the tenant.
 
     PREVIEW BY DEFAULT. Without -Apply it counts what is due, checks every named
     channel has a URL in the file, and stops: nothing is posted and the desk is
@@ -38,7 +39,7 @@ param(
     [Parameter(Mandatory = $true)] [string] $WebhookFile,
     [Parameter(Mandatory = $true)] [string] $StateDir,
     [string] $DeskUrl,
-    [string] $SpineDir = (Join-Path $PSScriptRoot '..'),
+    [string] $SpineDir,
     [string] $PythonExe = 'C:\PMC\Python312\python.exe',
     [int] $IntervalSeconds = 60,
     [switch] $Loop,
@@ -47,6 +48,10 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+# The repository root, one above scripts\. Not a param() default: under Windows
+# PowerShell 5.1 run with -File, $PSScriptRoot is empty while the defaults are
+# evaluated (MEASURED on DND-SQL01, part 21), so the default is resolved here.
+if (-not $SpineDir) { $SpineDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path) }
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $LogFile = Join-Path $StateDir 'teams-send.log'
@@ -68,11 +73,17 @@ function Invoke-Spine([string[]] $SpineArgs) {
 
 function Test-WebhookUrl([string] $Url) {
     # https only, and only a Microsoft host: the card names a ticket and a priority.
+    # A Teams Workflows webhook made today is on *.environment.api.powerplatform.com
+    # (VERIFIED by SQL01 on learn.microsoft.com, 30 Sep 2026). The classic Office 365
+    # connector (*.webhook.office.com) retired on 30 April 2026 and Power Automate's
+    # *.logic.azure.com trigger addresses on 30 November 2025; both are still allowed
+    # here for a tenant that has not moved, and a post to them will simply fail and
+    # be marked FAILED.
     if (-not $Url) { return $false }
     try { $u = [Uri] $Url } catch { return $false }
     if ($u.Scheme -ne 'https') { return $false }
     $h = $u.Host.ToLower()
-    return ($h.EndsWith('.webhook.office.com') -or $h.EndsWith('.logic.azure.com'))
+    return ($h.EndsWith('.api.powerplatform.com') -or $h.EndsWith('.webhook.office.com') -or $h.EndsWith('.logic.azure.com'))
 }
 
 function Read-Webhooks {
@@ -97,8 +108,16 @@ function Invoke-Pass {
     if ($DeskUrl) { $args1 += @('--desk-url', $DeskUrl) }
     $r = Invoke-Spine $args1
     if ($r.Code -ne 0) { throw "outbox-pending failed (exit $($r.Code))" }
+    # Under Windows PowerShell 5.1, '[]' | ConvertFrom-Json is ONE object (an
+    # empty array), so @(...) counts 1 and .id fails on it (MEASURED on
+    # DND-SQL01, part 21). foreach enumerates the array's elements on 5.1 and
+    # 7 alike, so an idle pass counts 0 on both.
     $items = @()
-    if ($r.Out) { $items = @($r.Out | ConvertFrom-Json) }
+    if ($r.Out) {
+        foreach ($x in ($r.Out | ConvertFrom-Json)) {
+            if ($null -ne $x -and $x.PSObject.Properties['id']) { $items += $x }
+        }
+    }
 
     if (-not $Apply) {
         $missing = @($items | Where-Object { -not $hooks.ContainsKey($_.target.ToLower()) } | ForEach-Object { $_.target } | Sort-Object -Unique)

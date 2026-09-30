@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 594 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 597 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -857,9 +857,17 @@ channel, and a page to the person on call that repeats until they answer.
   repository. `scripts/Send-PsaTeamsNotifications.ps1` takes the outbox's
   TEAMS channel (`outbox-pending --channel TEAMS`), posts each card to its
   URL, and marks it; preview by default; it posts only to `https://` on a
-  Microsoft host (`*.webhook.office.com`, or `*.logic.azure.com` for a Power
-  Automate "post to a channel" workflow) and marks anything else FAILED
-  unposted. The card (an Adaptive Card in the incoming-webhook envelope)
+  Microsoft host: a Teams Workflows "post to a channel" webhook on
+  `*.environment.api.powerplatform.com` (the shape made today; the classic
+  `*.webhook.office.com` connector retired on 30 April 2026 and Power
+  Automate's `*.logic.azure.com` addresses on 30 November 2025, VERIFIED by
+  SQL01 on learn.microsoft.com, 30 Sep; both are still allowed and simply
+  fail), and marks anything else FAILED unposted. The three scripts that run
+  on the host resolve the repository root themselves rather than in a
+  `param()` default (`$PSScriptRoot` is empty there under Windows PowerShell
+  5.1 with `-File`), and read `outbox-pending`'s JSON with `foreach`, since
+  under 5.1 `'[]' | ConvertFrom-Json` is one object and an idle pass would
+  otherwise fail (both MEASURED on DND-SQL01, part 21). The card (an Adaptive Card in the incoming-webhook envelope)
   carries the ticket number, board, priority, status and owner, the rule's
   words and an *Open on the desk* button (`--desk-url`, else
   `PSA_PUBLIC_URL`): **never the summary, never a note.** A channel is
