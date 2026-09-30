@@ -2089,3 +2089,53 @@ SQL01 registers PSA-Teams at the head that carries them.
   - Calendar shows his week and the month;
   - the feed from My profile opens on a phone;
   - the mail routing waits on PSA-Mail (item 7).
+
+*Part 21, continued, 08:48 +08:00:* **the as-desk run PASS.** The operator ran `Part21-AsDesk.ps1` as the task account
+(`D:\psa\logs\Part21-AsDesk.log`, read back by SQL01):
+- `init` ran twice, exit 0 both times, and printed the same line both times: "ready: SQL Server, …Database=PMC_PSA";
+- **no `psa.board` row changed** (6 boards, every column compared).
+
+Item 4 is met.
+
+### Part 22: 2026-09-30, about 08:57 +08:00. **c666b8e live; PSA-Teams registered in PREVIEW; its passes log "0 card(s) due" with result 0**
+
+Section "Folded in from part 21 (30 Sep)". Everything below is MEASURED.
+
+1. **The pull: a fast-forward at 08:49:17 to `c666b8e`.**
+   - It brought scripts, the README, tests and the runbook only. There was no port change and no `psaspine` change,
+     so PSA-Desk kept running, neither stopped nor restarted.
+   - `Send-PsaTeamsNotifications.ps1` is now pure ASCII (0 non-ASCII lines).
+2. **The fixed sender before the task.** SQL01 ran it as the operator on a scratch desk (deleted afterwards), under
+   Windows PowerShell 5.1 with `-File` and **no `-SpineDir`**.
+   - **With an empty file:** "PREVIEW: 0 card(s) due; 0 channel(s) in the file, 0 with an address that would be refused;
+     0 due channel(s) not in the file. Nothing posted." It started and counted 0, so **(b) and (c) are fixed**.
+   - **With four made-up addresses:** a Workflows `*.environment.api.powerplatform.com`, the retired `*.webhook.office.com`
+     and `*.logic.azure.com`, and a control on `example.com`.
+     - It read "4 channel(s) in the file, **1** with an address that would be refused". Only the control was refused, so
+       **(a) is fixed**.
+   - No state folder was made in preview.
+3. **The register: Dada ran `D:\psa\bin\Register-PsaTeams.ps1 -Apply` at 08:52:17.**
+   - Preflight PASS.
+   - Registered at 08:52:28 as `DND-SQL01\psa_desk`, every minute, PREVIEW.
+   - The first pass, at 08:52:30, logged **"PREVIEW: 0 card(s) due; 0 channel(s) in the file, 0 with an address that
+     would be refused; 0 due channel(s) not in the file. Nothing posted. Re-run with -Apply."**
+   - "RESULT: PASS".
+   - Before the run, the host copy was made byte-identical to the repository's; the two had differed in line endings only.
+4. **Read back by SQL01 afterwards.**
+   - **The task:** psa_desk, Password logon, Limited; every minute from 08:54, indefinitely; IgnoreNew; a 5-minute limit.
+   - **The action:** it passes `-SpineDir` and has **neither `-Apply` nor `-Loop`**.
+   - **Task Scheduler's history:** 5 action completions from 08:52:30 to 08:57:02: the first run and four scheduled
+     ones, one a minute from 08:54. **All have result 0.** The latest pass, at 08:57:02, logged the same PREVIEW line,
+     "0 card(s) due".
+   - **`D:\psa\mail-state` was not made.** Only `-Apply` makes it.
+   - **Without `-SpineDir`:** the one run without it is item 2. The task keeps it, as the script registers it.
+   - **A cosmetic point:** in `PSA-Teams.log` the PREVIEW line wraps after about 98 characters (the host width under
+     `*>`). The register script's check matched on the first line. Nothing changes for the Pass.
+5. **Nothing else on the host this sitting.**
+   - **Posting a card stays a later switch.** It needs four things:
+     - a Workflows webhook in a standard or shared channel (not a private one: Workflows cannot post there as the
+       flow bot yet);
+     - its address pasted into `D:\psa\teams-webhooks.json` by Dada;
+     - the channel named in Setup › Integrations › Teams channels;
+     - the task's action switched to `-Apply`, which needs psa_desk's password again.
+   - Whether Teams renders the card as posted is still this sitting's to say, once one is posted.
