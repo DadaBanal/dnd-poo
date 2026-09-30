@@ -214,6 +214,10 @@ BEGIN
     PRINT N'    psa.member';
     PRINT N'    psa.calendar_feed';
     PRINT N'    psa.mail_exclusion';
+    PRINT N'    psa.configuration_type';
+    PRINT N'    psa.configuration_status';
+    PRINT N'    psa.configuration_question';
+    PRINT N'    psa.configuration_answer';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -266,13 +270,14 @@ BEGIN
     PRINT N'    psa.ix_audit_event_when';
     PRINT N'    psa.ix_audit_event_actor';
     PRINT N'    psa.ix_audit_event_subject';
+    PRINT N'    psa.ix_configuration_question_type';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  116 tables, 51 indexes, 4 triggers.';
+    PRINT N'  120 tables, 52 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -3100,6 +3105,73 @@ CREATE TABLE psa.[mail_exclusion] (
 END;
 
 -- --------------------------------------------------------------------------
+-- configuration_type   (from schema/056_configuration_types.sql)
+-- 056: configuration types and statuses as setup tables, with typed questions
+--
+-- 021 fixed seven types and three statuses in a CHECK. A hospital's CMDB
+-- outgrows that the day biomedical devices join it: an infusion pump is not
+-- OTHER, and the questions asked of it (its asset tag, its last calibration)
+-- are not asked of a printer. The reference PSA has ConfigurationType,
+-- ConfigurationStatus and ConfigurationTypeQuestion; these are the same.
+--
+-- The 021 columns stay, and the CHECKs with them: a type MAPS TO one of the
+-- seven codes and a status to one of the three, so every report, filter and
+-- API shape that reads config_type or status keeps its meaning. The seven
+-- and the three are written as rows on first use (configurations.
+-- ensure_vocabulary), each mapping to itself; nothing is seeded here.
+IF OBJECT_ID(N'psa.[configuration_type]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[configuration_type] (
+    [type_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_configuration_type] PRIMARY KEY,
+    [name] NVARCHAR(400) NOT NULL,
+    [maps_to] NVARCHAR(32) NOT NULL CONSTRAINT [CK_configuration_type_01] CHECK (maps_to IN ('WORKSTATION', 'LAPTOP', 'SERVER', 'PRINTER', 'NETWORK', 'MOBILE', 'OTHER')),
+    [inactive] INT NOT NULL CONSTRAINT [DF_configuration_type_inactive] DEFAULT (0) CONSTRAINT [CK_configuration_type_02] CHECK (inactive IN (0, 1)),
+    [sort_order] INT NOT NULL CONSTRAINT [DF_configuration_type_sort_order] DEFAULT (0)
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- configuration_status   (from schema/056_configuration_types.sql)
+IF OBJECT_ID(N'psa.[configuration_status]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[configuration_status] (
+    [status_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_configuration_status] PRIMARY KEY,
+    [name] NVARCHAR(400) NOT NULL,
+    [maps_to] NVARCHAR(32) NOT NULL CONSTRAINT [CK_configuration_status_01] CHECK (maps_to IN ('ACTIVE', 'INACTIVE', 'RETIRED')),
+    [inactive] INT NOT NULL CONSTRAINT [DF_configuration_status_inactive] DEFAULT (0) CONSTRAINT [CK_configuration_status_02] CHECK (inactive IN (0, 1)),
+    [sort_order] INT NOT NULL CONSTRAINT [DF_configuration_status_sort_order] DEFAULT (0)
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- configuration_question   (from schema/056_configuration_types.sql)
+-- A question a type asks of every configuration of that type.
+IF OBJECT_ID(N'psa.[configuration_question]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[configuration_question] (
+    [question_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_configuration_question] PRIMARY KEY,
+    [type_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_configuration_question_type_id] REFERENCES psa.[configuration_type]([type_id]),
+    [label] NVARCHAR(400) NOT NULL,
+    [field_type] NVARCHAR(32) NOT NULL CONSTRAINT [CK_configuration_question_01] CHECK (field_type IN ('TEXT', 'NUMBER', 'DATE', 'CHECKBOX')),
+    [required] INT NOT NULL CONSTRAINT [DF_configuration_question_required] DEFAULT (0) CONSTRAINT [CK_configuration_question_02] CHECK (required IN (0, 1)),
+    [sort_order] INT NOT NULL CONSTRAINT [DF_configuration_question_sort_order] DEFAULT (0),
+    [inactive] INT NOT NULL CONSTRAINT [DF_configuration_question_inactive] DEFAULT (0) CONSTRAINT [CK_configuration_question_03] CHECK (inactive IN (0, 1))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- configuration_answer   (from schema/056_configuration_types.sql)
+IF OBJECT_ID(N'psa.[configuration_answer]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[configuration_answer] (
+    [configuration_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_configuration_answer_configuration_id] REFERENCES psa.[configuration]([configuration_id]),
+    [question_id] INT NOT NULL CONSTRAINT [FK_configuration_answer_question_id] REFERENCES psa.[configuration_question]([question_id]),
+    [value] NVARCHAR(400) NULL,
+    CONSTRAINT [PK_configuration_answer] PRIMARY KEY ([configuration_id], [question_id])
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -3469,6 +3541,14 @@ ALTER TABLE psa.[intake_message] ADD [to_address] NVARCHAR(400) NULL;
 IF COL_LENGTH(N'psa.[audit_event]', N'source') IS NULL
 ALTER TABLE psa.[audit_event] ADD [source] NVARCHAR(32) NULL;
 
+-- The type and status a configuration has, when it is one made here; NULL
+-- reads as the 021 code in config_type / status.
+IF COL_LENGTH(N'psa.[configuration]', N'type_id') IS NULL
+ALTER TABLE psa.[configuration] ADD [type_id] NVARCHAR(64) NULL CONSTRAINT [FK_configuration_type_id] REFERENCES psa.[configuration_type]([type_id]);
+
+IF COL_LENGTH(N'psa.[configuration]', N'status_id') IS NULL
+ALTER TABLE psa.[configuration] ADD [status_id] NVARCHAR(64) NULL CONSTRAINT [FK_configuration_status_id] REFERENCES psa.[configuration_status]([status_id]);
+
 IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
 ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
 
@@ -3636,6 +3716,9 @@ CREATE INDEX [ix_audit_event_actor] ON psa.[audit_event] ([actor]);
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_audit_event_subject' AND object_id = OBJECT_ID(N'psa.[audit_event]'))
 CREATE INDEX [ix_audit_event_subject] ON psa.[audit_event] ([subject_kind], [subject_id]);
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_configuration_question_type' AND object_id = OBJECT_ID(N'psa.[configuration_question]'))
+CREATE INDEX [ix_configuration_question_type] ON psa.[configuration_question] ([type_id]);
+
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
@@ -3771,10 +3854,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 116 OR @Triggers <> 4 OR @Indexes < 51
+IF @Tables <> 120 OR @Triggers <> 4 OR @Indexes < 52
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 116), %d triggers (expected 4), %d indexes (expected at least 51). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 120), %d triggers (expected 4), %d indexes (expected at least 52). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -3802,6 +3885,8 @@ PRINT N'target is enforced until somebody with the authority says so.';
     DROP TRIGGER IF EXISTS psa.[ticket_close_requires_a_variation];
     DROP TRIGGER IF EXISTS psa.[patient_reference_needs_a_restricted_board];
     DROP TRIGGER IF EXISTS psa.[patient_reference_stays_on_a_restricted_board];
+    ALTER TABLE psa.[configuration] DROP CONSTRAINT IF EXISTS [FK_configuration_status_id];
+    ALTER TABLE psa.[configuration] DROP CONSTRAINT IF EXISTS [FK_configuration_type_id];
     ALTER TABLE psa.[workflow_action] DROP CONSTRAINT IF EXISTS [FK_workflow_action_target_id];
     ALTER TABLE psa.[notification] DROP CONSTRAINT IF EXISTS [FK_notification_page_id];
     ALTER TABLE psa.[notification] DROP CONSTRAINT IF EXISTS [FK_notification_target_id];
@@ -3825,6 +3910,10 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[configuration_answer];
+    DROP TABLE IF EXISTS psa.[configuration_question];
+    DROP TABLE IF EXISTS psa.[configuration_status];
+    DROP TABLE IF EXISTS psa.[configuration_type];
     DROP TABLE IF EXISTS psa.[mail_exclusion];
     DROP TABLE IF EXISTS psa.[calendar_feed];
     DROP TABLE IF EXISTS psa.[member];

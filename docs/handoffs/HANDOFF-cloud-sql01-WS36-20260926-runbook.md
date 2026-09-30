@@ -998,6 +998,27 @@ first is the audit trail's page, with one schema step by the sitting-1 road
   --reset` on a spare database: 116 tables, 1157 columns, 51 CREATE INDEX, 4 triggers). **Pass, for Dada:**
   Setup › Email connector lists the helpdesk board's address; *Exclude* a
   vendor's domain and the row appears with who added it.
+- **Schema 056, in the same sitting: `configuration_type`,
+  `configuration_status`, `configuration_question`, `configuration_answer`,
+  and `configuration.type_id` / `status_id`.** Types and statuses as setup
+  tables, each counting as one of 021's codes so nothing that reads
+  `config_type` or `status` changes meaning; questions per type, answered
+  on the configuration's page. The seven and the three are written as rows
+  on first use, not seeded. **Pass after 054 to 056:** tables **116 → 120**,
+  columns **1157 → 1179** (056 adds 22: 5 in `configuration_type`, 5 in
+  `configuration_status`, 7 in `configuration_question`, 3 in
+  `configuration_answer`, 2 on `configuration`), indexes **51 → 52**
+  (`ix_configuration_question_type`), triggers 4 → 4, no existing row count
+  changed (MEASURED on the test container at this head after `init --reset`
+  on a spare database: 120 tables, 1179 columns, 52 CREATE INDEX, 4 triggers). **Pass, for Dada:** Setup ›
+  Configuration types lists the seven with *counts as itself*; add
+  *Infusion pump* counting as *Other* with a needed *Asset tag* question;
+  add a pump by hand on Configurations and its page shows an *Infusion pump
+  details* card that refuses to save without the tag; the Configurations
+  tiles show *Infusion pump* once one exists.
+- **Counts:** 604 tests at this head (SQLite OK, 1 skipped). The whole suite
+  ran on SQL Server in this container with 054 to 056: 604 run, OK, 2
+  skipped, 13.6 minutes (MEASURED, 30 Sep). The drift gate passes.
 
 ## When a step does not pass
 

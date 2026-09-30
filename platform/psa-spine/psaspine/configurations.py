@@ -140,6 +140,272 @@ def import_ad_computers(conn: sqlite3.Connection, path: str | Path, *, entity_id
     return counts
 
 
+# ------------------------------------------------ types, statuses, questions (056)
+
+TYPE_WORDS = {"WORKSTATION": "Workstation", "LAPTOP": "Laptop", "SERVER": "Server", "PRINTER": "Printer",
+              "NETWORK": "Network", "MOBILE": "Mobile", "OTHER": "Other"}
+STATUS_WORDS = {"ACTIVE": "Active", "INACTIVE": "Inactive", "RETIRED": "Retired"}
+FIELD_TYPES = {"TEXT": "Text", "NUMBER": "Number", "DATE": "Date", "CHECKBOX": "Yes / no"}
+
+
+def ensure_vocabulary(conn: sqlite3.Connection) -> None:
+    """The seven types and three statuses of 021 as rows, once, each
+    mapping to itself. OR IGNORE: two first requests may both find the
+    table empty."""
+    for i, (code, word) in enumerate(TYPE_WORDS.items()):
+        conn.execute("INSERT OR IGNORE INTO configuration_type (type_id, name, maps_to, inactive, sort_order) VALUES (?,?,?,0,?)",
+                     (code, word, code, i * 10))
+    for i, (code, word) in enumerate(STATUS_WORDS.items()):
+        conn.execute("INSERT OR IGNORE INTO configuration_status (status_id, name, maps_to, inactive, sort_order) VALUES (?,?,?,0,?)",
+                     (code, word, code, i * 10))
+
+
+def types(conn: sqlite3.Connection, *, all_rows: bool = False) -> list[dict]:
+    ensure_vocabulary(conn)
+    return [dict(r) for r in conn.execute(
+        "SELECT t.*, (SELECT COUNT(*) FROM configuration_question q WHERE q.type_id = t.type_id AND q.inactive = 0) AS questions,"
+        "       (SELECT COUNT(*) FROM configuration c WHERE COALESCE(c.type_id, c.config_type) = t.type_id) AS used"
+        "  FROM configuration_type t" + ("" if all_rows else " WHERE t.inactive = 0") + " ORDER BY t.sort_order, t.name")]
+
+
+def statuses(conn: sqlite3.Connection, *, all_rows: bool = False) -> list[dict]:
+    ensure_vocabulary(conn)
+    return [dict(r) for r in conn.execute(
+        "SELECT s.*, (SELECT COUNT(*) FROM configuration c WHERE COALESCE(c.status_id, c.status) = s.status_id) AS used"
+        "  FROM configuration_status s" + ("" if all_rows else " WHERE s.inactive = 0") + " ORDER BY s.sort_order, s.name")]
+
+
+def type_names(conn: sqlite3.Connection) -> dict:
+    return {r["type_id"]: r["name"] for r in types(conn, all_rows=True)}
+
+
+def status_names(conn: sqlite3.Connection) -> dict:
+    return {r["status_id"]: r["name"] for r in statuses(conn, all_rows=True)}
+
+
+def type_word(conn: sqlite3.Connection, row) -> str:
+    """The name of a configuration's type: the setup table's, else 021's word."""
+    key = (row["type_id"] if "type_id" in row.keys() else None) or row["config_type"]
+    return type_names(conn).get(key) or TYPE_WORDS.get(row["config_type"], row["config_type"].title())
+
+
+def status_word(conn: sqlite3.Connection, row) -> str:
+    key = (row["status_id"] if "status_id" in row.keys() else None) or row["status"]
+    return status_names(conn).get(key) or STATUS_WORDS.get(row["status"], row["status"].title())
+
+
+def _slug(name: str, prefix: str) -> str:
+    base = re.sub(r"[^A-Z0-9]+", "_", (name or "").upper()).strip("_")[:40]
+    return f"{prefix}_{base}" if base else prefix
+
+
+def _vocab_name(name, what) -> str:
+    n = " ".join(str(name or "").split())[:80]
+    if not n:
+        raise ValueError(f"A {what} needs a name.")
+    return n
+
+
+def add_type(conn: sqlite3.Connection, name: str, maps_to: str, *, at: datetime, actor: str) -> str:
+    ensure_vocabulary(conn)
+    n = _vocab_name(name, "type")
+    if maps_to not in TYPE_WORDS:
+        raise ValueError("A type counts as one of the seven kinds the reports know: workstation, laptop, server, printer, network, mobile or other.")
+    if conn.execute("SELECT 1 FROM configuration_type WHERE LOWER(name) = LOWER(?)", (n,)).fetchone():
+        raise ValueError("A type with that name exists.")
+    tid = _slug(n, "CT")
+    if conn.execute("SELECT 1 FROM configuration_type WHERE type_id = ?", (tid,)).fetchone():
+        tid = tid + "_" + uuid.uuid4().hex[:4].upper()
+    order = conn.execute("SELECT COALESCE(MAX(sort_order), 0) + 10 FROM configuration_type").fetchone()[0]
+    conn.execute("INSERT INTO configuration_type (type_id, name, maps_to, inactive, sort_order) VALUES (?,?,?,0,?)", (tid, n, maps_to, order))
+    db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor, action="CONFIGURATION_TYPE",
+             subject_kind="configuration_type", subject_id=tid, detail=f"added {n}, counts as {maps_to}")
+    return tid
+
+
+def save_type(conn: sqlite3.Connection, type_id: str, *, at: datetime, actor: str, name=None, maps_to=None, inactive=None) -> str:
+    row = conn.execute("SELECT * FROM configuration_type WHERE type_id = ?", (type_id,)).fetchone()
+    if row is None:
+        raise LookupError("No such type.")
+    changes = []
+    if name is not None and _vocab_name(name, "type") != row["name"]:
+        changes.append(("name", _vocab_name(name, "type")))
+    if maps_to is not None and maps_to != row["maps_to"]:
+        if maps_to not in TYPE_WORDS:
+            raise ValueError("No such kind.")
+        if type_id in TYPE_WORDS:
+            raise ValueError("One of the seven kinds counts as itself.")
+        changes.append(("maps_to", maps_to))
+    if inactive is not None and int(bool(inactive)) != row["inactive"]:
+        if inactive and type_id in TYPE_WORDS:
+            raise ValueError("One of the seven kinds is not retired: it is what the others count as.")
+        changes.append(("inactive", int(bool(inactive))))
+    for col, val in changes:
+        conn.execute(f"UPDATE configuration_type SET {col} = ? WHERE type_id = ?", (val, type_id))
+        if col == "maps_to":
+            conn.execute("UPDATE configuration SET config_type = ? WHERE type_id = ?", (val, type_id))
+    if changes:
+        db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor, action="CONFIGURATION_TYPE",
+                 subject_kind="configuration_type", subject_id=type_id, detail="; ".join(f"{c} -> {v}" for c, v in changes))
+    return "saved" if changes else "nothing changed"
+
+
+def add_status(conn: sqlite3.Connection, name: str, maps_to: str, *, at: datetime, actor: str) -> str:
+    ensure_vocabulary(conn)
+    n = _vocab_name(name, "status")
+    if maps_to not in STATUS_WORDS:
+        raise ValueError("A status counts as active, inactive or retired.")
+    if conn.execute("SELECT 1 FROM configuration_status WHERE LOWER(name) = LOWER(?)", (n,)).fetchone():
+        raise ValueError("A status with that name exists.")
+    sid = _slug(n, "CS")
+    if conn.execute("SELECT 1 FROM configuration_status WHERE status_id = ?", (sid,)).fetchone():
+        sid = sid + "_" + uuid.uuid4().hex[:4].upper()
+    order = conn.execute("SELECT COALESCE(MAX(sort_order), 0) + 10 FROM configuration_status").fetchone()[0]
+    conn.execute("INSERT INTO configuration_status (status_id, name, maps_to, inactive, sort_order) VALUES (?,?,?,0,?)", (sid, n, maps_to, order))
+    db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor, action="CONFIGURATION_STATUS",
+             subject_kind="configuration_status", subject_id=sid, detail=f"added {n}, counts as {maps_to}")
+    return sid
+
+
+def save_status(conn: sqlite3.Connection, status_id: str, *, at: datetime, actor: str, name=None, inactive=None) -> str:
+    row = conn.execute("SELECT * FROM configuration_status WHERE status_id = ?", (status_id,)).fetchone()
+    if row is None:
+        raise LookupError("No such status.")
+    changes = []
+    if name is not None and _vocab_name(name, "status") != row["name"]:
+        changes.append(("name", _vocab_name(name, "status")))
+    if inactive is not None and int(bool(inactive)) != row["inactive"]:
+        if inactive and status_id in STATUS_WORDS:
+            raise ValueError("One of the three statuses is not retired.")
+        changes.append(("inactive", int(bool(inactive))))
+    for col, val in changes:
+        conn.execute(f"UPDATE configuration_status SET {col} = ? WHERE status_id = ?", (val, status_id))
+    if changes:
+        db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor, action="CONFIGURATION_STATUS",
+                 subject_kind="configuration_status", subject_id=status_id, detail="; ".join(f"{c} -> {v}" for c, v in changes))
+    return "saved" if changes else "nothing changed"
+
+
+def resolve_type(conn: sqlite3.Connection, value: str) -> tuple[str, str]:
+    """(type_id, the 021 code it counts as) for a type id or a code."""
+    ensure_vocabulary(conn)
+    row = conn.execute("SELECT type_id, maps_to FROM configuration_type WHERE type_id = ? AND inactive = 0", ((value or "").strip(),)).fetchone()
+    if row is None:
+        raise ValueError(f"unknown type {value!r}")
+    return row["type_id"], row["maps_to"]
+
+
+def resolve_status(conn: sqlite3.Connection, value: str) -> tuple[str, str]:
+    ensure_vocabulary(conn)
+    row = conn.execute("SELECT status_id, maps_to FROM configuration_status WHERE status_id = ? AND inactive = 0", ((value or "").strip(),)).fetchone()
+    if row is None:
+        raise ValueError(f"unknown status {value!r}")
+    return row["status_id"], row["maps_to"]
+
+
+def questions(conn: sqlite3.Connection, type_id: str, *, all_rows: bool = False) -> list[dict]:
+    return [dict(r) for r in conn.execute(
+        "SELECT * FROM configuration_question WHERE type_id = ?" + ("" if all_rows else " AND inactive = 0")
+        + " ORDER BY sort_order, question_id", (type_id,))]
+
+
+def add_question(conn: sqlite3.Connection, type_id: str, *, label: str, field_type: str, required=False, at: datetime, actor: str) -> int:
+    if conn.execute("SELECT 1 FROM configuration_type WHERE type_id = ?", (type_id,)).fetchone() is None:
+        raise LookupError("No such type.")
+    lab = " ".join(str(label or "").split())[:120]
+    if not lab:
+        raise ValueError("A question needs a label.")
+    if field_type not in FIELD_TYPES:
+        raise ValueError("A question is text, a number, a date, or yes / no.")
+    if conn.execute("SELECT 1 FROM configuration_question WHERE type_id = ? AND LOWER(label) = LOWER(?) AND inactive = 0", (type_id, lab)).fetchone():
+        raise ValueError("That question is already asked of this type.")
+    order = conn.execute("SELECT COALESCE(MAX(sort_order), 0) + 10 FROM configuration_question WHERE type_id = ?", (type_id,)).fetchone()[0]
+    cur = conn.execute("INSERT INTO configuration_question (type_id, label, field_type, required, sort_order, inactive) VALUES (?,?,?,?,?,0)",
+                       (type_id, lab, field_type, int(bool(required)), order))
+    db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor, action="CONFIGURATION_TYPE",
+             subject_kind="configuration_type", subject_id=type_id, detail=f"question added: {lab} ({field_type}{', required' if required else ''})")
+    return cur.lastrowid
+
+
+def save_question(conn: sqlite3.Connection, question_id: int, *, at: datetime, actor: str, label=None, required=None, inactive=None) -> str:
+    row = conn.execute("SELECT * FROM configuration_question WHERE question_id = ?", (question_id,)).fetchone()
+    if row is None:
+        raise LookupError("No such question.")
+    changes = []
+    if label is not None:
+        lab = " ".join(str(label).split())[:120]
+        if not lab:
+            raise ValueError("A question needs a label.")
+        if lab != row["label"]:
+            changes.append(("label", lab))
+    if required is not None and int(bool(required)) != row["required"]:
+        changes.append(("required", int(bool(required))))
+    if inactive is not None and int(bool(inactive)) != row["inactive"]:
+        changes.append(("inactive", int(bool(inactive))))
+    for col, val in changes:
+        conn.execute(f"UPDATE configuration_question SET {col} = ? WHERE question_id = ?", (val, question_id))
+    if changes:
+        db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor, action="CONFIGURATION_TYPE",
+                 subject_kind="configuration_type", subject_id=row["type_id"],
+                 detail=f"question {row['label']}: " + "; ".join(f"{c} -> {v}" for c, v in changes))
+    return "saved" if changes else "nothing changed"
+
+
+def answers(conn: sqlite3.Connection, configuration_id: str) -> list[dict]:
+    """The questions the configuration's type asks, each with its answer."""
+    row = conn.execute("SELECT type_id, config_type FROM configuration WHERE configuration_id = ?", (configuration_id,)).fetchone()
+    if row is None:
+        raise LookupError(f"no configuration {configuration_id!r}")
+    tid = row["type_id"] or row["config_type"]
+    given = {r["question_id"]: r["value"] for r in conn.execute(
+        "SELECT question_id, value FROM configuration_answer WHERE configuration_id = ?", (configuration_id,))}
+    return [{**q, "value": given.get(q["question_id"])} for q in questions(conn, tid)]
+
+
+def _clean_answer(q: dict, raw) -> str | None:
+    v = " ".join(str(raw if raw is not None else "").split())
+    if q["field_type"] == "CHECKBOX":
+        return "1" if v.lower() in ("1", "on", "yes", "true") else ("0" if v.lower() in ("0", "no", "false", "") else None)
+    if not v:
+        return None
+    if q["field_type"] == "NUMBER":
+        try:
+            return f"{float(v.replace(',', '')):g}"
+        except ValueError:
+            raise ValueError(f"{q['label']} is a number.") from None
+    if q["field_type"] == "DATE":
+        try:
+            return date.fromisoformat(v).isoformat()
+        except ValueError:
+            raise ValueError(f"{q['label']} is a date, e.g. 2026-12-31.") from None
+    return v[:400]
+
+
+def save_answers(conn: sqlite3.Connection, configuration_id: str, values: dict, *, at: datetime, actor: str) -> list[str]:
+    """Write the answers a form posted, one per question of the type: a
+    question missing from `values` is an empty answer (a browser posts no
+    key for a blank box or an unticked box), and a required question with
+    no answer is refused. Returns what changed."""
+    changed = []
+    cleaned = []
+    for q in answers(conn, configuration_id):                  # every answer checked before any is written
+        new = _clean_answer(q, values.get(str(q["question_id"])))
+        if q["required"] and (new is None or (q["field_type"] == "CHECKBOX" and new == "0")):
+            raise ValueError(f"{q['label']} is needed for a {type_word(conn, conn.execute('SELECT type_id, config_type FROM configuration WHERE configuration_id = ?', (configuration_id,)).fetchone()).lower()}.")
+        cleaned.append((q, new))
+    for q, new in cleaned:
+        if new != q["value"]:
+            conn.execute("DELETE FROM configuration_answer WHERE configuration_id = ? AND question_id = ?", (configuration_id, q["question_id"]))
+            if new is not None:
+                conn.execute("INSERT INTO configuration_answer (configuration_id, question_id, value) VALUES (?,?,?)",
+                             (configuration_id, q["question_id"], new))
+            changed.append(f"{q['label']}: {q['value'] if q['value'] is not None else '-'} -> {new if new is not None else '-'}")
+    if changed:
+        db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor, action="CONFIGURATION_UPDATE",
+                 subject_kind="configuration", subject_id=configuration_id, detail="; ".join(changed)[:900])
+    return changed
+
+
 def create(conn: sqlite3.Connection, *, name: str, entity_id: str, config_type: str,
            at: datetime, actor: str, contact_id: str | None = None, serial_number: str | None = None,
            manufacturer: str | None = None, model: str | None = None, description: str | None = None,
@@ -152,8 +418,7 @@ def create(conn: sqlite3.Connection, *, name: str, entity_id: str, config_type: 
         raise ValueError("a configuration needs a name")
     if len(name) > 100:
         raise ValueError("a name is at most 100 characters")
-    if config_type not in TYPES:
-        raise ValueError(f"unknown type {config_type!r}")
+    type_id, config_type = resolve_type(conn, config_type)
     if conn.execute("SELECT 1 FROM entity WHERE entity_id = ?", (entity_id,)).fetchone() is None:
         raise LookupError(f"no company {entity_id!r}")
     if conn.execute("SELECT 1 FROM configuration WHERE entity_id = ? AND LOWER(name) = LOWER(?)",
@@ -174,11 +439,11 @@ def create(conn: sqlite3.Connection, *, name: str, entity_id: str, config_type: 
     stamp = at.isoformat(sep=" ", timespec="seconds")
     conn.execute(
         "INSERT INTO configuration (configuration_id, entity_id, name, config_type, status, contact_id,"
-        " site_id, manufacturer, model, serial_number, description, remote_session_id, source, created_at)"
-        " VALUES (?,?,?,?,'ACTIVE',?,?,?,?,?,?,?,'MANUAL',?)",
+        " site_id, manufacturer, model, serial_number, description, remote_session_id, source, created_at, type_id, status_id)"
+        " VALUES (?,?,?,?,'ACTIVE',?,?,?,?,?,?,?,'MANUAL',?,?,'ACTIVE')",
         (cid, entity_id, name, config_type, contact_id or None, site_id or None,
          (manufacturer or "").strip() or None, (model or "").strip() or None,
-         (serial_number or "").strip() or None, (description or "").strip() or None, session, stamp))
+         (serial_number or "").strip() or None, (description or "").strip() or None, session, stamp, type_id))
     db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor,
              action="CONFIGURATION_CREATE", subject_kind="configuration", subject_id=cid,
              detail=f"{name} ({config_type.lower()}) at {entity_id}, by hand")
@@ -237,14 +502,14 @@ def update(conn: sqlite3.Connection, configuration_id: str, *, at: datetime, act
                     changes["name"] = new_name[:100]
             if description is not None and (description.strip() or None) != row["description"]:
                 changes["description"] = description.strip() or None
-    if config_type is not None and config_type != row["config_type"]:
-        if config_type not in TYPES:
-            raise ValueError(f"unknown type {config_type!r}")
-        changes["config_type"] = config_type
-    if status is not None and status != row["status"]:
-        if status not in STATUSES:
-            raise ValueError(f"unknown status {status!r}")
-        changes["status"] = status
+    if config_type is not None and config_type != (row["type_id"] or row["config_type"]):
+        type_id, code = resolve_type(conn, config_type)
+        changes["type_id"] = type_id
+        changes["config_type"] = code
+    if status is not None and status != (row["status_id"] or row["status"]):
+        status_id, code = resolve_status(conn, status)
+        changes["status_id"] = status_id
+        changes["status"] = code
     if contact_id is not None and (contact_id or None) != row["contact_id"]:
         if contact_id and conn.execute(
                 "SELECT 1 FROM contact WHERE contact_id = ? AND entity_id = ?",

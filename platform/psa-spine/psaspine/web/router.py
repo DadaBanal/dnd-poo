@@ -21,6 +21,7 @@ from .views import calendar as calendar_view
 from .views import audit as audit_view
 from .views import tokens as tokens_view
 from .views import mail as mail_view
+from .views import cmdbsetup as cmdbsetup_view
 from .views import kb as kb_view
 from .views import projects as projects_view
 from .views import reportwriter as rw_view
@@ -91,6 +92,7 @@ ROUTES = [
     ("POST", "/configurations/new", configurations.create),
     ("GET", "/configuration/<configuration_id>", configurations.detail),
     ("POST", "/configuration/<configuration_id>/update", configurations.update),
+    ("POST", "/configuration/<configuration_id>/answers", configurations.answers),
     ("GET", "/dispatch", dispatch.index),
     ("GET", "/schedule", schedule_view.index),
     ("GET", "/time", timesheets_view.index),
@@ -110,6 +112,13 @@ ROUTES = [
     ("POST", "/agreement/<agreement_id>/status", agreements_view.set_status),
     ("POST", "/agreement/<agreement_id>/item", agreements_view.item_add),
     ("POST", "/agreement/<agreement_id>/item/remove", agreements_view.item_remove),
+    ("GET", "/admin/configuration-types", cmdbsetup_view.index),
+    ("POST", "/admin/configuration-types/type", cmdbsetup_view.type_add),
+    ("POST", "/admin/configuration-types/type/<type_id>", cmdbsetup_view.type_save),
+    ("POST", "/admin/configuration-types/type/<type_id>/question", cmdbsetup_view.question_add),
+    ("POST", "/admin/configuration-types/status", cmdbsetup_view.status_add),
+    ("POST", "/admin/configuration-types/status/<status_id>", cmdbsetup_view.status_save),
+    ("POST", "/admin/configuration-types/question/<question_id>", cmdbsetup_view.question_save),
     ("GET", "/admin/mail", mail_view.index),
     ("POST", "/admin/mail/exclude", mail_view.exclude),
     ("POST", "/admin/mail/exclude/remove", mail_view.exclude_remove),

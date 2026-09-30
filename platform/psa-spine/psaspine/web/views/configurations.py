@@ -106,7 +106,7 @@ def _list_filters(ctx):
     """The list's filters, shared by the page and its maintenance export."""
     q = ctx.request.query
     text = q.get("q", "").strip()
-    kind = q.get("type", "") if q.get("type", "") in cmdb.TYPES else ""
+    kind = q.get("type", "") if q.get("type", "") in cmdb.type_names(ctx.conn) else ""
     status = q.get("status", "ACTIVE")
     if status not in cmdb.STATUSES + ("ALL",):
         status = "ACTIVE"
@@ -118,7 +118,7 @@ def _list_filters(ctx):
         where.append("(c.name LIKE ? OR c.serial_number LIKE ? OR c.description LIKE ? OR c.dns_name LIKE ?)")
         params += [f"%{text}%"] * 4
     if kind:
-        where.append("c.config_type = ?"); params.append(kind)
+        where.append("COALESCE(c.type_id, c.config_type) = ?"); params.append(kind)
     if status != "ALL":
         where.append("c.status = ?"); params.append(status)
     if entity:
@@ -155,8 +155,8 @@ def index(ctx):
         "  LEFT JOIN contact ct ON ct.contact_id = c.contact_id"
         f" WHERE {' AND '.join(where)} ORDER BY {SORTS[sort]} LIMIT 500", params).fetchall()
     total = ctx.conn.execute(f"SELECT COUNT(*) FROM configuration c WHERE {' AND '.join(where)}", params).fetchone()[0]
-    counts = {r["config_type"]: r["n"] for r in ctx.conn.execute(
-        "SELECT config_type, COUNT(*) AS n FROM configuration WHERE status = 'ACTIVE' GROUP BY config_type")}
+    counts = {r["k"]: r["n"] for r in ctx.conn.execute(
+        "SELECT COALESCE(type_id, config_type) AS k, COUNT(*) AS n FROM configuration WHERE status = 'ACTIVE' GROUP BY COALESCE(type_id, config_type)")}
     active = sum(counts.values())
 
     def keep(**kw):
@@ -164,8 +164,9 @@ def index(ctx):
         d.update(kw)
         return "/configurations?" + urllib.parse.urlencode({k: v for k, v in d.items() if v and not (k == "status" and v == "ACTIVE")})
     tiles = (f"<a class='tile{' on' if not kind else ''}' href='{keep(type='')}'><div class=n>{active}</div><div class=l>Active, all types</div></a>"
-             + "".join(f"<a class='tile{' on' if kind == k else ''}' href='{keep(type=k)}'><div class=n>{counts.get(k, 0)}</div>"
-                       f"<div class=l>{v}</div></a>" for k, v in TYPE_WORDS.items()))
+             + "".join(f"<a class='tile{' on' if kind == ty['type_id'] else ''}' href='{keep(type=ty['type_id'])}'><div class=n>{counts.get(ty['type_id'], 0)}</div>"
+                       f"<div class=l>{t.esc(TYPE_WORDS.get(ty['type_id'], ty['name']))}</div></a>"
+                       for ty in cmdb.types(ctx.conn) if ty["type_id"] in TYPE_WORDS or counts.get(ty["type_id"])))
     wc = cmdb.warranty_counts(ctx.conn, ctx.now.date())
     tiles += (f"<a class='tile{' on' if warranty == 'expiring' else ''}' href='{keep(warranty='' if warranty == 'expiring' else 'expiring')}'>"
               f"<div class=n>{wc['expiring']}</div><div class=l>Warranty ends in 90 days</div></a>"
@@ -184,9 +185,9 @@ def index(ctx):
         return f"<th><a href='{keep(sort=key)}'{' class=on' if sort == key else ''}>{label}</a></th>"
     body_rows = "".join(
         f"<tr><td><a href='/configuration/{t.esc(r['configuration_id'])}'>{t.esc(r['name'])}</a>"
-        + (f" <span class=chip>{t.esc(r['status'].lower())}</span>" if r["status"] != "ACTIVE" else "")
+        + (f" <span class=chip>{t.esc(cmdb.status_word(ctx.conn, r).lower())}</span>" if r["status"] != "ACTIVE" else "")
         + (" <span class=muted>by hand</span>" if r["source"] == "MANUAL" else "") + "</td>"
-        f"<td>{t.esc(r['entity_name'])}</td><td>{t.esc(r['config_type'].title())}</td>"
+        f"<td>{t.esc(r['entity_name'])}</td><td>{t.esc(cmdb.type_word(ctx.conn, r))}</td>"
         f"<td>{t.esc(r['os_name'] or '—')}</td><td>{t.esc(r['contact_name'] or '—')}</td>"
         f"<td>{t.esc((r['last_seen_at'] or '—')[:10])}</td><td>{_warranty_cell(ctx, r)}</td>"
         f"<td class=num>{r['open_tickets'] or ''}</td><td>{links_html(ctx, 'CONFIGURATION', r)}</td></tr>" for r in rows)
@@ -206,7 +207,7 @@ def index(ctx):
             "<form method=post action='/configurations/new' class=fields><div class=grid2>"
             "<div><label>Name</label><input name=name required maxlength=100 placeholder='PRN-WARD3-01'></div>"
             f"<div><label>Company</label><select name=entity_id>{_opts([(e['entity_id'], e['name']) for e in companies], 'PMC')}</select></div>"
-            f"<div><label>Type</label><select name=config_type>{_opts([(x, x.title()) for x in cmdb.TYPES], 'PRINTER')}</select></div>"
+            f"<div><label>Type</label><select name=config_type>{_opts([(x['type_id'], x['name']) for x in cmdb.types(ctx.conn)], 'PRINTER')}</select></div>"
             "<div><label>Serial</label><input name=serial_number maxlength=100></div>"
             "<div><label>Manufacturer</label><input name=manufacturer maxlength=100></div>"
             "<div><label>Model</label><input name=model maxlength=100></div>"
@@ -295,12 +296,13 @@ def detail(ctx, configuration_id: str):
         f"<li><a href='/ticket/{t.esc(r['work_item_id'])}'>{t.esc(r['work_item_id'])}</a> {t.esc(r['summary'])} "
         f"<span class=muted>· {t.esc(r['board_name'])} · closed {t.esc((r['closed_at'] or '')[:10])}</span></li>"
         for r in closed) + "</ul>") if closed else "<div class=muted>None.</div>"
-    facts = "".join(f"<dt>{label}</dt><dd>{t.esc(str(c[key]) if c[key] else '—')}</dd>" for label, key in (
-        ("Type", "config_type"), ("Status", "status"), ("DNS name", "dns_name"), ("Operating system", "os_name"),
+    facts = (f"<dt>Type</dt><dd>{t.esc(cmdb.type_word(ctx.conn, c))}</dd><dt>Status</dt><dd>{t.esc(cmdb.status_word(ctx.conn, c))}</dd>"
+             + "".join(f"<dt>{label}</dt><dd>{t.esc(str(c[key]) if c[key] else '—')}</dd>" for label, key in (
+        ("DNS name", "dns_name"), ("Operating system", "os_name"),
         ("OS version", "os_version"), ("Manufacturer", "manufacturer"), ("Model", "model"), ("Serial", "serial_number"),
         ("Description", "description"), ("Site", "site_name"), ("ScreenConnect session", "remote_session_id"),
         ("AD object", "ad_object_guid"), ("Source", "source"), ("Added", "created_at"),
-        ("Last synced from AD", "last_synced_at"), ("Last seen in AD", "last_seen_at")))
+        ("Last synced from AD", "last_synced_at"), ("Last seen in AD", "last_seen_at"))))
     facts += (f"<dt>Vendor</dt><dd>{t.esc(c['vendor'] or '—')}</dd><dt>Purchased</dt><dd>{t.esc(c['purchased_on'] or '—')}</dd>"
               f"<dt>Warranty ends</dt><dd>{_warranty_cell(ctx, c)}</dd><dt>Installed</dt><dd>{t.esc(c['installed_on'] or '—')}</dd>"
               f"<dt>Purchase ref</dt><dd>{t.esc(c['purchase_ref'] or '—')}</dd><dt>Location</dt><dd>{t.esc(c['location'] or '—')}</dd>"
@@ -327,8 +329,8 @@ def detail(ctx, configuration_id: str):
             f"<div class=card><h3>{t.icon('flag')}Change</h3><form method=post action='/configuration/"
             f"{t.esc(configuration_id)}/update' class=fields>"
             + (f"<label>Name</label><input name=name value='{t.esc(c['name'])}' maxlength=100>" if manual else "")
-            + f"<label>Type</label><select name=config_type>{_opts([(x, x.title()) for x in cmdb.TYPES], c['config_type'])}</select>"
-            f"<label>Status</label><select name=status>{_opts([(x, x.title()) for x in cmdb.STATUSES], c['status'])}</select>"
+            + f"<label>Type</label><select name=config_type>{_opts([(x['type_id'], x['name']) for x in cmdb.types(ctx.conn)], c['type_id'] or c['config_type'])}</select>"
+            f"<label>Status</label><select name=status>{_opts([(x['status_id'], x['name']) for x in cmdb.statuses(ctx.conn)], c['status_id'] or c['status'])}</select>"
             f"<label>Contact</label><select name=contact_id>{_opts([('', '(none)')] + [(p['contact_id'], p['display_name']) for p in people], c['contact_id'] or '')}</select>"
             + (f"<label>Site</label><select name=site_id>{_opts([('', '(none)')] + [(x['site_id'], x['name']) for x in sites], c['site_id'] or '')}</select>" if sites else "")
             + f"<label>Manufacturer</label><input name=manufacturer value='{t.esc(c['manufacturer'] or '')}' maxlength=100>"
@@ -349,8 +351,8 @@ def detail(ctx, configuration_id: str):
     body = (
         (f"<div class='banner ok'>{t.esc(msg)}</div>" if msg else "")
         + (f"<div class='banner err'>{t.esc(err)}</div>" if err else "")
-        + f"<h1>{t.esc(c['name'])} <span class=chip>{t.esc(c['config_type'].title())}</span>"
-        + (f" <span class=chip>{t.esc(c['status'].lower())}</span>" if c["status"] != "ACTIVE" else "")
+        + f"<h1>{t.esc(c['name'])} <span class=chip>{t.esc(cmdb.type_word(ctx.conn, c))}</span>"
+        + (f" <span class=chip>{t.esc(cmdb.status_word(ctx.conn, c).lower())}</span>" if c["status"] != "ACTIVE" else "")
         + "</h1>"
         f"<p class=sub><a href='/company/{t.esc(c['entity_id'])}'>{t.esc(c['entity_name'])}</a>"
         + (f" · <a href='/contact/{t.esc(c['contact_id'])}'>{t.esc(c['contact_name'])}</a>" if c["contact_id"] else "")
@@ -363,8 +365,53 @@ def detail(ctx, configuration_id: str):
         f"<div><div class=card><h3>{t.icon('ticket')}Open tickets</h3>{tickets_html}{_hidden_note(hidden)}</div>"
         f"<div class=card><h3>{t.icon('check')}Recently closed</h3>{closed_html}</div>"
         f"<div class=card><h3>{t.icon('clock')}History</h3>{_history(ctx, configuration_id)}</div></div>"
-        f"<div><div class=card><h3>{t.icon('monitor')}Configuration</h3><dl class=kv>{facts}</dl></div>{person}{edit}</div></div>")
+        f"<div><div class=card><h3>{t.icon('monitor')}Configuration</h3><dl class=kv>{facts}</dl></div>{_answers_card(ctx, c)}{person}{edit}</div></div>")
     return Response(body=t.page(c["name"], body, user=ctx.user, active="companies"))
+
+
+def _answers_card(ctx, c) -> str:
+    """The questions the configuration's type asks (056), with their answers;
+    a form for a member who may work a board."""
+    qs = cmdb.answers(ctx.conn, c["configuration_id"])
+    if not qs:
+        return ""
+    if not _may_work(ctx):
+        rows = "".join(f"<dt>{t.esc(q['label'])}</dt><dd>{t.esc(('Yes' if q['value'] == '1' else 'No') if q['field_type'] == 'CHECKBOX' else (q['value'] or '—'))}</dd>" for q in qs)
+        return f"<div class=card><h3>{t.icon('note')}{t.esc(cmdb.type_word(ctx.conn, c))} details</h3><dl class=kv>{rows}</dl></div>"
+    fields = []
+    for q in qs:
+        n = f"q{q['question_id']}"
+        star = " <span class=muted>(needed)</span>" if q["required"] else ""
+        if q["field_type"] == "CHECKBOX":
+            fields.append(f"<label><input type=checkbox name='{n}' value=1{' checked' if q['value'] == '1' else ''}> {t.esc(q['label'])}{star}</label>")
+        elif q["field_type"] == "DATE":
+            fields.append(f"<label>{t.esc(q['label'])}{star}</label><input type=date name='{n}' value='{t.esc(q['value'] or '')}'>")
+        elif q["field_type"] == "NUMBER":
+            fields.append(f"<label>{t.esc(q['label'])}{star}</label><input name='{n}' inputmode=decimal value='{t.esc(q['value'] or '')}'>")
+        else:
+            fields.append(f"<label>{t.esc(q['label'])}{star}</label><input name='{n}' maxlength=400 value='{t.esc(q['value'] or '')}'>")
+    return (f"<div class=card><h3>{t.icon('note')}{t.esc(cmdb.type_word(ctx.conn, c))} details</h3>"
+            f"<form method=post action='/configuration/{t.esc(c['configuration_id'])}/answers' class=fields>" + "".join(fields)
+            + "<div style='margin-top:12px'><button type=submit>Save</button></div></form></div>")
+
+
+def answers(ctx, configuration_id: str):
+    from .. import HttpError, redirect
+    _fulfiller(ctx)
+    if not _may_work(ctx):
+        raise HttpError("403 Forbidden", "Changing a configuration takes WORK on a board.")
+    f = ctx.request.form()
+    base = f"/configuration/{urllib.parse.quote(configuration_id)}?"
+    values = {k[1:]: v for k, v in f.items() if k.startswith("q") and k[1:].isdigit()}
+    try:
+        changed = cmdb.save_answers(ctx.conn, configuration_id, values, at=ctx.now, actor=ctx.user.id)
+    except LookupError:
+        raise HttpError("404 Not Found", "No such configuration.")
+    except ValueError as exc:
+        ctx.conn.rollback()
+        return redirect(base + urllib.parse.urlencode({"err": str(exc)}))
+    ctx.conn.commit()
+    return redirect(base + urllib.parse.urlencode({"msg": "Saved." if changed else "Nothing changed."}))
 
 
 def update(ctx, configuration_id: str):

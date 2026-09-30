@@ -1005,6 +1005,19 @@
   "mail_exclusion.pattern": "NAME",
   "mail_exclusion.note": "NAME",
   "mail_exclusion.created_at": "TIMESTAMP_TEXT",
-  "mail_exclusion.created_by": "PERSON"
+  "mail_exclusion.created_by": "PERSON",
+  "configuration_type.type_id": "ID",
+  "configuration_type.name": "NAME",
+  "configuration_type.maps_to": "CODE",
+  "configuration_status.status_id": "ID",
+  "configuration_status.name": "NAME",
+  "configuration_status.maps_to": "CODE",
+  "configuration_question.type_id": "ID",
+  "configuration_question.label": "NAME",
+  "configuration_question.field_type": "CODE",
+  "configuration_answer.configuration_id": "ID",
+  "configuration_answer.value": "NAME",
+  "configuration.type_id": "ID",
+  "configuration.status_id": "ID"
  }
 }

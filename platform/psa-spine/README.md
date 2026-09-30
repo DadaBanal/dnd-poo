@@ -33,7 +33,7 @@ python3 -m psaspine init spine.db
 python3 -m psaspine import spine.db /path/to/PMC_Workstream_Register_YYYYMMDD.csv --run-id r1
 python3 -m psaspine import-tickets spine.db /path/to/desk-export.csv --run-id desk-1
 python3 -m psaspine report spine.db --out ./out --run-id desk-1 --capacity-hours 160
-python3 tests/test_spine.py          # 602 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
+python3 tests/test_spine.py          # 604 tests, on SQLite; PSA_TEST_DB=… runs them on SQL Server
 python3 tests/smoke.py               # end to end: imports, reports, intake, backup, desk
 ```
 
@@ -945,6 +945,28 @@ minted deliberately, and every list and read on that board writes
 `RESTRICTED_READ` as a person's does. The wrong scope is a 403 that names
 the scope needed; another board's ticket is a 404 a caller cannot tell from
 none.
+
+## Configuration types, statuses and questions (056, 30 Sep 2026)
+
+021 fixed seven configuration types and three statuses in a CHECK. A
+hospital's CMDB outgrows that the day biomedical devices join it: an
+infusion pump is not *Other*, and what is asked of it (an asset tag, a last
+calibration date) is not asked of a printer. **Setup › Configuration
+types** (`/admin/configuration-types`) adds a type and says which of the
+seven kinds it **counts as** (`configuration_type.maps_to`), adds a status
+and says which of the three it counts as, renames, retires, and gives a
+type its **questions** (`configuration_question`: text, number, date or
+yes/no, needed or not). The seven and the three are rows too, written on
+first use and counting as themselves; they cannot be retired, since they
+are what the others count as. A configuration carries both the setup
+table's key (`type_id`, `status_id`) and the 021 code it counts as
+(`config_type`, `status`), so every report, filter, CSV and API shape that
+read the codes keeps its meaning, and a type that changes what it counts
+as carries its configurations with it. The configuration's page shows the
+type's questions in a *details* card; a member who may work a board
+answers them, every answer is checked before any is written, a needed one
+cannot be left blank, and the change is audited like any other. The list's
+tiles and type filter read the setup table.
 
 ## Setup › Email connector (055, 30 Sep 2026)
 

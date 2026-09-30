@@ -11434,5 +11434,118 @@ class MailSetupTest(unittest.TestCase):
         self.assertIn("href='/admin/mail'", setup_page)
 
 
+
+
+class ConfigurationTypesTest(unittest.TestCase):
+    """056: configuration types and statuses as setup tables, each counting
+    as one of 021's codes, with the questions a type asks."""
+
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+
+    def setUp(self) -> None:
+        WebWSGITest.setUp(self)
+        self.addCleanup(self.tmp.cleanup)
+        self.at = datetime(2026, 9, 30, 10)
+        self.alice = self._cookie_for("alice")
+        self.root = self._cookie_for("root", is_sysadmin=True)
+
+    def _conn(self):
+        conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)
+        return conn
+
+    def test_a_new_type_counts_as_one_of_the_seven_and_asks_its_own_questions(self):
+        from psaspine import configurations as cmdb
+        conn = self._conn()
+        self.assertEqual([x["type_id"] for x in cmdb.types(conn)], list(cmdb.TYPE_WORDS))          # the seven, on first use
+        self.assertEqual([x["status_id"] for x in cmdb.statuses(conn)], ["ACTIVE", "INACTIVE", "RETIRED"])
+        with self.assertRaises(ValueError):
+            cmdb.add_type(conn, "Infusion pump", "DEVICE", at=self.at, actor="root")
+        tid = cmdb.add_type(conn, "Infusion pump", "OTHER", at=self.at, actor="root")
+        self.assertEqual(tid, "CT_INFUSION_PUMP")
+        with self.assertRaises(ValueError):
+            cmdb.add_type(conn, "infusion pump", "OTHER", at=self.at, actor="root")             # once
+        with self.assertRaises(ValueError):
+            cmdb.save_type(conn, "PRINTER", at=self.at, actor="root", inactive=True)          # the seven stay
+        sid = cmdb.add_status(conn, "In repair", "INACTIVE", at=self.at, actor="root")
+        q1 = cmdb.add_question(conn, tid, label="Asset tag", field_type="TEXT", required=True, at=self.at, actor="root")
+        q2 = cmdb.add_question(conn, tid, label="Last calibration", field_type="DATE", at=self.at, actor="root")
+        q3 = cmdb.add_question(conn, tid, label="Under contract", field_type="CHECKBOX", at=self.at, actor="root")
+        q4 = cmdb.add_question(conn, tid, label="Flow rate ceiling", field_type="NUMBER", at=self.at, actor="root")
+        with self.assertRaises(ValueError):
+            cmdb.add_question(conn, tid, label="asset tag", field_type="TEXT", at=self.at, actor="root")
+        cid = cmdb.create(conn, name="PUMP-W3-01", entity_id="PMC", config_type=tid, at=self.at, actor="alice")
+        row = conn.execute("SELECT config_type, type_id, status, status_id FROM configuration WHERE configuration_id = ?", (cid,)).fetchone()
+        self.assertEqual(tuple(row), ("OTHER", tid, "ACTIVE", "ACTIVE"))                          # both columns, so 021 readers keep working
+        self.assertEqual(cmdb.type_word(conn, conn.execute("SELECT * FROM configuration WHERE configuration_id = ?", (cid,)).fetchone()), "Infusion pump")
+        with self.assertRaises(ValueError):
+            cmdb.save_answers(conn, cid, {str(q2): "2026-09-01"}, at=self.at, actor="alice")      # the asset tag is needed
+        with self.assertRaises(ValueError):
+            cmdb.save_answers(conn, cid, {str(q1): "BM-0042", str(q4): "ten"}, at=self.at, actor="alice")
+        with self.assertRaises(ValueError):
+            cmdb.save_answers(conn, cid, {str(q1): "BM-0042", str(q2): "soon"}, at=self.at, actor="alice")
+        changed = cmdb.save_answers(conn, cid, {str(q1): "BM-0042", str(q2): "2026-09-01", str(q3): "1", str(q4): "1,200"},
+                                    at=self.at, actor="alice")
+        self.assertEqual(changed, ["Asset tag: - -> BM-0042", "Last calibration: - -> 2026-09-01", "Under contract: - -> 1",
+                                   "Flow rate ceiling: - -> 1200"])
+        self.assertEqual(cmdb.save_answers(conn, cid, {str(q1): "BM-0042", str(q2): "2026-09-01", str(q3): "1", str(q4): "1200"},
+                                           at=self.at, actor="alice"), [])
+        self.assertEqual({a["label"]: a["value"] for a in cmdb.answers(conn, cid)},
+                         {"Asset tag": "BM-0042", "Last calibration": "2026-09-01", "Under contract": "1", "Flow rate ceiling": "1200"})
+        cmdb.update(conn, cid, at=self.at, actor="alice", status=sid)
+        row = conn.execute("SELECT status, status_id FROM configuration WHERE configuration_id = ?", (cid,)).fetchone()
+        self.assertEqual(tuple(row), ("INACTIVE", sid))
+        # a type that changes what it counts as carries its configurations with it
+        cmdb.save_type(conn, tid, at=self.at, actor="root", maps_to="NETWORK")
+        self.assertEqual(conn.execute("SELECT config_type FROM configuration WHERE configuration_id = ?", (cid,)).fetchone()[0], "NETWORK")
+        cmdb.save_question(conn, q4, at=self.at, actor="root", inactive=True)
+        self.assertEqual([a["label"] for a in cmdb.answers(conn, cid)], ["Asset tag", "Last calibration", "Under contract"])
+
+    def test_the_setup_page_and_the_configuration_page_ask_the_questions(self):
+        from psaspine import configurations as cmdb
+        conn = self._conn()
+        status, _, _ = self._call("GET", "/admin/configuration-types", cookie=self.alice)
+        self.assertTrue(status.startswith("403"), status)
+        _, _, page = self._call("GET", "/admin/configuration-types", cookie=self.root)
+        self.assertIn("<h1>Configuration types</h1>", page)
+        self.assertIn("counts as itself", page)
+        _, h, _ = self._call("POST", "/admin/configuration-types/type", cookie=self.root, form={"name": "Infusion pump", "maps_to": "OTHER"})
+        self.assertIn("msg=Type+added", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/admin/configuration-types/type/CT_INFUSION_PUMP/question", cookie=self.root,
+                             form={"label": "Asset tag", "field_type": "TEXT", "required": "1"})
+        self.assertIn("msg=Question+added", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/admin/configuration-types/status", cookie=self.root, form={"name": "In repair", "maps_to": "INACTIVE"})
+        self.assertIn("msg=Status+added", dict(h)["Location"])
+        _, _, page = self._call("GET", "/admin/configuration-types", cookie=self.root)
+        self.assertIn("Infusion pump", page)
+        self.assertIn("value='Asset tag'", page)
+        self.assertIn("value='In repair'", page)
+        # a technician adds a pump by hand, and its page asks the question
+        _, h, _ = self._call("POST", "/configurations/new", cookie=self.alice,
+                             form={"name": "PUMP-W3-01", "entity_id": "PMC", "config_type": "CT_INFUSION_PUMP"})
+        cid = dict(h)["Location"].split("/configuration/")[1].split("?")[0]
+        _, _, page = self._call("GET", f"/configuration/{cid}", cookie=self.alice)
+        self.assertIn("<span class=chip>Infusion pump</span>", page)
+        self.assertIn("Infusion pump details", page)
+        self.assertIn("Asset tag <span class=muted>(needed)</span>", page)
+        qid = cmdb.questions(conn, "CT_INFUSION_PUMP")[0]["question_id"]
+        _, h, _ = self._call("POST", f"/configuration/{cid}/answers", cookie=self.alice, form={f"q{qid}": ""})
+        self.assertIn("err=Asset+tag+is+needed", dict(h)["Location"])
+        _, h, _ = self._call("POST", f"/configuration/{cid}/answers", cookie=self.alice, form={f"q{qid}": "BM-0042"})
+        self.assertIn("msg=Saved.", dict(h)["Location"])
+        _, _, page = self._call("GET", f"/configuration/{cid}", cookie=self.alice)
+        self.assertIn("value='BM-0042'", page)
+        _, h, _ = self._call("POST", f"/configuration/{cid}/update", cookie=self.alice, form={"config_type": "CT_INFUSION_PUMP", "status": "CS_IN_REPAIR"})
+        _, _, page = self._call("GET", f"/configuration/{cid}", cookie=self.alice)
+        self.assertIn("<span class=chip>in repair</span>", page)
+        _, _, page = self._call("GET", "/configurations", cookie=self.alice, query="type=CT_INFUSION_PUMP&status=ALL")
+        self.assertIn("PUMP-W3-01", page)
+        self.assertIn("<td>Infusion pump</td>", page)
+        _, _, page = self._call("GET", "/configurations", cookie=self.alice, query="type=PRINTER&status=ALL")
+        self.assertNotIn("PUMP-W3-01", page)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -3,7 +3,9 @@
 **Setup and administration: the desk against ConnectWise PSA's System and setup tables.**
 
 **Branch:** `claude/psa-ticketing-build` at `58008d6` (29 Sep 2026); **updated
-the same evening** after 053 built items 1 and 2 and the per-board intake
+on 30 Sep** after 054, 055 and 056 built items 3, 4 and 5 (Audit, API
+tokens, the email connector's settings, configuration types with
+questions); **updated the same evening** after 053 built items 1 and 2 and the per-board intake
 address (Dada: *"can we have different intake emails for the service
 boards?"*), which moves the email-connector row below from *Partly built* to
 *Built differently*: a board claims an address, intake routes by the
@@ -134,7 +136,7 @@ beyond the token and the reminder column.
 | `SLA`, `SLAPriority` | SLA targets per board × record type × priority × clock | **Built differently** (the clocks are the record's five, not ConnectWise's three) |
 | `WorkRole`, `WorkType`, `WorkRoleLocation`, `WorkRoleExemption` | Setup › Time | **Built** (no per-location rates: out of scope with billing) |
 | `Workflow*` | Setup › Workflow rules | **Built** |
-| `ConfigurationType`, `ConfigurationStatus`, `ConfigurationTypeQuestion` | a fixed vocabulary of seven types, three statuses; no questions | **Not built**: a Setup page for configuration types and statuses, and typed questions per type (a device's serial, a ward's asset tag). INFERRED needed the day biomedical devices join the CMDB |
+| `ConfigurationType`, `ConfigurationStatus`, `ConfigurationTypeQuestion` | Setup › Configuration types (056, 30 Sep): types and statuses as setup tables, each counting as one of 021's codes so every reader keeps its meaning; questions per type (text, number, date, yes/no, needed or not) answered on the configuration's page | **Built** |
 | `CompanyStatus`, `CompanyType`, `CompanyNoteType`, `CompanyTeam`, `CompanyGroup` | `entity` has a name and a covered flag | **Not built** (status and type); **Out of scope** (groups, teams, note types: a hospital has one company and a few suppliers) |
 | `ContactType`, `ContactRelationship`, `ContactDepartment`, `CommunicationType` | a contact has one email, one phone, a department string | **Partly built**: no types, no second number; the AD import is the source, so a Setup page would fight it |
 | `Country`, `State`, `AddressFormat`, `CwTimeZone` | none; the desk is one country and one time zone | **Out of scope** |
@@ -149,9 +151,9 @@ beyond the token and the reminder column.
 
 | ConnectWise tool | Desk today | Status |
 |---|---|---|
-| **Audit trail** (`AuditTrailEntry`, per record, and `TimeEntryAudit` with a source: Member / API / Workflow / Portal / EmailConnector …) | every change writes `audit_event` (actor, action, subject, detail); **no page reads it** except the ticket's history | **Partly built**: a Setup › Audit page (filter by person, action, subject, date; CSV) is the DOH inspection's first ask and is missing. The source of a change is not stored as a column |
-| **API members and keys** (`ApiMember`, `MemberSsoToken`) | `api_token` minted from the command line with a scope; no page | **Partly built**: a Setup › API tokens page (mint, scope, board, revoke, last used) |
-| **Email connector** (`EmailConnector`, one per board with its own mailbox and credential; parsing rules, `EmailExclusion`, `EmailToken`) | a board claims an intake address on its mail-policy tab (053); intake routes by the recipient address, so one mailbox with Exchange aliases serves every board, or a mailbox per board does; the reply policy is per board; auto-reply and bounce exclusions are in code | **Built differently**: an address, not a connector; no Setup page for exclusions or parsing rules |
+| **Audit trail** (`AuditTrailEntry`, per record, and `TimeEntryAudit` with a source: Member / API / Workflow / Portal / EmailConnector …) | every change writes `audit_event`; Setup › Audit (054, 30 Sep) reads it with filters by person, action, record, source and date, pages, and exports a CSV that is itself audited; `audit_event.source` says where the change came from (DESK, PORTAL, API, INTAKE, RULES, BIZBOX, CLI); a row about a restricted board the reader is not on is masked | **Built** |
+| **API members and keys** (`ApiMember`, `MemberSsoToken`) | Setup › API tokens (054, 30 Sep): mint (shown once, hash kept), board, scope, maker, last use, disable and re-enable | **Built** |
+| **Email connector** (`EmailConnector`, one per board with its own mailbox and credential; parsing rules, `EmailExclusion`, `EmailToken`) | a board claims an intake address on its mail-policy tab (053); intake routes by the recipient, so one mailbox with Exchange aliases serves every board, or a mailbox per board does; Setup › Email connector (055, 30 Sep) shows the addresses, holds the exclusions (an address, a domain, a subject phrase: imported and recorded, opens nothing) and the last seven days' dispositions without subjects | **Built differently** (an address, not a connector with a credential per board; no parsing rules, since the ticket takes the subject and body as written) |
 | **Notification recipients** (`NotificationRecipient`: owner, team leader, duty manager …) | `notify_role` on a rule action: TEAM_LEADER, OWNER, REQUESTER; a named member; a Teams channel | **Built** |
 | **Reports and custom reports** (`Report`, `CustomReport`, `ReportingService`) | Reports page and the report writer (042) | **Built** |
 | **KPIs** (`KPI`, `KPICategory`) | the Reports tiles | **Built differently** (fixed set) |
@@ -171,11 +173,11 @@ beyond the token and the reminder column.
 1. ~~**Members (053)**~~ — built the same evening.
 2. ~~**Calendar**~~ — built the same evening (day / week / month, `.ics`
    feed); reminders before a visit are not built.
-3. **Setup › Audit** — read the audit trail the desk already writes, with a
-   CSV; add the source of a change (desk, portal, API, email, rules).
-4. **Setup › API tokens** and **Setup › Email connector** — the two
-   administration tools that today need the command line or the host.
-5. **Setup › Configuration types and statuses**, with typed questions.
+3. ~~**Setup › Audit**~~ — built 30 Sep (054), with the source of a change.
+4. ~~**Setup › API tokens** and **Setup › Email connector**~~ — built 30 Sep
+   (054, 055).
+5. ~~**Setup › Configuration types and statuses**, with typed questions~~ —
+   built 30 Sep (056).
 6. **Email templates per board**, **survey setup**, **KB categories**,
    **company status and type**, **auto-assign**, **in/out board** — each
    small; each its own decision.
