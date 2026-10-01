@@ -154,15 +154,20 @@ def change_status(conn: sqlite3.Connection, work_item_id: str, to_status_id: str
          f"resumed={resumed or '-'}"))
 
     touch(conn, work_item_id, at)
-    from . import workflow
+    from . import outbox, workflow
     workflow.fire(conn, work_item_id, "ON_STATUS_CHANGE", at=at)
+    merged = conn.execute("SELECT merged_into FROM ticket WHERE work_item_id = ?",
+                          (work_item_id,)).fetchone()[0]
+    # 058: the status's own email, when the board has turned it on. A merge
+    # says nothing; a status the ticket was already in is no change.
+    told = (not merged and to_status_id != ticket["board_status_id"]
+            and outbox.queue_status(conn, work_item_id, to_status_id, at=at, actor=actor))
     if new["is_closed"]:
         # Children close with their parent (030). A child has no children, so
         # this goes one level and stops.
-        from . import family, outbox
+        from . import family
         family.close_with_parent(conn, work_item_id, at=at, actor=actor)
-        if not conn.execute("SELECT merged_into FROM ticket WHERE work_item_id = ?",
-                            (work_item_id,)).fetchone()[0]:
+        if not merged and not told:
             outbox.queue_requester(conn, work_item_id, "CLOSED", at=at)   # a merge says nothing
     return {"work_item_id": work_item_id, "board_status_id": to_status_id,
             "state": state, "escalation_status": escalation,

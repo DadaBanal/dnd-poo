@@ -223,7 +223,23 @@ def seed(conn: sqlite3.Connection) -> None:
         "INSERT OR IGNORE INTO ticket_numbering (id, prefix, padding)"
         " VALUES (1, 'PMC', 6)")
     seed_catalogue(conn)
+    move_intake_addresses(conn)
     conn.commit()
+
+
+def move_intake_addresses(conn) -> int:
+    """058: a board's one intake address (board.intake_address) becomes a row
+    of board_intake_address, and the column is emptied, so a claim lives in
+    one place. Idempotent: a value already moved, or an address another board
+    already claims, is not written twice. Returns how many moved."""
+    moved = 0
+    for r in conn.execute("SELECT board_id, intake_address FROM board WHERE intake_address IS NOT NULL").fetchall():
+        address = (r["intake_address"] or "").strip().lower()
+        if address and not conn.execute("SELECT 1 FROM board_intake_address WHERE address = ?", (address,)).fetchone():
+            conn.execute("INSERT INTO board_intake_address (address, board_id) VALUES (?, ?)", (address, r["board_id"]))
+            moved += 1
+        conn.execute("UPDATE board SET intake_address = NULL WHERE board_id = ?", (r["board_id"],))
+    return moved
 
 
 def seed_catalogue(conn: sqlite3.Connection) -> None:

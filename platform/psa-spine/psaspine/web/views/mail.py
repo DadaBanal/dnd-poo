@@ -32,12 +32,15 @@ def index(ctx):
     from .. import Response
     common.require_sysadmin(ctx)
     q = ctx.request.query
-    boards = ctx.conn.execute("SELECT board_id, display_name, intake_address, is_unrouted, closed_reply_policy FROM board"
+    boards = ctx.conn.execute("SELECT board_id, display_name, is_unrouted, closed_reply_policy FROM board"
                               " WHERE COALESCE(inactive, 0) = 0 ORDER BY is_unrouted DESC, display_name").fetchall()
+    claims: dict[str, list[str]] = {}
+    for a, bid in sorted(intake.board_addresses(ctx.conn).items()):
+        claims.setdefault(bid, []).append(a)
     addr_rows = "".join(
         f"<tr><td><a href='/admin/board/{t.esc(b['board_id'])}?tab=board'>{t.esc(b['display_name'])}</a>"
         + (" <span class=pill>unrouted queue</span>" if b["is_unrouted"] else "") + "</td>"
-        f"<td>{t.esc(b['intake_address'] or '')}{'' if b['intake_address'] else '<span class=muted>none: only the pickup task or the unrouted queue sends mail here</span>'}</td>"
+        f"<td>{t.esc(', '.join(claims.get(b['board_id'], [])))}{'' if claims.get(b['board_id']) else '<span class=muted>none: only the pickup task or the unrouted queue sends mail here</span>'}</td>"
         f"<td>{'Reopen' if (b['closed_reply_policy'] or 'REOPEN') == 'REOPEN' else 'New ticket'}</td></tr>" for b in boards)
     rules = intake.exclusions(ctx.conn)
     rule_rows = "".join(

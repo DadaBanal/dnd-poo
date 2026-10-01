@@ -18,6 +18,7 @@ import re
 import urllib.parse
 
 from ... import db, itil
+from ... import intake as _intake
 from .. import templates as t
 from . import common
 
@@ -438,12 +439,48 @@ def board_setup(ctx, board_id):
                 "<div><button type=submit>Save</button> "
                 + (f"<button class=ghost type=submit name=reset value=1>Back to the desk's words</button>" if tpl["custom"] else "")
                 + "</div></form></div>")
+        smails = _outbox.status_mails(ctx.conn, board_id)
+        on = sum(1 for m in smails if m["enabled"])
+        sblocks = []
+        for m in smails:
+            sid = t.esc(m["board_status_id"])
+            sblocks.append(
+                f"<div class=card id='st-{sid}'><h3>{t.icon('mail')}{t.esc(m['name'])} "
+                + ("<span class=pill>on</span>" if m["enabled"] else "<span class=muted style='font-weight:400;font-size:.85em'>off</span>")
+                + f" <span class=muted style='font-weight:400;font-size:.85em'>a status that {t.esc(_outbox.STATUS_SHAPES[m['shape']])}"
+                + (f" · the board's own words · {t.esc(m['updated_at'])} · {t.esc(m['updated_by'])}" if m["custom"] else " · the desk's words")
+                + "</span></h3>"
+                f"<form method=post action='/admin/board/{bid}/emails/status' class=stack style='max-width:none'>"
+                f"<input type=hidden name=board_status_id value='{sid}'>"
+                f"<label><input type=checkbox name=enabled value=1 style='width:auto'{' checked' if m['enabled'] else ''}> "
+                "Email the requester when a ticket enters this status</label>"
+                f"<label>Subject (after the ticket's reference)<input name=subject required maxlength=120 value='{t.esc(m['subject'])}'></label>"
+                f"<label>Body<textarea name=body required style='min-height:110px'>{t.esc(m['body'])}</textarea></label>"
+                "<div><button type=submit>Save</button> "
+                + ("<button class=ghost type=submit name=reset value=1>Back to the desk's words</button>" if m["custom"] else "")
+                + "</div></form></div>")
+        switch = ("<span class=pill>on</span>" if b["notify_requester"] else
+                  "<b>off</b>: nothing below is sent until it is turned on, on the Board tab")
         content = ("<div class=card><h3>" + t.icon("mail") + "What this board's emails say</h3><p class=why>The reference PSA's "
-                   "service email templates, one per kind. Placeholders: <code>{ticket}</code> the reference, <code>{board}</code> "
-                   "this board's name, <code>{actor}</code> who did it, <code>{when}</code> the visit's time. There is no "
-                   "placeholder for the summary or a note: a subject and a body leave the building, and the words stay "
-                   "behind the sign-in. The portal link and the reference are added by the sender. A board with no words "
-                   "of its own uses the desk's, shown here.</p></div>" + "".join(blocks))
+                   "service email templates. Placeholders: <code>{ticket}</code> the reference, <code>{board}</code> "
+                   "this board's name, <code>{requester}</code> the requester's name, <code>{owner}</code> who has it "
+                   "(else the board's team), <code>{status}</code> the status's name, <code>{status_text}</code> what the "
+                   "portal says about that status, <code>{link}</code> the ticket on the portal, <code>{date}</code> the "
+                   "day, <code>{actor}</code> who did it, <code>{when}</code> a visit's time. There is no placeholder for "
+                   "the summary, a note or the requester's own subject: a subject and a body leave the building, and the "
+                   "words stay behind the sign-in. The reference, the portal link and how to reply are added by the "
+                   "sender. A board with no words of its own uses the desk's, shown here.</p>"
+                   f"<p class=sub>Emails to requesters on this board: {switch}.</p></div>"
+                   "<h2 style='margin-top:18px'>An email at each status</h2>"
+                   f"<div class=card><p class=why>When a ticket enters a status that is on here, its requester gets "
+                   "that status's email. A status that closes the ticket sends its own email instead of the closed email "
+                   "below. Two changes before the sender runs send one email, the newer. A reply keeps the reference in "
+                   f"the subject and joins the ticket. <b>{on}</b> of {len(smails)} on.</p>"
+                   f"<form method=post action='/admin/board/{bid}/emails/status-all' class=inline>"
+                   "<button type=submit name=enabled value=1>Turn every status on</button> "
+                   "<button class=ghost type=submit name=enabled value=0>Turn every status off</button></form></div>"
+                   + "".join(sblocks)
+                   + "<h2 style='margin-top:18px'>Emails by event</h2>" + "".join(blocks))
     elif tab == "assign":
         from ... import board as _board
         from ... import setup as _setup
@@ -570,12 +607,14 @@ def _reply_policy_form(ctx, b) -> str:
         f"<div><label>Reopen to</label><select name=reopen_status_id>{st}</select></div>"
         f"<div><label>…only within days (blank: always)</label><input name=days type=number min=1 "
         f"value='{t.esc(b['reopen_within_days'] or '')}'></div>"
-        f"<div><label>This board's intake address</label><input name=intake_address maxlength=200 "
-        f"value='{t.esc(b['intake_address'] or '')}' placeholder='biomed@pmcne.ph'></div>"
+        f"<div style='flex:2 1 320px'><label>This board's intake addresses</label><input name=intake_address maxlength=1000 "
+        f"value='{t.esc(', '.join(_intake.addresses_of(ctx.conn, b['board_id'])))}' "
+        "placeholder='helpdesk@pmcne.ph, help@pmcne.ph, support@pmcne.ph'></div>"
         "<div style='flex:0 0 auto'><button type=submit>Save</button></div></form>"
-        "<p class=why style='margin-top:8px'>Mail sent to this address lands on this board, whichever mailbox delivered "
-        "it: alias it onto the helpdesk mailbox in Exchange and one pickup serves every board, or give the board a "
-        "mailbox of its own. Mail from the address never opens a ticket.</p>")
+        "<p class=why style='margin-top:8px'>Mail sent to any of these addresses lands on this board, whichever mailbox "
+        "delivered it: alias them onto one mailbox in Exchange, or give the board mailboxes of its own. Separate them "
+        "with commas. An address belongs to one board. Mail from these addresses never opens a ticket, and a reply to "
+        "the requester goes out from the address they wrote to.</p>")
 
 
 def save_reply_policy(ctx, board_id):
@@ -589,16 +628,14 @@ def save_reply_policy(ctx, board_id):
         return _done(board_id, "board", "Not saved: that status is not an open status on this board")
     days = f.get("days", "").strip()
     days = int(days) if days.isdigit() and int(days) > 0 else None
-    address = " ".join(f.get("intake_address", "").split()).lower() or None
-    if address and ("@" not in address or " " in address):
-        return _done(board_id, "board", "Not saved: the intake address does not look like an email address")
-    if address:
-        other = ctx.conn.execute("SELECT display_name FROM board WHERE LOWER(intake_address) = ? AND board_id <> ?",
-                                 (address, board_id)).fetchone()
-        if other:
-            return _done(board_id, "board", f"Not saved: {other['display_name']} already claims {address}")
+    try:
+        addresses = _intake.set_addresses(ctx.conn, board_id, f.get("intake_address", ""), at=ctx.now, actor=ctx.user.id)
+    except ValueError as exc:
+        ctx.conn.rollback()
+        return _done(board_id, "board", f"Not saved: {exc}")
+    address = ", ".join(addresses) or None
     ctx.conn.execute("UPDATE board SET closed_reply_policy = ?, reopen_status_id = ?,"
-                     " reopen_within_days = ?, intake_address = ? WHERE board_id = ?", (policy, status, days, address, board_id))
+                     " reopen_within_days = ? WHERE board_id = ?", (policy, status, days, board_id))
     db.audit(ctx.conn, at=ctx.now.isoformat(sep=" ", timespec="minutes"), actor=ctx.user.id,
              action="BOARD_REPLY_POLICY", subject_kind="board", subject_id=board_id,
              detail=f"{policy or 'REOPEN'} to {status or 'default'}"
@@ -2055,6 +2092,37 @@ def save_emails(ctx, board_id):
         ctx.conn.rollback()
         return _done(board_id, "emails", f"Not saved: {exc}")
     return _done(board_id, "emails", msg)
+
+
+def save_status_email(ctx, board_id):
+    from ... import outbox as _outbox
+    common.require_board(ctx, board_id, need="ADMIN")
+    f = ctx.request.form()
+    sid = f.get("board_status_id", "")
+    if not ctx.conn.execute("SELECT 1 FROM board_status WHERE board_status_id = ? AND board_id = ?", (sid, board_id)).fetchone():
+        return _done(board_id, "emails", "Not saved: that status is not on this board")
+    try:
+        if f.get("reset") == "1":
+            m = _outbox.set_status_mail(ctx.conn, sid, enabled=f.get("enabled") == "1", desk_words=True,
+                                        at=ctx.now, actor=ctx.user.id)
+        else:
+            m = _outbox.set_status_mail(ctx.conn, sid, enabled=f.get("enabled") == "1", subject=f.get("subject", ""),
+                                        body=f.get("body", ""), at=ctx.now, actor=ctx.user.id)
+        ctx.conn.commit()
+    except ValueError as exc:
+        ctx.conn.rollback()
+        return _done(board_id, "emails", f"Not saved: {exc}")
+    return _done(board_id, "emails", f"{m['name']}: email {'on' if m['enabled'] else 'off'}"
+                 + (", the board's own words" if m["custom"] else ", the desk's words"))
+
+
+def save_all_status_emails(ctx, board_id):
+    from ... import outbox as _outbox
+    common.require_board(ctx, board_id, need="ADMIN")
+    enabled = ctx.request.form().get("enabled") == "1"
+    n = _outbox.set_all_status_mails(ctx.conn, board_id, enabled=enabled, at=ctx.now, actor=ctx.user.id)
+    ctx.conn.commit()
+    return _done(board_id, "emails", f"{n} status email(s) turned {'on' if enabled else 'off'}")
 
 
 def save_auto_assign(ctx, board_id):

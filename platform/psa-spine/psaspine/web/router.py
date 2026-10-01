@@ -280,6 +280,8 @@ ROUTES = [
     ("POST", "/admin/board/<board_id>/sla", admin.save_sla),
     ("POST", "/admin/board/<board_id>/roles", admin.save_roles),
     ("POST", "/admin/board/<board_id>/emails", admin.save_emails),
+    ("POST", "/admin/board/<board_id>/emails/status", admin.save_status_email),
+    ("POST", "/admin/board/<board_id>/emails/status-all", admin.save_all_status_emails),
     ("POST", "/admin/board/<board_id>/assign", admin.save_auto_assign),
     ("POST", "/admin/board/<board_id>/assign/rule", admin.save_auto_assign_rule),
     ("POST", "/admin/board/<board_id>/assign/rule/remove", admin.remove_auto_assign_rule),

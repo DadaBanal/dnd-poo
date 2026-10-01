@@ -998,6 +998,58 @@ board that has said nothing behaves exactly as it did yesterday.
   under each name, and My profile links to it. It changes no ticket and no
   visit.
 
+## The mail cut-over (058, 1 Oct 2026)
+
+SQL01's handoff of 1 Oct (`HANDOFF-sql01-cloud-WS36-20261001-mail-cutover.md`):
+`helpdesk@pmcne.ph`, its `help@` alias and `support@pmcne.ph` all land on
+PMO Helpdesk, and the requester hears at each status change.
+
+- **Several addresses on one board** (`board_intake_address`; the board's
+  mail-policy card takes them separated by commas). An address belongs to
+  one board; every address is checked before any is written; audited as
+  `BOARD_INTAKE_ADDRESS`. Before 058 a board claimed one
+  (`board.intake_address`): `init` moves that value into the new table and
+  empties the column (`db.move_intake_addresses`, run by every `init`), so
+  a claim lives in one place. Mail *from* any claimed address is the desk
+  talking and never opens a ticket.
+- **The pickup, once per mailbox.** `Invoke-PmcMailPickup.ps1` keeps its
+  delta link, log and drop subfolder per `-Mailbox`, so a pickup for
+  `helpdesk@` and one for `support@` may share `-StateDir` and `-DropDir`
+  and never touch each other's state. `-BoardId` passes `--board-id`: mail
+  that no board claims lands there instead of the unrouted queue. Intake
+  never imports a `.part` file.
+- **An email at each status** (`status_mail`; the board's **Emails** tab,
+  *An email at each status*). Per status: on or off, and its words, the
+  board's own or the desk's. The desk's words depend on the kind of status
+  (INFERRED from its settings, so a board that disagrees writes its own):
+  one that waits on the requester asks for a reply that keeps the
+  reference in the subject (so it joins the ticket); a resolved one says
+  to reply if it is not fixed; a closing one sends its own email in place
+  of the closed email; any other says where the request is now. Two
+  changes before the sender runs send one email, the newer; a status the
+  ticket was already in sends nothing; a merge says nothing. Every gate of
+  the other requester emails still holds: the board's *email the
+  requester* switch, a ticket that came from a person, an address we can
+  resolve. Nothing is on until a board turns it on (one button turns every
+  status on). Audited as `STATUS_MAIL`.
+- **More placeholders, for every email the board words.**
+  `{requester}` (the requester's name from AD, else the part of the
+  address before the @), `{owner}` (who has it, else *the board's team*),
+  `{status}`, `{status_text}` (what the portal says about the status:
+  `board_status.customer_description`), `{link}` (the ticket on the
+  portal, filled in by the sender from `PSA_PORTAL_URL`), `{date}`, beside
+  `{ticket}`, `{board}`, `{actor}` and `{when}`. Still no `{summary}`, no
+  `{note}`, and no echo of the requester's own subject: whether that may
+  come back is Dada's decision under §6.1, not built.
+- **Replies come from the address the requester wrote to.** A requester
+  email carries `notification.from_address`: the claimed address the
+  ticket's first email arrived on (none for a ticket raised any other
+  way). `outbox-pending` hands it over as `from`; `Send-PmcNotifications.ps1`
+  sends as it only when it is `-Mailbox` or listed in `-SendAs`, and as
+  `-Mailbox` otherwise. An alias (`help@`) is not a mailbox Graph sends
+  as, so it falls back to the mailbox it aliases (INFERRED; NOT VERIFIED
+  on the tenant).
+
 ## Configuration types, statuses and questions (056, 30 Sep 2026)
 
 021 fixed seven configuration types and three statuses in a CHECK. A

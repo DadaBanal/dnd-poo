@@ -224,6 +224,8 @@ BEGIN
     PRINT N'    psa.company_type';
     PRINT N'    psa.board_auto_assign';
     PRINT N'    psa.member_presence';
+    PRINT N'    psa.board_intake_address';
+    PRINT N'    psa.status_mail';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -283,7 +285,7 @@ BEGIN
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  126 tables, 52 indexes, 4 triggers.';
+    PRINT N'  128 tables, 52 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -3282,6 +3284,47 @@ CREATE TABLE psa.[member_presence] (
 END;
 
 -- --------------------------------------------------------------------------
+-- board_intake_address   (from schema/058_mail_cutover.sql)
+-- 058: the mail cut-over (SQL01, 1 Oct 2026). Three addresses (helpdesk@, its
+-- help@ alias, and support@) all land on one board, and the requester hears
+-- at each status change in that status's own words.
+
+-- A board claims as many addresses as it is sent mail on; an address belongs
+-- to one board. Lower case, as intake compares them. Before 058 a board
+-- claimed one (board.intake_address). `init` moves any such value here and
+-- empties the column (db.seed, which every init runs), so the claim lives in
+-- one place only; the column stays, unread, for the databases that have it.
+IF OBJECT_ID(N'psa.[board_intake_address]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[board_intake_address] (
+    [address] NVARCHAR(200) NOT NULL CONSTRAINT [PK_board_intake_address] PRIMARY KEY,
+    [board_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_board_intake_address_board_id] REFERENCES psa.[board]([board_id])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- status_mail   (from schema/058_mail_cutover.sql)
+-- The email a requester gets when their ticket enters a status. No row: that
+-- status sends nothing, as before 058. A row with no words uses the desk's
+-- words for that kind of status. Placeholders as for mail_template, and none
+-- carries the summary, a note or the requester's own subject (6.1).
+IF OBJECT_ID(N'psa.[status_mail]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[status_mail] (
+    [board_status_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_status_mail] PRIMARY KEY CONSTRAINT [FK_status_mail_board_status_id] REFERENCES psa.[board_status]([board_status_id]),
+    [enabled] INT NOT NULL CONSTRAINT [DF_status_mail_enabled] DEFAULT (1) CONSTRAINT [CK_status_mail_01] CHECK (enabled IN (0, 1)),
+    [subject] NVARCHAR(400) NULL,
+    [body] NVARCHAR(MAX) NULL,
+    [updated_at] NVARCHAR(64) NOT NULL,
+    [updated_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [updated_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [updated_at], 126), CASE WHEN [updated_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [updated_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -3683,6 +3726,11 @@ ALTER TABLE psa.[entity] ADD [type_id] NVARCHAR(64) NULL CONSTRAINT [FK_entity_t
 IF COL_LENGTH(N'psa.[board]', N'auto_assign') IS NULL
 ALTER TABLE psa.[board] ADD [auto_assign] NVARCHAR(32) NULL CONSTRAINT [CK_board_auto_assign_01] CHECK (auto_assign IN ('OFF', 'LEAST_LOADED', 'TEAM_LEADER'));
 
+-- Which address a notification goes out from: the one the requester wrote
+-- to, when a board claims it. NULL: the sender's own mailbox, as before.
+IF COL_LENGTH(N'psa.[notification]', N'from_address') IS NULL
+ALTER TABLE psa.[notification] ADD [from_address] NVARCHAR(200) NULL;
+
 IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
 ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
 
@@ -3988,10 +4036,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 126 OR @Triggers <> 4 OR @Indexes < 52
+IF @Tables <> 128 OR @Triggers <> 4 OR @Indexes < 52
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 126), %d triggers (expected 4), %d indexes (expected at least 52). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 128), %d triggers (expected 4), %d indexes (expected at least 52). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -4047,6 +4095,8 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[status_mail];
+    DROP TABLE IF EXISTS psa.[board_intake_address];
     DROP TABLE IF EXISTS psa.[member_presence];
     DROP TABLE IF EXISTS psa.[board_auto_assign];
     DROP TABLE IF EXISTS psa.[company_type];

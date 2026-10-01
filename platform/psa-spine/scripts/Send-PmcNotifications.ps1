@@ -24,6 +24,15 @@
 
     Logs counts only. Never a subject, an address or a body.
 
+    -SendAs lists the other mailboxes this app may send as (the 1 Oct
+    cut-over: support@pmcne.ph beside helpdesk@). The desk names, for each
+    requester email, the address the requester wrote to; the email goes out
+    from it when it is -Mailbox or in -SendAs, and from -Mailbox otherwise (an
+    alias such as help@ is not a mailbox Graph can send as, so it falls back to
+    the mailbox it aliases). Each -SendAs mailbox needs "Application Mail.Send"
+    on the same management scope; without it Graph refuses and the email is
+    marked FAILED, never sent from somewhere else.
+
     -PortalUrl is the https:// address of the requester portal, used for the
     link in "your request was updated" emails. It is deployment config, passed
     here or set as PSA_PORTAL_URL, and never written into the repository.
@@ -33,6 +42,9 @@
         -Mailbox helpdesk@pmcne.ph -Database D:\psa\spine.db -StateDir D:\psa\mail-state
 .EXAMPLE
     .\Send-PmcNotifications.ps1 ... -Apply -Loop -IntervalSeconds 60
+.EXAMPLE
+    # Replies to support@ go out from support@.
+    .\Send-PmcNotifications.ps1 ... -Mailbox helpdesk@pmcne.ph -SendAs support@pmcne.ph -Apply -Loop
 #>
 [CmdletBinding()]
 param(
@@ -44,6 +56,7 @@ param(
     [Parameter(Mandatory = $true)] [string] $StateDir,
     [string] $AllowedDomain = 'pmcne.ph',
     [string] $PortalUrl,
+    [string[]] $SendAs = @(),
     [string] $SpineDir,
     [string] $PythonExe = 'C:\PMC\Python312\python.exe',
     [int] $IntervalSeconds = 60,
@@ -160,6 +173,17 @@ function Invoke-Spine([string[]] $SpineArgs) {
     return @{ Code = $code; Out = (($out | Out-String).Trim()) }
 }
 
+# The mailbox one email goes out from: the address the requester wrote to,
+# when this app may send as it; else -Mailbox. Never an address the desk
+# invented: only -Mailbox and -SendAs are ever used.
+$script:Senders = @(@($Mailbox) + @($SendAs | ForEach-Object { $_ -split '[,; ]+' }) | Where-Object { $_ } | ForEach-Object { $_.Trim().ToLowerInvariant() })
+function Get-SenderFor($Item) {
+    $from = $null
+    if ($Item.PSObject.Properties['from'] -and $Item.from) { $from = ([string]$Item.from).Trim().ToLowerInvariant() }
+    if ($from -and ($script:Senders -contains $from)) { return $from }
+    return $Mailbox
+}
+
 function Send-One($Item) {
     $headers = @{ Authorization = "Bearer $(Get-GraphToken)" }
     $message = @{
@@ -170,7 +194,7 @@ function Send-One($Item) {
         }
         saveToSentItems = $true
     } | ConvertTo-Json -Depth 6
-    $mbx = [Uri]::EscapeDataString($Mailbox)
+    $mbx = [Uri]::EscapeDataString((Get-SenderFor $Item))
     Invoke-RestMethod -Method Post -Uri "$Graph/users/$mbx/sendMail" -Headers $headers `
         -ContentType 'application/json' -Body ([Text.Encoding]::UTF8.GetBytes($message)) | Out-Null
 }
@@ -228,7 +252,7 @@ foreach ($p in @($SpineDir) + $(if ($isConnectionString) { @() } else { @($Datab
     if (-not (Test-Path $p)) { throw "Not found: $p" }
 }
 if ($Apply -and -not (Test-Path $StateDir)) { New-Item -ItemType Directory -Path $StateDir | Out-Null }
-Write-Log ("Notification sender for $Mailbox ({0}{1})" -f
+Write-Log ("Notification sender for $(($script:Senders) -join ', ') ({0}{1})" -f
     $(if ($Apply) { 'APPLY' } else { 'PREVIEW' }), $(if ($Loop) { ", every $IntervalSeconds s" } else { '' }))
 
 do {

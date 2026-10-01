@@ -1044,6 +1044,14 @@
   "member_presence.note": "NAME",
   "member_presence.back_at": "TIMESTAMP_TEXT",
   "member_presence.set_at": "TIMESTAMP_TEXT",
-  "member_presence.set_by": "PERSON"
+  "member_presence.set_by": "PERSON",
+  "board_intake_address.address": "PERSON",
+  "board_intake_address.board_id": "ID",
+  "status_mail.board_status_id": "ID",
+  "status_mail.subject": "NAME",
+  "status_mail.body": "FREE",
+  "status_mail.updated_at": "TIMESTAMP_TEXT",
+  "status_mail.updated_by": "PERSON",
+  "notification.from_address": "PERSON"
  }
 }

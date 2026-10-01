@@ -26,6 +26,7 @@ config (`PSA_PORTAL_URL` or `--portal-url`), never the repository.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import datetime
 
@@ -49,7 +50,13 @@ TEMPLATE_KINDS = {
     "SCHEDULED": "A visit booked, to the member",
     "APPROVAL": "Approval asked, to the approver",
 }
-PLACEHOLDERS = ("ticket", "board", "actor", "when")
+# 058 added six more for the mail cut-over: {requester} and {owner} are names
+# (staff, never a patient), {status} the status's name, {status_text} what the
+# portal says about it (board_status.customer_description), {link} the
+# ticket on the portal, {date} the day it happened. Still no {summary}, no
+# {note} and no requester's subject: those are Dada's call under 6.1.
+PLACEHOLDERS = ("ticket", "board", "actor", "when", "requester", "status", "status_text", "owner", "link", "date")
+PLACEHOLDER_HELP = ", ".join("{" + p + "}" for p in PLACEHOLDERS)
 DEFAULTS = {
     "OPENED": ("We have your request",
                "We have your request and it is in the queue. You do not need to do "
@@ -76,10 +83,75 @@ class _Fill(dict):
 def _placeholders(text: str) -> set[str]:
     import string
     names = set()
-    for _, field, _, _ in string.Formatter().parse(text):
+    for _, field, spec, conversion in string.Formatter().parse(text):
         if field is not None:
-            names.add(field)
+            # A conversion or a format spec ({owner!r}, {requester:>9999}) is
+            # never a plain placeholder: refused, as an unknown name is.
+            names.add(field if not spec and not conversion else field + "!")
     return names
+
+
+def _checked(subject, body) -> tuple[str, str]:
+    """A subject and body a board may save: both present, and no placeholder
+    outside PLACEHOLDERS."""
+    subj = " ".join(str(subject or "").split())[:120]
+    text = str(body or "").replace("\r\n", "\n").strip()[:2000]
+    if not subj or not text:
+        raise ValueError("an email needs a subject and a body")
+    try:
+        unknown = (_placeholders(subj) | _placeholders(text)) - set(PLACEHOLDERS)
+    except ValueError:
+        raise ValueError(f"a placeholder is one of {PLACEHOLDER_HELP}; a brace on its own is written {{{{ }}}}")
+    if unknown:
+        raise ValueError(f"a placeholder is one of {PLACEHOLDER_HELP}; not " + ", ".join(sorted("{" + u + "}" for u in unknown)))
+    return subj, text
+
+
+def _name(conn: sqlite3.Connection, who: str | None) -> str:
+    """A person's name for an email: the AD contact's or the member record's,
+    else the part of the address before the @. Never a guess."""
+    who = (who or "").strip()
+    if not who:
+        return ""
+    if "@" in who:
+        row = conn.execute("SELECT display_name FROM contact WHERE LOWER(email) = LOWER(?) AND display_name IS NOT NULL"
+                           " ORDER BY inactive", (who,)).fetchone()
+        if row is None:
+            row = conn.execute("SELECT display_name FROM member WHERE LOWER(email) = LOWER(?) AND display_name IS NOT NULL",
+                               (who,)).fetchone()
+        return row["display_name"] if row else who.split("@", 1)[0]
+    from .members import name_of
+    return name_of(conn, who)
+
+
+def _values(conn: sqlite3.Connection, work_item_id: str, *, at: datetime, actor: str = "desk", when: str = "") -> dict:
+    """Every placeholder's value for one ticket now. {link} stays a
+    placeholder: the portal's address is the sender's config, filled in by
+    pending()."""
+    row = conn.execute(
+        "SELECT t.requested_by, t.owner, b.display_name AS board, s.name AS status, s.customer_description"
+        "  FROM ticket t JOIN board b ON b.board_id = t.board_id"
+        "  LEFT JOIN board_status s ON s.board_status_id = t.board_status_id WHERE t.work_item_id = ?",
+        (work_item_id,)).fetchone()
+    if row is None:
+        return {"ticket": work_item_id, "actor": actor, "when": when, "date": f"{at.day} {at:%B %Y}", "link": "{link}"}
+    status = (row["status"] or "").lstrip(">")
+    return {"ticket": work_item_id, "board": row["board"], "actor": actor, "when": when,
+            "requester": _name(conn, row["requested_by"]) or "there",
+            "status": status, "status_text": row["customer_description"] or status,
+            "owner": _name(conn, row["owner"]) if row["owner"] else f"the {row['board']} team",
+            "link": "{link}", "date": f"{at.day} {at:%B %Y}"}
+
+
+def reply_from(conn: sqlite3.Connection, work_item_id: str) -> str | None:
+    """The address a requester wrote to when their email opened this ticket,
+    while a board still claims it: the desk answers from where it was asked.
+    None for a ticket raised any other way, which the sender sends from its
+    own mailbox."""
+    row = conn.execute(
+        "SELECT i.to_address FROM intake_message i JOIN board_intake_address a ON a.address = i.to_address"
+        " WHERE i.work_item_id = ? AND i.disposition = 'NEW_TICKET' ORDER BY i.received_at", (work_item_id,)).fetchone()
+    return row["to_address"] if row else None
 
 
 def template(conn: sqlite3.Connection, board_id: str, kind: str) -> dict:
@@ -97,21 +169,13 @@ def template(conn: sqlite3.Connection, board_id: str, kind: str) -> dict:
 
 def set_template(conn: sqlite3.Connection, board_id: str, kind: str, *, subject: str, body: str,
                  at: datetime, actor: str) -> None:
-    """A board writes its own words for one kind. Only the four placeholders
-    are allowed: nothing here can pull a summary or a note into an email."""
+    """A board writes its own words for one kind. Only the placeholders in
+    PLACEHOLDERS are allowed: nothing here can pull a summary or a note into
+    an email."""
     from . import db
     if kind not in TEMPLATE_KINDS:
         raise ValueError("no such email kind")
-    subj = " ".join(str(subject or "").split())[:120]
-    text = str(body or "").replace("\r\n", "\n").strip()[:2000]
-    if not subj or not text:
-        raise ValueError("an email needs a subject and a body")
-    try:
-        unknown = (_placeholders(subj) | _placeholders(text)) - set(PLACEHOLDERS)
-    except ValueError:
-        raise ValueError("a placeholder is {ticket}, {board}, {actor} or {when}; a brace on its own is written {{ }}")
-    if unknown:
-        raise ValueError("a placeholder is {ticket}, {board}, {actor} or {when}; not " + ", ".join(sorted("{" + u + "}" for u in unknown)))
+    subj, text = _checked(subject, body)
     stamp = at.isoformat(sep=" ", timespec="minutes")
     conn.execute("DELETE FROM mail_template WHERE board_id = ? AND kind = ?", (board_id, kind))
     conn.execute("INSERT INTO mail_template (board_id, kind, subject, body, updated_at, updated_by) VALUES (?,?,?,?,?,?)",
@@ -153,7 +217,8 @@ def queue_requester(conn: sqlite3.Connection, work_item_id: str, reason: str, *,
         return False
     if not address_for(conn, row["requested_by"]):
         return False                          # only an address we can resolve now
-    headline, said = words(conn, row["board_id"], reason, ticket=work_item_id, board=row["display_name"], actor="desk", when="")
+    headline, said = words(conn, row["board_id"], reason, **_values(conn, work_item_id, at=at))
+    sender = reply_from(conn, work_item_id)
     stamp = at.isoformat(sep=" ", timespec="minutes")
     pending = conn.execute("SELECT notification_id FROM notification WHERE work_item_id = ? AND"
                            " recipient = ? AND recipient_role = ? AND status = 'PENDING'",
@@ -169,11 +234,151 @@ def queue_requester(conn: sqlite3.Connection, work_item_id: str, reason: str, *,
         return True
     conn.execute(
         "INSERT INTO notification (work_item_id, recipient, recipient_role, subject, body,"
-        " created_at, status) VALUES (?,?,?,?,?,?,'PENDING')",
+        " created_at, status, from_address) VALUES (?,?,?,?,?,?,'PENDING',?)",
         (work_item_id, row["requested_by"], REQUESTER,
-         f"{subject_token(work_item_id)} {headline}", said, stamp))
+         f"{subject_token(work_item_id)} {headline}", said, stamp, sender))
     _event(conn, work_item_id, stamp, "NOTIFY", "desk",
            f"email to the requester queued: {headline.lower()}")
+    return True
+
+
+# 058: an email to the requester at each status change, worded per status.
+STATUS = "REQUESTER_STATUS"
+# The desk's words, by what kind of status it is. A board writes its own per
+# status on its Emails tab; these are what it starts from.
+STATUS_SHAPES = {
+    "WAITING": "waits on the requester",
+    "RESOLVED": "says it is fixed",
+    "CLOSED": "closes the ticket",
+    "OTHER": "moves the work on",
+}
+STATUS_DEFAULTS = {
+    "WAITING": ("We need something from you",
+                "Hello {requester},\n\nTo go on with your request we need something from you: {status_text}.\n\n"
+                "Reply to this email with it, and keep the reference in the subject so your reply joins your "
+                "request. {owner} has it on {board}."),
+    "RESOLVED": ("We think your request is fixed",
+                 "Hello {requester},\n\n{board} thinks your request is fixed, as of {date}: {status_text}.\n\n"
+                 "If it is not, reply to this email and it comes back to us."),
+    "CLOSED": ("Your request is closed",
+               "Hello {requester},\n\n{board} has closed your request, as of {date}. If it is not fixed, reply to "
+               "this email and it reopens. On the portal you can tell us how we did, one to five."),
+    "OTHER": ("Your request: {status}",
+              "Hello {requester},\n\nYour request has moved on, as of {date}: {status_text}.\n\n"
+              "It is with {owner} on {board}. You do not need to do anything; we will tell you when it moves again."),
+}
+_WAITS_ON_REQUESTER = re.compile(r"requester|customer|from you|your reply", re.I)
+
+
+def status_shape(status_row) -> str:
+    """Which of the desk's words a status starts from. INFERRED from the
+    status's settings and words; a board that disagrees writes its own."""
+    if status_row["is_closed"]:
+        return "CLOSED"
+    if status_row["escalation_status"] == "RESOLVED":
+        return "RESOLVED"
+    if status_row["escalation_status"] == "NO_ESCALATION" and _WAITS_ON_REQUESTER.search(
+            f"{status_row['name']} {status_row['customer_description'] or ''}"):
+        return "WAITING"
+    return "OTHER"
+
+
+def status_mail(conn: sqlite3.Connection, board_status_id: str) -> dict:
+    """One status's email: whether it is on, and its words (the board's own,
+    else the desk's for that kind of status)."""
+    st = conn.execute("SELECT * FROM board_status WHERE board_status_id = ?", (board_status_id,)).fetchone()
+    if st is None:
+        raise ValueError("no such status")
+    shape = status_shape(st)
+    row = conn.execute("SELECT * FROM status_mail WHERE board_status_id = ?", (board_status_id,)).fetchone()
+    subject, body = STATUS_DEFAULTS[shape]
+    custom = bool(row and row["subject"] and row["body"])
+    return {"board_status_id": board_status_id, "board_id": st["board_id"], "name": st["name"].lstrip(">"),
+            "shape": shape, "enabled": bool(row and row["enabled"]),
+            "subject": row["subject"] if custom else subject, "body": row["body"] if custom else body,
+            "custom": custom, "updated_at": row["updated_at"] if row else None,
+            "updated_by": row["updated_by"] if row else None}
+
+
+def status_mails(conn: sqlite3.Connection, board_id: str) -> list[dict]:
+    return [status_mail(conn, r["board_status_id"]) for r in conn.execute(
+        "SELECT board_status_id FROM board_status WHERE board_id = ? AND inactive = 0 ORDER BY sort_order, name",
+        (board_id,))]
+
+
+def set_status_mail(conn: sqlite3.Connection, board_status_id: str, *, enabled: bool, at: datetime, actor: str,
+                    subject: str | None = None, body: str | None = None, desk_words: bool = False) -> dict:
+    """Turn one status's email on or off, and keep the board's own words for
+    it, or go back to the desk's (desk_words). Words are checked as a
+    template's are."""
+    from . import db
+    cur = status_mail(conn, board_status_id)
+    if desk_words:
+        subj = text = None
+    elif subject is None and body is None:
+        subj, text = (cur["subject"], cur["body"]) if cur["custom"] else (None, None)
+    else:
+        subj, text = _checked(subject, body)
+        if (subj, text) == STATUS_DEFAULTS[cur["shape"]]:
+            subj = text = None                  # the desk's words, kept as the desk's
+    stamp = at.isoformat(sep=" ", timespec="minutes")
+    conn.execute("DELETE FROM status_mail WHERE board_status_id = ?", (board_status_id,))
+    conn.execute("INSERT INTO status_mail (board_status_id, enabled, subject, body, updated_at, updated_by)"
+                 " VALUES (?,?,?,?,?,?)", (board_status_id, 1 if enabled else 0, subj, text, stamp, actor))
+    db.audit(conn, at=stamp, actor=actor, action="STATUS_MAIL", subject_kind="board_status", subject_id=board_status_id,
+             detail=("on" if enabled else "off") + ("; own words" if subj else "; the desk's words"))
+    return status_mail(conn, board_status_id)
+
+
+def set_all_status_mails(conn: sqlite3.Connection, board_id: str, *, enabled: bool, at: datetime, actor: str) -> int:
+    """Every live status on the board on (or off) at once, keeping each one's
+    words. Returns how many changed."""
+    n = 0
+    for m in status_mails(conn, board_id):
+        if m["enabled"] != enabled:
+            set_status_mail(conn, m["board_status_id"], enabled=enabled, at=at, actor=actor)
+            n += 1
+    return n
+
+
+def queue_status(conn: sqlite3.Connection, work_item_id: str, board_status_id: str, *,
+                 at: datetime, actor: str) -> bool:
+    """The requester's email for the status their ticket has just entered,
+    when the board has turned that status's email on. The same gates as every
+    requester email: the board's requester switch, a person who expects to
+    hear back, an address we can resolve. One unsent status email per ticket:
+    a newer status replaces it, since the requester only needs where it is now.
+    Returns whether one is queued."""
+    from .board import _event
+    from .intake import subject_token
+    row = conn.execute(
+        "SELECT t.requested_by, t.intake_source, t.board_id, b.notify_requester FROM ticket t"
+        " JOIN board b ON b.board_id = t.board_id WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
+    if row is None or not row["notify_requester"] or not row["requested_by"]:
+        return False
+    if row["intake_source"] not in NOTIFY_ON_OPEN or not address_for(conn, row["requested_by"]):
+        return False
+    try:
+        mail = status_mail(conn, board_status_id)
+    except ValueError:
+        return False
+    if not mail["enabled"] or mail["board_id"] != row["board_id"]:
+        return False
+    fill = _Fill(_values(conn, work_item_id, at=at, actor=actor))
+    headline, said = mail["subject"].format_map(fill), mail["body"].format_map(fill)
+    stamp = at.isoformat(sep=" ", timespec="minutes")
+    subject = f"{subject_token(work_item_id)} {headline}"
+    pending_row = conn.execute("SELECT notification_id FROM notification WHERE work_item_id = ? AND recipient_role = ?"
+                               " AND status = 'PENDING'", (work_item_id, STATUS)).fetchone()
+    if pending_row:
+        conn.execute("UPDATE notification SET subject = ?, body = ?, created_at = ? WHERE notification_id = ?",
+                     (subject, said, stamp, pending_row["notification_id"]))
+    else:
+        conn.execute(
+            "INSERT INTO notification (work_item_id, recipient, recipient_role, subject, body, created_at, status,"
+            " from_address) VALUES (?,?,?,?,?,?,'PENDING',?)",
+            (work_item_id, row["requested_by"], STATUS, subject, said, stamp, reply_from(conn, work_item_id)))
+    _event(conn, work_item_id, stamp, "NOTIFY", "desk", f"email to the requester queued: now {mail['name']}")
     return True
 
 
@@ -200,7 +405,7 @@ def queue_owner(conn: sqlite3.Connection, work_item_id: str, *, at: datetime, ac
                     " AND status = 'PENDING'", (work_item_id, row["owner"], OWNER)).fetchone():
         return False
     stamp = at.isoformat(sep=" ", timespec="minutes")
-    headline, said = words(conn, row["board_id"], "ASSIGNED", ticket=work_item_id, board=row["display_name"], actor=actor, when="")
+    headline, said = words(conn, row["board_id"], "ASSIGNED", **_values(conn, work_item_id, at=at, actor=actor))
     conn.execute(
         "INSERT INTO notification (work_item_id, recipient, recipient_role, subject, body, created_at, status)"
         " VALUES (?,?,?,?,?,?,'PENDING')",
@@ -226,8 +431,7 @@ def queue_approver(conn: sqlite3.Connection, work_item_id: str, approver: str, *
     stamp = at.isoformat(sep=" ", timespec="minutes")
     b = conn.execute("SELECT t.board_id, b.display_name FROM ticket t JOIN board b ON b.board_id = t.board_id"
                      " WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
-    headline, said = words(conn, b["board_id"] if b else "", "APPROVAL", ticket=work_item_id,
-                           board=b["display_name"] if b else "", actor="desk", when="")
+    headline, said = words(conn, b["board_id"] if b else "", "APPROVAL", **_values(conn, work_item_id, at=at))
     conn.execute(
         "INSERT INTO notification (work_item_id, recipient, recipient_role, subject, body, created_at, status)"
         " VALUES (?,?,?,?,?,?,'PENDING')",
@@ -260,7 +464,7 @@ def queue_scheduled(conn: sqlite3.Connection, schedule_id: int, *, at: datetime,
                     " AND status = 'PENDING' AND body LIKE ?", (wid, row["member"], SCHEDULED, f"%{when}%")).fetchone():
         return False
     stamp = at.isoformat(sep=" ", timespec="minutes")
-    headline, said = words(conn, row["board_id"], "SCHEDULED", ticket=wid, board=row["display_name"], actor=actor, when=when)
+    headline, said = words(conn, row["board_id"], "SCHEDULED", **_values(conn, wid, at=at, actor=actor, when=when))
     conn.execute(
         "INSERT INTO notification (work_item_id, recipient, recipient_role, subject, body, created_at, status)"
         " VALUES (?,?,?,?,?,?,'PENDING')",
@@ -299,10 +503,12 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
             conn.execute("UPDATE notification SET status = 'NO_SENDER' WHERE notification_id = ?",
                          (n["notification_id"],))
             continue
-        if n["recipient_role"] == REQUESTER:
-            where = (f"{portal_url}/my/{n['work_item_id']}" if portal_url
-                     else "the PMC Requests portal, under Your requests")
-            body = (f"{n['body'] or ''}\n\nYour reference: {n['work_item_id']}\n"
+        link = (f"{portal_url}/my/{n['work_item_id']}" if portal_url
+                else "the PMC Requests portal, under Your requests")
+        subject = (n["subject"] or "").replace("{link}", link)
+        if n["recipient_role"] in (REQUESTER, STATUS):
+            where = link
+            body = (f"{(n['body'] or '').replace('{link}', link)}\n\nYour reference: {n['work_item_id']}\n"
                     f"See it here: {where}\n\nTo add something, reply to this email "
                     "and keep the reference in the subject. The ward, the room or the "
                     "machine is all we need; a patient's details never are.")
@@ -313,8 +519,9 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
             body = (n["body"] or "") + f"\n\nOpen the ticket on the desk and press Acknowledge: {n['work_item_id']}"
         else:
             body = (n["body"] or "") + f"\n\nOpen the ticket on the desk: {n['work_item_id']}"
-        out.append({"id": n["notification_id"], "to": to, "subject": n["subject"],
-                    "body": body, "ticket": n["work_item_id"]})
+        out.append({"id": n["notification_id"], "to": to, "subject": subject,
+                    "body": body.replace("{link}", link), "ticket": n["work_item_id"],
+                    "from": n["from_address"] if n["recipient_role"] in (REQUESTER, STATUS) else None})
     if not dry_run:
         conn.commit()
     return out

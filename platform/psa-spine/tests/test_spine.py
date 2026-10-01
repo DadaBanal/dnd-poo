@@ -6373,6 +6373,16 @@ class MailPickupScriptTest(unittest.TestCase):
         saved = self.text.index("Set-Content -Path $DeltaFile")
         self.assertLess(failed, saved)
 
+    def test_two_pickups_keep_apart_and_one_can_name_its_board(self):
+        # 058, the cut-over: helpdesk@ and support@ each get a pickup. Each
+        # mailbox has its own delta link, log and drop subfolder, so a shared
+        # -StateDir never mixes them; -BoardId reaches import-mail.
+        self.assertIn('"inbox-deltalink-$Slug.txt"', self.text)
+        self.assertIn("$DropDir = Join-Path $DropDir $Slug", self.text)
+        self.assertNotIn("'inbox-deltalink.txt'", self.text)
+        self.assertIn("[string] $BoardId", self.text)
+        self.assertIn("if ($BoardId) { $importArgs += @('--board-id', $BoardId) }", self.text)
+
 
 class BoardKindAndTypeTest(unittest.TestCase):
     """022 and psaspine.itil: board kinds (Service, Change, Project), the board's
@@ -6847,6 +6857,14 @@ class NotificationSenderScriptTest(unittest.TestCase):
             if "Write-Log" in line and "function" not in line:
                 self.assertNotIn("$item.to", line)
                 self.assertNotIn("$item.subject", line)
+
+    def test_it_sends_only_as_mailbox_or_send_as(self):
+        # 058: the desk names the address a requester wrote to; the script sends
+        # as it only when it is -Mailbox or in -SendAs, else as -Mailbox.
+        self.assertIn("[string[]] $SendAs = @()", self.text)
+        self.assertIn("if ($from -and ($script:Senders -contains $from)) { return $from }", self.text)
+        self.assertIn("$mbx = [Uri]::EscapeDataString((Get-SenderFor $Item))", self.text)
+        self.assertEqual(self.text.count("/sendMail"), 1)
 
 
 class TeamsSenderScriptTest(unittest.TestCase):
@@ -11193,6 +11211,8 @@ class IntakeRoutingTest(unittest.TestCase):
         self.conn.execute("INSERT INTO board (board_id, display_name, phase, fulfiller_group, is_live, is_unrouted, intake_address)"
                           " VALUES ('BIOMED', 'Biomedical', '2', 'Dada', 0, 0, 'Biomed@pmcne.ph')")
         self.conn.execute("UPDATE board SET intake_address = 'helpdesk@pmcne.ph' WHERE board_id = 'IT_HELP'")
+        self.assertEqual(db.move_intake_addresses(self.conn), 2)   # 058: the 053 column's values move, once
+        self.assertEqual(db.move_intake_addresses(self.conn), 0)
         setup.apply_starter(self.conn, "BIOMED", actor="t", at=self.at)
         self.conn.commit()
 
@@ -11405,7 +11425,7 @@ class MailSetupTest(unittest.TestCase):
     def test_the_email_connector_page_is_a_system_administrators(self):
         from psaspine import intake
         conn = self._conn()
-        conn.execute("UPDATE board SET intake_address = 'helpdesk@pmcne.ph' WHERE board_id = 'IT_HELP'")
+        conn.execute("INSERT INTO board_intake_address (address, board_id) VALUES ('helpdesk@pmcne.ph', 'IT_HELP')")
         conn.commit()
         self._msg(subject="A patient's chart will not open", sender="nurse@pmcne.ph")
         intake.import_drop(conn, self.drop, run_id="e2", at=self.at, board_id="IT_HELP")
@@ -11851,6 +11871,215 @@ class SmallSetupTest(unittest.TestCase):
         self.assertIn("Say where I am", page)
         status, _, _ = self._call("GET", "/inout", cookie=self._cookie_for("nobody"))
         self.assertTrue(status.startswith("403") or status.startswith("404"), status)
+
+
+class MailCutoverTest(unittest.TestCase):
+    """058, SQL01's mail cut-over (1 Oct 2026): helpdesk@, its help@ alias and
+    support@ all land on PMO Helpdesk; the requester hears at each status
+    change in that status's own words, with more placeholders and none that
+    carries a summary, a note or a subject; a reply goes out from the address
+    the requester wrote to."""
+
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.conn = _fresh(self.tmp)
+        self.addCleanup(self.conn.close)
+        self.drop = Path(self.tmp.name) / "drop"
+        self.drop.mkdir()
+        self.at = datetime(2026, 10, 1, 9, 0)
+        self.n = 0
+        from psaspine import setup
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        self.conn.execute("INSERT INTO board (board_id, display_name, phase, fulfiller_group, is_live, is_unrouted)"
+                          " VALUES ('BIOMED', 'Biomedical', '2', 'Dada', 0, 0)")
+        self.conn.execute(
+            "INSERT INTO contact (contact_id, entity_id, display_name, email, sam_account, source, inactive, created_at)"
+            " VALUES ('C_W3', 'PMC', 'Ward 3 Station', 'ward3@pmcne.ph', 'ward3', 'AD', 0, '2026')")
+        self.conn.execute(
+            "INSERT INTO contact (contact_id, entity_id, display_name, email, sam_account, source, inactive, created_at)"
+            " VALUES ('C_BOB', 'PMC', 'Bob Reyes', 'bob@pmcne.ph', 'bob', 'AD', 0, '2026')")
+        self.conn.commit()
+
+    def _msg(self, *, subject, to, sender="ward3@pmcne.ph", delivered_to=None):
+        self.n += 1
+        headers = [f"From: {sender}", f"To: {to}", f"Subject: {subject}", "Date: Thu, 01 Oct 2026 09:00:00 +0800",
+                   f"Message-ID: <c{self.n}@pmcne.ph>"]
+        if delivered_to:
+            headers.append(f"Delivered-To: {delivered_to}")
+        (self.drop / f"{self.n:03d}.eml").write_bytes(("\r\n".join(headers) + "\r\n\r\nPlease help.\r\n").encode())
+
+    def _ticket(self, n):
+        return self.conn.execute("SELECT t.work_item_id, t.board_id, i.to_address FROM intake_message i"
+                                 " JOIN ticket t ON t.work_item_id = i.work_item_id WHERE i.message_id = ?",
+                                 (f"<c{n}@pmcne.ph>",)).fetchone()
+
+    def _status_mails(self, wid):
+        return self.conn.execute("SELECT notification_id, subject, body, status, from_address FROM notification"
+                                 " WHERE work_item_id = ? AND recipient_role = 'REQUESTER_STATUS' ORDER BY notification_id",
+                                 (wid,)).fetchall()
+
+    # ------------------------------------------------------------ item 1: several addresses, one board
+
+    def test_one_board_claims_three_addresses_and_each_lands_there(self):
+        from psaspine import intake
+        got = intake.set_addresses(self.conn, "IT_HELP", "Helpdesk@pmcne.ph, help@pmcne.ph;\nsupport@pmcne.ph help@pmcne.ph",
+                                   at=self.at, actor="dada")
+        self.assertEqual(got, ["help@pmcne.ph", "helpdesk@pmcne.ph", "support@pmcne.ph"])
+        # an address is one board's, and nothing is written when any one is refused
+        with self.assertRaises(ValueError):
+            intake.set_addresses(self.conn, "BIOMED", "biomed@pmcne.ph, support@pmcne.ph", at=self.at, actor="dada")
+        with self.assertRaises(ValueError):
+            intake.set_addresses(self.conn, "BIOMED", "biomed@pmcne.ph, not an address", at=self.at, actor="dada")
+        self.assertEqual(intake.addresses_of(self.conn, "BIOMED"), [])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'BOARD_INTAKE_ADDRESS'").fetchone()[0], 1)
+        self._msg(subject="Printer jams", to="help@pmcne.ph")                                              # the alias, as To keeps it
+        self._msg(subject="Scanner offline", to="PMC Service Board <support@pmcne.ph>")
+        self._msg(subject="Keyboard", to="someone@pmcne.ph", delivered_to="helpdesk@pmcne.ph")
+        self._msg(subject="The desk talking", to="ward3@pmcne.ph", sender="support@pmcne.ph")              # never a ticket
+        (self.drop / "half.eml.part").write_bytes(b"From: x\r\n")                                         # a pickup mid-write
+        counts = intake.import_drop(self.conn, self.drop, run_id="c1", at=self.at)                         # no run board
+        self.assertEqual((counts["files"], counts["new"], counts["routed_by_address"], counts["loop_guarded"]), (4, 3, 3, 1))
+        self.assertEqual([tuple(self._ticket(i))[1:] for i in (1, 2, 3)],
+                         [("IT_HELP", "help@pmcne.ph"), ("IT_HELP", "support@pmcne.ph"), ("IT_HELP", "helpdesk@pmcne.ph")])
+        # the pickup's -BoardId: mail nobody claims lands on the board it names
+        self._msg(subject="Mouse", to="someone@pmcne.ph")
+        intake.import_drop(self.conn, self.drop, run_id="c2", at=self.at, board_id="BIOMED")
+        self.assertEqual(self._ticket(5)["board_id"], "BIOMED")
+        # a board that is cleared claims nothing
+        intake.set_addresses(self.conn, "IT_HELP", "", at=self.at, actor="dada")
+        self.assertEqual(intake.board_addresses(self.conn), {})
+
+    # ------------------------------------------------------------ items 2 and 3: an email for each status
+
+    def test_each_status_sends_its_own_email_with_the_new_placeholders(self):
+        from psaspine import board, intake, outbox
+        self.conn.execute("UPDATE board SET notify_requester = 1 WHERE board_id = 'IT_HELP'")
+        intake.set_addresses(self.conn, "IT_HELP", "helpdesk@pmcne.ph, support@pmcne.ph", at=self.at, actor="dada")
+        self._msg(subject="A patient's chart will not print", to="support@pmcne.ph")
+        intake.import_drop(self.conn, self.drop, run_id="c1", at=self.at)
+        wid = self._ticket(1)["work_item_id"]
+        # off until the board turns a status on: as before 058
+        board.change_status(self.conn, wid, "IT_HELP.IN_PROGRESS", at=self.at, actor="bob")
+        self.assertEqual(self._status_mails(wid), [])
+        self.assertEqual(outbox.set_all_status_mails(self.conn, "IT_HELP", enabled=True, at=self.at, actor="dada"),
+                         len(outbox.status_mails(self.conn, "IT_HELP")))
+        board.update_fields(self.conn, wid, at=self.at, actor="bob", owner="bob")
+        board.change_status(self.conn, wid, "IT_HELP.ASSIGNED", at=self.at, actor="bob")
+        [m] = self._status_mails(wid)
+        self.assertEqual(m["subject"], f"[{wid}] Your request: Assigned")
+        self.assertIn("Hello Ward 3 Station,", m["body"])
+        self.assertIn("Assigned to a technician", m["body"])                      # {status_text}: the portal's words
+        self.assertIn("It is with Bob Reyes on PMO Helpdesk.", m["body"])               # {owner}, {board}
+        self.assertIn("1 October 2026", m["body"])                                 # {date}
+        self.assertNotIn("chart", m["subject"] + m["body"])                        # the requester's subject never comes back
+        self.assertEqual(m["from_address"], "support@pmcne.ph")                    # where they wrote
+        # a second change before the sender runs: one email, the newer
+        board.change_status(self.conn, wid, "IT_HELP.WAITING_ON_REQUESTER", at=self.at, actor="bob")
+        [m] = self._status_mails(wid)
+        self.assertEqual(m["subject"], f"[{wid}] We need something from you")
+        self.assertIn("Reply to this email", m["body"])
+        due = {d["id"]: d for d in outbox.pending(self.conn, allowed_domains=("pmcne.ph",), portal_url="https://help.pmcne.ph")}
+        item = due[m["notification_id"]]
+        self.assertEqual((item["to"], item["from"]), ("ward3@pmcne.ph", "support@pmcne.ph"))
+        self.assertIn("https://help.pmcne.ph/my/" + wid, item["body"])
+        outbox.mark(self.conn, m["notification_id"], "SENT", at=self.at)
+        # the status the ticket is already in is no change
+        board.change_status(self.conn, wid, "IT_HELP.WAITING_ON_REQUESTER", at=self.at, actor="bob")
+        self.assertEqual(len(self._status_mails(wid)), 1)
+        # a closing status with its email on sends that, not the closed email as well
+        board.change_status(self.conn, wid, "IT_HELP.CLOSED", at=self.at, actor="bob")
+        last = self._status_mails(wid)[-1]
+        self.assertEqual(last["subject"], f"[{wid}] Your request is closed")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM notification WHERE work_item_id = ? AND recipient_role = 'REQUESTER'"
+                                           " AND subject LIKE '%closed%'", (wid,)).fetchone()[0], 0)
+        # the board's requester switch still governs every requester email
+        self._msg(subject="Mouse", to="helpdesk@pmcne.ph")
+        intake.import_drop(self.conn, self.drop, run_id="c2", at=self.at)
+        w2 = self._ticket(2)["work_item_id"]
+        self.conn.execute("UPDATE board SET notify_requester = 0 WHERE board_id = 'IT_HELP'")
+        board.change_status(self.conn, w2, "IT_HELP.IN_PROGRESS", at=self.at, actor="bob")
+        self.assertEqual(self._status_mails(w2), [])
+        # a status turned off sends nothing; the closed email is back for a closing status that is off
+        self.conn.execute("UPDATE board SET notify_requester = 1 WHERE board_id = 'IT_HELP'")
+        outbox.set_status_mail(self.conn, "IT_HELP.CLOSED", enabled=False, at=self.at, actor="dada")
+        board.change_status(self.conn, w2, "IT_HELP.CLOSED", at=self.at, actor="bob")
+        self.assertEqual(self._status_mails(w2), [])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM notification WHERE work_item_id = ? AND recipient_role = 'REQUESTER'"
+                                           " AND status = 'PENDING'", (w2,)).fetchone()[0], 1)
+
+    def test_a_board_words_each_status_and_only_safe_placeholders(self):
+        from psaspine import board, outbox, tickets
+        self.conn.execute("UPDATE board SET notify_requester = 1 WHERE board_id = 'IT_HELP'")
+        shapes = {m["name"]: m["shape"] for m in outbox.status_mails(self.conn, "IT_HELP")}
+        self.assertEqual((shapes["Waiting on Requester"], shapes["Waiting on Vendor"], shapes["Resolved"], shapes["Closed"]),
+                         ("WAITING", "OTHER", "RESOLVED", "CLOSED"))
+        for bad in ("{summary}", "{note}", "{subject}", "{requester.__class__}", "{0}", "{", "{owner!r}",
+                    "{requester:>99999999}"):
+            with self.assertRaises(ValueError, msg=bad):
+                outbox.set_status_mail(self.conn, "IT_HELP.IN_PROGRESS", enabled=True, subject="x",
+                                       body=f"About {bad}", at=self.at, actor="dada")
+        m = outbox.set_status_mail(self.conn, "IT_HELP.IN_PROGRESS", enabled=True, at=self.at, actor="dada",
+                                   subject="{ticket} is {status}",
+                                   body="Hi {requester}. {owner} took it on {date}: {status_text}. Track it at {link}.")
+        self.assertTrue(m["custom"] and m["enabled"])
+        wid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="Printer", impact="I3", urgency="U3",
+                                  requested_by="bob@pmcne.ph", at=self.at, source="PORTAL")
+        board.change_status(self.conn, wid, "IT_HELP.IN_PROGRESS", at=self.at, actor="alice")
+        [n] = self._status_mails(wid)
+        self.assertEqual(n["subject"], f"[{wid}] {wid} is In Progress")
+        self.assertEqual(n["body"], "Hi Bob Reyes. the PMO Helpdesk team took it on 1 October 2026: Someone is working on it."
+                                    " Track it at {link}.")
+        self.assertIsNone(n["from_address"])                                       # a portal ticket: the sender's mailbox
+        [item] = [d for d in outbox.pending(self.conn, allowed_domains=("pmcne.ph",)) if d["id"] == n["notification_id"]]
+        self.assertIn("Track it at the PMC Requests portal, under Your requests.", item["body"])
+        self.assertIsNone(item["from"])
+        # back to the desk's words keeps the switch
+        m = outbox.set_status_mail(self.conn, "IT_HELP.IN_PROGRESS", enabled=True, desk_words=True, at=self.at, actor="dada")
+        self.assertEqual((m["custom"], m["subject"]), (False, "Your request: {status}"))
+        # the event templates take the new placeholders too
+        outbox.set_template(self.conn, "IT_HELP", "OPENED", subject="Thanks {requester}", body="{board} has it. {link}",
+                            at=self.at, actor="dada")
+
+    def test_the_emails_tab_turns_statuses_on_and_saves_their_words(self):
+        WebWSGITest.setUp(self)
+        self.addCleanup(self.tmp.cleanup)
+        from psaspine import setup
+        conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)
+        setup.apply_starter(conn, "IT_HELP", actor="t", at=self.at)
+        conn.commit()
+        root = self._cookie_for("alice")             # ADMIN on IT_HELP
+        status, _, body = self._call("GET", "/admin/board/IT_HELP", cookie=root, query="tab=emails")
+        self.assertTrue(status.startswith("200"), status)
+        self.assertIn("An email at each status", body)
+        self.assertIn("Waiting on Requester", body)
+        self.assertIn("<b>0</b> of", body)
+        status, headers, _ = self._call("POST", "/admin/board/IT_HELP/emails/status-all", cookie=root, form={"enabled": "1"})
+        self.assertTrue(status.startswith("303"), status)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM status_mail s JOIN board_status b ON b.board_status_id ="
+                                      " s.board_status_id WHERE b.board_id = 'IT_HELP' AND s.enabled = 1").fetchone()[0],
+                         conn.execute("SELECT COUNT(*) FROM board_status WHERE board_id = 'IT_HELP' AND inactive = 0").fetchone()[0])
+        status, headers, _ = self._call("POST", "/admin/board/IT_HELP/emails/status", cookie=root,
+                                        form={"board_status_id": "IT_HELP.IN_PROGRESS", "enabled": "1",
+                                              "subject": "Fixed?", "body": "{summary} is fixed"})
+        self.assertIn("Not+saved", dict(headers)["Location"])
+        self._call("POST", "/admin/board/IT_HELP/emails/status", cookie=root,
+                   form={"board_status_id": "IT_HELP.IN_PROGRESS", "subject": "Fixed?", "body": "Is it fixed, {requester}?"})
+        row = conn.execute("SELECT enabled, subject FROM status_mail WHERE board_status_id = 'IT_HELP.IN_PROGRESS'").fetchone()
+        self.assertEqual(tuple(row), (0, "Fixed?"))                               # unticked: off, words kept
+        # another board's status cannot be set from this board's page
+        status, headers, _ = self._call("POST", "/admin/board/IT_HELP/emails/status", cookie=root,
+                                        form={"board_status_id": "PHI.NEW", "enabled": "1", "subject": "x", "body": "y"})
+        self.assertIn("not+on+this+board", dict(headers)["Location"])
+        # the board page takes several intake addresses
+        self._call("POST", "/admin/board/IT_HELP/reply-policy", cookie=root,
+                   form={"policy": "REOPEN", "intake_address": "helpdesk@pmcne.ph, help@pmcne.ph, support@pmcne.ph"})
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM board_intake_address WHERE board_id = 'IT_HELP'").fetchone()[0], 3)
 
 
 if __name__ == "__main__":

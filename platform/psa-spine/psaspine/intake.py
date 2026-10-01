@@ -262,10 +262,49 @@ def recipients_of(message) -> list[str]:
 
 
 def board_addresses(conn: sqlite3.Connection) -> dict[str, str]:
-    """address (lower case) -> board_id, for every live board that claims one."""
-    return {r["intake_address"].strip().lower(): r["board_id"] for r in conn.execute(
-        "SELECT board_id, intake_address FROM board WHERE intake_address IS NOT NULL AND COALESCE(inactive, 0) = 0")
-        if r["intake_address"] and r["intake_address"].strip()}
+    """address (lower case) -> board_id, for every live board that claims one.
+    A board may claim several (058): helpdesk@, its help@ alias and support@
+    can all land on one board."""
+    return {r["address"]: r["board_id"] for r in conn.execute(
+        "SELECT a.address, a.board_id FROM board_intake_address a JOIN board b ON b.board_id = a.board_id"
+        " WHERE COALESCE(b.inactive, 0) = 0")}
+
+
+def addresses_of(conn: sqlite3.Connection, board_id: str) -> list[str]:
+    return [r["address"] for r in conn.execute(
+        "SELECT address FROM board_intake_address WHERE board_id = ? ORDER BY address", (board_id,))]
+
+
+_ADDRESS = re.compile(r"^[a-z0-9._%+'-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$")
+
+
+def set_addresses(conn: sqlite3.Connection, board_id: str, text: str, *, at: datetime, actor: str) -> list[str]:
+    """The addresses a board claims, as written (commas, semicolons, spaces
+    or new lines between them). Every one is checked before any is written:
+    each must look like an address and none may be another board's."""
+    from . import db
+    wanted: list[str] = []
+    for a in re.split(r"[\s,;]+", (text or "").lower()):
+        if a and a not in wanted:
+            wanted.append(a)
+    for a in wanted:
+        if not _ADDRESS.match(a) or len(a) > 200:
+            raise ValueError(f"{a} does not look like an email address")
+        other = conn.execute("SELECT b.display_name FROM board_intake_address a JOIN board b ON b.board_id = a.board_id"
+                             " WHERE a.address = ? AND a.board_id <> ?", (a, board_id)).fetchone()
+        if other:
+            raise ValueError(f"{other['display_name']} already claims {a}")
+    before = addresses_of(conn, board_id)
+    if before == sorted(wanted):
+        return before
+    conn.execute("DELETE FROM board_intake_address WHERE board_id = ?", (board_id,))
+    conn.execute("UPDATE board SET intake_address = NULL WHERE board_id = ?", (board_id,))   # the 053 column, unread
+    for a in wanted:
+        conn.execute("INSERT INTO board_intake_address (address, board_id) VALUES (?, ?)", (a, board_id))
+    db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor, action="BOARD_INTAKE_ADDRESS",
+             subject_kind="board", subject_id=board_id,
+             detail="intake " + (", ".join(sorted(wanted)) if wanted else "none") + f" (was {', '.join(before) or 'none'})")
+    return sorted(wanted)
 
 
 def route(conn: sqlite3.Connection, message, *, fallback: str | None) -> tuple[str | None, str | None]:
@@ -405,7 +444,9 @@ def import_drop(conn: sqlite3.Connection, drop_dir, *, run_id: str,
     """
     at = at or datetime.now()
     drop = Path(drop_dir)
-    files = sorted(p for p in drop.iterdir() if p.is_file())
+    # A .part file is one the pickup is still writing, or one a crash left
+    # half-written: never a message to import.
+    files = sorted(p for p in drop.iterdir() if p.is_file() and not p.name.endswith(".part"))
 
     if board_id is None:
         row = conn.execute(

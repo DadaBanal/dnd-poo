@@ -3,6 +3,13 @@
 A second handoff on the same day as `HANDOFF-cloud-sql01-WS36-20260923.md`, which
 has its reply and is not edited. This one is a different bucket.
 
+> **Step 1's certificate command is superseded (1 Oct 2026)** by
+> `HANDOFF-cloud-sql01-WS36-20261001-mail-cutover.md`, step 1. As written below
+> it fails on DND-SQL01 with `NTE_PROV_TYPE_NOT_DEF`: `-KeySpec` is a legacy-CSP
+> property and the Software Key Storage Provider is CNG (MEASURED by SQL01, 1 Oct).
+> The certificate was made with `-KeyUsage DigitalSignature` and no `-KeySpec`.
+> The rest of this file stands; the 1 Oct file adds the second mailbox.
+
 | Field | |
 |---|---|
 | **To** | SQL01, with the operator at the keyboard. Steps 2 and 3 need an Entra administrator and an Exchange Online **Organization Management** member; SQL01 runs no admin step itself. |

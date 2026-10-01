@@ -38,6 +38,16 @@
     The shared mailbox to read, e.g. helpdesk@pmcne.ph. The app must be scoped
     to this mailbox with Exchange RBAC for Applications; see the handoff.
 
+.PARAMETER BoardId
+    The board a message lands on when no board claims any of its recipient
+    addresses (passed to import-mail as --board-id). Without it, the unrouted
+    queue. A board that claims the address on its page wins either way.
+
+    Two mailboxes, two pickups (the 1 Oct cut-over: helpdesk@ and support@):
+    run the script once per -Mailbox. Each keeps its own delta link, log and
+    drop subfolder (named from the mailbox), so the two never share state,
+    and both may give the same -StateDir and -DropDir.
+
 .EXAMPLE
     # Preview: signs in and counts, changes nothing.
     .\Invoke-PmcMailPickup.ps1 -TenantId <guid> -ClientId <guid> `
@@ -60,6 +70,7 @@ param(
     [string] $SpineDir,
     [string] $PythonExe = 'C:\PMC\Python312\python.exe',
     [string] $Channel = 'helpdesk',
+    [string] $BoardId,
     [datetime] $Since = (Get-Date),
     [int] $IntervalSeconds = 30,
     [switch] $Loop,
@@ -76,8 +87,13 @@ if (-not $SpineDir) { $SpineDir = Split-Path -Parent (Split-Path -Parent $MyInvo
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $Graph = 'https://graph.microsoft.com/v1.0'
-$DeltaFile = Join-Path $StateDir 'inbox-deltalink.txt'
-$LogFile = Join-Path $StateDir 'mail-pickup.log'
+# One mailbox's state, apart from any other pickup's: a second pickup with the
+# same -StateDir must never read or advance this one's delta link, and its
+# import must never pick up this one's half-written files.
+$Slug = ($Mailbox.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
+$DeltaFile = Join-Path $StateDir "inbox-deltalink-$Slug.txt"
+$LogFile = Join-Path $StateDir "mail-pickup-$Slug.log"
+$DropDir = Join-Path $DropDir $Slug
 $script:Token = $null
 $script:TokenExpires = [datetime]::MinValue
 
@@ -217,10 +233,13 @@ function Invoke-Pass {
     }
 
     if ($written.Count -gt 0) {
-        $runId = 'mail-' + (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss')
+        $runId = "mail-$Slug-" + (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss')
         Push-Location $SpineDir
         try {
-            $out = & $PythonExe -m psaspine import-mail $Database $DropDir --run-id $runId --channel $Channel --own-address $Mailbox 2>&1
+            $importArgs = @('-m', 'psaspine', 'import-mail', $Database, $DropDir, '--run-id', $runId,
+                            '--channel', $Channel, '--own-address', $Mailbox)
+            if ($BoardId) { $importArgs += @('--board-id', $BoardId) }
+            $out = & $PythonExe @importArgs 2>&1
             $code = $LASTEXITCODE
         } finally { Pop-Location }
         # import-mail prints counts only ("n files: x new, y appended ...").
@@ -248,8 +267,9 @@ if ($Apply) {
         if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d | Out-Null }
     }
 }
-Write-Log ("Mail pickup for $Mailbox -> $Database ({0}{1})" -f
-    $(if ($Apply) { 'APPLY' } else { 'PREVIEW' }), $(if ($Loop) { ", every $IntervalSeconds s" } else { '' }))
+Write-Log ("Mail pickup for $Mailbox -> $Database, board {2} ({0}{1})" -f
+    $(if ($Apply) { 'APPLY' } else { 'PREVIEW' }), $(if ($Loop) { ", every $IntervalSeconds s" } else { '' }),
+    $(if ($BoardId) { $BoardId } else { 'by address, else unrouted' }))
 
 do {
     try { Invoke-Pass }
