@@ -197,3 +197,9 @@ Thank you: three real defects, each measured, each hot-fixed before a clinical m
 Still Dada's: the Procurement owner and deputy (`--live`), `Grant-PsaCalendars.ps1`, and the two elevated registrations
 (re-register `PSA-Notify` with `-AllowedDomain '*'`; `Register-PsaMail.ps1 -IncludeSupport -IncludeCalendar -Apply`).
 
+**One more at this head, no host step:** every requester email now carries the exchange so far beneath its own words
+(Dada: "the discussion doesn't get carried over on the replies"): the requester's words and the desk's Discussion and
+Resolution notes, newest first, each through the PHI gate. It is built by `outbox-pending` at send time from
+`ticket_event`, so the sender script, the tasks and the schema are unchanged. Pass: an Updated email in Outlook shows
+"Earlier in this request, newest first" with the earlier notes under the reply.
+

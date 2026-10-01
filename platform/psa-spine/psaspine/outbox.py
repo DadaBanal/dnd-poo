@@ -273,6 +273,54 @@ def note_for_email(note: str | None) -> str:
     return text[:2000]
 
 
+THREAD_LIMIT = 8      # the last exchanges; the portal has the whole thread
+THREAD_TITLE = "Earlier in this request, newest first"
+
+
+def conversation(conn: sqlite3.Connection, work_item_id: str, *, limit: int = THREAD_LIMIT) -> list[dict]:
+    """The exchange the requester may read, newest first, as the portal shows
+    it (Dada, 1 Oct 2026: "the discussion doesn't get carried over on the
+    replies; the reply should be read on the email as well"): their own words
+    (the first email, every reply by email or on the portal) and the desk's
+    Discussion and Resolution notes. Never an Internal note, never a system
+    event. Each entry is `who`, `when`, `raw` (as written) and `text` (as it
+    may go into an email: the PHI gate applies to every entry on its own)."""
+    rows = conn.execute(
+        "SELECT e.occurred_at, e.kind, e.actor, e.detail, e.note_flag, e.is_resolution, b.display_name AS board"
+        "  FROM ticket_event e JOIN ticket t ON t.work_item_id = e.work_item_id"
+        "  JOIN board b ON b.board_id = t.board_id"
+        "  WHERE e.work_item_id = ?"
+        "    AND (e.kind IN ('INTAKE','INTAKE_REPLY','PORTAL_REPLY') OR e.note_flag IN ('DISCUSSION','RESOLUTION'))"
+        "    AND (e.note_flag IS NULL OR e.note_flag <> 'INTERNAL')"
+        "    AND e.detail IS NOT NULL AND TRIM(e.detail) <> ''"
+        "  ORDER BY e.ticket_event_id DESC LIMIT ?", (work_item_id, limit)).fetchall()
+    out = []
+    for e in rows:
+        if e["kind"] in ("INTAKE", "INTAKE_REPLY", "PORTAL_REPLY"):
+            who = "You"
+        else:
+            first = _first(_name(conn, e["actor"])) if e["actor"] and e["actor"] != "desk" else ""
+            who = f"{first} from {e['board']}" if first else e["board"]
+            if e["note_flag"] == "RESOLUTION" or e["is_resolution"]:
+                who += " (resolution)"
+        raw = str(e["detail"]).strip()
+        out.append({"who": who, "when": (e["occurred_at"] or "")[:16], "raw": raw,
+                    "text": note_for_email(raw)[:1200]})
+    return out
+
+
+def conversation_text(items: list[dict]) -> str:
+    """The thread as plain text, under its title; empty when there is nothing."""
+    if not items:
+        return ""
+    lines = [THREAD_TITLE, "-" * len(THREAD_TITLE)]
+    for i in items:
+        lines.append(f"{i['who']}, {i['when']}")
+        lines.extend("    " + ln for ln in i["text"].splitlines() or [""])
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
 def queue_requester(conn: sqlite3.Connection, work_item_id: str, reason: str, *,
                     at: datetime, note: str | None = None) -> bool:
     """Queue the one email a requester gets. Returns whether one was queued.
@@ -655,9 +703,17 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
         link = (f"{portal_url}/my/{n['work_item_id']}" if portal_url
                 else "the PMC Requests portal, under Your requests")
         subject = (n["subject"] or "").replace("{link}", link)
+        thread = []
         if n["recipient_role"] in (REQUESTER, STATUS):
             where = link
-            body = (f"{(n['body'] or '').replace('{link}', link)}\n\nYour reference: {n['work_item_id']}\n"
+            # The exchange so far rides under every requester email, so the
+            # reply reads in the mail as it does on the portal; what the body
+            # itself already says is not said twice.
+            said_already = n["body"] or ""
+            thread = [x for x in conversation(conn, n["work_item_id"]) if x["raw"] not in said_already]
+            body = (f"{(n['body'] or '').replace('{link}', link)}"
+                    + (f"\n\n{conversation_text(thread)}" if thread else "")
+                    + f"\n\nYour reference: {n['work_item_id']}\n"
                     f"See it here: {where}\n\nTo add something, reply to this email "
                     "and keep the reference in the subject. The ward, the room or the "
                     "machine is all we need; a patient's details never are.")
@@ -680,14 +736,16 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
             b = conn.execute("SELECT b.display_name FROM ticket t JOIN board b ON b.board_id = t.board_id WHERE t.work_item_id = ?",
                              (n["work_item_id"],)).fetchone()
             item["html"] = html_email((n["body"] or "").replace("{link}", link), ticket=n["work_item_id"],
-                                      link=link if portal_url else None, board=b["display_name"] if b else "", hospital=_hospital())
+                                      link=link if portal_url else None, board=b["display_name"] if b else "", hospital=_hospital(),
+                                      thread=thread)
         out.append(item)
     if not dry_run:
         conn.commit()
     return out
 
 
-def html_email(text: str, *, ticket: str, link: str | None, board: str, hospital: str) -> str:
+def html_email(text: str, *, ticket: str, link: str | None, board: str, hospital: str,
+               thread: list[dict] | None = None) -> str:
     """The same words as the plain text, laid out (Dada, 1 Oct 2026: "a better
     formatted email this looks kinda bland"): a header with the hospital and
     the board, the reference, the paragraphs, a button to the request, and
@@ -704,6 +762,17 @@ def html_email(text: str, *, ticket: str, link: str | None, board: str, hospital
         for pp in paras)
     if link and link.startswith("http"):
         body_html = body_html.replace(_h.escape(link), f'<a href="{_h.escape(link)}" style="color:#3d63dd">{_h.escape(link)}</a>')
+    if thread:
+        # The exchange so far: each entry quoted with who and when, newest
+        # first, the same words as the plain text (the PHI gate already ran).
+        entries = "".join(
+            f'<div style="border-left:3px solid #d5dae6;padding:6px 12px;margin:0 0 10px">'
+            f'<div style="font-size:12px;font-weight:600;color:#3b4454">{_h.escape(i["who"])}'
+            f'<span style="font-weight:400;color:#6b7785"> &middot; {_h.escape(i["when"])}</span></div>'
+            f'<div style="font-size:14px;line-height:1.5;color:#1f2430;white-space:pre-wrap">{_h.escape(i["text"])}</div></div>'
+            for i in thread)
+        body_html += (f'<div style="margin:18px 0 4px;font-size:12px;letter-spacing:.3px;text-transform:uppercase;color:#6b7785">'
+                      f'{_h.escape(THREAD_TITLE)}</div>{entries}')
     button = (f'<p style="margin:18px 0 6px"><a href="{_h.escape(link)}" style="display:inline-block;background:#3d63dd;color:#ffffff;'
               f'text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px">See your request</a></p>'
               if link and link.startswith("http") else "")

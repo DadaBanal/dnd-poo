@@ -11975,7 +11975,8 @@ class MailCutoverTest(unittest.TestCase):
             " VALUES ('C_BOB', 'PMC', 'Bob Reyes', 'bob@pmcne.ph', 'bob', 'AD', 0, '2026')")
         self.conn.commit()
 
-    def _msg(self, *, subject, to, sender="ward3@pmcne.ph", delivered_to=None, cc=None, in_reply_to=None):
+    def _msg(self, *, subject, to, sender="ward3@pmcne.ph", delivered_to=None, cc=None, in_reply_to=None,
+             body="Please help."):
         self.n += 1
         headers = [f"From: {sender}", f"To: {to}", f"Subject: {subject}", "Date: Thu, 01 Oct 2026 09:00:00 +0800",
                    f"Message-ID: <c{self.n}@pmcne.ph>"]
@@ -11985,7 +11986,7 @@ class MailCutoverTest(unittest.TestCase):
             headers.append(f"Cc: {cc}")
         if in_reply_to:
             headers.append(f"In-Reply-To: {in_reply_to}")
-        (self.drop / f"{self.n:03d}.eml").write_bytes(("\r\n".join(headers) + "\r\n\r\nPlease help.\r\n").encode())
+        (self.drop / f"{self.n:03d}.eml").write_bytes(("\r\n".join(headers) + f"\r\n\r\n{body}\r\n").encode())
 
     def test_cc_on_an_email_stays_on_the_ticket_and_the_requester_emails_copy_it(self):
         """061, Dada 1 Oct 2026: "can we add a cc on the tickets"."""
@@ -12127,7 +12128,7 @@ class MailCutoverTest(unittest.TestCase):
         board.add_note(self.conn, wid, body="Correction: it arrives Monday.", flag="DISCUSSION", actor="bob", at=self.at)
         [m] = outbox.pending(self.conn, allowed_domains=("*",), dry_run=True)
         self.assertIn("Correction: it arrives Monday.", m["body"])
-        self.assertNotIn("toner", m["body"])
+        self.assertNotIn("toner", m["body"].split(outbox.THREAD_TITLE, 1)[0])   # the earlier reply is history now
         for d in outbox.pending(self.conn, allowed_domains=("*",)):
             outbox.mark(self.conn, d["id"], "SENT", at=self.at)
         # a reply the PHI scan flags goes to the portal, not into the email; an internal note goes nowhere
@@ -12139,6 +12140,62 @@ class MailCutoverTest(unittest.TestCase):
             outbox.mark(self.conn, d["id"], "SENT", at=self.at)
         board.add_note(self.conn, wid, body="checked the switch port", flag="INTERNAL", actor="bob", at=self.at)
         self.assertEqual(outbox.pending(self.conn, allowed_domains=("*",), dry_run=True), [])
+
+    def test_the_exchange_so_far_rides_under_every_requester_email(self):
+        """Dada, 1 Oct 2026: "the discussion doesn't get carried over on the
+        replies; the reply should be read on the email as well". What the
+        portal thread shows, the email shows: the requester's own words and
+        the desk's Discussion and Resolution notes, newest first, each through
+        the PHI gate on its own; never an Internal note, never what the body
+        already says."""
+        from psaspine import board, intake, outbox
+        self.conn.execute("UPDATE board SET notify_requester = 1 WHERE board_id = 'IT_HELP'")
+        intake.set_addresses(self.conn, "IT_HELP", "helpdesk@pmcne.ph", at=self.at, actor="t")
+        self._msg(subject="printer", to="helpdesk@pmcne.ph", sender="susan.dolfo@yahoo.com",
+                  body="The ward 3 printer shows an orange light and prints nothing.")
+        intake.import_drop(self.conn, self.drop, run_id="x1", board_id="IT_HELP", at=self.at)
+        wid = self._ticket(1)["work_item_id"]
+        # the acknowledgement already carries the requester's own first words
+        [m] = outbox.pending(self.conn, allowed_domains=("*",), dry_run=True)
+        self.assertIn(outbox.THREAD_TITLE, m["body"])
+        self.assertIn("You, 2026-10-01", m["body"])
+        self.assertIn("    The ward 3 printer shows an orange light and prints nothing.", m["body"])
+        for d in outbox.pending(self.conn, allowed_domains=("*",)):
+            outbox.mark(self.conn, d["id"], "SENT", at=self.at)
+        board.update_fields(self.conn, wid, at=self.at, actor="bob", owner="bob")
+        board.add_note(self.conn, wid, body="checked the switch port", flag="INTERNAL", actor="bob", at=self.at)
+        board.add_note(self.conn, wid, body="We have ordered the toner; it arrives Friday.", flag="DISCUSSION",
+                       actor="bob", at=datetime(2026, 10, 1, 10, 0))
+        for d in outbox.pending(self.conn, allowed_domains=("*",)):
+            outbox.mark(self.conn, d["id"], "SENT", at=self.at)
+        # the requester answers by email; the technician answers that
+        self._msg(subject=f"[{wid}] printer", to="helpdesk@pmcne.ph", sender="susan.dolfo@yahoo.com",
+                  body="Thank you. Case no. 4471 is the one waiting on it.")
+        intake.import_drop(self.conn, self.drop, run_id="x2", board_id="IT_HELP", at=datetime(2026, 10, 1, 11, 0))
+        board.add_note(self.conn, wid, body="Installed. Please try again.", flag="RESOLUTION", actor="bob",
+                       at=datetime(2026, 10, 1, 12, 0))
+        [m] = outbox.pending(self.conn, allowed_domains=("*",), dry_run=True, portal_url="https://help.pmcne.ph")
+        body, html = m["body"], m["html"]
+        # the reply itself is the body; the exchange before it follows, newest first
+        self.assertIn("Bob from PMO Helpdesk has replied to your request, as of 1 October 2026:\n\nInstalled. Please try again.", body)
+        self.assertEqual(body.count("Installed. Please try again."), 1)
+        thread = body.split(outbox.THREAD_TITLE, 1)[1].split("Your reference:", 1)[0]
+        # (an email reply is stamped with the mail's own Date header, not the run's clock)
+        i_reply = thread.index("    " + outbox.PORTAL_WORDS)     # the requester's own reply named a case number: the gate holds for it too
+        i_note = thread.index("Bob from PMO Helpdesk, 2026-10-01 10:00\n    We have ordered the toner; it arrives Friday.")
+        i_first = thread.index("You, 2026-10-01 09:00\n    The ward 3 printer shows an orange light and prints nothing.")
+        self.assertLess(i_reply, i_note)
+        self.assertLess(i_note, i_first)
+        self.assertEqual(thread.count("You, "), 2)
+        self.assertNotIn("4471", body + html)
+        self.assertNotIn("switch port", body + html)
+        self.assertIn(outbox.THREAD_TITLE.upper()[:7], html.upper())
+        self.assertIn("Bob from PMO Helpdesk", html)
+        self.assertIn("We have ordered the toner; it arrives Friday.", html)
+        self.assertNotIn("4471", html)
+        # the same thread, as the engine hands it out
+        who = [x["who"] for x in outbox.conversation(self.conn, wid)]
+        self.assertEqual(who, ["Bob from PMO Helpdesk (resolution)", "You", "Bob from PMO Helpdesk", "You"])
 
     def test_the_unrouted_queue_claims_helpdesk_and_help_and_the_dispatcher_routes(self):
         """Dada, 1 Oct 2026: "for the unrouted board add helpdesk and help@

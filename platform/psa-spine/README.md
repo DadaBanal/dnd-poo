@@ -1151,6 +1151,18 @@ sign-in, so the dispatch portal's behaviour is from indexed excerpts
   note) goes into the "has replied" email as written when the PHI scan finds
   nothing in it, else the email says to read it on the portal. `{note}` is
   the placeholder, filled in that email only.
+- **The exchange so far rides under every requester email** (Dada, later the
+  same evening: "the discussion doesn't get carried over on the replies; the
+  reply should be read on the email as well"). What the portal's thread
+  shows, the email shows beneath its own words, newest first: the
+  requester's first email, their replies by email or on the portal, and the
+  desk's Discussion and Resolution notes, each signed with the first name
+  and the board. Never an Internal note, never a system event, never what
+  the body already says, the last eight only (the portal has them all), and
+  the PHI gate runs on every entry on its own, so one that names a case
+  number reads "Sign in to the portal to read it." while the rest go as
+  written. `outbox.conversation` is the engine call; the HTML lays it out as
+  quoted entries.
 - **The Dispatch board scrolls inside its card** with the hours and the
   names pinned, empty rows short; the day never pushes the page down.
 - **A filter applies the moment it is picked**: any select, checkbox or date
