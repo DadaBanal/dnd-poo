@@ -9,6 +9,8 @@ names.
 """
 from __future__ import annotations
 
+import urllib.parse
+
 from .. import templates as t
 from . import common
 
@@ -131,6 +133,14 @@ def index(ctx):
         if e["member"].lower() not in {p.lower() for p in people}:
             people.append(e["member"])
     people.sort(key=str.lower)
+    everyone = list(people)                       # the choice the People dialog offers
+    # 063: whose rows. `who=` in the URL shows a set once; the dispatcher's
+    # saved view applies when the URL says nothing; "Only me" beats both.
+    who_q = [w.strip().lower() for w in ctx.request.query.get("who", "").split(",") if w.strip()]
+    saved = schedule.view_of(ctx.conn, ctx.user.id)
+    chosen = who_q or (saved["people"] if saved and ctx.request.query.get("who") is None else [])
+    if chosen:
+        people = [p for p in people if p.lower() in chosen] or people
     if mine:
         people = [p for p in people if p.lower() == ctx.user.id.lower()] or [ctx.user.id]
     blocks = schedule.blocks(ctx.conn, people, lo, hi)
@@ -280,12 +290,36 @@ def index(ctx):
     prev_, next_ = (d0 - _td(days=1)).isoformat(), (d0 + _td(days=1)).isoformat()
     keep = f"&board={board_q}" if board_q in boards else ""
     keep += "&mine=1" if mine else ""
+    keep += f"&who={t.esc(','.join(who_q))}" if who_q else ""
+    # The People dialog (063): tick whose rows to show; Show is this once,
+    # Save keeps it as your view, Clear forgets it. Works without a mouse.
+    ticks = "".join(
+        f"<label class=tick><input type=checkbox name=p value='{t.esc(p)}'{' checked' if p.lower() in {x.lower() for x in people} else ''}>"
+        f" {t.esc(_members.name_of(ctx.conn, p))} <span class=muted>{t.esc(p)}</span></label>" for p in everyone)
+    showing = (f"{len(people)} of {len(everyone)}" if len(people) != len(everyone) else f"all {len(everyone)}")
+    people_dlg = (
+        "<dialog id=whodlg class=card style='max-width:560px;width:95%'><form method=dialog class=dlghead><h3 style='margin:0'>"
+        + t.icon("users") + "Who is on the board</h3><button type=submit class=iconbtn aria-label=Close>" + t.icon("x") + "</button></form>"
+        f"<form method=get action='/dispatch' id=whoform><input type=hidden name=day value='{t.esc(day)}'>"
+        + (f"<input type=hidden name=board value='{t.esc(board_q)}'>" if board_q in boards else "")
+        + "<p class=why>Tick the people whose rows you want. <b>Show</b> is for now; <b>Save as my view</b> keeps it "
+          "whenever you open Dispatch; <b>Clear</b> goes back to everyone on your boards.</p>"
+        "<p class=row style='gap:6px'><button type=button class='ghost small' data-tick=1>All</button>"
+        "<button type=button class='ghost small' data-tick=0>None</button></p>"
+        f"<div class=ticks>{ticks}</div>"
+        "<p class=row style='margin-top:12px;gap:8px'><button type=submit name=show value=1>Show</button>"
+        "<button type=submit formmethod=post formaction='/dispatch/view' class=ghost>Save as my view</button>"
+        + ("<button type=submit formmethod=post formaction='/dispatch/view' name=clear value=1 class=ghost>Clear my view</button>" if saved else "")
+        + "</p></form></dialog>")
+    who_btn = (f"<div style='flex:0 0 auto'><button type=button class=ghost data-open=whodlg title='Choose whose rows to show'>"
+               + t.icon("users") + f" People <span class=muted>{showing}</span>" + ("" if not saved or who_q else " · saved") + "</button></div>")
     bar = ("<form method=get action='/dispatch' class='row schedbar'>"
            f"<div style='flex:0 0 auto'><a class='btn ghost' href='/dispatch?day={prev_}{keep}' title='Previous day'>‹</a></div>"
            f"<div style='flex:0 0 170px'><input type=date name=day value='{t.esc(day)}' aria-label='Day'></div>"
            f"<div style='flex:0 0 auto'><a class='btn ghost' href='/dispatch?day={next_}{keep}' title='Next day'>›</a></div>"
            f"<div style='flex:0 0 200px'><select name=board aria-label='Board'>{board_opts}</select></div>"
            f"<div style='flex:0 0 auto'><label><input type=checkbox name=mine value=1{' checked' if mine else ''}> Only me</label></div>"
+           + (f"<input type=hidden name=who value='{t.esc(','.join(who_q))}'>" if who_q else "") + who_btn +
            "<div style='flex:0 0 auto'><button class=ghost type=submit>Show</button></div>"
            f"<div style='flex:0 0 auto'><a class='btn ghost' href='/dispatch?day={ctx.now.date().isoformat()}{keep}'>Today</a></div>"
            f"<div style='flex:0 0 auto'><a class='btn ghost' href='/schedule?week={t.esc(day)}'>Week</a></div></form>")
@@ -304,6 +338,7 @@ def index(ctx):
         + day_card + queue + "".join(role_cards))
     if can_book:
         body += slot_dialog(ctx, people, back=back)
+    body += people_dlg
     return Response(body=t.page("Dispatch", body, user=ctx.user, active="dispatch", live="schedule"))
 
 
@@ -327,3 +362,24 @@ def assign(ctx):
                 owner=owner, reason="routed from dispatch")
     ctx.conn.commit()
     return redirect("/dispatch")
+
+
+def view(ctx):
+    """063: keep or forget the dispatcher's own set of people."""
+    from .. import redirect
+    from ... import schedule
+    f = ctx.request.form()
+    day = f.get("day", "") or ctx.now.date().isoformat()
+    board = f.get("board", "") or None
+    back = f"/dispatch?day={urllib.parse.quote(day)}" + (f"&board={urllib.parse.quote(board)}" if board else "")
+    if f.get("clear") == "1":
+        schedule.clear_view(ctx.conn, ctx.user.id)
+        ctx.conn.commit()
+        return redirect(back + "&msg=" + urllib.parse.quote("Your view is cleared: everyone on your boards."))
+    try:
+        kept = schedule.save_view(ctx.conn, ctx.user.id, ctx.request.form_list("p"), board, at=ctx.now)
+    except ValueError as exc:
+        ctx.conn.rollback()
+        return redirect(back + "&err=" + urllib.parse.quote(str(exc)))
+    ctx.conn.commit()
+    return redirect(back + "&msg=" + urllib.parse.quote(f"Saved: {len(kept)} people on your Dispatch board."))

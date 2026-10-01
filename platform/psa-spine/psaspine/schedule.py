@@ -211,6 +211,41 @@ def members_of(conn, boards) -> list[str]:
         " ORDER BY member", tuple(boards))]
 
 
+# ------------------------------------------------------------ the dispatcher's view (063)
+
+def view_of(conn, member: str) -> dict | None:
+    """Whose rows this dispatcher chose for the Dispatch board, or None."""
+    row = conn.execute("SELECT people, board_id, updated_at FROM dispatch_view WHERE LOWER(member) = LOWER(?)",
+                       (member,)).fetchone()
+    if row is None:
+        return None
+    return {"people": [p for p in row["people"].split(",") if p], "board_id": row["board_id"], "updated_at": row["updated_at"]}
+
+
+def save_view(conn, member: str, people, board_id: str | None, *, at) -> list[str]:
+    """Keep the chosen people (identifiers, any case, duplicates dropped) as
+    the dispatcher's own view. An empty choice is refused: a board with no
+    rows says nothing. Returns the list kept."""
+    kept: list[str] = []
+    for p in people:
+        p = str(p or "").strip().lower()
+        if p and p not in kept and all(ch not in p for ch in ",;|<>'\""):
+            kept.append(p)
+    if not kept:
+        raise ValueError("pick at least one person")
+    if len(kept) > 200:
+        raise ValueError("that is every person; clear the view instead")
+    stamp = at.isoformat(sep=" ", timespec="minutes")
+    conn.execute("DELETE FROM dispatch_view WHERE LOWER(member) = LOWER(?)", (member,))
+    conn.execute("INSERT INTO dispatch_view (member, people, board_id, updated_at) VALUES (?,?,?,?)",
+                 (member, ",".join(kept), board_id or None, stamp))
+    return kept
+
+
+def clear_view(conn, member: str) -> bool:
+    return bool(conn.execute("DELETE FROM dispatch_view WHERE LOWER(member) = LOWER(?)", (member,)).rowcount)
+
+
 def blocks(conn, members, first: str, last: str):
     if not members:
         return []

@@ -200,6 +200,7 @@ ROUTES = [
     ("POST", "/schedule/block", schedule_view.block_add),
     ("POST", "/schedule/block/remove", schedule_view.block_remove),
     ("POST", "/dispatch/assign", dispatch.assign),
+    ("POST", "/dispatch/view", dispatch.view),
     ("GET", "/oncall", oncall.index),
     ("POST", "/oncall/add", oncall.add),
     # The requester portal. Ownership, not board membership, is the filter.

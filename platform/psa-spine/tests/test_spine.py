@@ -12968,6 +12968,44 @@ class ConnectWiseShapeTest(unittest.TestCase):
         self.assertEqual(row["priority"], "P1")
         self.assertNotEqual(row["priority_source"], "OVERRIDE")
 
+    def test_the_dispatcher_chooses_whose_rows_the_board_shows_and_keeps_it(self):
+        """063, Dada 1 Oct 2026: "an edit view as to who will be displayed on
+        the dispatch portal". `who=` shows a set once; Save keeps it as the
+        dispatcher's own view; Clear forgets it; Only me still wins."""
+        from psaspine import schedule
+        self.conn.execute("INSERT OR REPLACE INTO board_member (board_id, member, access) VALUES ('IT_HELP','carol','WORK')")
+        self.conn.commit()
+        _, _, page = self._call("GET", "/dispatch", cookie=self.alice, query="day=2026-09-18")
+        for who in ("alice", "bob", "carol"):
+            self.assertIn(f"data-slot='{who}|2026-09-18|09:00'", page)
+        self.assertIn("id=whodlg", page)
+        self.assertIn("name=p value='carol' checked", page)
+        # once, by the URL
+        _, _, page = self._call("GET", "/dispatch", cookie=self.alice, query="day=2026-09-18&who=bob,carol")
+        self.assertNotIn("data-slot='alice|2026-09-18|09:00'", page)
+        self.assertIn("data-slot='bob|2026-09-18|09:00'", page)
+        self.assertIn("name=p value='alice'>", page)                               # offered, unticked
+        # kept as my view
+        status, headers, _ = self._call("POST", "/dispatch/view", cookie=self.alice,
+                                        form=[("day", "2026-09-18"), ("p", "bob"), ("p", "Carol")])
+        self.assertTrue(status.startswith("303"), status)
+        self.assertEqual(schedule.view_of(self.conn, "alice")["people"], ["bob", "carol"])
+        _, _, page = self._call("GET", "/dispatch", cookie=self.alice, query="day=2026-09-18")
+        self.assertNotIn("data-slot='alice|2026-09-18|09:00'", page)
+        self.assertIn("2 of 3", page)
+        self.assertIn("saved", page)
+        # Only me wins; a view of nobody is refused; Clear forgets
+        _, _, page = self._call("GET", "/dispatch", cookie=self.alice, query="day=2026-09-18&mine=1")
+        self.assertIn("data-slot='alice|2026-09-18|09:00'", page)
+        self.assertNotIn("data-slot='bob|2026-09-18|09:00'", page)
+        status, headers, _ = self._call("POST", "/dispatch/view", cookie=self.alice, form=[("day", "2026-09-18")])
+        self.assertIn("pick%20at%20least%20one%20person", dict(headers)["Location"])
+        status, headers, _ = self._call("POST", "/dispatch/view", cookie=self.alice, form={"day": "2026-09-18", "clear": "1"})
+        self.assertIsNone(schedule.view_of(self.conn, "alice"))
+        _, _, page = self._call("GET", "/dispatch", cookie=self.alice, query="day=2026-09-18")
+        self.assertIn("data-slot='alice|2026-09-18|09:00'", page)
+        self.assertIn("all 3", page)
+
     def test_the_dispatch_board_is_people_by_hours_and_entries_are_dragged(self):
         from psaspine import schedule
         sid = schedule.add(self.conn, "ITO-1", member="bob", starts_at=datetime(2026, 9, 18, 9), ends_at=datetime(2026, 9, 18, 10),

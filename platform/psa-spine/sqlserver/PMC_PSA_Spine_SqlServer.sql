@@ -230,6 +230,7 @@ BEGIN
     PRINT N'    psa.outlook_busy';
     PRINT N'    psa.priority';
     PRINT N'    psa.ticket_cc';
+    PRINT N'    psa.dispatch_view';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -291,7 +292,7 @@ BEGIN
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  132 tables, 54 indexes, 4 triggers.';
+    PRINT N'  133 tables, 54 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -3429,6 +3430,35 @@ CREATE TABLE psa.[ticket_cc] (
 END;
 
 -- --------------------------------------------------------------------------
+-- dispatch_view   (from schema/063_dispatch_view.sql)
+-- 063: whose rows the Dispatch board shows (Dada, 1 Oct 2026: "can we have
+-- an edit view as to who will be displayed on the dispatch portal").
+--
+-- The reference PSA's dispatch portal shows a chosen set of resources, not
+-- everyone on every board. Here each dispatcher keeps one view: the people
+-- whose rows they want, as a comma-separated list of member identifiers,
+-- and optionally the one board. Nobody else's. The URL's `who=` shows a set
+-- once; this is the one that applies when the URL says nothing.
+IF OBJECT_ID(N'psa.[dispatch_view]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[dispatch_view] (
+    -- the dispatcher, as board_member.member
+    [member] NVARCHAR(200) NOT NULL CONSTRAINT [PK_dispatch_view] PRIMARY KEY,
+
+    -- member identifiers, comma-separated, lower case
+    [people] NVARCHAR(MAX) NOT NULL,
+
+    -- the one board, or NULL for all theirs
+    [board_id] NVARCHAR(64) NULL CONSTRAINT [FK_dispatch_view_board_id] REFERENCES psa.[board]([board_id]),
+    [updated_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [updated_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [updated_at], 126), CASE WHEN [updated_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [updated_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -4177,10 +4207,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 132 OR @Triggers <> 4 OR @Indexes < 54
+IF @Tables <> 133 OR @Triggers <> 4 OR @Indexes < 54
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 132), %d triggers (expected 4), %d indexes (expected at least 54). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 133), %d triggers (expected 4), %d indexes (expected at least 54). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -4236,6 +4266,7 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[dispatch_view];
     DROP TABLE IF EXISTS psa.[ticket_cc];
     DROP TABLE IF EXISTS psa.[priority];
     DROP TABLE IF EXISTS psa.[outlook_busy];
