@@ -30,6 +30,7 @@ import re
 # bulk bar and selected rows, @starting-style for enter transitions,
 # color-mix() with plain fallbacks declared first, sticky table headings.
 STYLE = """
+.dispatchwrap{display:grid;grid-template-columns:280px 1fr;gap:14px;align-items:start}@media (max-width:1000px){.dispatchwrap{grid-template-columns:1fr}}.todolist{max-height:70vh;overflow:auto}.todo{padding:8px;border:1px solid var(--line);border-radius:var(--r-sm);margin:0 0 6px;background:var(--surface);font-size:12.5px}.todo[draggable=true]{cursor:grab}.todo.dragging,.sch.dragging{opacity:.4}table.schedgrid.dispatch{min-width:1260px}table.schedgrid.dispatch td.hr{min-width:78px;height:44px;position:relative;overflow:visible;padding:0}table.schedgrid.dispatch td.hr .sch{position:absolute;z-index:1;margin:0;height:78px;overflow:hidden;white-space:normal;word-break:normal;overflow-wrap:normal;box-sizing:border-box;line-height:1.3}table.schedgrid.dispatch td.hr .sch:hover{z-index:2;height:auto;min-height:78px;width:auto!important;min-width:150px}table.schedgrid.dispatch td.hr .sch.clash{outline:2px solid #c62828;outline-offset:-1px}.nowline{position:absolute;top:0;bottom:0;width:2px;background:#d32f2f;z-index:3;pointer-events:none}.util{display:block;margin-top:4px;height:6px;border-radius:3px;background:var(--line);overflow:hidden;width:72px}.util i{display:block;height:100%}.util.lo i{background:#c62828}.util.mid i{background:#c9a400}.util.hi i{background:#1a7f37}.utilt{display:block;font-size:10.5px;color:var(--ink-3);font-weight:400;text-transform:none;letter-spacing:0}table.schedgrid.dispatch td.now{background:color-mix(in srgb,var(--accent) 8%,transparent)}[data-slot].over{outline:2px dashed var(--accent);outline-offset:-2px;background:var(--accent-bg,#e9eefc)}.sch[draggable=true]{cursor:grab}.sch .acts{position:absolute;top:2px;right:2px;display:none;gap:2px}.sch:hover .acts{display:inline-flex}.sch .acts form{display:inline}.sch .acts .iconbtn.x{padding:0 4px;min-width:0;height:auto;line-height:1.3;font-size:12px}
 [data-slot]{cursor:copy}.sch.outlook{background:var(--surface-3,#eceef3);border-style:dashed;color:var(--ink-2,#4a5260)}[data-slot]:hover{background:var(--accent-bg,#e9eefc)}
 #slotdlg::backdrop{background:rgb(0 0 0/.35)}
 :root{color-scheme:light dark;
@@ -348,6 +349,14 @@ ul.plain{list-style:none;padding:0;margin:0} ul.plain li{padding:7px 0;border-bo
 /* ---- the ticket: notes, tabs, layout ----------------------------------- */
 .rail{display:grid;grid-template-columns:minmax(0,2fr) minmax(300px,1fr);gap:16px;align-items:start}
 .hdr{display:flex;align-items:start;gap:12px;flex-wrap:wrap} .hdr .grow{flex:1;min-width:0}
+dialog.viewer{width:min(96vw,1200px);max-width:none;height:min(92vh,900px);max-height:none;padding:0;border:0;border-radius:var(--r);background:var(--card);color:var(--fg);overflow:hidden}
+dialog.viewer:not([open]){display:none} dialog.viewer::backdrop{background:rgb(10 12 18/.55)}
+dialog.viewer .vbar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line)} dialog.viewer .vbar .grow{flex:1}
+dialog.viewer .vname{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+dialog.viewer .vbody{height:calc(100% - 46px);display:flex;align-items:center;justify-content:center;background:var(--bg)}
+dialog.viewer .vbody img{max-width:100%;max-height:100%;object-fit:contain} dialog.viewer .vbody iframe{width:100%;height:100%;border:0;background:#fff}
+h1.sumline .sumedit{width:26px;height:26px;vertical-align:middle;opacity:.55} h1.sumline .sumedit:hover{opacity:1}
+h1.sumline .sumform{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:4px;font-size:14px;font-weight:400} h1.sumline .sumform input{flex:1;min-width:220px;font-size:16px} h1.sumline .sumform[hidden]{display:none}
 .tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:12px}
 .tabs a{padding:7px 12px;color:var(--ink-2);border-bottom:2px solid transparent;margin-bottom:-1px;border-radius:var(--r-sm) var(--r-sm) 0 0;
   transition:color var(--fast) var(--ease),background var(--fast) var(--ease)}
@@ -614,6 +623,26 @@ d.addEventListener("keydown",function(e){
 (function(){var n=document.querySelector('header.top nav');if(!n)return;
 function f(){n.classList.toggle('more',n.scrollWidth>n.clientWidth+2&&n.scrollLeft+n.clientWidth<n.scrollWidth-2)}
 f();addEventListener('resize',f);n.addEventListener('scroll',f,{passive:true})})();
+// Drag and drop, as the reference PSA's Dispatch Portal: a ticket card
+// dropped on a person's hour books it; a visit or a task dropped on another
+// person, hour or day moves it. Each drop is one ordinary form post.
+(function(){if(!('draggable' in document.createElement('div')))return;var cur=null;
+function post(url,fields){var f=document.createElement('form');f.method='post';f.action=url;
+Object.keys(fields).forEach(function(k){var i=document.createElement('input');i.type='hidden';i.name=k;i.value=fields[k];f.appendChild(i)});
+document.body.appendChild(f);f.submit()}
+document.addEventListener('dragstart',function(e){var el=e.target.closest&&e.target.closest('[data-drag]');if(!el||el.getAttribute('draggable')!=='true')return;
+cur=el.getAttribute('data-drag');el.classList.add('dragging');try{e.dataTransfer.setData('text/plain',cur);e.dataTransfer.effectAllowed='move'}catch(x){}});
+document.addEventListener('dragend',function(e){var el=e.target.closest&&e.target.closest('[data-drag]');if(el)el.classList.remove('dragging');
+document.querySelectorAll('[data-slot].over').forEach(function(s){s.classList.remove('over')})});
+document.addEventListener('dragover',function(e){var s=e.target.closest&&e.target.closest('[data-slot]');if(!s||!cur)return;e.preventDefault();
+try{e.dataTransfer.dropEffect='move'}catch(x){}s.classList.add('over')});
+document.addEventListener('dragleave',function(e){var s=e.target.closest&&e.target.closest('[data-slot]');if(s&&!(e.relatedTarget&&s.contains(e.relatedTarget)))s.classList.remove('over')});
+document.addEventListener('drop',function(e){var s=e.target.closest&&e.target.closest('[data-slot]');if(!s||!cur)return;e.preventDefault();
+var p=s.getAttribute('data-slot').split('|'),d=cur.split('|'),back=location.pathname+location.search;cur=null;
+var dlg=document.getElementById('slotdlg');if(dlg){var b=dlg.querySelector('input[name=back]');if(b&&b.value)back=b.value}
+if(d[0]==='ticket'){var tm=p[2]||'09:00',h=parseInt(tm.slice(0,2),10);
+post('/schedule/slot',{what:'visit',member:p[0],work_item_id:d[1],starts_at:p[1]+'T'+tm,ends_at:p[1]+'T'+(h+1<10?'0':'')+Math.min(h+1,23)+tm.slice(2),back:back});return}
+var f={kind:d[0],id:d[1],member:p[0],back:back};if(p[2])f.starts_at=p[1]+'T'+p[2];else f.day=p[1];post('/schedule/move',f)});})();
 // Click a time: a cell marked data-slot="member|YYYY-MM-DD[|HH:MM]" opens the
 // add dialog with the person and the time filled in. A click on a chip, a
 // link or a button inside the cell does what it always did.
@@ -633,6 +662,26 @@ var sel=f.querySelector('select[name=member]');if(sel){var o=[].find.call(sel.op
 var h=parseInt(tm.slice(0,2),10),e2=pad(Math.min(h+1,23))+tm.slice(2);f.starts_at.value=p[1]+'T'+tm;f.ends_at.value=p[1]+'T'+e2;
 var ti=d.querySelector('[data-slot-title]');if(ti)ti.textContent='Add on '+p[1]+' at '+tm;show();d.showModal()});
 show()})();
+// Files: a picture, a PDF or a text file opens in the page's viewer instead
+// of saving. The link itself still opens the file, so nothing depends on this.
+document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[data-view]');if(!a)return;
+var d=document.getElementById('viewer');if(!d||!d.showModal)return;e.preventDefault();
+var kind=a.getAttribute('data-view'),href=a.getAttribute('href'),body=d.querySelector('.vbody');
+d.querySelector('.vname').textContent=a.getAttribute('data-name')||a.textContent;
+d.querySelector('[data-vdl]').href=href+(href.indexOf('?')<0?'?':'&')+'dl=1';d.querySelector('[data-vopen]').href=href;
+body.innerHTML='';var el;if(kind==='image'){el=document.createElement('img');el.alt=a.textContent}
+else{el=document.createElement('iframe');el.title=a.textContent;if(kind==='text')el.setAttribute('sandbox','')}
+el.src=href;body.appendChild(el);d.showModal()});
+(function(){var d=document.getElementById('viewer');if(!d)return;
+d.querySelector('[data-close]').addEventListener('click',function(){d.close()});
+d.addEventListener('close',function(){d.querySelector('.vbody').innerHTML=''});
+d.addEventListener('click',function(e){if(e.target===d)d.close()})})();
+// The ticket summary: the pencil swaps the words for a one-line form.
+document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-edit]');if(!b)return;
+var h=b.closest('h1.sumline');if(!h)return;var f=h.querySelector('.sumform'),t=h.querySelector('.sumtext'),p=h.querySelector('.sumedit');
+var on=b.getAttribute('data-edit')==='summary';f.hidden=!on;t.hidden=on;p.hidden=on;if(on){var i=f.querySelector('input');i.focus();i.select()}});
+document.addEventListener('keydown',function(e){if(e.key!=='Escape')return;var f=e.target.closest&&e.target.closest('.sumform');
+if(f){var c=f.querySelector('[data-edit=cancel]');if(c)c.click()}});
 // Real time: a page marked data-live asks /live for a stamp every ten
 // seconds while it is on screen, and reloads when the stamp moves. While the
 // person is typing it does not reload: it says so, and they choose.
@@ -699,6 +748,7 @@ ICONS = {
     "down": "M12 5v14M5 12l7 7 7-7",
     "left": "M19 12H5M12 5l-7 7 7 7",
     "right": "M5 12h14M12 5l7 7-7 7",
+    "edit": "M4 20h4l11-11-4-4L4 16zM13 7l4 4",
     "sparkle": "M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6",
 }
 
@@ -856,9 +906,28 @@ def md_to_html(md: str, *, file_url=None) -> str:
     return "".join(out)
 
 
+_PRIO: dict[str, dict] = {}
+
+
+def set_priorities(table: dict[str, dict]) -> None:
+    """060: the Priority setup table for this request: each code's name and
+    colour, so every badge says the hospital's word for it."""
+    global _PRIO
+    _PRIO = dict(table or {})
+
+
+def priority_name(code: str) -> str:
+    r = _PRIO.get(code)
+    return r["name"] if r else (code or "")
+
+
 def badge(priority) -> str:
+    from ..priorities import PAINT
     p = priority if priority in ("P1", "P2", "P3", "P4") else ""
-    return f'<span class="badge {p}">{esc(priority or "—")}</span>'
+    r = _PRIO.get(p)
+    style = f' style="background:{PAINT.get(r["color"], "")}"' if r and r.get("color") in PAINT else ""
+    title = f' title="{esc(r["name"])}"' if r else ""
+    return f'<span class="badge {p}"{style}{title}>{esc(priority or "—")}</span>'
 
 
 # One chip per Dada PSA clock: Respond, resolution Plan, reSolve.

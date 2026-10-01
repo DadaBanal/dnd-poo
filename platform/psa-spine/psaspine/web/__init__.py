@@ -502,6 +502,8 @@ def _route(conn, request: Request, config: Config, now: datetime) -> Response:
             next_url=_portal_next(request.path) if portal else request.path, requester=portal))
 
     ctx = Ctx(conn=conn, request=request, user=user, config=config, now=now)
+    from .. import priorities
+    templates.set_priorities(priorities.table(conn))          # 060: the badges' words and colours
     # Who gets the requester's layout: everyone on the portal host, and anyone
     # who is on no board (a requester is not a fulfiller). Derived here, once,
     # so every page draws the same shell for the same person.

@@ -505,3 +505,42 @@ def remove_block(conn, block_id: int, *, actor: str, at: datetime) -> bool:
            detail=f"{BLOCK_KINDS[row['kind']].lower()} removed: {row['member']}, {row['starts_at']} to "
                   f"{row['ends_at']}, {row['name']}")
     return True
+
+
+# ---------------------------------------------------------------- drag and drop
+
+def move(conn, kind: str, ref_id: int, *, member: str | None, starts_at: datetime | None,
+         day: str | None = None, actor: str, at: datetime, allow_conflict: bool = False) -> str:
+    """A visit or a block dragged on the Dispatch board, the Schedule or a
+    calendar: to another person, another time, or another day (keeping its
+    time of day). Its length never changes. Same rules as the forms: a clash
+    is refused unless allowed."""
+    if kind == "VISIT":
+        r = _visit(conn, ref_id)
+    else:
+        r = conn.execute("SELECT * FROM schedule_block WHERE block_id = ?", (ref_id,)).fetchone()
+        if r is None:
+            raise Refused("no such block")
+    s0, e0 = parse_local(r["starts_at"]), parse_local(r["ends_at"])
+    length = e0 - s0
+    if starts_at is None and day:
+        starts_at = datetime.combine(datetime.fromisoformat(day).date(), s0.time())
+    s1 = starts_at or s0
+    e1 = s1 + length
+    who = (member or "").strip() or r["member"]
+    if kind == "VISIT":
+        return update(conn, ref_id, actor=actor, at=at, member=who, starts_at=s1, ends_at=e1, allow_conflict=allow_conflict)
+    if who.lower() == r["member"].lower() and _stamp(s1) == r["starts_at"]:
+        return "nothing changed"
+    allowed = _check(conn, who, s1, e1, allow=allow_conflict, time_off_blocks=r["kind"] != "TIME_OFF", skip_block=ref_id)
+    conn.execute("UPDATE schedule_block SET member = ?, starts_at = ?, ends_at = ? WHERE block_id = ?",
+                 (who, _stamp(s1), _stamp(e1), ref_id))
+    _audit(conn, at=at, actor=actor, action="SCHEDULE_BLOCK", kind="schedule_block", subject=str(ref_id),
+           detail=f"{BLOCK_KINDS[r['kind']].lower()} moved: {r['member']}, {r['starts_at']} -> {who}, {_stamp(s1)}"
+           + (", over a booking (allowed)" if allowed else ""))
+    from . import calsync
+    if who.lower() != r["member"].lower():
+        calsync.queue(conn, "BLOCK", ref_id, "DELETE", member=r["member"], at=at, event_id=r["outlook_event_id"])
+        conn.execute("UPDATE schedule_block SET outlook_event_id = NULL WHERE block_id = ?", (ref_id,))
+    calsync.queue(conn, "BLOCK", ref_id, "UPSERT", member=who, at=at)
+    return f"moved to {who}, {_stamp(s1)}"

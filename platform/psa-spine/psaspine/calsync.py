@@ -142,12 +142,9 @@ def pending(conn, *, allowed_domains: tuple[str, ...], desk_url: str = "", limit
                     mark("SUPERSEDED")
                     continue
                 link = f"{desk_url}/ticket/{v['work_item_id']}" if desk_url else f"the desk, ticket {v['work_item_id']}"
+                subject, body = event_words(conn, v, link)
                 item.update({
-                    "event_id": v["outlook_event_id"],
-                    "subject": f"{v['work_item_id']} · {v['board']}" + (f" · {v['place']}" if v["place"] else ""),
-                    "body": (f"A visit on ticket {v['work_item_id']} ({v['board']})."
-                             + (f" Status: {v['status_name']}." if v["status_name"] else "")
-                             + f"\n\nOpen it on the desk: {link}\n\nThe ticket's words stay on the desk."),
+                    "event_id": v["outlook_event_id"], "subject": subject, "body": body,
                     "start": v["starts_at"], "end": v["ends_at"],
                     "show_as": "tentative" if v["status_id"] == "TENTATIVE" else "busy",
                     "location": v["place"] or ""})
@@ -169,6 +166,35 @@ def pending(conn, *, allowed_domains: tuple[str, ...], desk_url: str = "", limit
     if not dry_run:
         conn.commit()
     return out
+
+
+def event_words(conn, v, link: str) -> tuple[str, str]:
+    """What the Outlook appointment says, as the reference PSA's calendar sync
+    writes a schedule entry (Dada, 1 Oct 2026: "what should go in outlook is
+    the same as the outlook api or integration from connectwise"): the
+    ticket number, the company and the summary in the subject; the summary,
+    status, place and a link in the body. The one guard the record keeps: a
+    ticket on a restricted board, or whose summary the PHI scan flags, goes
+    by its number and board alone (6.1), so a patient's details never reach
+    a calendar that syncs to a phone."""
+    from . import phi
+    row = conn.execute("SELECT w.name AS summary, e.name AS company, w.entity_id, b.restricted FROM ticket t"
+                       "  JOIN work_item w ON w.work_item_id = t.work_item_id JOIN board b ON b.board_id = t.board_id"
+                       "  LEFT JOIN entity e ON e.entity_id = w.entity_id WHERE t.work_item_id = ?",
+                       (v["work_item_id"],)).fetchone()
+    summary = (row["summary"] if row else "") or ""
+    guarded = bool(row and row["restricted"]) or any(sev == "ERROR" for _, sev, _ in phi.scan(summary, field="summary"))
+    status = f" Status: {v['status_name']}." if v["status_name"] else ""
+    if guarded:
+        subject = f"{v['work_item_id']} - {v['board']}" + (f" - {v['place']}" if v["place"] else "")
+        body = f"A visit on ticket {v['work_item_id']} ({v['board']}).{status}\n\nOpen it on the desk: {link}\n\nThe ticket's words stay on the desk."
+    else:
+        from .board import UNKNOWN_ENTITY
+        company = (row["company"] if row and row["entity_id"] != UNKNOWN_ENTITY else "") or ""
+        subject = f"{v['work_item_id']} - " + (f"{company} - " if company else "") + summary
+        body = (f"Ticket {v['work_item_id']} ({v['board']}): {summary}.{status}"
+                + (f" Where: {v['place']}." if v["place"] else "") + f"\n\nOpen it on the desk: {link}")
+    return subject[:255], body
 
 
 def mark(conn, sync_id: int, status: str, *, at: datetime, event_id: str | None = None) -> bool:

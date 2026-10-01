@@ -49,12 +49,12 @@ def _items(conn, member: str, boards, first: date, end: date) -> list[dict]:
     out = []
     for v in schedule._visits(conn, sorted(boards), lo, hi):
         if v["member"].lower() == member.lower():
-            out.append({"kind": "visit", "starts_at": v["starts_at"], "ends_at": v["ends_at"], "ticket": v["work_item_id"],
+            out.append({"kind": "visit", "id": v["schedule_id"], "starts_at": v["starts_at"], "ends_at": v["ends_at"], "ticket": v["work_item_id"],
                         "board_id": v["board_id"], "status": v["status_name"], "where": v["location_name"],
                         "tentative": v["status_id"] == "TENTATIVE", "done": bool(v["done_at"]), "lead": bool(v["is_lead"]),
                         "summary": v["summary"], "note": v["note"]})
     for b in schedule.blocks(conn, [member], lo, hi):
-        out.append({"kind": "block", "block_kind": b["kind"], "starts_at": b["starts_at"], "ends_at": b["ends_at"], "name": b["name"]})
+        out.append({"kind": "block", "id": b["block_id"], "block_kind": b["kind"], "starts_at": b["starts_at"], "ends_at": b["ends_at"], "name": b["name"]})
     for s in conn.execute("SELECT s.*, b.display_name AS board_name FROM oncall_slot s JOIN board b ON b.board_id = s.board_id"
                           " WHERE LOWER(s.member) = LOWER(?) AND s.starts_at < ? AND s.ends_at > ? ORDER BY s.starts_at",
                           (member, hi, lo)):
@@ -76,7 +76,7 @@ def _who(ctx, boards) -> list[str]:
     return sorted(people.values(), key=str.lower)
 
 
-def _chip(it: dict, *, day_of: str) -> str:
+def _chip(it: dict, *, day_of: str, drag: bool = False) -> str:
     def span():
         s, e = it["starts_at"], it["ends_at"]
         if s[:10] == e[:10]:
@@ -86,11 +86,13 @@ def _chip(it: dict, *, day_of: str) -> str:
         return f"from {s[11:]}" if s[:10] == day_of else f"until {e[11:]}"
     if it["kind"] == "visit":
         cls = "sch visit" + (" tentative" if it["tentative"] else "") + (" done" if it["done"] else "")
-        return (f"<a class='{cls}' href='/ticket/{t.esc(it['ticket'])}' title='{t.esc(it['note'] or '')}'><b>{t.esc(span())}</b> "
+        dr = f" draggable=true data-drag='visit|{it['id']}'" if drag and not it["done"] else ""
+        return (f"<a class='{cls}'{dr} href='/ticket/{t.esc(it['ticket'])}' title='{t.esc(it['note'] or '')}'><b>{t.esc(span())}</b> "
                 f"{t.esc(it['ticket'])}{' ★' if it['lead'] else ''}<br>{t.esc((it['summary'] or '')[:36])}"
                 + (f"<br><span class=muted>{t.esc(it['status'] or '')}{' · ' + t.esc(it['where']) if it['where'] else ''}</span>") + "</a>")
     if it["kind"] == "block":
-        return (f"<div class='sch block {it['block_kind'].lower()}'><b>{t.esc(schedule.BLOCK_KINDS[it['block_kind']])}</b> "
+        dr = f" draggable=true data-drag='block|{it['id']}'" if drag else ""
+        return (f"<div class='sch block {it['block_kind'].lower()}'{dr}><b>{t.esc(schedule.BLOCK_KINDS[it['block_kind']])}</b> "
                 f"{t.esc(span())}<br>{t.esc(it['name'])}</div>")
     if it["kind"] == "outlook":
         from .schedule import OUTLOOK_WORD
@@ -145,7 +147,7 @@ def index(ctx):
             for i in range(7):
                 dd = d + timedelta(days=i)
                 cls = ("today" if dd == today else "") + (" other" if dd.month != on.month else "")
-                cells.append(f"<td class='{cls}'{slot(dd)}><div class=dnum>{dd.day}</div>{''.join(_chip(it, day_of=dd.isoformat()) for it in on_day(dd))}</td>")
+                cells.append(f"<td class='{cls}'{slot(dd)}><div class=dnum>{dd.day}</div>{''.join(_chip(it, day_of=dd.isoformat(), drag=can_book) for it in on_day(dd))}</td>")
             weeks.append("<tr>" + "".join(cells) + "</tr>")
             d += timedelta(days=7)
         head = "".join(f"<th>{n}</th>" for n in ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"))
@@ -156,7 +158,7 @@ def index(ctx):
     elif view == "week":
         days = [first + timedelta(days=i) for i in range(7)]
         head = "".join(f"<th class='{'today' if d == today else ''}'>{d.strftime('%a %d %b')}</th>" for d in days)
-        cells = "".join(f"<td class='{'today' if d == today else ''}'{slot(d)}>{''.join(_chip(it, day_of=d.isoformat()) for it in on_day(d))}</td>" for d in days)
+        cells = "".join(f"<td class='{'today' if d == today else ''}'{slot(d)}>{''.join(_chip(it, day_of=d.isoformat(), drag=can_book) for it in on_day(d))}</td>" for d in days)
         grid = f"<div class=schedwrap><table class='schedgrid week'><thead><tr>{head}</tr></thead><tbody><tr>{cells}</tr></tbody></table></div>"
         title = f"Week of {first.strftime('%d %b %Y')}"
         prev_, next_ = first - timedelta(days=7), first + timedelta(days=7)
@@ -173,7 +175,7 @@ def index(ctx):
             here = [it for it in todays if it["starts_at"][:10] == on.isoformat()
                     and max(6, min(20, int(it["starts_at"][11:13]))) == h]
             rows.append(f"<tr><th class=who style='width:70px'>{hh}</th><td{slot(on, hh)}>"
-                        + "".join(_chip(it, day_of=on.isoformat()) for it in here) + "</td></tr>")
+                        + "".join(_chip(it, day_of=on.isoformat(), drag=can_book) for it in here) + "</td></tr>")
         grid = ((("<div class=card>" + "".join(_chip(it, day_of=on.isoformat()) for it in allday) + "</div>") if allday else "")
                 + ("" if todays else "<p class=muted>Nothing on this day." + (" Click an hour to add something." if can_book else "")
                    + "</p>")

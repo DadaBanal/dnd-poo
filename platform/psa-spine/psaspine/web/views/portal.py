@@ -277,9 +277,10 @@ def detail(ctx, work_item_id):
     shared = _visible_files(ctx, work_item_id)
     files_card = ""
     if shared:
+        from . import files as _files
         files_card = ("<div class='card'><h3><svg class=ic aria-hidden=true><use href=#i-paperclip></use></svg>Files</h3><ul class='plain'>" + "".join(
-            f"<li><a href='/my/{t.esc(work_item_id)}/file/{f['attachment_id']}'>"
-            f"{t.esc(f['filename'])}</a></li>" for f in shared) + "</ul></div>")
+            "<li>" + _files.file_link(f"/my/{t.esc(work_item_id)}/file/{f['attachment_id']}", f) + "</li>" for f in shared) + "</ul>"
+            + (_files.viewer_dialog() if any(_files.view_kind(f["media_type"]) for f in shared) else "") + "</div>")
 
     from ... import approvals as _appr
     waiting = _appr.pending(ctx.conn, work_item_id)

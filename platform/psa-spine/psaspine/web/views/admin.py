@@ -94,6 +94,7 @@ def index(ctx):
             f"<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/catalogue'>Catalogue: Type / Subtype / "
             f"Item ({n_items})</a></div>"
             "<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/configuration-types'>Configuration types</a></div>"
+            "<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/priorities'>Priorities</a></div>"
             "<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/kb-categories'>Knowledge categories</a></div>"
             "<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/companies'>Company status and type</a></div></div>"
             "<p class=why style='margin-top:10px'>The template is Dada's design on the "

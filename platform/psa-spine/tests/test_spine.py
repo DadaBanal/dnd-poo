@@ -5425,7 +5425,7 @@ class SchedulingTest(unittest.TestCase):
         self.assertIn("<b>Time off</b> all day<br>Annual leave", page)
         self.assertIn("Mon 28 Sep", page)
         _, _, page = self._call("GET", "/dispatch", cookie=alice, query="day=2026-09-30")
-        self.assertIn("Time off: Annual leave", page)
+        self.assertIn("<b>Time off</b> all day<br>Annual leave", page)
         _, _, ticket = self._call("GET", "/ticket/ITO-2", cookie=alice)
         self.assertIn("Tentative", ticket)
         self.assertIn("Move or change", ticket)
@@ -8019,7 +8019,7 @@ class MergeScheduleSurveyWebTest(unittest.TestCase):
             "member": "bob", "starts_at": "2026-09-18T10:00", "ends_at": "2026-09-18T11:00", "note": "Ward 3"})
         self.assertIn("scheduled", dict(headers)["Location"])
         _, _, page = self._call("GET", "/dispatch", cookie=alice, query="day=2026-09-18")
-        self.assertIn("10:00–11:00 · ITO-1", page)
+        self.assertIn("<b>10:00–11:00</b> <a href='/ticket/ITO-1'>ITO-1</a>", page)
         _, _, ticket = self._call("GET", "/ticket/ITO-1", cookie=alice)
         self.assertIn("Schedule · 1", ticket)
         conn = db.connect(self.db_path)
@@ -8065,7 +8065,7 @@ class AttachmentsWebTest(unittest.TestCase):
     tearDown = WebWSGITest.tearDown
     _cookie_for = WebWSGITest._cookie_for
 
-    def _send(self, method, path, *, cookie, fields=None, files=()):
+    def _send(self, method, path, *, cookie, fields=None, files=(), query=""):
         import io as _io_
         import wsgiref.validate as _v
         body, ctype = b"", None
@@ -8082,7 +8082,7 @@ class AttachmentsWebTest(unittest.TestCase):
             body = b"".join(parts) + f"--{boundary}--\r\n".encode()
             ctype = f"multipart/form-data; boundary={boundary}"
         env = {"REQUEST_METHOD": method, "PATH_INFO": path, "SCRIPT_NAME": "",
-               "QUERY_STRING": "", "SERVER_NAME": "t", "SERVER_PORT": "80",
+               "QUERY_STRING": query, "SERVER_NAME": "t", "SERVER_PORT": "80",
                "SERVER_PROTOCOL": "HTTP/1.1", "wsgi.version": (1, 0),
                "wsgi.url_scheme": "http", "wsgi.input": _io_.BytesIO(body),
                "wsgi.errors": _io_.StringIO(), "wsgi.multithread": False,
@@ -8104,7 +8104,7 @@ class AttachmentsWebTest(unittest.TestCase):
     def _conn(self):
         return db.connect(self.db_path)
 
-    def test_a_file_uploaded_at_the_desk_downloads_as_an_attachment(self):
+    def test_a_file_uploaded_at_the_desk_is_shown_in_place_and_downloads_on_request(self):
         cookie = self._cookie_for("alice")
         status, headers, _ = self._send("POST", "/ticket/ITO-1/attach", cookie=cookie,
                                         files=[("error screen.png", _png())])
@@ -8114,14 +8114,37 @@ class AttachmentsWebTest(unittest.TestCase):
         aid, stored = conn.execute("SELECT attachment_id, size_stored FROM attachment").fetchone()
         conn.close()
         self.assertLess(stored, len(_png()))
+        # Dada, 1 Oct 2026: a picture is viewed, not saved; ?dl=1 saves it
         status, headers, data = self._send("GET", f"/ticket/ITO-1/file/{aid}", cookie=cookie)
         self.assertTrue(status.startswith("200"))
-        self.assertTrue(headers["Content-Disposition"].startswith("attachment;"))
+        self.assertTrue(headers["Content-Disposition"].startswith('inline; filename="error screen.png"'))
         self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
         self.assertEqual(headers["Content-Security-Policy"], "sandbox")
         self.assertTrue(data.startswith(b"\x89PNG"))
+        status, headers, data = self._send("GET", f"/ticket/ITO-1/file/{aid}", cookie=cookie, query="dl=1")
+        self.assertTrue(headers["Content-Disposition"].startswith("attachment;"))
+        self.assertTrue(data.startswith(b"\x89PNG"))
         _, _, page = self._send("GET", "/ticket/ITO-1", cookie=cookie)
         self.assertIn(b"Awaiting review", page)
+        self.assertIn(f"<a href='/ticket/ITO-1/file/{aid}' data-view='image' data-name='error screen.png'>".encode(), page)
+        self.assertIn(f"<a href='/ticket/ITO-1/file/{aid}?dl=1' class=muted title='Download error screen.png'".encode(), page)
+        self.assertIn(b"<dialog id=viewer class=viewer", page)
+        # a PDF is drawn by the browser (no sandbox flag: Chromium's viewer will not run under it); a document downloads
+        self._send("POST", "/ticket/ITO-1/attach", cookie=cookie,
+                   files=[("manual.pdf", b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<<>>\nendobj\n")])
+        self._send("POST", "/ticket/ITO-1/attach", cookie=cookie, files=[("notes.txt", b"the printer is on the 3rd floor\n")])
+        conn = self._conn()
+        kinds = {r[1]: r[0] for r in conn.execute("SELECT attachment_id, media_type FROM attachment")}
+        conn.close()
+        status, headers, _ = self._send("GET", f"/ticket/ITO-1/file/{kinds['application/pdf']}", cookie=cookie)
+        self.assertTrue(headers["Content-Disposition"].startswith('inline; filename="manual.pdf"'))
+        self.assertEqual(headers["Content-Security-Policy"], "default-src 'none'; frame-ancestors 'self'")
+        status, headers, _ = self._send("GET", f"/ticket/ITO-1/file/{kinds['text/plain']}", cookie=cookie)
+        self.assertTrue(headers["Content-Disposition"].startswith('inline; filename="notes.txt"'))
+        self.assertEqual(headers["Content-Security-Policy"], "sandbox")
+        _, _, page = self._send("GET", "/ticket/ITO-1", cookie=cookie)
+        self.assertIn(b"data-view='pdf'", page)
+        self.assertIn(b"data-view='text'", page)
 
     def test_a_refused_upload_says_why_and_keeps_nothing(self):
         status, headers, _ = self._send("POST", "/ticket/ITO-1/attach",
@@ -11952,13 +11975,72 @@ class MailCutoverTest(unittest.TestCase):
             " VALUES ('C_BOB', 'PMC', 'Bob Reyes', 'bob@pmcne.ph', 'bob', 'AD', 0, '2026')")
         self.conn.commit()
 
-    def _msg(self, *, subject, to, sender="ward3@pmcne.ph", delivered_to=None):
+    def _msg(self, *, subject, to, sender="ward3@pmcne.ph", delivered_to=None, cc=None, in_reply_to=None):
         self.n += 1
         headers = [f"From: {sender}", f"To: {to}", f"Subject: {subject}", "Date: Thu, 01 Oct 2026 09:00:00 +0800",
                    f"Message-ID: <c{self.n}@pmcne.ph>"]
         if delivered_to:
             headers.append(f"Delivered-To: {delivered_to}")
+        if cc:
+            headers.append(f"Cc: {cc}")
+        if in_reply_to:
+            headers.append(f"In-Reply-To: {in_reply_to}")
         (self.drop / f"{self.n:03d}.eml").write_bytes(("\r\n".join(headers) + "\r\n\r\nPlease help.\r\n").encode())
+
+    def test_cc_on_an_email_stays_on_the_ticket_and_the_requester_emails_copy_it(self):
+        """061, Dada 1 Oct 2026: "can we add a cc on the tickets"."""
+        from psaspine import cc, intake, outbox
+        self.conn.execute("UPDATE board SET notify_requester = 1 WHERE board_id = 'IT_HELP'")
+        intake.set_addresses(self.conn, "IT_HELP", "helpdesk@pmcne.ph", at=self.at, actor="t")   # the desk's own address
+        self._msg(subject="printer", to="helpdesk@pmcne.ph",
+                  cc="Head Nurse <nurse3@pmcne.ph>, helpdesk@pmcne.ph, ward3@pmcne.ph, Outside <someone@gmail.com>, not-an-address")
+        intake.import_drop(self.conn, self.drop, run_id="cc1", board_id="IT_HELP", at=self.at)
+        wid = self._ticket(1)["work_item_id"]
+        # the sender is the requester, the desk's own address is never a Cc; the rest are kept
+        self.assertEqual(cc.of(self.conn, wid), ["nurse3@pmcne.ph", "someone@gmail.com"])
+        self.assertTrue(self.conn.execute("SELECT 1 FROM ticket_event WHERE work_item_id = ? AND detail = ?",
+                                          (wid, "cc from the email: nurse3@pmcne.ph, someone@gmail.com")).fetchone())
+        # the acknowledgement copies them, within the allowed domains only
+        [m] = [x for x in outbox.pending(self.conn, allowed_domains=("pmcne.ph",), dry_run=True) if x["ticket"] == wid]
+        self.assertEqual((m["to"], m["cc"]), ("ward3@pmcne.ph", ["nurse3@pmcne.ph"]))
+        # a reply with a new Cc adds it; one already there is not doubled
+        self._msg(subject=f"Re: {intake.subject_token(wid)} printer", to="helpdesk@pmcne.ph",
+                  cc="nurse3@pmcne.ph, nurse4@pmcne.ph", in_reply_to="<c1@pmcne.ph>")
+        intake.import_drop(self.conn, self.drop, run_id="cc2", board_id="IT_HELP", at=self.at)
+        self.assertEqual(cc.of(self.conn, wid), ["nurse3@pmcne.ph", "nurse4@pmcne.ph", "someone@gmail.com"])
+        # by hand on the desk: the list as typed replaces it, each address checked, written down
+        self.assertEqual(cc.set_(self.conn, wid, "Nurse3@pmcne.ph; charge.nurse@pmcne.ph", at=self.at, actor="alice"),
+                         "cc nurse3@pmcne.ph, nurse4@pmcne.ph, someone@gmail.com -> charge.nurse@pmcne.ph, nurse3@pmcne.ph")
+        self.assertIsNone(cc.set_(self.conn, wid, "nurse3@pmcne.ph, charge.nurse@pmcne.ph", at=self.at, actor="alice"))
+        with self.assertRaises(ValueError):
+            cc.set_(self.conn, wid, "nurse3@pmcne.ph, ward three", at=self.at, actor="alice")
+        self.assertEqual(cc.of(self.conn, wid), ["charge.nurse@pmcne.ph", "nurse3@pmcne.ph"])
+        self.assertEqual(cc.set_(self.conn, wid, "", at=self.at, actor="alice"), "cc charge.nurse@pmcne.ph, nurse3@pmcne.ph -> -")
+
+    def test_the_unrouted_queue_claims_helpdesk_and_help_and_the_dispatcher_routes(self):
+        """Dada, 1 Oct 2026: "for the unrouted board add helpdesk and help@
+        emails". An address belongs to one board, so the help desk gives
+        them up first and keeps support@."""
+        from psaspine import intake, board as engine
+        intake.set_addresses(self.conn, "IT_HELP", "support@pmcne.ph", at=self.at, actor="t")
+        intake.set_addresses(self.conn, "UNROUTED", "helpdesk@pmcne.ph, help@pmcne.ph", at=self.at, actor="t")
+        self.assertEqual(intake.addresses_of(self.conn, "UNROUTED"), ["help@pmcne.ph", "helpdesk@pmcne.ph"])
+        with self.assertRaises(ValueError):                                          # one board per address
+            intake.set_addresses(self.conn, "IT_HELP", "helpdesk@pmcne.ph", at=self.at, actor="t")
+        self.conn.execute("UPDATE board SET notify_requester = 1 WHERE board_id IN ('UNROUTED', 'IT_HELP')")
+        self._msg(subject="printer", to="help@pmcne.ph")
+        self._msg(subject="po", to="support@pmcne.ph")
+        intake.import_drop(self.conn, self.drop, run_id="u1", board_id="IT_HELP", at=self.at)
+        t1, t2 = self._ticket(1), self._ticket(2)
+        self.assertEqual((t1["board_id"], t1["to_address"]), ("UNROUTED", "help@pmcne.ph"))
+        self.assertEqual((t2["board_id"], t2["to_address"]), ("IT_HELP", "support@pmcne.ph"))
+        # the dispatcher routes it: the ticket moves, its reply address stays the one it was written to
+        engine.move(self.conn, t1["work_item_id"], "IT_HELP", at=self.at, actor="alice", reason="routed")
+        row = self.conn.execute("SELECT board_id FROM ticket WHERE work_item_id = ?", (t1["work_item_id"],)).fetchone()
+        self.assertEqual(row["board_id"], "IT_HELP")
+        froms = {r[0] for r in self.conn.execute("SELECT from_address FROM notification WHERE work_item_id = ?",
+                                                  (t1["work_item_id"],))}
+        self.assertEqual(froms, {"help@pmcne.ph"})
 
     def _ticket(self, n):
         return self.conn.execute("SELECT t.work_item_id, t.board_id, i.to_address FROM intake_message i"
@@ -12221,6 +12303,56 @@ class DeskFlowTest(unittest.TestCase):
         self.conn.commit()
         return wid
 
+    def test_cc_is_edited_on_the_ticket(self):
+        wid = self._open()
+        _, _, page = self._call("GET", f"/ticket/{wid}", cookie=self.alice)
+        self.assertIn("<label>Cc</label><input name=cc value=''", page)
+        status, headers, _ = self._call("POST", f"/ticket/{wid}/update", cookie=self.alice,
+                                        form={"cc": "head.nurse@pmcne.ph, ward three"})
+        self.assertIn("Not+saved%3A+ward+does+not+look+like+an+email+address", dict(headers)["Location"])
+        status, headers, _ = self._call("POST", f"/ticket/{wid}/update", cookie=self.alice,
+                                        form={"cc": "Head.Nurse@pmcne.ph, charge@pmcne.ph"})
+        self.assertIn("msg=Saved", dict(headers)["Location"])
+        _, _, page = self._call("GET", f"/ticket/{wid}", cookie=self.alice)
+        self.assertIn("<label>Cc</label><input name=cc value='charge@pmcne.ph, head.nurse@pmcne.ph'", page)
+        self.assertIn("cc - -&gt; charge@pmcne.ph, head.nurse@pmcne.ph", page)                 # in the history
+
+    def test_the_summary_is_edited_on_the_ticket_and_the_change_is_written_down(self):
+        wid = self._open()
+        _, _, page = self._call("GET", f"/ticket/{wid}", cookie=self.alice)
+        self.assertIn("<span class=sumtext> · Printer down</span>", page)
+        self.assertIn("data-edit=summary", page)
+        self.assertIn("<input name=summary required maxlength=200 value='Printer down'", page)
+        # a reader sees the words, not the pencil
+        self.conn.execute("INSERT OR REPLACE INTO board_member (board_id, member, access) VALUES ('IT_HELP', 'carol', 'READ')")
+        self.conn.commit()
+        _, _, ro = self._call("GET", f"/ticket/{wid}", cookie=self._cookie_for("carol"))
+        self.assertIn("Printer down", ro)
+        self.assertNotIn("data-edit=summary", ro)
+        # the edit: tidied to one line, written down, PHI-scanned
+        status, headers, _ = self._call("POST", f"/ticket/{wid}/update", cookie=self.alice,
+                                        form={"summary": "  Ward 3  printer   jams on every page "})
+        self.assertTrue(status.startswith("303"), status)
+        self.assertEqual(self.conn.execute("SELECT name FROM work_item WHERE work_item_id = ?", (wid,)).fetchone()[0],
+                         "Ward 3 printer jams on every page")
+        ev = self.conn.execute("SELECT detail FROM ticket_event WHERE work_item_id = ? AND kind = 'UPDATED'"
+                               " ORDER BY ticket_event_id DESC LIMIT 1", (wid,)).fetchone()[0]
+        self.assertIn("summary 'Printer down' -> 'Ward 3 printer jams on every page'", ev)
+        # an empty summary is refused and nothing moves
+        status, headers, _ = self._call("POST", f"/ticket/{wid}/update", cookie=self.alice, form={"summary": "   "})
+        self.assertIn("a+summary+is+required", dict(headers)["Location"])
+        self.assertEqual(self.conn.execute("SELECT name FROM work_item WHERE work_item_id = ?", (wid,)).fetchone()[0],
+                         "Ward 3 printer jams on every page")
+        # the same words again change nothing
+        self._call("POST", f"/ticket/{wid}/update", cookie=self.alice, form={"summary": "Ward 3 printer jams on every page"})
+        n = self.conn.execute("SELECT COUNT(*) FROM ticket_event WHERE work_item_id = ? AND kind = 'UPDATED'", (wid,)).fetchone()[0]
+        self.assertEqual(n, 1)
+        # PHI in the new words is flagged, as on a new ticket
+        self._call("POST", f"/ticket/{wid}/update", cookie=self.alice,
+                   form={"summary": "Hospital no. 44812 cannot be found in BizBox"})
+        self.assertTrue(self.conn.execute("SELECT 1 FROM data_quality WHERE subject_id = ? AND subject_kind = 'ticket'",
+                                          (wid,)).fetchone())
+
     def test_the_owner_is_picked_from_the_boards_members_me_first(self):
         wid = self._open()
         _, _, page = self._call("GET", f"/ticket/{wid}", cookie=self.alice)
@@ -12244,12 +12376,13 @@ class DeskFlowTest(unittest.TestCase):
         wid = self._open()
         self.assertEqual(self.conn.execute("SELECT priority FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()[0], "P4")
         with self.assertRaises(ValueError):
-            board.update_fields(self.conn, wid, at=self.at, actor="alice", priority="P1")          # no reason
-        with self.assertRaises(ValueError):
             board.update_fields(self.conn, wid, at=self.at, actor="alice", priority="P9", priority_reason="x")
         changed = board.update_fields(self.conn, wid, at=self.at, actor="alice", priority="P2",
                                       priority_reason="theatre printer, list starts at 10")
         self.assertIn("priority P4 -> P2 (set by alice: theatre printer, list starts at 10)", changed)
+        self.assertIn("priority P2 -> P1 (set by alice)",                                           # no reason needed
+                      board.update_fields(self.conn, wid, at=self.at, actor="alice", priority="P1"))
+        board.update_fields(self.conn, wid, at=self.at, actor="alice", priority="P2", priority_reason="back")
         row = self.conn.execute("SELECT priority, priority_source FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()
         self.assertEqual(tuple(row), ("P2", "OVERRIDE"))
         board.update_fields(self.conn, wid, at=self.at, actor="alice", impact="I3", urgency="U2")       # the matrix waits
@@ -12452,12 +12585,13 @@ class OutlookCalendarTest(unittest.TestCase):
     def test_a_visit_is_written_moved_and_removed_and_never_carries_the_summary(self):
         from psaspine import calsync, schedule
         sid = schedule.add(self.conn, self.wid, member="bob", starts_at=datetime(2026, 10, 2, 9),
-                           ends_at=datetime(2026, 10, 2, 10), note="bring the chart printer key", actor="alice", at=self.at)
+                           ends_at=datetime(2026, 10, 2, 10), note="bring the toner key", actor="alice", at=self.at)
         [w] = self._pending()
         self.assertEqual((w["action"], w["mailbox"], w["start"], w["end"]), ("UPSERT", "bob@pmcne.ph", "2026-10-02 09:00", "2026-10-02 10:00"))
-        self.assertIn(self.wid, w["subject"])
+        # the reference PSA's subject: number and summary; the catch-all company is not a company
+        self.assertEqual(w["subject"], f"{self.wid} - A patient's chart will not print")
         self.assertIn(f"https://desk.pmcne.ph/ticket/{self.wid}", w["body"])
-        self.assertNotIn("chart", w["subject"] + w["body"])                    # neither the summary nor the note
+        self.assertNotIn("toner", w["subject"] + w["body"])                    # the note stays on the desk
         self.assertEqual(w["category"], calsync.CATEGORY)
         calsync.mark(self.conn, w["id"], "SENT", at=self.at, event_id="EV1")
         self.assertEqual(self.conn.execute("SELECT outlook_event_id FROM ticket_schedule WHERE schedule_id = ?", (sid,)).fetchone()[0], "EV1")
@@ -12515,6 +12649,178 @@ class OutlookCalendarTest(unittest.TestCase):
         self.conn.execute("DELETE FROM calendar_sync")
         self.assertEqual(calsync.backfill(self.conn, at=self.at), 1)
         self.assertEqual(len(self._pending()), 1)
+
+
+class ConnectWiseShapeTest(unittest.TestCase):
+    """Dada, 1 Oct 2026: the desk in the reference PSA's shape. A ticket starts
+    unassigned and has an owner and resources; priorities are a setup table a
+    person can override on the ticket; the Dispatch board is a day of people
+    by hours that entries are dragged on; and what reaches Outlook is what
+    the reference PSA's calendar sync writes, behind the 6.1 guard."""
+
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+
+    def setUp(self) -> None:
+        WebWSGITest.setUp(self)
+        self.addCleanup(self.tmp.cleanup)
+        self.at = datetime(2026, 9, 17, 10)
+        self.conn = db.connect(self.db_path)
+        self.addCleanup(self.conn.close)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        self.conn.execute("INSERT OR REPLACE INTO board_member (board_id, member, access) VALUES ('IT_HELP', 'bob', 'WORK')")
+        for m in ("alice", "bob"):
+            self.conn.execute("INSERT INTO contact (contact_id, entity_id, display_name, email, sam_account, source, inactive,"
+                              " created_at) VALUES (?, 'PMC', ?, ?, ?, 'AD', 0, '2026')", (f"C_{m}", m.title(), f"{m}@pmcne.ph", m))
+        self.conn.commit()
+        self.alice = self._cookie_for("alice")
+        self.root = self._cookie_for("root", is_sysadmin=True)
+
+    def _redirect(self, method, path, **kw):
+        status, headers, _ = self._call(method, path, **kw)
+        self.assertTrue(status.startswith("303"), status)
+        return urllib.parse.unquote_plus(dict(headers)["Location"])
+
+    def test_a_ticket_starts_unassigned_and_has_an_owner_and_resources(self):
+        wid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="Mouse", impact="I3", urgency="U3",
+                                  requested_by=None, at=self.at)
+        self.conn.commit()
+        self.assertIsNone(self.conn.execute("SELECT owner FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()[0])
+        _, _, page = self._call("GET", f"/ticket/{wid}", cookie=self.alice)
+        self.assertIn(">Assign me</button>", page)
+        self.assertIn("href='#schedadd'", page)                                  # Schedule me
+        self.assertNotIn("resources:", page)
+        # a visit for bob makes bob a resource; the owner is still whoever has it
+        from psaspine import schedule
+        schedule.add(self.conn, wid, member="bob", starts_at=datetime(2026, 9, 18, 9), ends_at=datetime(2026, 9, 18, 10),
+                     note=None, actor="alice", at=self.at)
+        self.conn.commit()
+        _, _, page = self._call("GET", f"/ticket/{wid}", cookie=self.alice)
+        self.assertIn("resources: Bob</span>", page)
+        where = self._redirect("POST", f"/ticket/{wid}/update", cookie=self.alice, form={"owner": "alice"})
+        self.assertIn("msg=Saved", where)
+        self.assertEqual(self.conn.execute("SELECT owner FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()[0], "alice")
+        _, _, page = self._call("GET", f"/ticket/{wid}", cookie=self.alice)
+        self.assertNotIn(">Assign me</button>", page)
+
+    def test_priorities_are_a_setup_table_whose_words_show_on_the_ticket(self):
+        from psaspine import priorities
+        self.assertEqual([r["priority_id"] for r in priorities.rows(self.conn)], ["P1", "P2", "P3", "P4"])
+        self.assertEqual(priorities.name_of(self.conn, "P1"), "Priority 1 - Emergency Response")
+        status, _, _ = self._call("GET", "/admin/priorities", cookie=self.alice)
+        self.assertTrue(status.startswith("403"), status)                         # a sysadmin's page
+        _, _, page = self._call("GET", "/admin/priorities", cookie=self.root)
+        self.assertIn("Priority 3 - Normal Response", page)
+        self.assertIn("action='/admin/priorities/P1'", page)
+        where = self._redirect("POST", "/admin/priorities/P1", cookie=self.root,
+                               form={"name": "  Priority 1 -  Ward down ", "color": "Purple", "sort_order": "1", "is_default": "1"})
+        self.assertIn("msg=", where)
+        self.conn.commit()
+        row = self.conn.execute("SELECT name, color, is_default FROM priority WHERE priority_id = 'P1'").fetchone()
+        self.assertEqual(tuple(row), ("Priority 1 - Ward down", "Purple", 1))
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM priority WHERE is_default = 1").fetchone()[0], 1)
+        where = self._redirect("POST", "/admin/priorities/P2", cookie=self.root, form={"name": "x", "color": "Mauve"})
+        self.assertIn("err=", where)
+        self.assertIn("one of Red", where)
+        # the ticket page uses the hospital's words, and a person overrides without a reason
+        _, _, page = self._call("GET", "/ticket/ITO-1", cookie=self.alice)
+        self.assertIn("Priority 1 - Ward down", page)
+        where = self._redirect("POST", "/ticket/ITO-1/update", cookie=self.alice, form={"priority": "P3"})
+        self.assertIn("msg=Saved", where)
+        row = self.conn.execute("SELECT priority, priority_source FROM ticket WHERE work_item_id = 'ITO-1'").fetchone()
+        self.assertEqual(tuple(row), ("P3", "OVERRIDE"))
+        where = self._redirect("POST", "/ticket/ITO-1/update", cookie=self.alice, form={"priority": "MATRIX"})
+        row = self.conn.execute("SELECT priority, priority_source FROM ticket WHERE work_item_id = 'ITO-1'").fetchone()
+        self.assertEqual(row["priority"], "P1")
+        self.assertNotEqual(row["priority_source"], "OVERRIDE")
+
+    def test_the_dispatch_board_is_people_by_hours_and_entries_are_dragged(self):
+        from psaspine import schedule
+        sid = schedule.add(self.conn, "ITO-1", member="bob", starts_at=datetime(2026, 9, 18, 9), ends_at=datetime(2026, 9, 18, 10),
+                           note=None, actor="alice", at=self.at)
+        bid = schedule.add_block(self.conn, member="alice", kind="MEETING", name="Vendor", starts_at=datetime(2026, 9, 18, 13),
+                                 ends_at=datetime(2026, 9, 18, 14), actor="alice", at=self.at)
+        wid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="Mouse", impact="I3", urgency="U3",
+                                  requested_by=None, at=self.at)
+        self.conn.commit()
+        _, _, page = self._call("GET", "/dispatch", cookie=self.alice, query="day=2026-09-18")
+        self.assertIn("<div class=dispatchwrap>", page)
+        self.assertIn("data-slot='bob|2026-09-18|09:00'", page)
+        self.assertIn("data-slot='alice|2026-09-18|20:00'", page)
+        self.assertNotIn("data-slot='alice|2026-09-18|21:00'", page)
+        self.assertIn(f"data-drag='visit|{sid}'", page)
+        self.assertIn(f"data-drag='block|{bid}'", page)
+        self.assertIn(f"data-drag='ticket|{wid}'", page)                           # waiting to be scheduled
+        self.assertNotIn("data-drag='ticket|ITO-1'", page)                         # it has a visit this day
+        self.assertIn("unassigned", page)
+        # the reference PSA's dispatch portal: a red line at the current time, a conflict outlined, utilisation per person
+        _, _, today = self._call("GET", "/dispatch", cookie=self.alice, query="day=2026-09-17")
+        self.assertIn("<i class=nowline style='left:0%'", today)                    # the fixture clock is 10:00
+        self.assertNotIn("<i class=nowline", page)
+        self.assertIn("1.0/8.0 12%", page)                                           # bob: one hour booked
+        self.assertIn("<span class='util lo'>", page)
+        self.assertNotIn("sch visit clash", page)
+        schedule.add(self.conn, wid, member="bob", starts_at=datetime(2026, 9, 18, 9, 30), ends_at=datetime(2026, 9, 18, 10, 30),
+                     note=None, actor="alice", at=self.at, allow_conflict=True)
+        self.conn.commit()
+        _, _, page2 = self._call("GET", "/dispatch", cookie=self.alice, query="day=2026-09-18")
+        self.assertEqual(page2.count("sch visit clash"), 2)
+        self.assertIn("left:calc(0.50 * 100% + 2px)", page2)                        # 09:30 starts half way across the 09:00 cell
+        self.assertIn("top:84px", page2)                                             # on the second lane
+        # a reader drags nothing
+        _, _, ro = self._call("GET", "/dispatch", cookie=self._cookie_for("carol"), query="day=2026-09-18")
+        self.assertNotIn("data-slot='", ro)
+        self.assertNotIn("draggable=true data-drag", ro)
+        # the visit dropped on alice at 11: same length, alice's
+        where = self._redirect("POST", "/schedule/move", cookie=self.alice,
+                               form={"kind": "visit", "id": str(sid), "member": "alice", "starts_at": "2026-09-18T11:00",
+                                     "back": "/dispatch?day=2026-09-18"})
+        self.assertTrue(where.startswith("/dispatch?day=2026-09-18&msg=Moved"), where)
+        row = self.conn.execute("SELECT member, starts_at, ends_at FROM ticket_schedule WHERE schedule_id = ?", (sid,)).fetchone()
+        self.assertEqual(tuple(row), ("alice", "2026-09-18 11:00", "2026-09-18 12:00"))
+        # the block to another day keeps its time of day
+        where = self._redirect("POST", "/schedule/move", cookie=self.alice,
+                               form={"kind": "block", "id": str(bid), "day": "2026-09-21", "back": "/calendar?view=week"})
+        self.assertTrue(where.startswith("/calendar?view=week&msg=Moved"), where)
+        row = self.conn.execute("SELECT member, starts_at, ends_at FROM schedule_block WHERE block_id = ?", (bid,)).fetchone()
+        self.assertEqual(tuple(row), ("alice", "2026-09-21 13:00", "2026-09-21 14:00"))
+        # onto the visit: a clash is refused, as the forms refuse it
+        where = self._redirect("POST", "/schedule/move", cookie=self.alice,
+                               form={"kind": "block", "id": str(bid), "member": "alice", "starts_at": "2026-09-18T11:30"})
+        self.assertIn("err=Not moved", where)
+        # a reader moves nothing; a bad id moves nothing; an outside 'back' goes home
+        where = self._redirect("POST", "/schedule/move", cookie=self._cookie_for("carol"),
+                               form={"kind": "visit", "id": str(sid), "member": "bob"})
+        self.assertIn("err=Not moved", where)
+        where = self._redirect("POST", "/schedule/move", cookie=self.alice, form={"kind": "visit", "id": "x", "back": "//evil"})
+        self.assertTrue(where.startswith("/dispatch?err="), where)
+
+    def test_outlook_gets_the_reference_subject_unless_the_record_guards_it(self):
+        from psaspine import calsync, schedule
+        pend = lambda: calsync.pending(self.conn, allowed_domains=("pmcne.ph",), desk_url="https://desk.pmcne.ph")
+        schedule.add(self.conn, "ITO-1", member="bob", starts_at=datetime(2026, 9, 18, 9), ends_at=datetime(2026, 9, 18, 10),
+                     note="bring a toner", actor="alice", at=self.at)
+        [w] = pend()
+        self.assertEqual(w["subject"], "ITO-1 - Premiere Medical Center Nueva Ecija - Printer down")
+        self.assertIn("Ticket ITO-1 (", w["body"])
+        self.assertIn("Printer down", w["body"])
+        self.assertNotIn("toner", w["subject"] + w["body"])                       # the note stays on the desk
+        self.assertIn("https://desk.pmcne.ph/ticket/ITO-1", w["body"])
+        calsync.mark(self.conn, w["id"], "SENT", at=self.at, event_id="EV1")
+        # a restricted board: number and board only
+        schedule.add(self.conn, "ITO-9", member="bob", starts_at=datetime(2026, 9, 18, 11), ends_at=datetime(2026, 9, 18, 12),
+                     note=None, actor="alice", at=self.at)
+        [w] = pend()
+        self.assertEqual(w["subject"], "ITO-9 - PHI Board")
+        self.assertNotIn("Sensitive", w["subject"] + w["body"])
+        calsync.mark(self.conn, w["id"], "SENT", at=self.at, event_id="EV2")
+        # the summary edited to something the PHI scan flags: the event is rewritten, guarded
+        from psaspine import board as engine
+        engine.update_fields(self.conn, "ITO-1", at=self.at, actor="alice", summary="Case no. 4471 chart will not print")
+        [w] = pend()
+        self.assertEqual((w["event_id"], w["subject"]), ("EV1", "ITO-1 - IT Help"))
+        self.assertNotIn("4471", w["body"])
 
 
 if __name__ == "__main__":

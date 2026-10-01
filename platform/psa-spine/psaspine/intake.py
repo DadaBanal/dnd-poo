@@ -41,6 +41,7 @@ import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from . import cc
 from . import db, phi
 
 # How close in time two messages from the same requester with the same subject
@@ -525,6 +526,7 @@ def import_drop(conn: sqlite3.Connection, drop_dir, *, run_id: str,
                 itil.link(conn, ticket_id, parent_ticket, "RELATED", actor="intake", at=when)
                 _keep_files(conn, message, ticket_id, sender=sender, at=when, run_id=run_id,
                             counts=counts)
+                cc.add_from_message(conn, ticket_id, message, sender=sender, own_addresses=own_addresses, at=when)
                 _record(conn, mid, stamp, sender, subject, channel, "NEW_TICKET",
                         ticket_id, parent_id, run_id, to_address)
                 counts["new"] += 1
@@ -533,6 +535,7 @@ def import_drop(conn: sqlite3.Connection, drop_dir, *, run_id: str,
             _append_note(conn, parent_ticket, body or subject, sender, stamp)
             _keep_files(conn, message, parent_ticket, sender=sender, at=when, run_id=run_id,
                         counts=counts)
+            cc.add_from_message(conn, parent_ticket, message, sender=sender, own_addresses=own_addresses, at=when)
             if action == "REOPEN" and reopen_to:
                 from .board import change_status
                 change_status(conn, parent_ticket, reopen_to, at=when, actor="intake")
@@ -573,8 +576,11 @@ def import_drop(conn: sqlite3.Connection, drop_dir, *, run_id: str,
                                  requester=sender, body=body, at=when)
         _keep_files(conn, message, ticket_id, sender=sender, at=when, run_id=run_id,
                     counts=counts)
+        cc.add_from_message(conn, ticket_id, message, sender=sender, own_addresses=own_addresses, at=when)
         _record(conn, mid, stamp, sender, subject, channel, "NEW_TICKET",
                 ticket_id, None, run_id, to_address)
+        from . import outbox
+        outbox.settle_reply_from(conn, ticket_id)     # the acknowledgement answers from the address written to
         counts["new"] += 1
 
     conn.commit()

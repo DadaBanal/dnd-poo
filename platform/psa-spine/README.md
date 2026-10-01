@@ -1069,6 +1069,93 @@ PMO Helpdesk, and the requester hears at each status change.
   as, so it falls back to the mailbox it aliases (INFERRED; NOT VERIFIED
   on the tenant).
 
+## The desk in the reference PSA's shape: owner, resources, priorities, the dispatch board, Outlook (060, 1 Oct 2026)
+
+Dada, 1 Oct 2026: "if you would look at how connectwise works there is a
+ticket owner and a member; it should be unassigned to start with and the
+dispatcher would assign the tickets; priorities should match what
+connectwise has and can be overridden; scheduling should flow into the
+ticket; the calendars should be interactive; what should go in outlook is
+the same as the outlook integration from connectwise." Checked against the
+reference PSA's own API shape (MEASURED from its OpenAPI schema through the
+`pyconnectwise` package: `Ticket.owner`, `Ticket.resources`, `Priority
+{name, color, sortOrder, defaultFlag}`, `ScheduleEntry {member, dateStart,
+dateEnd, doneFlag, acknowledgedFlag, ownerFlag}`,
+`Member.calendarSyncIntegrationFlag`); its documentation is behind a
+sign-in, so the dispatch portal's behaviour is from indexed excerpts
+(INFERRED) and its default priority names are NOT VERIFIED.
+
+- **A ticket starts unassigned.** `ticket.owner` is empty until a person
+  takes it: the owner dropdown on the ticket (Me first, then the board's
+  members), the board's bulk owner, **Assign me** (owner only, no visit) or
+  **Schedule me** (a visit for me; the ticket becomes mine when nobody has
+  it: `schedule.flow_into_ticket`). The people with a visit on the ticket
+  are its **resources**, shown beside the owner on the ticket and the
+  board, never stored twice.
+- **Priorities are a setup table** (`priority`: P1 to P4 with a name, a
+  colour, an order and the default; `psaspine/priorities.py`; Setup ›
+  Priorities, a sysadmin's page). The codes stay fixed because every SLA
+  target and catalogue floor names them; the words and colours are the
+  hospital's and paint every badge. A person sets a ticket's priority by
+  hand (`priority_source = OVERRIDE`; a reason is recorded when given,
+  never demanded, as the reference PSA does it) and gives it back to the
+  matrix. A store without 060 reads the defaults so every page still
+  opens; the page says so.
+- **The Dispatch board** (`/dispatch`) is the day as the reference PSA's
+  dispatch portal draws it: people down the side, 06:00 to 20:00 across,
+  each visit, block and Outlook busy time a strip across the hours it
+  covers (overlaps go on lanes), and a **To schedule** list of the open
+  tickets with no visit that day. A ticket dragged onto a person's hour
+  books a visit (`POST /schedule/slot`); a visit or block dragged to
+  another hour, person or day keeps its length (`POST /schedule/move`,
+  `schedule.move`; a clash is refused as the forms refuse it); click an
+  hour to book by hand; ✓ marks done and 👁 acknowledges. The Schedule week
+  and the Calendar drag the same way. Readers see the day and drag nothing.
+- **Outlook carries what the reference PSA's sync writes**: the subject is
+  `<ticket> - <company> - <summary>` (the catch-all company is left out),
+  the body the summary, status, place and a link to the desk
+  (`calsync.event_words`). The one guard the record keeps (§6.1): a visit
+  on a restricted board, or whose summary the PHI scan flags as an error,
+  goes by its number and board alone, so a patient's details never reach a
+  calendar that syncs to a phone. A note on the visit never goes.
+- **The summary is editable** (Dada: "ticket summaries cannot be edited"):
+  the pencil beside it on the ticket; one line, never empty, PHI-scanned
+  like a new ticket, written to the ticket's history, and every Outlook
+  event already written for the ticket is rewritten so its subject follows.
+- **Files open in place** (Dada: "autoviewer on attachments rather than
+  being downloaded"): a picture, a PDF or a plain-text file on a ticket
+  (the desk and the requester's portal) opens in a viewer on the page with
+  Download and Open-in-a-tab beside it; the link alone still opens it
+  inline (`Content-Disposition: inline`), `?dl=1` downloads, and Office
+  documents and mail files stay downloads because a browser has no viewer
+  for them. Pictures and text keep the `sandbox` policy; a PDF shown inline
+  gets `default-src 'none'` instead, because Chromium's own PDF viewer does
+  not run inside a sandboxed document (INFERRED from its plugin rules; a
+  sandboxed PDF comes up blank or downloads). The restricted-board audit
+  says viewed or downloaded.
+
+- **Cc on the ticket** (061; Dada: "can we add a cc on the tickets"): the
+  reference PSA's Cc field. An email's Cc addresses are kept on the ticket
+  it opens and a reply's new ones are added (`ticket_cc`; never the sender,
+  never one of the desk's own addresses); a person edits the list on the
+  ticket, each address checked; every requester email (opened, status,
+  picked up, updated, closed) goes to them as Cc within the allowed domains
+  (`outbox-pending` hands `cc` beside `to`; `Send-PmcNotifications.ps1`
+  sends `ccRecipients`). They see nothing on the portal, and they get the
+  same words the requester gets: never the summary, never a note.
+- **The unrouted queue claims `helpdesk@` and `help@`** (Dada: "for the
+  unrouted board add helpdesk and help@ emails"): mail to them opens on the
+  Unrouted queue, where the dispatcher routes it from the Dispatch page;
+  `support@` stays on PMO Helpdesk. An address belongs to one board, so the
+  help desk gives the two up first (`mail-setup`, in the handoff). The
+  "we have your request" email now goes out from the address the mail came
+  to: it was queued before intake had written that address, so it went from
+  the sender's own mailbox (`outbox.settle_reply_from`).
+
+Schemas 060 and 061 are one table each. On the live desk SQL01 applies them
+as schema steps; `init` seeds the four priority rows and never touches a row
+already there.
+
 ## Configuration types, statuses and questions (056, 30 Sep 2026)
 
 021 fixed seven configuration types and three statuses in a CHECK. A

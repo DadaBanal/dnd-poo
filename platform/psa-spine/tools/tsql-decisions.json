@@ -1067,6 +1067,14 @@
   "outlook_busy.starts_at": "TIMESTAMP_TEXT",
   "outlook_busy.ends_at": "TIMESTAMP_TEXT",
   "outlook_busy.show_as": "CODE",
-  "outlook_busy.pulled_at": "TIMESTAMP_TEXT"
+  "outlook_busy.pulled_at": "TIMESTAMP_TEXT",
+  "priority.priority_id": "CODE",
+  "priority.name": "NAME",
+  "priority.color": "CODE",
+  "ticket_cc.work_item_id": "ID",
+  "ticket_cc.address": "PERSON",
+  "ticket_cc.source": "CODE",
+  "ticket_cc.added_at": "TIMESTAMP_TEXT",
+  "ticket_cc.added_by": "PERSON"
  }
 }

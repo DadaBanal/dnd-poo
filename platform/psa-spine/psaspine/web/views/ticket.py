@@ -274,17 +274,41 @@ def detail(ctx, work_item_id):
     buttons = ""
     if can_work and tk["closed_loop_required"]:
         buttons = f"<a class=btn href='/ticket/{wid}/loop'>Close the loop</a>"
+    # The reference PSA's Owner and Resources: the owner is the point of contact;
+    # the resources are the people scheduled on it (its schedule entries). The
+    # owner defaults to the first resource scheduled and can always be changed.
+    from ... import members as _members, schedule as _schedule
+    resources = []
+    for r in _schedule.entries_for(ctx.conn, work_item_id):
+        if r["member"].lower() not in {x.lower() for x in resources}:
+            resources.append(r["member"])
+    resources_line = (" · <span class=pill title='The people scheduled on this ticket'>resources: "
+                      + t.esc(", ".join(_members.name_of(ctx.conn, m) for m in resources)) + "</span>" if resources else "")
+    if can_work and not tk["closed_at"]:
+        me_owner = (tk["owner"] or "").lower() == ctx.user.id.lower()
+        buttons += ("" if me_owner else
+                    f" <form method=post action='/ticket/{wid}/update' class=inline><input type=hidden name=owner value='{t.esc(ctx.user.id)}'>"
+                    "<button class='ghost' type=submit title='Take ownership; no visit is booked'>Assign me</button></form>")
+        buttons += (" <a class='btn ghost' href='#schedadd' title='Book yourself a time on it; it becomes yours if "
+                    "nobody has it'>Schedule me</a>")
     header = (
         (f"<div class='banner ok'>{t.icon('layers')} Merged into <a href='/ticket/{t.esc(tk['merged_into'])}'>"
          f"{t.esc(tk['merged_into'])}</a>; the work continues there.</div>" if tk["merged_into"] else "") +
         (f"<div class='banner ok toast'>{t.icon('check')} {t.esc(msg)}</div>" if msg else "") +
         (f"<div class='banner err toast'>{t.icon('alert')} {t.esc(err)}</div>" if err else "") +
         "<div class=hdr><div class=grow>"
-        f"<h1>{wid} · {t.esc(tk['summary'])}</h1>"
+        f"<h1 class=sumline>{wid}<span class=sumtext> · {t.esc(tk['summary'])}</span>"
+        + (f" <button type=button class='iconbtn sumedit' data-edit=summary title='Edit the summary'>{t.icon('edit')}</button>"
+           f"<form method=post action='/ticket/{wid}/update' class='inline sumform' hidden>"
+           f"<input name=summary required maxlength=200 value='{t.esc(tk['summary'])}' aria-label='Summary'>"
+           f" <button type=submit>Save</button> <button type=button class=ghost data-edit=cancel>Cancel</button></form>"
+           if can_work and not tk["merged_into"] else "")
+        + "</h1>"
         f"<p class=sub>{t.esc(tk['board_name'])} · "
         f"{t.chip(tk['status_name'] or tk['state'].replace('_', ' ').title())} · "
-        f"{t.badge(tk['priority'])} <span class=why>{t.esc(why)}</span>"
-        + (f" · <span class=pill>{t.esc(klass)}</span>" if klass else "") + "</p></div>"
+        f"{t.badge(tk['priority'])} <span class=why>{t.esc(t.priority_name(tk['priority']))} · {t.esc(why)}</span>"
+        + (f" · <span class=pill>{t.esc(klass)}</span>" if klass else "")
+        + resources_line + "</p></div>"
         f"<div>{buttons}</div></div>")
 
     # ----------------------------------------------------------- SLA strip
@@ -418,6 +442,7 @@ def detail(ctx, work_item_id):
         board_pairs.insert(0, (tk["board_id"], tk["board_name"]))
     entities = ctx.conn.execute("SELECT entity_id, name FROM entity ORDER BY name").fetchall()
     dis = "" if can_work else " disabled"
+    from ... import cc as _cc
     person = (ctx.conn.execute("SELECT * FROM contact WHERE contact_id = ?",
                                (tk["contact_id"],)).fetchone() if tk["contact_id"] else None)
     if person is not None:
@@ -444,6 +469,8 @@ def detail(ctx, work_item_id):
         f"<label>Contact</label><input name=requested_by list=contacts-ticket "
         f"value='{t.esc(tk['requested_by'] or '')}'{dis}>"
         + _contact_list(ctx.conn, "contacts-ticket", tk["entity_id"]) + person_line
+        + f"<label>Cc</label><input name=cc value='{t.esc(', '.join(_cc.of(ctx.conn, work_item_id)))}'"
+          f" placeholder='addresses, separated by commas' title='They get the emails the requester gets'{dis}>"
         + _type_select(ctx.conn, tk["board_id"], tk["record_type"], disabled=dis,
                        blank=None if tk["record_type"] else "(not set)")
         + _catalogue_select(ctx.conn, tk["board_id"], tk["catalogue_item_id"], disabled=dis) +
@@ -454,8 +481,8 @@ def detail(ctx, work_item_id):
         + (f"<select name=priority aria-label='Change the priority'{dis}>"
            + _options([("", "Keep it as it is")]
                       + ([("MATRIX", "Give it back to the matrix")] if tk["priority_source"] == "OVERRIDE" else [])
-                      + [(p, f"Set it to {p}") for p in ("P1", "P2", "P3", "P4")], "")
-           + "</select><input name=priority_reason maxlength=200 placeholder='why (needed to set it by hand)'"
+                      + [(p, f"Set it to {t.priority_name(p)}") for p in ("P1", "P2", "P3", "P4")], "")
+           + "</select><input name=priority_reason maxlength=200 placeholder='why (optional)'"
            f"{dis} style='margin-top:6px'>" if can_work else "")
         + ("<div style='margin-top:12px'><button type=submit><svg class=ic aria-hidden=true><use href=#i-check></use></svg> Save changes</button></div>" if can_work else "")
         + "</form></div>")
@@ -536,9 +563,25 @@ def detail(ctx, work_item_id):
 
 
 def _back(work_item_id, **q):
+    """Back to the ticket, or to where the form said (`back`: the Dispatch
+    board or a calendar, which carry the same visit actions)."""
     from .. import redirect
+    to = (_BACK.get() or "").strip()
     qs = urllib.parse.urlencode({k: v for k, v in q.items() if v})
+    if to.startswith("/") and not to.startswith("//"):
+        return redirect(to + ("&" if "?" in to else "?") + qs if qs else to)
     return redirect(f"/ticket/{work_item_id}" + (f"?{qs}" if qs else ""))
+
+
+import contextvars as _cv
+_BACK: _cv.ContextVar = _cv.ContextVar("psa_back", default="")
+
+
+def _remember_back(ctx) -> None:
+    try:
+        _BACK.set(ctx.request.form().get("back", "") if ctx.request.method == "POST" else "")
+    except Exception:                                        # noqa: BLE001 - a GET, or no body
+        _BACK.set("")
 
 
 def change_status(ctx, work_item_id):
@@ -646,7 +689,13 @@ def update(ctx, work_item_id):
             requested_by=f.get("requested_by"), impact=impact, urgency=urgency,
             catalogue_item_id=f.get("catalogue_item_id") if "catalogue_item_id" in f else None,
             record_type=want_type, priority=f.get("priority") or None,
-            priority_reason=f.get("priority_reason"), **change_fields_from(f))
+            priority_reason=f.get("priority_reason"),
+            summary=f.get("summary") if "summary" in f else None, **change_fields_from(f))
+        if "cc" in f:
+            from ... import cc as _cc
+            line = _cc.set_(ctx.conn, work_item_id, f.get("cc"), at=ctx.now, actor=ctx.user.id)
+            if line:
+                changed.append(line)
         if any("item" in c or "catalogue" in c for c in changed):
             from ... import approvals as _appr
             if _appr.maybe_request(ctx.conn, work_item_id, at=ctx.now, actor=ctx.user.id) == "REQUESTED":
@@ -1017,7 +1066,7 @@ def _schedule_card(ctx, tk, *, can_work: bool) -> str:
     add = ""
     if can_work and not tk["closed_at"]:
         start = ctx.now.replace(minute=0, second=0, microsecond=0)
-        add = (f"<form method=post action='/ticket/{wid}/schedule/add' class=grid2 style='margin-top:8px'>"
+        add = (f"<form method=post action='/ticket/{wid}/schedule/add' class=grid2 style='margin-top:8px' id=schedadd>"
                "<div><label>Who</label>" + common.owner_select(ctx.conn, [tk["board_id"]], tk["owner"] or ctx.user.id, me=ctx.user.id,
                                                                name="member", blank="(pick a person)", attrs=" required")
                + "</div>"
@@ -1072,6 +1121,7 @@ def _visit_of(ctx, work_item_id):
 
 def schedule_update(ctx, work_item_id):
     from ... import schedule
+    _remember_back(ctx)
     tk = _load(ctx, work_item_id)
     common.require_board(ctx, tk["board_id"], need="WORK")
     sid = _visit_of(ctx, work_item_id)
@@ -1091,6 +1141,7 @@ def schedule_update(ctx, work_item_id):
 
 def schedule_done(ctx, work_item_id):
     from ... import schedule
+    _remember_back(ctx)
     tk = _load(ctx, work_item_id)
     common.require_board(ctx, tk["board_id"], need="WORK")
     sid = _visit_of(ctx, work_item_id)
@@ -1104,6 +1155,7 @@ def schedule_done(ctx, work_item_id):
 
 def schedule_ack(ctx, work_item_id):
     from ... import schedule
+    _remember_back(ctx)
     tk = _load(ctx, work_item_id)
     common.require_board(ctx, tk["board_id"], need="WORK")
     sid = _visit_of(ctx, work_item_id)
@@ -1119,6 +1171,7 @@ def schedule_ack(ctx, work_item_id):
 
 def schedule_lead(ctx, work_item_id):
     from ... import schedule
+    _remember_back(ctx)
     tk = _load(ctx, work_item_id)
     common.require_board(ctx, tk["board_id"], need="WORK")
     sid = _visit_of(ctx, work_item_id)
@@ -1131,6 +1184,7 @@ def schedule_lead(ctx, work_item_id):
 
 def schedule_remove(ctx, work_item_id):
     from ... import schedule
+    _remember_back(ctx)
     tk = _load(ctx, work_item_id)
     common.require_board(ctx, tk["board_id"], need="WORK")
     sid = _visit_of(ctx, work_item_id)

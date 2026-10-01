@@ -346,7 +346,7 @@ def _filters(ctx, boards, f) -> str:
         "</select></div><div><label>Owner</label><select name=owner>"
         + _options([("", "Anyone"), ("me", "Me"), ("none", "Unassigned")], f["owner"]) +
         "</select></div><div><label>Priority</label><select name=pri>"
-        + _options([("", "Any")] + [(p, p) for p in PRIORITY_ORDER], f["pri"]) +
+        + _options([("", "Any")] + [(p, f"{p} · {t.priority_name(p)}") for p in PRIORITY_ORDER], f["pri"]) +
         "</select></div><div><label>Type</label><select name=type>"
         + _options([("", "Any")] + [(k, v) for k, v in itil.LABEL.items()]
                    + [("none", "Not set")], f["type"]) +
@@ -395,6 +395,15 @@ def _table(ctx, boards, shown, f, total: int) -> str:
             names[m.lower()] = n
         return names[m.lower()]
 
+    # The reference PSA's Resources column: who is scheduled on each ticket.
+    res: dict[str, list[str]] = {}
+    ids = [x["r"]["work_item_id"] for x in shown]
+    if ids:
+        for r in ctx.conn.execute("SELECT work_item_id, member FROM ticket_schedule WHERE work_item_id IN (%s)"
+                                  " ORDER BY starts_at" % ",".join("?" * len(ids)), ids):
+            lst = res.setdefault(r["work_item_id"], [])
+            if r["member"].lower() not in {m.lower() for m in lst}:
+                lst.append(r["member"])
     lines = []
     for x in shown:
         r = x["r"]
@@ -420,6 +429,8 @@ def _table(ctx, boards, shown, f, total: int) -> str:
                if r["parent_id"] else "")
             + (f" <span class=pill>{r['children']} child{'ren' if r['children'] != 1 else ''}</span>"
                if r["children"] else "")
+            + (" <span class=pill title='Scheduled on it'>" + t.esc(", ".join(who(m) for m in res[wid])) + "</span>"
+               if res.get(wid) else "")
             + "</div>"
             + (f"<div class=last>{t.esc(last)}</div>" if last else "") + "</td>"
             f"<td class=sm-hide title='{t.esc(r['entity'] or '')}'>{t.esc(r['entity_id'] or '—')}</td>"

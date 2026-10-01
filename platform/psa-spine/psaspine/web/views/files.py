@@ -51,8 +51,7 @@ def ticket_card(ctx, tk, *, can_work: bool) -> str:
                          "</span></li>")
             continue
         served = r["review_status"] != "WITHHELD" or is_admin
-        link = (f"<a href='/ticket/{wid}/file/{r['attachment_id']}'>{name}</a>" if served
-                else f"<s>{name}</s>")
+        link = file_link(f"/ticket/{wid}/file/{r['attachment_id']}", r) if served else f"<s>{name}</s>"
         saved = ""
         if r["size_stored"] < r["size_received"]:
             saved = f", stored {_size(r['size_stored'])}"
@@ -77,10 +76,23 @@ def ticket_card(ctx, tk, *, can_work: bool) -> str:
                   "review.</p>")
     pending = sum(1 for r in rows if r["review_status"] == "PENDING" and not r["purged_at"])
     head = f"Files · {len(rows)}" + (f" · {pending} to review" if pending else "")
+    viewable = any(view_kind(r["media_type"]) and not r["purged_at"] for r in rows)
     return (f"<div class=card data-pod=files><h3><svg class=ic aria-hidden=true><use href=#i-paperclip></use></svg>{head if rows else 'Files'}</h3>"
             + (f"<ul class=plain>{''.join(items)}</ul>" if items
                else "<div class=muted>No files.</div>")
-            + upload + "</div>")
+            + upload + (viewer_dialog() if viewable else "") + "</div>")
+
+
+def file_link(href: str, r) -> str:
+    """The file's name as a link: viewable kinds open in the viewer (and the
+    plain link still works without script), with a download beside; the rest
+    download."""
+    name = t.esc(r["filename"])
+    kind = view_kind(r["media_type"])
+    if not kind:
+        return f"<a href='{href}'>{name}</a>"
+    return (f"<a href='{href}' data-view='{kind}' data-name='{name}'>{name}</a> "
+            f"<a href='{href}?dl=1' class=muted title='Download {name}' aria-label='Download {name}'>" + t.icon("down") + "</a>")
 
 
 def _attachment_on(ctx, work_item_id: str, attachment_id: str):
@@ -94,12 +106,45 @@ def _attachment_on(ctx, work_item_id: str, attachment_id: str):
     return row
 
 
+# What the browser shows in place rather than saves (Dada, 1 Oct 2026: "autoviewer
+# on attachments rather than being downloaded"). Pictures, PDFs and plain text:
+# the kinds a browser renders itself. Office documents and mail files have no
+# viewer in a browser and stay downloads. ?dl=1 downloads any of them.
+VIEWABLE = ("image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "application/pdf",
+            "text/plain", "text/csv")
+
+
+def view_kind(media_type: str) -> str:
+    """'image', 'pdf', 'text' or '' (download only)."""
+    if media_type.startswith("image/") and media_type in VIEWABLE:
+        return "image"
+    if media_type == "application/pdf":
+        return "pdf"
+    if media_type in ("text/plain", "text/csv"):
+        return "text"
+    return ""
+
+
+def viewer_dialog() -> str:
+    """The one dialog a page with viewable files carries: the picture or frame
+    goes in when a file is clicked (templates JS, [data-view])."""
+    return ("<dialog id=viewer class=viewer aria-label='File'><div class=vbar><b class=vname></b>"
+            "<span class=grow></span><a class='btn ghost small' data-vdl href='#'>Download</a> "
+            "<a class='btn ghost small' data-vopen href='#' target=_blank rel=noopener>Open in a tab</a> "
+            "<button type=button class='iconbtn' data-close title='Close'>" + t.icon("x") + "</button></div>"
+            "<div class=vbody></div></dialog>")
+
+
 def serve(ctx, row, *, board_id: str):
-    """The file as a download. Audited on a restricted board."""
+    """The file, shown in place when the browser can show it (a picture, a PDF,
+    plain text) and as a download otherwise or on ?dl=1. Audited on a
+    restricted board."""
     from .. import HttpError, Response
+    kind = view_kind(row["media_type"])
+    inline = bool(kind) and ctx.request.query.get("dl") != "1"
     common.audit_restricted_read(
         ctx, board_id, subject_id=row["work_item_id"],
-        detail=f"downloaded attachment {row['attachment_id']} ({row['filename']})"
+        detail=f"{'viewed' if inline else 'downloaded'} attachment {row['attachment_id']} ({row['filename']})"
                f" via {ctx.user.via}")
     try:
         _, data = attachments.read(ctx.conn, row["attachment_id"])
@@ -109,11 +154,17 @@ def serve(ctx, row, *, board_id: str):
         raise HttpError("404 Not Found", "That file is missing or damaged; it was not served.")
     ascii_name = row["filename"].encode("ascii", "replace").decode().replace("?", "_") \
         .replace('"', "_")
-    disposition = (f'attachment; filename="{ascii_name}"; '
+    disposition = (f'{"inline" if inline else "attachment"}; filename="{ascii_name}"; '
                    f"filename*=UTF-8''{urllib.parse.quote(row['filename'])}")
+    # A picture or text shown inline is sandboxed as before: no script, no
+    # origin. A PDF is drawn by the browser's own viewer, which Chromium does not
+    # run inside a sandboxed document (INFERRED from its plugin rules: a
+    # sandboxed PDF comes up blank or downloads), so a PDF shown inline gets a
+    # policy that lets nothing load instead of the sandbox flag.
+    csp = "default-src 'none'; frame-ancestors 'self'" if inline and kind == "pdf" else "sandbox"
     return Response(body=data, content_type=row["media_type"], headers=[
         ("Content-Disposition", disposition),
-        ("Content-Security-Policy", "sandbox"),
+        ("Content-Security-Policy", csp),
         ("Cache-Control", "private, no-store")])
 
 

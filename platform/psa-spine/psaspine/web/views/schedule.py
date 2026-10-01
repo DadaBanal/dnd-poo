@@ -73,13 +73,14 @@ def index(ctx):
                           f"<input type=hidden name=week value='{start.isoformat()}'>"
                           "<button class='iconbtn x' type=submit title='Remove' aria-label='Remove'>×</button></form>"
                           if can_book else "")
-                chips.append(f"<div class='sch block {b['kind'].lower()}'><b>{t.esc(schedule.BLOCK_KINDS[b['kind']])}</b> "
+                chips.append(f"<div class='sch block {b['kind'].lower()}'{' draggable=true data-drag=' + chr(39) + 'block|' + str(b['block_id']) + chr(39) if can_book else ''}><b>{t.esc(schedule.BLOCK_KINDS[b['kind']])}</b> "
                              f"{t.esc(span)}<br>{t.esc(b['name'])}{remove}</div>")
         for v in visits:
             if v["member"].lower() == member.lower() and v["starts_at"][:10] == d.isoformat():
                 cls = "sch visit" + (" tentative" if v["status_id"] == "TENTATIVE" else "") + (" done" if v["done_at"] else "")
+                drag = f" draggable=true data-drag='visit|{v['schedule_id']}'" if can_book and not v["done_at"] else ""
                 chips.append(
-                    f"<a class='{cls}' href='/ticket/{t.esc(v['work_item_id'])}' title='{t.esc(v['note'] or '')}'>"
+                    f"<a class='{cls}'{drag} href='/ticket/{t.esc(v['work_item_id'])}' title='{t.esc(v['note'] or '')}'>"
                     f"<b>{t.esc(v['starts_at'][11:])}–{t.esc(v['ends_at'][11:])}</b> {t.esc(v['work_item_id'])}"
                     + (" ★" if v["is_lead"] else "") + f"<br>{t.esc((v['summary'] or '')[:36])}"
                     + (f"<br><span class=muted>{t.esc(v['status_name'] or '')}"
@@ -322,3 +323,44 @@ def block_remove(ctx):
         return _back(f.get("week", ""), err="No such entry")
     ctx.conn.commit()
     return _back(f.get("week", ""), msg="Removed from the schedule")
+
+
+def move(ctx):
+    """POST /schedule/move: a visit or a block dropped on another person or
+    time (Dispatch, the Schedule, a calendar). Keeps its length."""
+    from .. import redirect
+    f = ctx.request.form()
+    back = f.get("back", "/dispatch")
+    if not back.startswith("/") or back.startswith("//"):
+        back = "/dispatch"
+    sep = "&" if "?" in back else "?"
+
+    def done(msg="", err=""):
+        return redirect(back + sep + urllib.parse.urlencode({k: v for k, v in (("msg", msg), ("err", err)) if v}))
+
+    kind = "VISIT" if f.get("kind", "").lower() == "visit" else "BLOCK"
+    try:
+        ref_id = int(f.get("id", ""))
+    except ValueError:
+        return done(err="Not moved: no such entry")
+    if kind == "VISIT":
+        row = ctx.conn.execute("SELECT t.board_id FROM ticket_schedule s JOIN ticket t ON t.work_item_id = s.work_item_id"
+                               " WHERE s.schedule_id = ?", (ref_id,)).fetchone()
+        if row is None or not common.may_access_board(ctx, row["board_id"], need="WORK"):
+            return done(err="Not moved: no such visit that you can work")
+    elif not any(common.may_access_board(ctx, b, need="WORK") for b in common.board_ids_for(ctx)):
+        return done(err="Not moved: you do not work a board")
+    starts = None
+    if f.get("starts_at"):
+        try:
+            starts = schedule.parse_local(f["starts_at"])
+        except ValueError:
+            return done(err="Not moved: a bad time")
+    try:
+        what = schedule.move(ctx.conn, kind, ref_id, member=f.get("member"), starts_at=starts, day=f.get("day") or None,
+                             actor=ctx.user.id, at=ctx.now, allow_conflict=f.get("allow_conflict") == "1")
+        ctx.conn.commit()
+    except (schedule.Refused, LookupError, ValueError) as exc:
+        ctx.conn.rollback()
+        return done(err=f"Not moved: {exc}")
+    return done(msg=f"Moved: {what}" if what != "nothing changed" else "Nothing changed")

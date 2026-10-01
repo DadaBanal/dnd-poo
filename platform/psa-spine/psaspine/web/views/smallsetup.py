@@ -12,6 +12,7 @@ import urllib.parse
 
 from ... import companies as _companies
 from ... import knowledge
+from ... import priorities as _priorities
 from .. import templates as t
 from . import common
 
@@ -175,3 +176,42 @@ def co_list_save_status(ctx, ident):
 
 def co_list_save_type(ctx, ident):
     return co_list_save(ctx, "type", ident)
+
+
+# ------------------------------------------------------------ priorities (060)
+
+PR_PATH = "/admin/priorities"
+
+
+def pr_index(ctx):
+    from .. import Response
+    common.require_sysadmin(ctx)
+    rows = _priorities.rows(ctx.conn)
+    colours = lambda sel: "".join(f"<option value='{c}'{' selected' if c == sel else ''}>{c}</option>" for c in _priorities.COLORS)
+    trs = "".join(
+        f"<tr><td>{t.badge(r['priority_id'])}</td>"
+        f"<td><form method=post action='{PR_PATH}/{r['priority_id']}' class=row style='margin:0;gap:6px'>"
+        f"<div style='flex:1 1 220px'><input name=name value='{t.esc(r['name'])}' maxlength=50 required aria-label='Name'></div>"
+        f"<div style='flex:0 0 120px'><select name=color aria-label='Colour'>{colours(r['color'])}</select></div>"
+        f"<div style='flex:0 0 70px'><input name=sort_order type=number value='{r['sort_order']}' aria-label='Order'></div>"
+        f"<div style='flex:0 0 auto'><label><input type=radio name=is_default value=1 style='width:auto'{' checked' if r['is_default'] else ''}> default</label></div>"
+        "<div style='flex:0 0 auto'><button class=ghost type=submit>Save</button></div></form></td></tr>" for r in rows)
+    body = (_banners(ctx.request.query)
+            + "<h1>Priorities</h1><p class=sub>The reference PSA's Priority setup table: each priority's name, colour "
+              "and order, and which is the default. The codes P1 to P4 are what every SLA target and floor names and "
+              "what the matrix computes from <i>who is affected</i> and <i>is a patient waiting</i>; the words are the "
+              "hospital's. A person can set a ticket's priority by hand on the ticket, and give it back to the matrix. "
+              "<a href='/admin'>Setup</a></p>"
+              "<div class=card><h3>" + t.icon("alert") + "Priorities</h3><div class=tablewrap><table><thead><tr><th>Code</th>"
+              "<th>Name · colour · order · default</th></tr></thead><tbody>" + trs + "</tbody></table></div></div>")
+    return Response(body=t.page("Priorities", body, user=ctx.user, active="admin"))
+
+
+def pr_save(ctx, code):
+    common.require_sysadmin(ctx)
+    f = ctx.request.form()
+    order = f.get("sort_order", "").strip()
+    return _try(ctx, PR_PATH, lambda: _priorities.save(
+        ctx.conn, code, name=f.get("name"), color=f.get("color"),
+        sort_order=int(order) if order.lstrip("-").isdigit() else None,
+        is_default=f.get("is_default") == "1", at=ctx.now, actor=ctx.user.id), lambda s: s.capitalize() + ".")

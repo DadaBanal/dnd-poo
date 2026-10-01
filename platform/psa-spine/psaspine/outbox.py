@@ -170,6 +170,18 @@ def reply_from(conn: sqlite3.Connection, work_item_id: str) -> str | None:
     return row["to_address"] if row else None
 
 
+def settle_reply_from(conn: sqlite3.Connection, work_item_id: str) -> None:
+    """The 'we have your request' email is queued when the ticket opens, before
+    intake has written which address the mail came to; once it has, the
+    waiting email takes that address, so the first reply comes from where the
+    requester wrote (058: an emailed ticket's acknowledgement was going out
+    from the sender's own mailbox instead)."""
+    sender = reply_from(conn, work_item_id)
+    if sender:
+        conn.execute("UPDATE notification SET from_address = ? WHERE work_item_id = ? AND from_address IS NULL"
+                     " AND status = 'PENDING'", (sender, work_item_id))
+
+
 def template(conn: sqlite3.Connection, board_id: str, kind: str) -> dict:
     """The words a board uses for one kind: its own row, else the desk's."""
     if kind not in TEMPLATE_KINDS:
@@ -606,9 +618,14 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
             body = (n["body"] or "") + f"\n\nOpen the ticket on the desk and press Acknowledge: {n['work_item_id']}"
         else:
             body = (n["body"] or "") + f"\n\nOpen the ticket on the desk: {n['work_item_id']}"
+        copied = []
+        if n["recipient_role"] in (REQUESTER, STATUS):      # 061: the ticket's Cc hears what the requester hears
+            from . import cc as _cc
+            copied = [a for a in _cc.of(conn, n["work_item_id"]) if a != to and a.rsplit("@", 1)[1] in allowed]
         out.append({"id": n["notification_id"], "to": to, "subject": subject,
                     "body": body.replace("{link}", link), "ticket": n["work_item_id"],
-                    "from": n["from_address"] if n["recipient_role"] in (REQUESTER, STATUS) else None})
+                    "from": n["from_address"] if n["recipient_role"] in (REQUESTER, STATUS) else None,
+                    "cc": copied})
     if not dry_run:
         conn.commit()
     return out

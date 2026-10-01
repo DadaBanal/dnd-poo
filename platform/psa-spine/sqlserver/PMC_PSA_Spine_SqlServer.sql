@@ -228,6 +228,8 @@ BEGIN
     PRINT N'    psa.status_mail';
     PRINT N'    psa.calendar_sync';
     PRINT N'    psa.outlook_busy';
+    PRINT N'    psa.priority';
+    PRINT N'    psa.ticket_cc';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -289,7 +291,7 @@ BEGIN
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  130 tables, 54 indexes, 4 triggers.';
+    PRINT N'  132 tables, 54 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -3378,6 +3380,55 @@ CREATE TABLE psa.[outlook_busy] (
 END;
 
 -- --------------------------------------------------------------------------
+-- priority   (from schema/060_priority.sql)
+-- 060: the Priority setup table, in the reference PSA's shape (Dada, 1 Oct
+-- 2026: "priorities should match what connectwise has and can be overriden").
+--
+-- ConnectWise's Priority entity is id, name (50), color (a named colour),
+-- sortOrder and defaultFlag (MEASURED from its OpenAPI schema, docs/
+-- WS36-connectwise-model-20260909.md). The desk's P1-P4 codes stay the key
+-- every clock and floor already uses; this table gives each its name and
+-- colour, editable at Setup > Priorities. The names seeded are the desk's
+-- reading of ConnectWise's defaults (NOT VERIFIED against a live instance:
+-- its documentation is behind a sign-in); a wrong word is a setup edit.
+IF OBJECT_ID(N'psa.[priority]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[priority] (
+    [priority_id] NVARCHAR(32) NOT NULL CONSTRAINT [PK_priority] PRIMARY KEY CONSTRAINT [CK_priority_01] CHECK (priority_id IN ('P1', 'P2', 'P3', 'P4')),
+    [name] NVARCHAR(400) NOT NULL,
+    [color] NVARCHAR(32) NOT NULL CONSTRAINT [CK_priority_02] CHECK (color IN ('Red', 'Orange', 'Yellow', 'Green', 'Blue', 'Cyan', 'Lime', 'Purple', 'Pink', 'Gray', 'Black', 'White')),
+    [sort_order] INT NOT NULL CONSTRAINT [DF_priority_sort_order] DEFAULT (0),
+    [is_default] INT NOT NULL CONSTRAINT [DF_priority_is_default] DEFAULT (0) CONSTRAINT [CK_priority_03] CHECK (is_default IN (0, 1))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ticket_cc   (from schema/061_ticket_cc.sql)
+-- 061: Cc on a ticket (Dada, 1 Oct 2026: "can we add a cc on the tickets").
+--
+-- The people copied on a ticket, as the reference PSA's ticket Cc field: the
+-- addresses an email came in with (never the sender, never the desk's own
+-- addresses), and whatever a person types on the ticket. The requester's
+-- emails (we have it, status changes, picked up, closed) go to them as Cc,
+-- within the allowed domains. They see nothing on the portal; the requester
+-- does. Carries no words of the ticket: an address only.
+IF OBJECT_ID(N'psa.[ticket_cc]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ticket_cc] (
+    [work_item_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ticket_cc_work_item_id] REFERENCES psa.[ticket]([work_item_id]),
+    [address] NVARCHAR(200) NOT NULL,
+    [source] NVARCHAR(32) NOT NULL CONSTRAINT [CK_ticket_cc_01] CHECK (source IN ('EMAIL', 'DESK')),
+    [added_at] NVARCHAR(64) NOT NULL,
+    [added_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [added_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [added_at], 126), CASE WHEN [added_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [added_at], 112) END)),
+    CONSTRAINT [PK_ticket_cc] PRIMARY KEY ([work_item_id], [address])
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -4112,10 +4163,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 130 OR @Triggers <> 4 OR @Indexes < 54
+IF @Tables <> 132 OR @Triggers <> 4 OR @Indexes < 54
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 130), %d triggers (expected 4), %d indexes (expected at least 54). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 132), %d triggers (expected 4), %d indexes (expected at least 54). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -4171,6 +4222,8 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[ticket_cc];
+    DROP TABLE IF EXISTS psa.[priority];
     DROP TABLE IF EXISTS psa.[outlook_busy];
     DROP TABLE IF EXISTS psa.[calendar_sync];
     DROP TABLE IF EXISTS psa.[status_mail];

@@ -857,8 +857,14 @@ def update_fields(conn: sqlite3.Connection, work_item_id: str, *, at: datetime,
                   change_risk: str | None = None, planned_start: str | None = None,
                   planned_end: str | None = None,
                   backout_plan: str | None = None,
-                  priority: str | None = None, priority_reason: str | None = None) -> list[str]:
+                  priority: str | None = None, priority_reason: str | None = None,
+                  summary: str | None = None) -> list[str]:
     """Change the ticket's editable fields and write down every change.
+
+    The summary (the work item's name) is editable too (Dada, 1 Oct 2026:
+    "ticket summaries cannot be edited"). It is one line, never empty, the PHI
+    scan runs on the new words as it does on a new ticket, and every Outlook
+    event booked for the ticket is written again so its subject follows.
 
     The record type is checked against the board. If the item changes and the
     same save does not change the record type, the type follows the new item.
@@ -887,6 +893,25 @@ def update_fields(conn: sqlite3.Connection, work_item_id: str, *, at: datetime,
         v = (v or "").strip()
         return v or None
 
+    if summary is not None:
+        new_name = " ".join(summary.split())
+        if not new_name:
+            raise ValueError("a summary is required")
+        old_name = conn.execute("SELECT name FROM work_item WHERE work_item_id = ?",
+                                (work_item_id,)).fetchone()[0]
+        if new_name != old_name:
+            from . import phi
+            conn.execute("UPDATE work_item SET name = ? WHERE work_item_id = ?", (new_name, work_item_id))
+            for code, severity, detail in phi.scan(new_name, field="summary"):
+                conn.execute(
+                    "INSERT INTO data_quality (run_id, subject_kind, subject_id, code, detail, severity)"
+                    " VALUES (?,?,?,?,?,?)", ("desk", "ticket", work_item_id, code, detail, severity))
+            changed.append(f"summary {old_name!r} -> {new_name!r}")
+            # 059: the visits' Outlook events carry the summary in their subject
+            from . import calsync
+            for v in conn.execute("SELECT schedule_id FROM ticket_schedule WHERE work_item_id = ?"
+                                  " AND outlook_event_id IS NOT NULL", (work_item_id,)):
+                calsync.visit_changed(conn, v["schedule_id"], at=at)
     if owner is not None and norm(owner) != row["owner"]:
         conn.execute("UPDATE ticket SET owner = ? WHERE work_item_id = ?",
                      (norm(owner), work_item_id))
@@ -1033,12 +1058,12 @@ def update_fields(conn: sqlite3.Connection, work_item_id: str, *, at: datetime,
                 changed.append(f"priority {cur['priority']} -> {p} (back to the matrix, {source})")
         elif priority in ("P1", "P2", "P3", "P4"):
             if priority != cur["priority"] or cur["priority_source"] != "OVERRIDE":
+                # As the reference PSA: a person picks the priority on the ticket.
+                # A reason is recorded when given, never demanded.
                 why = " ".join(str(priority_reason or "").split())[:200]
-                if not why:
-                    raise ValueError("changing the priority by hand needs a reason")
                 conn.execute("UPDATE ticket SET priority = ?, priority_source = 'OVERRIDE' WHERE work_item_id = ?",
                              (priority, work_item_id))
-                changed.append(f"priority {cur['priority']} -> {priority} (set by {actor}: {why})")
+                changed.append(f"priority {cur['priority']} -> {priority} (set by {actor}" + (f": {why}" if why else "") + ")")
         else:
             raise ValueError("a priority is P1, P2, P3 or P4")
     now_priority = conn.execute("SELECT priority FROM ticket WHERE work_item_id = ?",

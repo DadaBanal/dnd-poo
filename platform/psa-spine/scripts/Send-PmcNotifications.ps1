@@ -186,14 +186,16 @@ function Get-SenderFor($Item) {
 
 function Send-One($Item) {
     $headers = @{ Authorization = "Bearer $(Get-GraphToken)" }
-    $message = @{
-        message = @{
-            subject      = $Item.subject
-            body         = @{ contentType = 'Text'; content = $Item.body }
-            toRecipients = @(@{ emailAddress = @{ address = $Item.to } })
-        }
-        saveToSentItems = $true
-    } | ConvertTo-Json -Depth 6
+    $msg = @{
+        subject      = $Item.subject
+        body         = @{ contentType = 'Text'; content = $Item.body }
+        toRecipients = @(@{ emailAddress = @{ address = $Item.to } })
+    }
+    # 061: the ticket's Cc list, already limited to the allowed domains by outbox-pending.
+    if ($Item.PSObject.Properties['cc'] -and $Item.cc) {
+        $msg.ccRecipients = @(foreach ($a in @($Item.cc)) { @{ emailAddress = @{ address = [string]$a } } })
+    }
+    $message = @{ message = $msg; saveToSentItems = $true } | ConvertTo-Json -Depth 6
     $mbx = [Uri]::EscapeDataString((Get-SenderFor $Item))
     Invoke-RestMethod -Method Post -Uri "$Graph/users/$mbx/sendMail" -Headers $headers `
         -ContentType 'application/json' -Body ([Text.Encoding]::UTF8.GetBytes($message)) | Out-Null

@@ -224,6 +224,8 @@ def seed(conn: sqlite3.Connection) -> None:
         " VALUES (1, 'PMC', 6)")
     seed_catalogue(conn)
     move_intake_addresses(conn)
+    from . import priorities
+    priorities.seed(conn)                     # 060: the four priorities' words and colours, once
     conn.commit()
 
 
