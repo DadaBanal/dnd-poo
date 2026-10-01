@@ -6889,6 +6889,23 @@ class TeamsSenderScriptTest(unittest.TestCase):
             self.assertNotIn("$PSScriptRoot", head, name)                        # (b) empty under 5.1 -File
             self.assertIn("$MyInvocation.MyCommand.Path", text, name)
 
+    def test_no_format_string_carries_a_variable_and_no_local_shadows_a_parameter(self):
+        # SQL01, part 27: the pickup put $Database into a -f format string, so an
+        # ODBC connection string's {ODBC Driver 17 for SQL Server} was read as a
+        # placeholder and threw before sign-in; and a local $since overwrote the
+        # [datetime] $Since parameter (PowerShell names ignore case). Every script.
+        import re
+        for path in sorted(self.SCRIPTS.glob("*.ps1")):
+            text = path.read_text(encoding="utf-8", errors="replace")
+            for m in re.finditer(r'\("((?:[^"`]|`.)*)"\s*-f\b', text, re.S):
+                self.assertNotIn("$", m.group(1), f"{path.name}: a variable inside a -f format string")
+            block = re.search(r"param\s*\((.*?)\n\)", text, re.S)
+            params = set(re.findall(r"\$(\w+)", block.group(1))) if block else set()
+            for m in re.finditer(r"^\s*\$(\w+)\s*=", text, re.M):
+                for p in params:
+                    self.assertFalse(m.group(1).lower() == p.lower() and m.group(1) != p,
+                                     f"{path.name}: ${m.group(1)} overwrites the parameter ${p}")
+
     def test_an_idle_pass_counts_zero_on_windows_powershell(self):
         for name in ("Send-PsaTeamsNotifications.ps1", "Send-PmcNotifications.ps1"):
             text = self._text(name)

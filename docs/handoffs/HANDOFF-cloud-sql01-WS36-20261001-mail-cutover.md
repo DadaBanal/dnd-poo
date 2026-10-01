@@ -224,3 +224,32 @@ and 3 of the mail handoff for both mailboxes.
 5. start PSA-Notify with `-SendAs support@pmcne.ph`.
 
 The `support@` pickup goes live only after PCSD stops reading `support@`.
+
+## SQL01's two pickup defects (part 27, at `7a7c4ea`): fixed
+
+Both are in `scripts/Invoke-PmcMailPickup.ps1`, and both are as SQL01 measured them.
+
+- **(a) The start-up log line put `$Database` inside a `-f` format string.** An ODBC connection string's
+  `{ODBC Driver 17 for SQL Server}` was then read as a placeholder.
+  - Every value now goes in as a `-f` argument.
+  - The log no longer prints the connection string at all, only "the SQL Server desk" or "a SQLite file".
+  - `Send-PmcNotifications.ps1`'s start-up line gets the same treatment, though it had no variable that could hold a
+    brace.
+- **(b) `$since` overwrote the `[datetime] $Since` parameter**, because PowerShell names ignore case. It is now
+  `$sinceUtc`.
+- **Both mistakes came from me.** (a) came with the 053 change that added this log line, and (b) is from the original
+  script of 23 Sep. CI never ran PowerShell, so nothing caught them.
+- **The guard is now a test over every `scripts/*.ps1`.** It fails on any variable inside a `-f` format string, and on
+  any local variable that differs only in case from a parameter.
+  - It fails on the script at `7a7c4ea` and passes at this head.
+  - SQL01's scratch copy should match this head in behaviour. It is not byte-identical: the log wording differs.
+
+**SQL01:**
+1. Pull this head, and drop the scratch copy.
+2. Re-run the two pickup previews.
+   - **Pass:** `0 new message(s)` for each of `helpdesk@` and `support@`, and the start-up line names "the SQL Server
+     desk".
+3. Release the held tasks. The `support@` task stays held until PCSD stops reading `support@`.
+
+**The column count:** 1,226 measured against 1,225 in this file. SQL01's explanation stands: it is the port's computed
+twin column beside `status_mail.updated_at`, as in part 21.

@@ -197,9 +197,11 @@ function Invoke-Pass {
         $uri = (Get-Content -Path $DeltaFile -Raw).Trim()
         $first = $false
     } else {
-        $since = $Since.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+        # Not $since: PowerShell names ignore case, so that would overwrite the
+        # [datetime] $Since parameter with a string (MEASURED by SQL01, part 27).
+        $sinceUtc = $Since.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
         $uri = "$Graph/users/$mbx/mailFolders/inbox/messages/delta?changeType=created" +
-               "&`$select=id,receivedDateTime&`$filter=receivedDateTime+ge+$since"
+               "&`$select=id,receivedDateTime&`$filter=receivedDateTime+ge+$sinceUtc"
         $first = $true
     }
 
@@ -267,9 +269,14 @@ if ($Apply) {
         if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d | Out-Null }
     }
 }
-Write-Log ("Mail pickup for $Mailbox -> $Database, board {2} ({0}{1})" -f
-    $(if ($Apply) { 'APPLY' } else { 'PREVIEW' }), $(if ($Loop) { ", every $IntervalSeconds s" } else { '' }),
-    $(if ($BoardId) { $BoardId } else { 'by address, else unrouted' }))
+# Every value goes in as a -f argument, never into the format string: an ODBC
+# connection string's {ODBC Driver 17 for SQL Server} is a -f placeholder and
+# throws before sign-in (MEASURED by SQL01, part 27). Nor is the connection
+# string logged: the log says which kind of database, not where it is.
+Write-Log ('Mail pickup for {0} -> {1}, board {2} ({3}{4})' -f $Mailbox,
+    $(if ($isConnectionString) { 'the SQL Server desk' } else { 'a SQLite file' }),
+    $(if ($BoardId) { $BoardId } else { 'by address, else unrouted' }),
+    $(if ($Apply) { 'APPLY' } else { 'PREVIEW' }), $(if ($Loop) { ", every $IntervalSeconds s" } else { '' }))
 
 do {
     try { Invoke-Pass }

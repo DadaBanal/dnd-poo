@@ -252,7 +252,8 @@ foreach ($p in @($SpineDir) + $(if ($isConnectionString) { @() } else { @($Datab
     if (-not (Test-Path $p)) { throw "Not found: $p" }
 }
 if ($Apply -and -not (Test-Path $StateDir)) { New-Item -ItemType Directory -Path $StateDir | Out-Null }
-Write-Log ("Notification sender for $(($script:Senders) -join ', ') ({0}{1})" -f
+# Values as -f arguments, never in the format string (see the pickup, part 27).
+Write-Log ('Notification sender for {0} ({1}{2})' -f (($script:Senders) -join ', '),
     $(if ($Apply) { 'APPLY' } else { 'PREVIEW' }), $(if ($Loop) { ", every $IntervalSeconds s" } else { '' }))
 
 do {
