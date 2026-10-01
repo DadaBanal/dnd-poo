@@ -1199,6 +1199,13 @@ and the delta link advances.
   --allowed-domain '*'` (`Send-PmcNotifications.ps1 -AllowedDomain '*'`, which
   `Register-PsaMail.ps1` now passes to `PSA-Notify`) releases every domain;
   the words are the same for everyone, a reference and a link.
+- **Three host defects SQL01 measured on 1 Oct 2026 (part 28)**, each fixed
+  here: the pickup and sender set `PSA_ATTACHMENT_DIR` themselves
+  (`-AttachmentDir`, default `D:\psa\files`); every script runs Python
+  with stderr as output and decides by the exit code (a warning failed
+  every pass); `data_quality.subject_id` is as wide as a Message-ID in the
+  port and a Message-ID over 400 characters is hashed, so neither column
+  truncates.
 - `psaspine mail-retry <db> --message-id <id> --actor <who> --apply`: forget
   a message that was set aside, once the cause is put right, so a fresh
   pickup sync (delete the mailbox's delta file, run with `-Since`) imports it

@@ -121,10 +121,13 @@ function Get-GraphToken {
 
 function Invoke-Spine([string[]] $SpineArgs) {
     Push-Location $SpineDir
+    # A native command's stderr (a Python warning, say) is not a terminating error: under
+    # 'Stop' with 2>&1 it was, and one warning failed every pass (MEASURED by SQL01, part 28).
+    $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
     try {
         $out = & $PythonExe -m psaspine @SpineArgs 2>&1
         $code = $LASTEXITCODE
-    } finally { Pop-Location }
+    } finally { $ErrorActionPreference = $eap; Pop-Location }
     return @{ Code = $code; Out = (($out | Out-String).Trim()) }
 }
 

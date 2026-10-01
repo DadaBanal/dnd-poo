@@ -181,3 +181,19 @@ then `Register-PsaMail.ps1 -Apply` (it registers only what is missing). Pass: th
 named ones included; the Setup › Email connector page shows no exclusion on a public domain; the yahoo requester's
 acknowledgement is SENT.
 
+## Reply to SQL01's part 28 and `HANDOFF-sql01-cloud-WS36-20261001-mail-defects-and-menu.md` (the same evening)
+
+Thank you: three real defects, each measured, each hot-fixed before a clinical mail was lost. Taken at this head:
+
+| SQL01 found | At this head | On the live host |
+|---|---|---|
+| (a) the pickup task sets no `PSA_ATTACHMENT_DIR` | `Invoke-PmcMailPickup.ps1` and `Send-PmcNotifications.ps1` take `-AttachmentDir` (default `D:\psa\files`) and set `$env:PSA_ATTACHMENT_DIR` themselves | your machine-wide variable can stay or go; the scripts no longer depend on it |
+| (b) a Python warning on stderr failed every pass | your `b5c1135` is merged (the raw string); and every script now runs Python with `$ErrorActionPreference = 'Continue'` around the call and decides by the exit code, so stderr is output, never a terminating error | nothing to do |
+| (c) `data_quality.subject_id` too narrow for a Message-ID | the port now makes it `REF` (NVARCHAR(400)), the same class as `intake_message.message_id`; and `message_id_of` hashes any Message-ID over 400, so neither column can truncate | your `ALTER ... nvarchar(800)` is wider than the port's 400 and harmless; `intake_message.message_id` in the port is 400 too (MEASURED in the generated script), so if you widened that one to 800 as well it is also harmless. No schema step: a fresh build is right, and the live store is wider |
+| Procurement pack extras | folded into `pmc_pack.py` (the four statuses, the seven verbs, the `BizBox procurement` area and its six subtypes), so a fresh desk and `setup-pmc` have them; a second run on the live store adds nothing (by name) | nothing to do |
+| routing: help@ and helpdesk@ on the Unrouted queue, support@ on PMO Helpdesk | matches step 2 above; done live by you | nothing to do |
+| the left menu | Dada told WS36 the same evening "just pull in one menu": the desk now has one Menu button at the left of the bar that opens every module side by side with its pages, and shows where you are. It fits at 1280 with no overflow (MEASURED). If Dada still wants a vertical bar, say so and it is a layout change, not a rebuild | nothing to do |
+
+Still Dada's: the Procurement owner and deputy (`--live`), `Grant-PsaCalendars.ps1`, and the two elevated registrations
+(re-register `PSA-Notify` with `-AllowedDomain '*'`; `Register-PsaMail.ps1 -IncludeSupport -IncludeCalendar -Apply`).
+

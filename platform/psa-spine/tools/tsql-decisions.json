@@ -318,7 +318,7 @@
   "document.supersedes": "ID",
   "data_quality.run_id": "ID",
   "data_quality.subject_kind": "CODE",
-  "data_quality.subject_id": "ID",
+  "data_quality.subject_id": "REF",
   "data_quality.code": "CODE",
   "data_quality.detail": "FREE",
   "data_quality.severity": "CODE",

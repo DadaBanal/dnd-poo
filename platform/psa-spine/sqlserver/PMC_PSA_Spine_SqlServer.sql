@@ -825,7 +825,7 @@ CREATE TABLE psa.[data_quality] (
 
     -- 'work_item', 'evidence', 'scope_item'
     [subject_kind] NVARCHAR(32) NOT NULL,
-    [subject_id] NVARCHAR(64) NULL,
+    [subject_id] NVARCHAR(400) NULL,
     [code] NVARCHAR(32) NOT NULL,
     [detail] NVARCHAR(MAX) NOT NULL,
     [severity] NVARCHAR(32) NOT NULL CONSTRAINT [CK_data_quality_01] CHECK (severity IN ('INFO','WARN','ERROR'))

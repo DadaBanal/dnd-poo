@@ -42,6 +42,11 @@ PROCUREMENT = (
     ("Issued", "RESOLVED", 0, 1, 1, "Issued to you - reply if anything is wrong"),
     ("Cancelled", "RESOLVED", 0, 0, 1, "Cancelled"),
     (">Closed", "RESOLVED", 1, 0, 0, "Closed"),
+    # SQL01 added these live on 1 Oct 2026 (Dada: "add additional statuses subtype item to the bizbox one")
+    ("Waiting on BizBox", "NO_ESCALATION", 0, 1, 1, "Raised with the BizBox support team; we will tell you when they answer"),
+    ("For Receiving", "RESOLUTION_PLAN", 0, 1, 1, "Delivered; being received into stock"),
+    ("For Payment", "RESOLUTION_PLAN", 0, 1, 1, "Received; the supplier's invoice is with Finance"),
+    ("On Hold", "NO_ESCALATION", 0, 1, 1, "On hold; we will tell you when it moves"),
 )
 
 # ------------------------------------------------------------------ the catalogue
@@ -65,6 +70,14 @@ ITEMS = {
     "Purchase": ("REQUEST", None),
     "Quotation": ("REQUEST", None),
     "Repair by supplier": ("REQUEST", None),
+    # BizBox procurement verbs (SQL01, 1 Oct 2026)
+    "Amend": ("REQUEST", None),
+    "Cancel": ("REQUEST", None),
+    "Query": ("REQUEST", None),
+    "Follow up": ("REQUEST", None),
+    "Dispute": ("REQUEST", None),
+    "Receive": ("REQUEST", None),
+    "Short or wrong delivery": ("FAULT", None),
 }
 FAULTS = ("Not working", "Slow or freezing", "Error message")
 SYSTEM = FAULTS + ("Cannot log in", "Down for the whole ward", "Wrong data or report",
@@ -118,6 +131,14 @@ PROCURE = {
         ("Medical supplies", ("Purchase", "Quotation"), False, None),
         ("Furniture and fixtures", ("Purchase", "Quotation", "Repair by supplier"), False, None),
         ("Services and repairs", ("Repair by supplier", "Quotation"), False, None),
+    ],
+    "BizBox procurement": [
+        ("Purchase order", ("New or install", "Amend", "Cancel", "Query", "Follow up"), False, None),
+        ("Supplier invoice", ("New or install", "Dispute", "Query", "Follow up"), False, None),
+        ("Receiving / delivery", ("Receive", "Short or wrong delivery", "Damaged", "Query"), False, None),
+        ("Supplier / vendor", ("New or install", "Amend", "Query"), False, None),
+        ("Product / item", ("New or install", "Amend", "Query"), False, None),
+        ("Agreement / contract", ("New or install", "Amend", "Query"), False, None),
     ],
 }
 

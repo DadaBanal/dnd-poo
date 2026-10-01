@@ -107,8 +107,8 @@ def message_id_of(message, *, raw_bytes: bytes) -> str:
     gives the same id for the same message and a different one for a different
     message, which is exactly what the column is for.
     """
-    mid = _decode(message.get("Message-ID"))
-    if mid:
+    mid = _decode(message.get("Message-ID")).strip()
+    if mid and len(mid) <= 400:                       # the column's width in the port (REF, 400); a longer one is hashed
         return mid
     return "sha256:" + hashlib.sha256(raw_bytes).hexdigest()
 

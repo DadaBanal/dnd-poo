@@ -68,6 +68,7 @@ param(
     [Parameter(Mandatory = $true)] [string] $DropDir,
     [Parameter(Mandatory = $true)] [string] $StateDir,
     [string] $SpineDir,
+    [string] $AttachmentDir = 'D:\psa\files',
     [string] $PythonExe = 'C:\PMC\Python312\python.exe',
     [string] $Channel = 'helpdesk',
     [string] $BoardId,
@@ -80,6 +81,10 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+# The files a mail brings go where the desk keeps every file. The task's own setting, not a
+# machine variable it has to inherit (SQL01, part 28: the pickup had none and every mail with an
+# attachment failed its pass).
+if ($AttachmentDir) { $env:PSA_ATTACHMENT_DIR = $AttachmentDir }
 # The repository root, one above scripts\. Not a param() default: under Windows
 # PowerShell 5.1 run with -File, $PSScriptRoot is empty while the defaults are
 # evaluated (MEASURED on DND-SQL01, part 21), so the default is resolved here.
@@ -241,8 +246,12 @@ function Invoke-Pass {
             $importArgs = @('-m', 'psaspine', 'import-mail', $Database, $DropDir, '--run-id', $runId,
                             '--channel', $Channel, '--own-address', $Mailbox)
             if ($BoardId) { $importArgs += @('--board-id', $BoardId) }
+            # Python's stderr (a warning) is not a terminating error: under 'Stop' with 2>&1 it
+            # was, and one warning failed every pass (MEASURED by SQL01, part 28). The exit code decides.
+            $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
             $out = & $PythonExe @importArgs 2>&1
             $code = $LASTEXITCODE
+            $ErrorActionPreference = $eap
         } finally { Pop-Location }
         # import-mail prints counts only ("n files: x new, y appended ...").
         Write-Log ("import-mail exit $code : " + (($out | Out-String).Trim() -replace '\s+', ' '))

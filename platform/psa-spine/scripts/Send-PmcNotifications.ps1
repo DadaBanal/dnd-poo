@@ -58,6 +58,7 @@ param(
     [string] $PortalUrl,
     [string[]] $SendAs = @(),
     [string] $SpineDir,
+    [string] $AttachmentDir = 'D:\psa\files',
     [string] $PythonExe = 'C:\PMC\Python312\python.exe',
     [int] $IntervalSeconds = 60,
     [switch] $Loop,
@@ -66,6 +67,7 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+if ($AttachmentDir) { $env:PSA_ATTACHMENT_DIR = $AttachmentDir }   # the desk's file folder, the task's own setting
 # The repository root, one above scripts\. Not a param() default: under Windows
 # PowerShell 5.1 run with -File, $PSScriptRoot is empty while the defaults are
 # evaluated (MEASURED on DND-SQL01, part 21), so the default is resolved here.
@@ -166,10 +168,13 @@ function Invoke-Graph([string] $Uri, [string] $OutFile) {
 
 function Invoke-Spine([string[]] $SpineArgs) {
     Push-Location $SpineDir
+    # A native command's stderr (a Python warning, say) is not a terminating error: under
+    # 'Stop' with 2>&1 it was, and one warning failed every pass (MEASURED by SQL01, part 28).
+    $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
     try {
         $out = & $PythonExe -m psaspine @SpineArgs 2>&1
         $code = $LASTEXITCODE
-    } finally { Pop-Location }
+    } finally { $ErrorActionPreference = $eap; Pop-Location }
     return @{ Code = $code; Out = (($out | Out-String).Trim()) }
 }
 
