@@ -192,6 +192,7 @@ ROUTES = [
     ("GET", "/my/help/<article_id>", kb_view.portal_detail),
     ("GET", "/my/help/<article_id>/file/<file_id>", kb_view.portal_file),
     ("POST", "/schedule/book", schedule_view.book),
+    ("POST", "/schedule/slot", schedule_view.slot),
     ("POST", "/schedule/block", schedule_view.block_add),
     ("POST", "/schedule/block/remove", schedule_view.block_remove),
     ("POST", "/dispatch/assign", dispatch.assign),

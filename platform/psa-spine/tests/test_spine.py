@@ -12357,5 +12357,55 @@ class LiveTest(unittest.TestCase):
         self.assertTrue(self._call("GET", "/live", cookie=self.alice, query="scope=nonsense")[0].startswith("400"))
 
 
+class ClickATimeTest(unittest.TestCase):
+    """Dada, 1 Oct 2026: clicking a time on the Schedule or the Calendar adds
+    a visit, a new ticket or a task for that person then."""
+
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+
+    def setUp(self) -> None:
+        WebWSGITest.setUp(self)
+        self.addCleanup(self.tmp.cleanup)
+        self.conn = db.connect(self.db_path)
+        self.addCleanup(self.conn.close)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=datetime(2026, 9, 17))
+        self.conn.execute("INSERT OR REPLACE INTO board_member (board_id, member, access) VALUES ('IT_HELP', 'bob', 'WORK')")
+        self.conn.commit()
+        self.alice = self._cookie_for("alice")
+
+    def _post(self, **form):
+        status, headers, _ = self._call("POST", "/schedule/slot", cookie=self.alice, form=form)
+        self.assertTrue(status.startswith("303"), status)
+        return urllib.parse.unquote_plus(dict(headers)["Location"])
+
+    def test_a_click_on_a_time_adds_a_visit_a_new_ticket_or_a_task(self):
+        _, _, page = self._call("GET", "/schedule", cookie=self.alice, query="week=2026-09-14")
+        self.assertIn("data-slot='bob|2026-09-17'", page)
+        self.assertIn("<dialog id=slotdlg", page)
+        _, _, cal = self._call("GET", "/calendar", cookie=self.alice, query="view=day&date=2026-09-18")
+        self.assertIn("data-slot='alice|2026-09-18|09:00'", cal)
+        where = self._post(what="visit", member="bob", work_item_id="ITO-1", starts_at="2026-09-18T09:00",
+                           ends_at="2026-09-18T10:00", back="/schedule?week=2026-09-14")
+        self.assertIn("Booked ITO-1 for bob", where)
+        self.assertTrue(where.startswith("/schedule?week=2026-09-14&msg="))
+        where = self._post(what="ticket", member="bob", board_id="IT_HELP", summary="Mount the TV in Ward 3",
+                           starts_at="2026-09-18T13:00", ends_at="2026-09-18T14:00", back="/calendar")
+        self.assertIn("and booked it for bob", where)
+        wid = where.split("Opened ")[1].split(" ")[0]
+        row = self.conn.execute("SELECT owner FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()
+        self.assertEqual(row["owner"], "bob")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM ticket_schedule WHERE work_item_id = ?", (wid,)).fetchone()[0], 1)
+        where = self._post(what="task", member="alice", kind="MEETING", name="Vendor meeting",
+                           starts_at="2026-09-18T15:00", ends_at="2026-09-18T16:00", back="/calendar")
+        self.assertIn("Added for alice", where)
+        # refused cleanly: no ticket, a restricted board's ticket, a bad back address
+        self.assertIn("Not added", self._post(what="visit", member="bob", work_item_id="PMC-999999",
+                                              starts_at="2026-09-18T09:00", ends_at="2026-09-18T10:00"))
+        self.assertTrue(self._post(what="task", member="alice", kind="MEETING", name="x", starts_at="2026-09-19T09:00",
+                                   ends_at="2026-09-19T10:00", back="//evil.example").startswith("/schedule?"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

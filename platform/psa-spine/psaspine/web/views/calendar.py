@@ -121,6 +121,10 @@ def index(ctx):
     for board_id, n in sorted(listed.items()):
         common.audit_restricted_read(ctx, board_id, detail=f"calendar listed {n} visit(s) on restricted board {board_id} via {ctx.user.via}")
     today = ctx.now.date()
+    can_book = any(common.may_access_board(ctx, b, need="WORK") for b in boards)
+
+    def slot(d: date, hhmm: str = "") -> str:
+        return f" data-slot='{t.esc(who)}|{d.isoformat()}{'|' + hhmm if hhmm else ''}'" if can_book else ""
 
     def on_day(d: date):
         lo, hi = f"{d.isoformat()} 00:00", f"{(d + timedelta(days=1)).isoformat()} 00:00"
@@ -134,7 +138,7 @@ def index(ctx):
             for i in range(7):
                 dd = d + timedelta(days=i)
                 cls = ("today" if dd == today else "") + (" other" if dd.month != on.month else "")
-                cells.append(f"<td class='{cls}'><div class=dnum>{dd.day}</div>{''.join(_chip(it, day_of=dd.isoformat()) for it in on_day(dd))}</td>")
+                cells.append(f"<td class='{cls}'{slot(dd)}><div class=dnum>{dd.day}</div>{''.join(_chip(it, day_of=dd.isoformat()) for it in on_day(dd))}</td>")
             weeks.append("<tr>" + "".join(cells) + "</tr>")
             d += timedelta(days=7)
         head = "".join(f"<th>{n}</th>" for n in ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"))
@@ -145,14 +149,26 @@ def index(ctx):
     elif view == "week":
         days = [first + timedelta(days=i) for i in range(7)]
         head = "".join(f"<th class='{'today' if d == today else ''}'>{d.strftime('%a %d %b')}</th>" for d in days)
-        cells = "".join(f"<td class='{'today' if d == today else ''}'>{''.join(_chip(it, day_of=d.isoformat()) for it in on_day(d))}</td>" for d in days)
+        cells = "".join(f"<td class='{'today' if d == today else ''}'{slot(d)}>{''.join(_chip(it, day_of=d.isoformat()) for it in on_day(d))}</td>" for d in days)
         grid = f"<div class=schedwrap><table class='schedgrid week'><thead><tr>{head}</tr></thead><tbody><tr>{cells}</tr></tbody></table></div>"
         title = f"Week of {first.strftime('%d %b %Y')}"
         prev_, next_ = first - timedelta(days=7), first + timedelta(days=7)
     else:
         todays = on_day(on)
-        grid = ("<div class=card><ul class=plain>" + "".join(f"<li>{_chip(it, day_of=on.isoformat())}</li>" for it in todays)
-                + ("" if todays else "<li class=muted>Nothing on this day.</li>") + "</ul></div>")
+        # The day by the hour: each hour is a row you can click to add something
+        # at that time; what starts in an hour sits in its row, what spans the
+        # day sits above.
+        day_lo = f"{on.isoformat()} 00:00"
+        allday = [it for it in todays if it["starts_at"] < day_lo]
+        rows = []
+        for h in range(6, 21):
+            hh = f"{h:02d}:00"
+            here = [it for it in todays if it["starts_at"][:10] == on.isoformat()
+                    and max(6, min(20, int(it["starts_at"][11:13]))) == h]
+            rows.append(f"<tr><th class=who style='width:70px'>{hh}</th><td{slot(on, hh)}>"
+                        + "".join(_chip(it, day_of=on.isoformat()) for it in here) + "</td></tr>")
+        grid = ((("<div class=card>" + "".join(_chip(it, day_of=on.isoformat()) for it in allday) + "</div>") if allday else "")
+                + "<div class=schedwrap><table class='schedgrid day'><tbody>" + "".join(rows) + "</tbody></table></div>")
         title = on.strftime("%A %d %B %Y")
         prev_, next_ = on - timedelta(days=1), on + timedelta(days=1)
     keep = {"member": who if who.lower() != ctx.user.id.lower() else "", "view": view}
@@ -173,10 +189,14 @@ def index(ctx):
            f"<div class=tabs style='flex:0 0 auto'>{tabs}</div></form>")
     mine = who.lower() == ctx.user.id.lower()
     body = (f"<h1>{t.esc(members.name_of(ctx.conn, who)) if not mine else 'My calendar'} <span class=muted style='font-size:.6em'>{t.esc(title)}</span></h1>"
-            "<p class=sub>Visits, time off, meetings and on-call shifts. Book and move visits from the ticket or the "
-            "<a href='/schedule'>Schedule</a>; a feed for your phone is on <a href='/my/profile'>My profile</a>.</p>"
+            "<p class=sub>Visits, time off, meetings and on-call shifts. Click a day, or an hour in the Day view, to "
+            "add a visit, a new ticket or a task; move visits from the ticket or the <a href='/schedule'>Schedule</a>. "
+            "A feed for your phone is on <a href='/my/profile'>My profile</a>.</p>"
             + bar + grid)
-    return Response(body=t.page("Calendar", body, user=ctx.user, active="calendar"))
+    if can_book:
+        from .schedule import slot_dialog
+        body += slot_dialog(ctx, people, back=f"/calendar?{qs(date=on.isoformat())}")
+    return Response(body=t.page("Calendar", body, user=ctx.user, active="calendar", live="schedule"))
 
 
 # ------------------------------------------------------------ the feed

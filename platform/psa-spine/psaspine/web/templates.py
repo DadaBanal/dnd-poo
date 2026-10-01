@@ -30,6 +30,8 @@ import re
 # bulk bar and selected rows, @starting-style for enter transitions,
 # color-mix() with plain fallbacks declared first, sticky table headings.
 STYLE = """
+[data-slot]{cursor:copy}[data-slot]:hover{background:var(--accent-bg,#e9eefc)}
+#slotdlg::backdrop{background:rgb(0 0 0/.35)}
 :root{color-scheme:light dark;
   --canvas:#f4f5f8; --surface:#ffffff; --surface-2:#f6f7fa; --surface-3:#eceef3;
   --ink:#15181e; --ink-2:#4a5260; --ink-3:#7a8290; --line:#e3e6ec; --line-2:#cbd1db;
@@ -598,6 +600,25 @@ d.addEventListener("keydown",function(e){
     case "Enter":if(cur>=0){var a=$("a[href^='/ticket/']",rows[cur]);if(a)location.href=a.getAttribute("href")}break}
 });
 })();
+// Click a time: a cell marked data-slot="member|YYYY-MM-DD[|HH:MM]" opens the
+// add dialog with the person and the time filled in. A click on a chip, a
+// link or a button inside the cell does what it always did.
+(function(){var d=document.getElementById('slotdlg');if(!d||!d.showModal)return;var f=d.querySelector('form');
+function pad(n){return(n<10?'0':'')+n}
+function show(){var w=(f.querySelector('input[name=what]:checked')||{}).value||'visit';
+d.querySelectorAll('[data-for]').forEach(function(el){var on=el.getAttribute('data-for').split(' ').indexOf(w)>=0;el.style.display=on?'':'none';
+el.querySelectorAll('input,select').forEach(function(i){i.disabled=!on})});
+var t=f.querySelector('input[name=work_item_id]');if(t)t.required=(w==='visit');var s=f.querySelector('input[name=summary]');if(s)s.required=(w==='ticket')}
+f.addEventListener('change',function(e){if(e.target.name==='what')show();
+if(e.target.name==='starts_at'){var a=f.starts_at.value,b=f.ends_at.value;if(a&&(!b||b<=a)){var x=new Date(a);x.setHours(x.getHours()+1);
+f.ends_at.value=x.getFullYear()+'-'+pad(x.getMonth()+1)+'-'+pad(x.getDate())+'T'+pad(x.getHours())+':'+pad(x.getMinutes())}}});
+d.querySelector('[data-close]').addEventListener('click',function(){d.close()});
+document.addEventListener('click',function(e){var c=e.target.closest&&e.target.closest('[data-slot]');if(!c)return;
+if(e.target.closest('a,button,form,input,select,label'))return;var p=c.getAttribute('data-slot').split('|'),tm=p[2]||'09:00';
+var sel=f.querySelector('select[name=member]');if(sel){var o=[].find.call(sel.options,function(x){return x.value.toLowerCase()===p[0].toLowerCase()});if(o)sel.value=o.value}
+var h=parseInt(tm.slice(0,2),10),e2=pad(Math.min(h+1,23))+tm.slice(2);f.starts_at.value=p[1]+'T'+tm;f.ends_at.value=p[1]+'T'+e2;
+var ti=d.querySelector('[data-slot-title]');if(ti)ti.textContent='Add on '+p[1]+' at '+tm;show();d.showModal()});
+show()})();
 // Real time: a page marked data-live asks /live for a stamp every ten
 // seconds while it is on screen, and reloads when the stamp moves. While the
 // person is typing it does not reload: it says so, and they choose.

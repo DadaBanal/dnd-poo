@@ -79,7 +79,8 @@ def index(ctx):
                     + (" ★" if v["is_lead"] else "") + f"<br>{t.esc((v['summary'] or '')[:36])}"
                     + (f"<br><span class=muted>{t.esc(v['status_name'] or '')}"
                        f"{' · ' + t.esc(v['location_name']) if v['location_name'] else ''}</span>") + "</a>")
-        return f"<td class='{'today' if d == ctx.now.date() else ''}'>{''.join(chips)}</td>"
+        slot = f" data-slot='{t.esc(member)}|{d.isoformat()}'" if can_book else ""
+        return f"<td class='{'today' if d == ctx.now.date() else ''}'{slot}>{''.join(chips)}</td>"
 
     head = "".join(f"<th class='{'today' if d == ctx.now.date() else ''}'>{d.strftime('%a %d %b')}</th>" for d in days)
     from ... import presence as _presence
@@ -145,7 +146,111 @@ def index(ctx):
               "activities. A booking that clashes is refused unless you allow it; time off is never double-booked. "
               "<a href='/dispatch'>Dispatch</a> · <a href='/admin/schedule'>Setup</a></p>"
             + "<div class=card>" + nav + grid + "</div>" + forms)
+    if can_book:
+        body += slot_dialog(ctx, people, back=f"/schedule?{qs(week=start.isoformat())}")
     return Response(body=t.page("Schedule", body, user=ctx.user, active="schedule", live="schedule"))
+
+
+# ------------------------------------------------------------ click a time
+
+def slot_dialog(ctx, people, *, back: str) -> str:
+    """The dialog a click on a time opens (Schedule and Calendar): book a visit
+    on a ticket, open a new ticket and book it, or put a task (a meeting, an
+    activity, time off) on the person's day. The page's own forms still do all
+    of it without JavaScript."""
+    work_boards = [b for b in ctx.conn.execute(
+        "SELECT b.board_id, b.display_name FROM board b JOIN board_member m ON m.board_id = b.board_id"
+        " WHERE m.member = ? AND m.access IN ('WORK','ADMIN') AND COALESCE(b.inactive, 0) = 0 AND b.is_unrouted = 0"
+        " ORDER BY b.display_name", (ctx.user.id,))]
+    from ... import members as _members
+    who = "".join(f"<option value='{t.esc(p)}'>{t.esc(_members.name_of(ctx.conn, p))}</option>" for p in people)
+    statuses = "".join(f"<option value='{t.esc(x['status_id'])}'{' selected' if x['is_default'] else ''}>{t.esc(x['name'])}</option>"
+                       for x in schedule.statuses(ctx.conn))
+    kinds = "".join(f"<option value='{k}'>{v}</option>" for k, v in schedule.BLOCK_KINDS.items())
+    boards = "".join(f"<option value='{t.esc(b['board_id'])}'>{t.esc(b['display_name'])}</option>" for b in work_boards)
+    return (
+        "<dialog id=slotdlg class=card style='max-width:560px;width:95%'>"
+        "<form method=post action='/schedule/slot' class=grid2>"
+        f"<input type=hidden name=back value='{t.esc(back)}'>"
+        "<h3 style='grid-column:1/-1;margin:0'>" + t.icon("calendar") + "<span data-slot-title>Add to the day</span></h3>"
+        "<div style='grid-column:1/-1' class=radiorow>"
+        "<label><input type=radio name=what value=visit checked> A visit on a ticket</label> "
+        + ("<label><input type=radio name=what value=ticket> A new ticket</label> " if work_boards else "")
+        + "<label><input type=radio name=what value=task> A task, meeting or time off</label></div>"
+        f"<div><label>Who</label><select name=member required>{who}</select></div><div></div>"
+        "<div><label>From</label><input type=datetime-local name=starts_at required></div>"
+        "<div><label>To</label><input type=datetime-local name=ends_at required></div>"
+        "<div data-for=visit><label>Ticket</label><input name=work_item_id placeholder='PMC-000123'></div>"
+        f"<div data-for='visit ticket'><label>Visit status</label><select name=status_id>{statuses}</select></div>"
+        f"<div data-for=ticket><label>Board</label><select name=board_id>{boards}</select></div>"
+        "<div data-for=ticket style='grid-column:1/-1'><label>Summary</label><input name=summary maxlength=200 "
+        "placeholder='What needs doing, in one line - the ward, the room, the machine'></div>"
+        f"<div data-for=task><label>What</label><select name=kind>{kinds}</select></div>"
+        "<div data-for=task><label>Name</label><input name=name maxlength=120 placeholder='Vendor meeting; leave; stocktake'></div>"
+        "<div style='grid-column:1/-1'><label><input type=checkbox name=allow_conflict value=1> Allow a double booking</label></div>"
+        "<div style='grid-column:1/-1;display:flex;gap:8px'><button type=submit>Add</button>"
+        "<button class=ghost type=button data-close>Cancel</button></div>"
+        "<p class=why style='grid-column:1/-1;margin:0'>It goes on the desk now, and on the person's Outlook calendar "
+        "at the next sync.</p></form></dialog>")
+
+
+def slot(ctx):
+    """POST /schedule/slot: what the click-a-time dialog sends."""
+    from .. import redirect
+    from ... import tickets
+    from .ticket import _load
+    f = ctx.request.form()
+    back = f.get("back", "/schedule")
+    if not back.startswith("/") or back.startswith("//"):
+        back = "/schedule"
+    sep = "&" if "?" in back else "?"
+
+    def done(msg="", err=""):
+        return redirect(back + sep + urllib.parse.urlencode({k: v for k, v in (("msg", msg), ("err", err)) if v}))
+
+    what = f.get("what", "visit")
+    member = (f.get("member") or "").strip()
+    try:
+        starts = schedule.parse_local(f.get("starts_at", ""))
+        ends = schedule.parse_local(f.get("ends_at", ""))
+    except ValueError:
+        return done(err="Not added: give a start and an end")
+    allow = f.get("allow_conflict") == "1"
+    try:
+        if what == "task":
+            if not any(common.may_access_board(ctx, b, need="WORK") for b in common.board_ids_for(ctx)):
+                return done(err="Not added: you do not work a board")
+            schedule.add_block(ctx.conn, member=member, kind=f.get("kind", ""), name=f.get("name", "") or "Task",
+                               starts_at=starts, ends_at=ends, actor=ctx.user.id, at=ctx.now, allow_conflict=allow)
+            msg = f"Added for {member}"
+        elif what == "ticket":
+            board_id = f.get("board_id", "")
+            common.require_board(ctx, board_id, need="WORK")
+            summary = " ".join((f.get("summary") or "").split())
+            if not summary:
+                return done(err="Not added: a new ticket needs a summary")
+            wid = tickets.open_ticket(ctx.conn, board_id=board_id, summary=summary, impact="I3", urgency="U3",
+                                      requested_by=ctx.user.id, at=ctx.now, actor=ctx.user.id, owner=member,
+                                      source="DESK")
+            schedule.add(ctx.conn, wid, member=member, starts_at=starts, ends_at=ends, note=None, actor=ctx.user.id,
+                         at=ctx.now, status_id=f.get("status_id") or None, allow_conflict=allow)
+            msg = f"Opened {wid} and booked it for {member}"
+        else:
+            wid = (f.get("work_item_id") or "").strip().upper()
+            try:
+                tk = _load(ctx, wid)
+            except Exception:                                # noqa: BLE001
+                return done(err=f"Not added: no ticket {wid} that you can see")
+            if not common.may_access_board(ctx, tk["board_id"], need="WORK"):
+                return done(err=f"Not added: you do not work the board {wid} is on")
+            schedule.add(ctx.conn, wid, member=member, starts_at=starts, ends_at=ends, note=None, actor=ctx.user.id,
+                         at=ctx.now, status_id=f.get("status_id") or None, allow_conflict=allow)
+            msg = f"Booked {wid} for {member}"
+        ctx.conn.commit()
+    except (schedule.Refused, LookupError, ValueError) as exc:
+        ctx.conn.rollback()
+        return done(err=f"Not added: {exc}")
+    return done(msg=msg)
 
 
 def book(ctx):
