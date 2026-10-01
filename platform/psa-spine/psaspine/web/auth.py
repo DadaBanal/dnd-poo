@@ -256,9 +256,11 @@ def authenticate_windows(conn: sqlite3.Connection, username: str, password: str,
     db.audit(conn, at=stamp, actor=name, action="WINDOWS_LOGIN", subject_kind="windows_account",
              subject_id=name, detail=("contact " + contact["contact_id"]) if contact else "no contact row")
     conn.commit()
+    from .. import members
     return User(id=name, name=contact["display_name"] if contact else name,
                 email=(contact["email"] or "").lower() or None if contact else None,
                 via="windows", roles=board_roles(conn, name),
+                is_sysadmin=members.is_sysadmin(conn, name),          # 062: the member record's flag
                 department=(contact["department"] or None) if contact else None)
 
 
@@ -352,9 +354,16 @@ def user_from_session(conn: sqlite3.Connection, payload: dict) -> User:
     row = conn.execute("SELECT display_name FROM member WHERE LOWER(member) = LOWER(?)",
                        (payload["sub"],)).fetchone()
     name = row["display_name"] if row and row["display_name"] else payload.get("name", payload["sub"])
+    # 062: the member record's sysadmin flag is read live, so a grant or a
+    # revocation on Setup > Members takes effect at the next request. A
+    # Windows sign-in has only that; a break-glass account or an Entra claim
+    # keeps what its door said as well.
+    from .. import members
+    via = payload.get("via", "entra")
+    flag = members.is_sysadmin(conn, payload["sub"])
     return User(id=payload["sub"], name=name,
-                email=payload.get("email"), via=payload.get("via", "entra"),
-                is_sysadmin=bool(payload.get("sysadmin")),
+                email=payload.get("email"), via=via,
+                is_sysadmin=flag if via == "windows" else (bool(payload.get("sysadmin")) or flag),
                 roles=board_roles(conn, payload["sub"]), department=payload.get("dept"))
 
 

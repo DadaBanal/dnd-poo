@@ -64,6 +64,12 @@ def main(argv: list[str] | None = None) -> int:
     pretry.add_argument("--message-id", required=True, help="as mail-why printed it, e.g. <abc@yahoo.com>")
     pretry.add_argument("--actor", required=True)
     pretry.add_argument("--apply", action="store_true", help="do it; without this it only says what it would do")
+    psys = sub.add_parser("set-sysadmin", help="grant (or with --off take back) the desk's sysadmin on a member"
+                                               " record, so their normal Windows sign-in runs every Setup page")
+    psys.add_argument("database", help=DB_HELP)
+    psys.add_argument("--member", required=True, help="the sign-in name, e.g. dada.banal")
+    psys.add_argument("--off", action="store_true", help="take it back instead")
+    psys.add_argument("--actor", default="host", help="who is doing this, for the audit row (default host)")
     pmail.add_argument("--run-id", default="mail-1")
     pmail.add_argument("--channel", default="helpdesk",
                        help="which mailbox this drop came from; how the measured "
@@ -348,6 +354,18 @@ def _run(conn, a) -> int:
             print("REFUSED: row count does not match — nothing may be silently dropped",
                   file=sys.stderr)
             return 1
+        return 0
+
+    if a.cmd == "set-sysadmin":
+        from . import members
+        try:
+            said = members.set_sysadmin(conn, a.member, not a.off, at=datetime.now(), actor=a.actor)
+        except members.Refused as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 2
+        conn.commit()
+        print(said)
+        print("sysadmins now: " + (", ".join(members.sysadmins(conn)) or "none"))
         return 0
 
     if a.cmd == "mail-why":

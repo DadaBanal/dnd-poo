@@ -1289,6 +1289,27 @@ kept), see every token with its board, scope, maker and last use, and
 disable or re-enable one. `create-api-token` on the host still works and
 lands in the same list.
 
+## A desk sysadmin by the member record (062, 1 Oct 2026)
+
+SQL01 part 29, root cause MEASURED: every member action on Setup › Members
+needs the cross-board sysadmin flag, and a Windows sign-in never carried it
+(it lived only on a break-glass local account and on the Entra claim), so
+from the normal sign-in "members cannot be removed" (Dada, 1 Oct). The flag
+is now on the member record too (`member.is_sysadmin`, NULL reads as 0) and
+is read at every request: a Windows sign-in is a sysadmin exactly when the
+record says so, a break-glass account or an Entra claim keeps what its door
+said as well. Granting and revoking take effect at the next request, no
+sign-out.
+
+- **Setup › Members › the person › Desk sysadmin**: Make sysadmin / Take
+  off, by a sysadmin. Never on yourself; the last one cannot be taken off;
+  somebody who has left comes back on the desk first. Audited as `MEMBER`.
+- **On the host, for the first one:** `psaspine set-sysadmin "<the desk's
+  connection>" --member dada.banal --actor sql01` (`--off` takes it back).
+  An AD account the desk has not met yet gets a record from its contact.
+- Port: one `ALTER TABLE member ADD is_sysadmin INT NULL DEFAULT 0`, guarded
+  by `COL_LENGTH`; nothing else changes.
+
 ## Members, a calendar, and a board's own address (053, 29 Sep 2026)
 
 Dada, 29 Sep, evening: *"there is no member page as per connectwise"*,

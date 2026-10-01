@@ -8934,6 +8934,59 @@ class WindowsSignInTest(unittest.TestCase):
         conn.close()
         self.assertEqual(tuple(row), ("alice", "contact CT-1"))
 
+    def test_a_windows_sign_in_is_a_sysadmin_when_the_member_record_says_so(self):
+        """062, SQL01 part 29: a Windows sign-in never carried the cross-board
+        flag, so Dada could not take a member off a board (403). The member
+        record carries it now, read live: a grant on Setup > Members or by
+        `set-sysadmin` on the host takes effect at the next request, and a
+        revocation too."""
+        import contextlib
+        import io
+        from psaspine import members
+        from psaspine.__main__ import main
+        status, headers, _ = self._login("alice", "correct horse")
+        cookie = next(v for k, v in headers if k == "Set-Cookie").split(";", 1)[0]
+        status, _, _ = self._call("GET", "/admin/members", cookie=cookie)
+        self.assertTrue(status.startswith("403"), status)              # as before: no flag, no Setup > Members
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = main(["set-sysadmin", TEST_DB or str(self.db_path), "--member", "alice", "--actor", "sql01"])
+        self.assertEqual(code, 0)
+        self.assertIn("alice is now a sysadmin.", out.getvalue())
+        self.assertIn("sysadmins now: alice", out.getvalue())
+        # the same session, no sign-out: the flag is read at the request
+        status, _, body = self._call("GET", "/admin/members", cookie=cookie)
+        self.assertTrue(status.startswith("200"), status)
+        status, _, _ = self._call("POST", "/admin/member/bob/board/remove", cookie=cookie, form={"board_id": "IT_HELP"})
+        self.assertTrue(status.startswith("303"), status)
+        conn = db.connect(self.db_path)
+        self.assertIsNone(conn.execute("SELECT 1 FROM board_member WHERE member = 'bob'").fetchone())
+        self.assertEqual(conn.execute("SELECT detail FROM audit_event WHERE action = 'MEMBER' AND subject_id = 'alice'"
+                                      " ORDER BY audit_id DESC").fetchone()[0], "desk sysadmin granted")
+        # the guards: not yourself, not the last one, not somebody who has left
+        with self.assertRaisesRegex(members.Refused, "your own"):
+            members.set_sysadmin(conn, "alice", False, at=datetime(2026, 10, 1, 9), actor="alice")
+        with self.assertRaisesRegex(members.Refused, "last sysadmin"):
+            members.set_sysadmin(conn, "alice", False, at=datetime(2026, 10, 1, 9), actor="root")
+        conn.execute("INSERT INTO board_member (board_id, member, access) VALUES ('IT_HELP','bob','WORK')")   # a member again
+        self.assertEqual(members.set_sysadmin(conn, "bob", True, at=datetime(2026, 10, 1, 9), actor="alice"), "bob is now a sysadmin.")
+        self.assertEqual(members.sysadmins(conn), ["alice", "bob"])
+        self.assertEqual(members.set_sysadmin(conn, "bob", True, at=datetime(2026, 10, 1, 9), actor="alice"), "bob is already a sysadmin.")
+        conn.commit()
+        # the page: the toggle, and a revocation that bites at the next request
+        status, _, body = self._call("GET", "/admin/member/bob", cookie=cookie)
+        self.assertIn("Desk sysadmin", body)
+        self.assertIn("Take off", body)
+        status, _, _ = self._call("POST", "/admin/member/alice/sysadmin", cookie=cookie, form={"on": "0"})
+        self.assertTrue(status.startswith("303"), status)
+        self.assertTrue(members.is_sysadmin(conn, "alice"))             # refused: your own
+        status, _, _ = self._call("POST", "/admin/member/bob/sysadmin", cookie=cookie, form={"on": "0"})
+        self.assertFalse(members.is_sysadmin(conn, "bob"))
+        self.assertEqual(members.sysadmins(conn), ["alice"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["set-sysadmin", TEST_DB or str(self.db_path), "--member", "alice", "--off", "--actor", "sql01"]), 2)
+        conn.close()
+
     def test_domain_and_upn_spellings_of_the_name_are_the_same_person(self):
         for spelling in ("PMCNE\\alice", "alice@pmcne.ph", "  Alice "):
             self.asked.clear()

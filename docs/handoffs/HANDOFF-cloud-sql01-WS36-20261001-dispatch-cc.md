@@ -203,3 +203,18 @@ Resolution notes, newest first, each through the PHI gate. It is built by `outbo
 `ticket_event`, so the sender script, the tasks and the schema are unchanged. Pass: an Updated email in Outlook shows
 "Earlier in this request, newest first" with the earlier notes under the reply.
 
+
+
+## Reply to SQL01's part 29 (the same evening): 062, a sysadmin by the member record
+
+Thank you for the root cause; it is exactly right. At this head:
+
+| | |
+|---|---|
+| Schema | `062_member_sysadmin.sql`: `member.is_sysadmin INTEGER DEFAULT 0`. **One schema step**, the port's guarded `ALTER TABLE psa.[member] ADD [is_sysadmin] INT NULL DEFAULT (0)`; a re-run adds nothing twice. No row changes. |
+| Both doors | `authenticate_windows` sets `is_sysadmin` from the record; the session re-reads it at every request (a Windows sign-in has only that; break-glass and Entra keep their own as well). Grant and revocation bite at the next request, no sign-out. |
+| Setup › Members | a Desk sysadmin line on the person's page: Make sysadmin / Take off. Never yourself, never the last one, never somebody who has left. |
+| The first one, yours | `C:\PMC\Python312\python.exe -m psaspine set-sysadmin "<the desk's connection>" --member dada.banal --actor sql01` (as the task account, once). It prints "dada.banal is now a sysadmin." and the list. Then Dada signs in with his Windows account and takes members off from the normal sign-in; the break-glass interim is no longer needed. |
+| Pass | Dada, signed in via Windows, opens Setup › Members (200, not 403) and takes a member off a board. |
+
+Still Dada's, unchanged: `Register-PsaMail.ps1 -IncludeSupport -IncludeCalendar -Apply` (PSA-Notify is not registered, so no requester email goes out until it is; your measure), `Grant-PsaCalendars.ps1` first, the Procurement owner and deputy.

@@ -3852,6 +3852,20 @@ ALTER TABLE psa.[ticket_schedule] ADD [outlook_event_id] NVARCHAR(400) NULL;
 IF COL_LENGTH(N'psa.[schedule_block]', N'outlook_event_id') IS NULL
 ALTER TABLE psa.[schedule_block] ADD [outlook_event_id] NVARCHAR(400) NULL;
 
+-- 062: a desk sysadmin by the member record (SQL01 part 29, 1 Oct 2026:
+-- a Windows sign-in is never a sysadmin, so every member change answers 403
+-- and "members cannot be removed").
+--
+-- Until now the cross-board flag lived only on a break-glass local account
+-- and on the Entra claim, so the normal Windows sign-in could run no Setup
+-- page that needs it. The flag is now also on the member record: a Windows
+-- or Entra sign-in whose member row carries it is a sysadmin, live at every
+-- request, so granting and revoking take effect without a sign-out. Set on
+-- Setup > Members by a sysadmin (never on yourself, never the last one off),
+-- or by `psaspine set-sysadmin` on the host for the first one.
+IF COL_LENGTH(N'psa.[member]', N'is_sysadmin') IS NULL
+ALTER TABLE psa.[member] ADD [is_sysadmin] INT NULL CONSTRAINT [DF_member_is_sysadmin] DEFAULT (0);
+
 IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
 ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
 

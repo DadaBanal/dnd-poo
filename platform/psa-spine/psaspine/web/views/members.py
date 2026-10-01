@@ -169,6 +169,10 @@ def detail(ctx, member):
                    "<div style='flex:0 0 auto;align-self:end'><button class=ghost type=submit>Set</button></div></form>"
                    f"<form method=post action='{p}/capacity' class=row><div><label>Hours a week</label><input name=hours inputmode=decimal value='{m['hours_per_week']:g}'></div>"
                    "<div style='flex:0 0 auto;align-self:end'><button class=ghost type=submit>Set</button></div></form></div>"
+                   f"<form method=post action='{p}/sysadmin' class=row style='margin-top:10px'><div><label>Desk sysadmin</label>"
+                   f"<div class=why>{'Yes: runs every Setup page from their normal sign-in.' if m['is_sysadmin'] else 'No.'}</div></div>"
+                   f"<div style='flex:0 0 auto;align-self:end'><input type=hidden name=on value='{0 if m['is_sysadmin'] else 1}'>"
+                   f"<button class=ghost type=submit>{'Take off' if m['is_sysadmin'] else 'Make sysadmin'}</button></div></form>"
                    f"<dl class=kv style='margin-top:10px'><dt>Break-glass account</dt><dd>{t.esc(account)}</dd>"
                    f"<dt>Calendar</dt><dd><a href='/calendar?{urllib.parse.urlencode({'member': ident})}'>Open their calendar</a>"
                    f"{' · feed on' if members.has_feed(ctx.conn, ident) else ''}</dd></dl></div>")
@@ -245,6 +249,15 @@ def capacity(ctx, member):
     path = f"/admin/member/{urllib.parse.quote(m['member'])}"
     return _try(ctx, path, lambda: timesheets.set_capacity(ctx.conn, m["member"], f.get("hours"), at=ctx.now, actor=ctx.user.id),
                 lambda h: f"{h:g} hours a week.")
+
+
+def sysadmin(ctx, member):
+    common.require_sysadmin(ctx)
+    m = _load(ctx, member)
+    f = ctx.request.form()
+    path = f"/admin/member/{urllib.parse.quote(m['member'])}"
+    return _try(ctx, path, lambda: members.set_sysadmin(ctx.conn, m["member"], f.get("on") == "1", at=ctx.now, actor=ctx.user.id),
+                lambda s: s)
 
 
 def deactivate(ctx, member):

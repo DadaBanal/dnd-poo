@@ -1,0 +1,12 @@
+-- 062: a desk sysadmin by the member record (SQL01 part 29, 1 Oct 2026:
+-- a Windows sign-in is never a sysadmin, so every member change answers 403
+-- and "members cannot be removed").
+--
+-- Until now the cross-board flag lived only on a break-glass local account
+-- and on the Entra claim, so the normal Windows sign-in could run no Setup
+-- page that needs it. The flag is now also on the member record: a Windows
+-- or Entra sign-in whose member row carries it is a sysadmin, live at every
+-- request, so granting and revoking take effect without a sign-out. Set on
+-- Setup > Members by a sysadmin (never on yourself, never the last one off),
+-- or by `psaspine set-sysadmin` on the host for the first one.
+ALTER TABLE member ADD COLUMN is_sysadmin INTEGER DEFAULT 0;   -- NULL reads as 0: the port adds a column NULL

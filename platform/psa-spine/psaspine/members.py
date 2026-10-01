@@ -92,7 +92,7 @@ def get(conn: sqlite3.Connection, member: str) -> dict | None:
                        " LEFT JOIN work_role w ON w.work_role_id = m.work_role_id"
                        " WHERE LOWER(m.member) = LOWER(?)", (member,)).fetchone()
     out = {k: None for k in FIELDS}
-    out.update({"member": member, "inactive_from": None, "default_board_name": None, "work_role_name": None,
+    out.update({"member": member, "inactive_from": None, "is_sysadmin": 0, "default_board_name": None, "work_role_name": None,
                 "created_at": None, "created_by": None, "updated_at": None, "updated_by": None, "has_record": False})
     if row:
         out.update(dict(row))
@@ -237,6 +237,51 @@ def save(conn: sqlite3.Connection, member: str, *, at: datetime, actor: str, **f
         conn.execute("UPDATE member SET updated_at = ?, updated_by = ? WHERE member = ?", (stamp, actor, row["member"]))
         _audit(conn, at, actor, row["member"], "; ".join(changed)[:900])
     return changed
+
+
+# ------------------------------------------------------------ desk sysadmin
+
+def is_sysadmin(conn: sqlite3.Connection, member: str) -> bool:
+    """Whether the member record carries the desk's cross-board flag (062)."""
+    row = conn.execute("SELECT is_sysadmin FROM member WHERE LOWER(member) = LOWER(?)", (member or "",)).fetchone()
+    return bool(row and row["is_sysadmin"])
+
+
+def sysadmins(conn: sqlite3.Connection) -> list[str]:
+    """Every active member with the flag, by identifier."""
+    return [r["member"] for r in conn.execute(
+        "SELECT member FROM member WHERE is_sysadmin = 1 AND inactive_from IS NULL ORDER BY member")]
+
+
+def set_sysadmin(conn: sqlite3.Connection, member: str, on: bool, *, at: datetime, actor: str) -> str:
+    """Grant or take back the desk's sysadmin on a member record (062). Makes
+    the record if the identifier is known only from a membership. Nobody
+    changes their own, and the last one cannot be taken off, so the desk
+    always has somebody who can run Setup > Members. Audited."""
+    if member.strip().lower() == actor.strip().lower():
+        raise Refused("Somebody else changes your own sysadmin flag.")
+    if exists(conn, member):
+        ident = next(x for x in identifiers(conn) if x.lower() == member.lower())
+    elif on and _contact(conn, member.strip()):
+        ident = member.strip().lower()            # an AD account the desk has not met yet: a record is made for it
+    else:
+        raise Refused("No such member.")
+    stamp = _stamp(at)
+    row = conn.execute("SELECT member, is_sysadmin, inactive_from FROM member WHERE LOWER(member) = LOWER(?)", (ident,)).fetchone()
+    if row is None:
+        conn.execute("INSERT INTO member (member, created_at, created_by, updated_at, updated_by) VALUES (?,?,?,?,?)",
+                     (ident, stamp, actor, stamp, actor))
+        row = conn.execute("SELECT member, is_sysadmin, inactive_from FROM member WHERE member = ?", (ident,)).fetchone()
+    if on and row["inactive_from"]:
+        raise Refused("They have left; bring them back on the desk first.")
+    if bool(row["is_sysadmin"]) == bool(on):
+        return f"{ident} is already " + ("a sysadmin." if on else "not a sysadmin.")
+    if not on and len(sysadmins(conn)) <= 1:
+        raise Refused("The last sysadmin cannot be taken off; make somebody else one first.")
+    conn.execute("UPDATE member SET is_sysadmin = ?, updated_at = ?, updated_by = ? WHERE member = ?",
+                 (1 if on else 0, stamp, actor, row["member"]))
+    _audit(conn, at, actor, row["member"], "desk sysadmin " + ("granted" if on else "taken off"))
+    return f"{ident} is " + ("now a sysadmin." if on else "no longer a sysadmin.")
 
 
 # ------------------------------------------------------------ memberships
