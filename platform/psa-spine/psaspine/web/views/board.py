@@ -451,7 +451,8 @@ def _bulk_bar(ctx, boards, f) -> str:
         "<form id=bulk method=post action='/bulk' class=bulk>"
         f"<input type=hidden name=back value='{t.esc(back)}'>"
         "<b><span data-count>0</span> ticked:</b> Status <select name=status>" + "".join(status_opts) + "</select>"
-        " Assign <input name=owner placeholder='owner' style='width:130px;padding:4px 8px'>"
+        " Assign " + common.owner_select(ctx.conn, [b["board_id"] for b in work_boards], None, me=ctx.user.id,
+                                         blank="(leave the owner)", attrs=" style='padding:4px 8px'") +
         f" Move to <select name=to_board>{move_opts}</select>"
         " Attach to parent <input name=parent placeholder='PMC-000123' style='width:130px;padding:4px 8px'>"
         " Merge into <input name=merge_into placeholder='PMC-000123' style='width:130px;padding:4px 8px'>"

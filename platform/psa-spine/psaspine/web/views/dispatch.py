@@ -44,6 +44,7 @@ def index(ctx):
     target_opts = "".join(
         f"<option value='{t.esc(b['board_id'])}'>{t.esc(b['display_name'])}</option>"
         for b in targets)
+    owner_pick = common.owner_select(ctx.conn, [b["board_id"] for b in targets], None, me=ctx.user.id, blank="(the board's queue)")
 
     if unrouted_rows:
         lines = []
@@ -58,7 +59,7 @@ def index(ctx):
                     "style='display:flex;gap:6px'>"
                     f"<input type='hidden' name='work_item_id' value='{t.esc(r['work_item_id'])}'>"
                     f"<select name='to_board'>{target_opts}</select>"
-                    "<input name='owner' placeholder='owner' style='width:120px'>"
+                    + owner_pick +
                     "<button type='submit'>Route</button></form>")
             lines.append(
                 "<tr>"

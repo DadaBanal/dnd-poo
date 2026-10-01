@@ -856,7 +856,8 @@ def update_fields(conn: sqlite3.Connection, work_item_id: str, *, at: datetime,
                   record_type: str | None = None, change_type: str | None = None,
                   change_risk: str | None = None, planned_start: str | None = None,
                   planned_end: str | None = None,
-                  backout_plan: str | None = None) -> list[str]:
+                  backout_plan: str | None = None,
+                  priority: str | None = None, priority_reason: str | None = None) -> list[str]:
     """Change the ticket's editable fields and write down every change.
 
     The record type is checked against the board. If the item changes and the
@@ -1006,13 +1007,40 @@ def update_fields(conn: sqlite3.Connection, work_item_id: str, *, at: datetime,
             "SELECT i.min_priority, i.clinical_impact FROM ticket t JOIN catalogue_item i"
             " ON i.catalogue_item_id = t.catalogue_item_id WHERE t.work_item_id = ?",
             (work_item_id,)).fetchone()
-        priority, source = compute_priority(
+        computed, source = compute_priority(
             new_i, new_u, min_priority=item["min_priority"] if item else None,
             clinical_impact=item["clinical_impact"] if item else 0)
-        if priority != row["priority"]:
+        if computed != row["priority"]:
             conn.execute("UPDATE ticket SET priority = ?, priority_source = ?"
-                         " WHERE work_item_id = ?", (priority, source, work_item_id))
-            changed.append(f"priority {row['priority']} -> {priority} ({source})")
+                         " WHERE work_item_id = ?", (computed, source, work_item_id))
+            changed.append(f"priority {row['priority']} -> {computed} ({source})")
+    # A person sets the priority (P1-P4, with a reason), or gives it back to the
+    # matrix ("MATRIX"). An override stays until it is given back: the matrix no
+    # longer moves it (above).
+    if priority:
+        cur = conn.execute("SELECT priority, priority_source FROM ticket WHERE work_item_id = ?",
+                           (work_item_id,)).fetchone()
+        if priority == "MATRIX":
+            if cur["priority_source"] == "OVERRIDE":
+                item = conn.execute(
+                    "SELECT i.min_priority, i.clinical_impact FROM ticket t JOIN catalogue_item i"
+                    " ON i.catalogue_item_id = t.catalogue_item_id WHERE t.work_item_id = ?",
+                    (work_item_id,)).fetchone()
+                p, source = compute_priority(new_i, new_u, min_priority=item["min_priority"] if item else None,
+                                             clinical_impact=item["clinical_impact"] if item else 0)
+                conn.execute("UPDATE ticket SET priority = ?, priority_source = ? WHERE work_item_id = ?",
+                             (p, source, work_item_id))
+                changed.append(f"priority {cur['priority']} -> {p} (back to the matrix, {source})")
+        elif priority in ("P1", "P2", "P3", "P4"):
+            if priority != cur["priority"] or cur["priority_source"] != "OVERRIDE":
+                why = " ".join(str(priority_reason or "").split())[:200]
+                if not why:
+                    raise ValueError("changing the priority by hand needs a reason")
+                conn.execute("UPDATE ticket SET priority = ?, priority_source = 'OVERRIDE' WHERE work_item_id = ?",
+                             (priority, work_item_id))
+                changed.append(f"priority {cur['priority']} -> {priority} (set by {actor}: {why})")
+        else:
+            raise ValueError("a priority is P1, P2, P3 or P4")
     now_priority = conn.execute("SELECT priority FROM ticket WHERE work_item_id = ?",
                                 (work_item_id,)).fetchone()["priority"]
     if now_priority != row["priority"] or rt_changed:

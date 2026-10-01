@@ -12173,5 +12173,101 @@ class MailCutoverTest(unittest.TestCase):
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM board_intake_address WHERE board_id = 'IT_HELP'").fetchone()[0], 3)
 
 
+class DeskFlowTest(unittest.TestCase):
+    """Dada, 1 Oct 2026: the owner is picked from the board's members (the
+    signed-in person first); the priority can be changed by hand, with a
+    reason; and a booked visit flows into the ticket."""
+
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+
+    def setUp(self) -> None:
+        WebWSGITest.setUp(self)
+        self.addCleanup(self.tmp.cleanup)
+        self.at = datetime(2026, 10, 1, 9)
+        self.conn = db.connect(self.db_path)
+        self.addCleanup(self.conn.close)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        self.conn.execute("INSERT OR REPLACE INTO board_member (board_id, member, access) VALUES ('IT_HELP', 'bob', 'WORK')")
+        self.conn.execute(
+            "INSERT INTO contact (contact_id, entity_id, display_name, email, sam_account, source, inactive, created_at)"
+            " VALUES ('C_BOB', 'PMC', 'Bob Reyes', 'bob@pmcne.ph', 'bob', 'AD', 0, '2026')")
+        self.conn.commit()
+        self.alice = self._cookie_for("alice")
+
+    def _open(self):
+        wid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="Printer down", impact="I3", urgency="U3",
+                                  requested_by="ward3@pmcne.ph", at=self.at, entity_id="PMC")
+        self.conn.commit()
+        return wid
+
+    def test_the_owner_is_picked_from_the_boards_members_me_first(self):
+        wid = self._open()
+        _, _, page = self._call("GET", f"/ticket/{wid}", cookie=self.alice)
+        sel = page.split("<label>Owner</label>")[1].split("</select>")[0]
+        self.assertIn("<select name=owner", sel)
+        self.assertIn(">Me - alice</option>", sel)
+        self.assertIn(">Bob Reyes (bob)</option>", sel)
+        self.assertNotIn("carol", sel)                                   # READ only: not someone work goes to
+        self.assertLess(sel.index("Me - alice"), sel.index("Bob Reyes"))
+        self._call("POST", f"/ticket/{wid}/update", cookie=self.alice, form={"owner": "bob"})
+        self.assertEqual(self.conn.execute("SELECT owner FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()[0], "bob")
+        # someone who has left the board stays shown on their tickets, marked
+        self.conn.execute("DELETE FROM board_member WHERE member = 'bob'")
+        self.conn.commit()
+        _, _, page = self._call("GET", f"/ticket/{wid}", cookie=self.alice)
+        self.assertIn("Bob Reyes (not working this board)", page)
+        _, _, board_page = self._call("GET", "/", cookie=self.alice)
+        self.assertIn("(leave the owner)", board_page)
+
+    def test_the_priority_is_changed_by_hand_with_a_reason_and_given_back(self):
+        wid = self._open()
+        self.assertEqual(self.conn.execute("SELECT priority FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()[0], "P4")
+        with self.assertRaises(ValueError):
+            board.update_fields(self.conn, wid, at=self.at, actor="alice", priority="P1")          # no reason
+        with self.assertRaises(ValueError):
+            board.update_fields(self.conn, wid, at=self.at, actor="alice", priority="P9", priority_reason="x")
+        changed = board.update_fields(self.conn, wid, at=self.at, actor="alice", priority="P2",
+                                      priority_reason="theatre printer, list starts at 10")
+        self.assertIn("priority P4 -> P2 (set by alice: theatre printer, list starts at 10)", changed)
+        row = self.conn.execute("SELECT priority, priority_source FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()
+        self.assertEqual(tuple(row), ("P2", "OVERRIDE"))
+        board.update_fields(self.conn, wid, at=self.at, actor="alice", impact="I3", urgency="U2")       # the matrix waits
+        self.assertEqual(self.conn.execute("SELECT priority FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()[0], "P2")
+        board.update_fields(self.conn, wid, at=self.at, actor="alice", priority="MATRIX")
+        row = self.conn.execute("SELECT priority, priority_source FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()
+        self.assertNotEqual(row["priority_source"], "OVERRIDE")
+        self.conn.commit()
+        # the page offers it, and a save that keeps it as it is needs no reason
+        _, _, page = self._call("GET", f"/ticket/{wid}", cookie=self.alice)
+        self.assertIn("<select name=priority", page)
+        status, headers, _ = self._call("POST", f"/ticket/{wid}/update", cookie=self.alice, form={"priority": "", "owner": ""})
+        self.assertNotIn("Not+saved", dict(headers)["Location"])
+        status, headers, _ = self._call("POST", f"/ticket/{wid}/update", cookie=self.alice,
+                                        form={"priority": "P1", "priority_reason": "ICU", "owner": ""})
+        self.assertEqual(self.conn.execute("SELECT priority FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()[0], "P1")
+
+    def test_a_booked_visit_flows_into_the_ticket(self):
+        from psaspine import schedule
+        wid = self._open()
+        schedule.add(self.conn, wid, member="bob", starts_at=datetime(2026, 10, 2, 9), ends_at=datetime(2026, 10, 2, 10),
+                     note=None, actor="alice", at=self.at)
+        row = self.conn.execute("SELECT owner, board_status_id FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()
+        self.assertEqual((row["owner"], row["board_status_id"]), ("bob", "IT_HELP.SCHEDULED"))
+        # a ticket that already has an owner keeps them; a waiting ticket is not moved
+        w2 = self._open()
+        board.update_fields(self.conn, w2, at=self.at, actor="alice", owner="alice")
+        board.change_status(self.conn, w2, "IT_HELP.WAITING_ON_REQUESTER", at=self.at, actor="alice")
+        schedule.add(self.conn, w2, member="bob", starts_at=datetime(2026, 10, 3, 9), ends_at=datetime(2026, 10, 3, 10),
+                     note=None, actor="alice", at=self.at)
+        row = self.conn.execute("SELECT owner, board_status_id FROM ticket WHERE work_item_id = ?", (w2,)).fetchone()
+        self.assertEqual((row["owner"], row["board_status_id"]), ("alice", "IT_HELP.WAITING_ON_REQUESTER"))
+        # the ticket's Schedule pod picks the person from the board
+        self.conn.commit()
+        _, _, page = self._call("GET", f"/ticket/{wid}", cookie=self.alice)
+        self.assertIn("<select name=member", page)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -319,7 +319,49 @@ def add(conn: sqlite3.Connection, work_item_id: str, *, member: str, starts_at: 
     touch(conn, work_item_id, at)
     from . import outbox
     outbox.queue_scheduled(conn, cur.lastrowid, at=at, actor=actor)
+    flow_into_ticket(conn, work_item_id, member=member, at=at, actor=actor)
     return cur.lastrowid
+
+
+def scheduled_status(conn, board_id: str) -> str | None:
+    """The board's status for "a visit is booked": the live open status named
+    Scheduled, else the first live open Resolution-plan status."""
+    rows = conn.execute("SELECT board_status_id, name, escalation_status FROM board_status WHERE board_id = ?"
+                        " AND inactive = 0 AND is_closed = 0 ORDER BY sort_order, name", (board_id,)).fetchall()
+    for r in rows:
+        if r["name"].strip().lower() == "scheduled":
+            return r["board_status_id"]
+    for r in rows:
+        if r["escalation_status"] == "RESOLUTION_PLAN":
+            return r["board_status_id"]
+    return None
+
+
+def flow_into_ticket(conn, work_item_id: str, *, member: str, at: datetime, actor: str) -> list[str]:
+    """A booked visit is work on the ticket, as in the reference PSA: an
+    unowned ticket goes to the person booked, and a ticket still at New,
+    Assigned or In Progress moves to the board's Scheduled status (its own
+    email to the requester follows, when the board has it on). A ticket that
+    is waiting, resolved or closed is not moved, and a move the board refuses
+    (a change not yet approved) is left alone. Returns what changed."""
+    from . import board as _board
+    t = conn.execute("SELECT t.owner, t.board_id, t.board_status_id, t.state, s.escalation_status"
+                     "  FROM ticket t LEFT JOIN board_status s ON s.board_status_id = t.board_status_id"
+                     " WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
+    if t is None or t["state"] in ("RESOLVED", "CLOSED", "CANCELLED"):
+        return []
+    done = []
+    if not t["owner"]:
+        done += _board.update_fields(conn, work_item_id, at=at, actor=actor, owner=member)
+    target = scheduled_status(conn, t["board_id"])
+    if (target and target != t["board_status_id"]
+            and (t["escalation_status"] in (None, "NOT_RESPONDED", "RESPONDED"))):
+        try:
+            _board.change_status(conn, work_item_id, target, at=at, actor=actor)
+            done.append("status: scheduled")
+        except (ValueError, _board.NotOnThisBoard):      # the board said no (a change not approved); the visit stands
+            pass
+    return done
 
 
 def _visit(conn, schedule_id: int):

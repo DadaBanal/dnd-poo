@@ -438,7 +438,7 @@ def detail(ctx, work_item_id):
         f"<label>Board</label><select name=board_id{dis}>{_options(board_pairs, tk['board_id'])}</select>"
         f"<label>Status</label><select name=to_status{dis}>"
         f"{_options(([] if tk['board_status_id'] else [('', '(none)')]) + status_pairs, tk['board_status_id'] or '')}</select>"
-        f"<label>Owner</label><input name=owner value='{t.esc(tk['owner'] or '')}'{dis}>"
+        f"<label>Owner</label>" + common.owner_select(ctx.conn, [tk["board_id"]], tk["owner"], attrs=dis, me=ctx.user.id) +
         f"<label>Company</label><select name=entity_id{dis}>"
         f"{_options([(e['entity_id'], e['name']) for e in entities], tk['entity_id'] or '')}</select>"
         f"<label>Contact</label><input name=requested_by list=contacts-ticket "
@@ -449,7 +449,14 @@ def detail(ctx, work_item_id):
         + _catalogue_select(ctx.conn, tk["board_id"], tk["catalogue_item_id"], disabled=dis) +
         f"<label>Who is affected</label><select name=impact{dis}>{_options(WHO_IS_AFFECTED, tk['impact'])}</select>"
         f"<label>Is a patient waiting</label><select name=urgency{dis}>{_options(PATIENT_WAITING, tk['urgency'])}</select>"
-        f"<label>Priority</label><div class=ro>{t.badge(tk['priority'])} from the matrix — never typed</div>"
+        f"<label>Priority</label><div class=ro>{t.badge(tk['priority'])} "
+        + ("set by hand" if tk["priority_source"] == "OVERRIDE" else "from the matrix") + "</div>"
+        + (f"<select name=priority aria-label='Change the priority'{dis}>"
+           + _options([("", "Keep it as it is")]
+                      + ([("MATRIX", "Give it back to the matrix")] if tk["priority_source"] == "OVERRIDE" else [])
+                      + [(p, f"Set it to {p}") for p in ("P1", "P2", "P3", "P4")], "")
+           + "</select><input name=priority_reason maxlength=200 placeholder='why (needed to set it by hand)'"
+           f"{dis} style='margin-top:6px'>" if can_work else "")
         + ("<div style='margin-top:12px'><button type=submit><svg class=ic aria-hidden=true><use href=#i-check></use></svg> Save changes</button></div>" if can_work else "")
         + "</form></div>")
 
@@ -638,7 +645,8 @@ def update(ctx, work_item_id):
             owner=f.get("owner"), entity_id=f.get("entity_id") or None,
             requested_by=f.get("requested_by"), impact=impact, urgency=urgency,
             catalogue_item_id=f.get("catalogue_item_id") if "catalogue_item_id" in f else None,
-            record_type=want_type, **change_fields_from(f))
+            record_type=want_type, priority=f.get("priority") or None,
+            priority_reason=f.get("priority_reason"), **change_fields_from(f))
         if any("item" in c or "catalogue" in c for c in changed):
             from ... import approvals as _appr
             if _appr.maybe_request(ctx.conn, work_item_id, at=ctx.now, actor=ctx.user.id) == "REQUESTED":
@@ -723,7 +731,8 @@ def new_form(ctx, *, error: str = "", values: dict | None = None):
         f"{radios('urgency', PATIENT_WAITING, v.get('urgency', ''))}</div>"
         "<div style='grid-column:1/-1'><label>Description</label><textarea name=description "
         f"placeholder='The ward or office, the room, the machine, and since when.'>{t.esc(v.get('description', ''))}</textarea></div>"
-        f"<div><label>Owner</label><input name=owner value='{t.esc(v.get('owner', ''))}' placeholder='leave blank for the board queue'></div>"
+        + "<div><label>Owner</label>" + common.owner_select(ctx.conn, [b["board_id"] for b in boards], v.get("owner"), me=ctx.user.id)
+        + "</div>"
         "</div><div style='margin-top:14px'><button type=submit>Create ticket</button> "
         "<a class='btn ghost' href='/'>Cancel</a></div></form></div>")
     return Response(body=t.page("New ticket", body, user=ctx.user, active="board"))
@@ -995,7 +1004,8 @@ def _schedule_card(ctx, tk, *, can_work: bool) -> str:
                 line += (f"<details style='margin-top:4px'><summary class=muted>Move or change</summary>"
                          f"<form method=post action='/ticket/{wid}/schedule/update' class=grid2 style='margin-top:6px'>"
                          f"<input type=hidden name=schedule_id value='{sid}'>"
-                         f"<div><label>Who</label><input name=member value='{t.esc(r['member'])}'></div>"
+                         "<div><label>Who</label>" + common.owner_select(ctx.conn, [tk["board_id"]], r["member"], me=ctx.user.id, name="member",
+                                                                          blank="(as it is)") + "</div>"
                          f"<div><label>Status</label><select name=status_id>{opts([(x['status_id'], x['name']) for x in statuses], r['status_id'])}</select></div>"
                          f"<div><label>From</label><input type=datetime-local name=starts_at value='{t.esc(r['starts_at'].replace(' ', 'T'))}'></div>"
                          f"<div><label>To</label><input type=datetime-local name=ends_at value='{t.esc(r['ends_at'].replace(' ', 'T'))}'></div>"
@@ -1008,7 +1018,9 @@ def _schedule_card(ctx, tk, *, can_work: bool) -> str:
     if can_work and not tk["closed_at"]:
         start = ctx.now.replace(minute=0, second=0, microsecond=0)
         add = (f"<form method=post action='/ticket/{wid}/schedule/add' class=grid2 style='margin-top:8px'>"
-               f"<div><label>Who</label><input name=member value='{t.esc(tk['owner'] or '')}' required></div>"
+               "<div><label>Who</label>" + common.owner_select(ctx.conn, [tk["board_id"]], tk["owner"] or ctx.user.id, me=ctx.user.id,
+                                                               name="member", blank="(pick a person)", attrs=" required")
+               + "</div>"
                f"<div><label>Status</label><select name=status_id>{opts([(x['status_id'], x['name']) for x in statuses], schedule.default_status(ctx.conn))}</select></div>"
                f"<div><label>From</label><input type=datetime-local name=starts_at value='{start.strftime('%Y-%m-%dT%H:%M')}' required></div>"
                f"<div><label>To</label><input type=datetime-local name=ends_at required></div>"

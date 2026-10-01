@@ -242,3 +242,33 @@ def public_url(ctx) -> str:
     if base:
         return base.rstrip("/")
     return f"{ctx.request.scheme}://{ctx.request.public_host}"
+
+
+def owner_select(conn, board_ids, current: str | None = None, *, name: str = "owner",
+                 blank: str = "(nobody: the board's queue)", attrs: str = "", me: str | None = None) -> str:
+    """A select of the people who may take work: the WORK and ADMIN members of
+    these boards who are not deactivated, by name. The current owner stays
+    selectable, marked, if they no longer work the board; the blank choice
+    leaves the ticket in the queue."""
+    from ... import board as _board
+    from ... import members as _members
+    from .. import templates as t
+    seen: dict[str, str] = {}
+    for b in board_ids:
+        for m in _board._working_members(conn, b):
+            seen.setdefault(m.lower(), m)
+    people = sorted(((_members.name_of(conn, m), m) for m in seen.values()), key=lambda x: x[0].lower())
+    cur = (current or "").strip()
+    opts = [f"<option value=''{' selected' if not cur else ''}>{t.esc(blank)}</option>"]
+    if me and me.lower() in seen:
+        # The signed-in person first: "take it myself" is the commonest choice.
+        people = [(lbl, m) for lbl, m in people if m.lower() == me.lower()] + \
+                 [(lbl, m) for lbl, m in people if m.lower() != me.lower()]
+    for label, m in people:
+        shown = label if label.lower() == m.lower() else f"{label} ({m})"
+        if me and m.lower() == me.lower():
+            shown = f"Me - {shown}"
+        opts.append(f"<option value='{t.esc(m)}'{' selected' if m.lower() == cur.lower() else ''}>{t.esc(shown)}</option>")
+    if cur and cur.lower() not in seen:
+        opts.append(f"<option value='{t.esc(cur)}' selected>{t.esc(_members.name_of(conn, cur))} (not working this board)</option>")
+    return f"<select name={name}{attrs}>" + "".join(opts) + "</select>"
