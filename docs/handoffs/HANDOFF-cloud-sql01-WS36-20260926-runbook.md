@@ -2525,3 +2525,24 @@ one-line fixes to `Invoke-PmcMailPickup.ps1`. The tasks are held until WS36 land
      after the grant rather than the documented 2 hours.
 5. **Held until WS36 lands the two fixes:** the test mails and the two PSA-Mail tasks. A task must run the repository's
    script, not a scratch copy. Nothing on the host runs a pickup today, and `support@` still feeds PCSD alone.
+
+### Part 28: 2026-10-01, ~15:35 +08:00. **a9520bc live (059-061 PASS); mail cut-over ingests all; three production defects hot-fixed on the host; routing changed.**
+
+**059-061 PASS:** tables 128 -> 132 (`calendar_sync`, `outlook_busy`, `priority`, `ticket_cc`); columns 1226 -> 1259 (port `*_parsed` twins over the handoff's 1253); indexes 52 -> 54; triggers 4; no existing row changed. Suite 641 OK at a9520bc. Desk down 13 s. Backup `PMC_PSA_pre059-061-20261001.bak` (23.2 MB, valid).
+
+**mail-why (disposition words only, subjects kept on host):**
+- yahoo.com: **NEW_TICKET**.
+- gmail.com: **NEW_TICKET** (several), **DUPLICATE**.
+- "Property Request": **NEW_TICKET**, **DUPLICATE**.
+- No exclusion rule on any public domain (0 rules).
+
+**Why mail was not being received: three defects, each MEASURED here, each blocking all support@ ingestion. Hot-fixed to restore clinical mail; each needs a proper fix from WS36 (see the WS36 handoff).**
+1. **No `PSA_ATTACHMENT_DIR`** in the pickup task's environment: a mail with an attachment could not be stored, and the pass failed. The pickup task, unlike PSA-Desk/PSA-Rules, sets none. **Host fix:** `PSA_ATTACHMENT_DIR=D:\psa\files` set machine-wide (`[Environment]::SetEnvironmentVariable(...,'Machine')`); the task spawns fresh each minute and inherits it.
+2. **`__main__.py:363` had an unescaped `\p`** (`"...D:\psa\logs\PSA-Mail-<mailbox>.log"`), a `SyntaxWarning` to stderr on every psaspine start. The pickup runs python `2>&1` under `$ErrorActionPreference='Stop'`, so that stderr became a terminating error (pmc-estate §6, native stderr under EAP=Stop) -> every pass "failed". **Fix:** made that string a raw string (`r"..."`). Committed in the live tree (this commit).
+3. **`data_quality.subject_id` was nvarchar(64)**, but `_record_failure` writes the full Message-ID there, and a real Exchange Message-ID is longer -> truncation error -> the per-message failure recorder itself raised and killed the whole pass (so one unplaceable message blocked all of support@). **Host fix:** `ALTER TABLE psa.data_quality ALTER COLUMN subject_id nvarchar(800)` to match `intake_message.message_id(800)`. **This diverges from the port (still 64); WS36 must carry it in a schema step so a rebuild keeps it.**
+
+After all three: the support@ drop cleared, delta link saved, tickets 9 -> 16, the yahoo and "Property Request" mails ingested.
+
+**Routing (Dada, 1 Oct, "help and helpdesk@ should be on unrouted only, support goes to PMO helpdesk"):** done via the desk's own `set_addresses`, audited. UNROUTED claims help@ and helpdesk@; PMO Helpdesk (IT_HELP) claims support@.
+
+**Still Dada's (elevated, psa_desk password):** re-register PSA-Notify with `-AllowedDomain '*'` (so yahoo/gmail requesters get the acknowledgement); `Register-PsaMail.ps1 -IncludeSupport -IncludeCalendar -Apply` (PSA-Calendar needs the calendar grant `Grant-PsaCalendars.ps1` first, which is also Dada's).
