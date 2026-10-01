@@ -192,3 +192,35 @@ The command drops `-KeySpec Signature`.
   - the sender sends only as `-Mailbox` or `-SendAs`.
 - **The existing intake tests** were moved onto the new table, and they pass.
 - **Not yet run:** the full suite on SQL Server. That is SQL01's run at this head.
+
+## Dada's admin steps: done, 1 Oct 2026, 12:16 to 12:17 +08:00 (MEASURED, from the output Dada pasted)
+
+`D:\psa\bin\New-PsaMailApp.ps1 -Apply`, run as `PMCNE\dada.banal`, after a clean preview at 11:54. This covers steps 2
+and 3 of the mail handoff for both mailboxes.
+
+1. **The Entra app.** *PMC PSA mail pickup* is registered with one key credential, the `CN=PMC-PSA-MailPickup`
+   certificate, which expires 1 Oct 2027.
+   - API permissions: **0**.
+   - Its service principal was created.
+   - Its identifiers were written to `D:\psa\mail-app.txt` and not printed. Only SYSTEM, Administrators and `psa_desk`
+     can read that file.
+2. **The two mailboxes.** `helpdesk@pmcne.ph` and `support@pmcne.ph` are both SharedMailbox.
+3. **Exchange.** Exchange knows the service principal. Application Mail.Read and Application Mail.Send are assigned on
+   the scope over both mailboxes.
+4. **The tests:**
+   - Mail.Read and Mail.Send on `helpdesk@`: **InScope True**.
+   - Mail.Read and Mail.Send on `support@`: **InScope True**.
+   - Both on another mailbox: **InScope False**.
+
+   So the app reaches the two desk mailboxes and nothing else.
+5. **The script's own word:** "Tell SQL01 'mail app done'". The permission can take 30 minutes to 2 hours to take
+   effect, so a pickup preview that gets 403 before then is the cache, not a fault.
+
+**Next, SQL01:**
+1. apply 058;
+2. run `mail-setup`;
+3. preview the two pickups;
+4. send one test mail each to `helpdesk@`, `help@` and `support@`;
+5. start PSA-Notify with `-SendAs support@pmcne.ph`.
+
+The `support@` pickup goes live only after PCSD stops reading `support@`.
