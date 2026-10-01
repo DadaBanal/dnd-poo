@@ -38,6 +38,7 @@ param(
     [string]$GroupAlias = 'psa-desk-calendars',
     [string]$ScopeName = 'PSA desk calendars',
     [string]$AllowedDomain = 'pmcne.ph',
+    [string]$MembersFile = '',
     [string]$Database = 'Driver={ODBC Driver 17 for SQL Server};Server=DND-SQL01\PMC_SS;Database=PMC_PSA;Trusted_Connection=yes;Encrypt=yes;TrustServerCertificate=yes',
     [string]$SpineDir = 'D:\dnd-poo\platform\psa-spine',
     [string]$PythonExe = 'C:\PMC\Python312\python.exe',
@@ -65,10 +66,19 @@ if (-not (Test-Path $AppFile)) { throw ($AppFile + ' is missing: run New-PsaMail
 foreach ($l in Get-Content $AppFile) { if ($l -match '^\s*(\w+)\s*=\s*(\S+)\s*$') { $ids[$Matches[1]] = $Matches[2] } }
 if (-not $ids['AppId']) { throw ($AppFile + ' has no AppId. Nothing was done.') }
 
-# --- the desk's members and their mailboxes
-Push-Location $SpineDir
-try { $out = & $PythonExe -m psaspine calendar-members $Database --allowed-domain $AllowedDomain 2>&1; $code = $LASTEXITCODE } finally { Pop-Location }
-if ($code -ne 0) { throw ('calendar-members failed (exit ' + $code + '). Nothing was done.') }
+# --- the desk's members and their mailboxes.
+# -MembersFile: a JSON array of {"mailbox": "..."} produced by the desk itself (psaspine calendar-members), for when
+# this script is run by a SQL sysadmin whose connection resolves to schema [dbo] and the desk refuses it. Otherwise
+# the python is called here, which needs a connection whose default schema is [psa] (the task account).
+if ($MembersFile) {
+    if (-not (Test-Path $MembersFile)) { throw ($MembersFile + ' not found. Nothing was done.') }
+    $out = Get-Content -Path $MembersFile -Raw -Encoding UTF8
+    Write-Step ('member mailboxes read from ' + $MembersFile)
+} else {
+    Push-Location $SpineDir
+    try { $out = & $PythonExe -m psaspine calendar-members $Database --allowed-domain $AllowedDomain 2>&1; $code = $LASTEXITCODE } finally { Pop-Location }
+    if ($code -ne 0) { throw ('calendar-members failed (exit ' + $code + '). Run as a SQL sysadmin resolves to schema [dbo], which the desk refuses; pass -MembersFile instead, or run the python step as the task account. Nothing was done.') }
+}
 $wanted = @()
 foreach ($x in (($out | Out-String).Trim() | ConvertFrom-Json)) { if ($null -ne $x -and $x.PSObject.Properties['mailbox']) { $wanted += $x.mailbox.ToLowerInvariant() } }
 Write-Step ('the desk has ' + $wanted.Count + ' member(s) with a mailbox in ' + $AllowedDomain)
