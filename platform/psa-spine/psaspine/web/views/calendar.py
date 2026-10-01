@@ -168,6 +168,8 @@ def index(ctx):
             rows.append(f"<tr><th class=who style='width:70px'>{hh}</th><td{slot(on, hh)}>"
                         + "".join(_chip(it, day_of=on.isoformat()) for it in here) + "</td></tr>")
         grid = ((("<div class=card>" + "".join(_chip(it, day_of=on.isoformat()) for it in allday) + "</div>") if allday else "")
+                + ("" if todays else "<p class=muted>Nothing on this day." + (" Click an hour to add something." if can_book else "")
+                   + "</p>")
                 + "<div class=schedwrap><table class='schedgrid day'><tbody>" + "".join(rows) + "</tbody></table></div>")
         title = on.strftime("%A %d %B %Y")
         prev_, next_ = on - timedelta(days=1), on + timedelta(days=1)
