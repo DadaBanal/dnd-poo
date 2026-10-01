@@ -184,6 +184,17 @@ def main(argv: list[str] | None = None) -> int:
     pms.add_argument("--apply", action="store_true", help="write it; without this nothing is changed")
     pms.add_argument("--show", action="store_true",
                      help="afterwards, print every email the board sends a requester: on or off, subject and words")
+    ppk = sub.add_parser("setup-pmc",
+                         help="the PMC pack: hospital statuses, Areas, Subtypes and Items on the help desk and "
+                              "procurement boards; adds only what is missing. Preview unless --apply")
+    ppk.add_argument("database", help=DB_HELP)
+    ppk.add_argument("--helpdesk", default="IT_HELP", help="the help desk board_id (default IT_HELP)")
+    ppk.add_argument("--procurement", help="the procurement board_id; omit to leave procurement alone")
+    ppk.add_argument("--live", action="store_true", help="make the procurement board live (needs --owner and --deputy)")
+    ppk.add_argument("--owner", help="the procurement board's owner (a member)")
+    ppk.add_argument("--deputy", help="the procurement board's deputy (a member)")
+    ppk.add_argument("--actor", required=True, help="who this is done for, for the audit trail")
+    ppk.add_argument("--apply", action="store_true", help="write it; without this nothing is changed")
     pom = sub.add_parser("outbox-mark", help="record what the sender did with one notification")
     pom.add_argument("database", help=DB_HELP)
     pom.add_argument("--id", type=int, required=True)
@@ -457,6 +468,26 @@ def _run(conn, a) -> int:
             print(f"refused: {exc}", file=sys.stderr)
             return 1
         print(outbox.as_json(items))
+        return 0
+
+    if a.cmd == "setup-pmc":
+        from . import pmc_pack
+        try:
+            added = pmc_pack.apply(conn, helpdesk=a.helpdesk, procurement=a.procurement, owner=a.owner,
+                                   deputy=a.deputy, live=a.live, at=datetime.now(), actor=a.actor)
+        except ValueError as exc:
+            conn.rollback()
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        for line in added:
+            print(line)
+        print(f"{len(added)} thing(s) to add" if added else "nothing to add: the pack is already there")
+        if a.apply:
+            conn.commit()
+            print("applied")
+        else:
+            conn.rollback()
+            print("PREVIEW: nothing written; re-run with --apply")
         return 0
 
     if a.cmd == "mail-setup":

@@ -12269,5 +12269,56 @@ class DeskFlowTest(unittest.TestCase):
         self.assertIn("<select name=member", page)
 
 
+class PmcPackTest(unittest.TestCase):
+    """Dada, 1 Oct 2026: statuses, types and subtypes that fit PMC, and the
+    Procurement board live. Adds only what is missing; a second run adds
+    nothing; nothing already there is changed."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.conn = _fresh(self.tmp)
+        self.addCleanup(self.conn.close)
+        self.at = datetime(2026, 10, 1, 9)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        setup.create_board(self.conn, display_name="Procurement", board_id="PROCUREMENT", fulfiller_group="Finance",
+                           creator="dada.banal", at=self.at)
+        self.conn.commit()
+
+    def test_the_pack_adds_what_fits_pmc_once_and_makes_procurement_live(self):
+        from psaspine import pmc_pack
+        before = {r[0]: tuple(r[1:]) for r in self.conn.execute(
+            "SELECT board_status_id, name, sort_order, is_default FROM board_status WHERE board_id = 'IT_HELP'")}
+        with self.assertRaises(ValueError):
+            pmc_pack.apply(self.conn, procurement="PROCUREMENT", live=True, owner="dada.banal", at=self.at, actor="x")
+        self.conn.rollback()
+        added = pmc_pack.apply(self.conn, procurement="PROCUREMENT", live=True, owner="dada.banal",
+                               deputy="jefferson.simon", at=self.at, actor="sql01 for dada.banal")
+        self.assertIn("status IT_HELP: Waiting on Parts", added)
+        self.assertIn("status PROCUREMENT: PO Raised", added)
+        self.assertIn("pair: BizBox HIS > Not working -> IT_HELP", added)
+        self.assertIn("board PROCUREMENT: live, owner dada.banal, deputy jefferson.simon", added)
+        for k, v in before.items():                                     # nothing already there changed
+            self.assertEqual(tuple(self.conn.execute("SELECT name, sort_order, is_default FROM board_status"
+                                                     " WHERE board_status_id = ?", (k,)).fetchone()), v)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM board_status WHERE board_id = 'PROCUREMENT'"
+                                           " AND is_closed = 1").fetchone()[0], 1)
+        # a clinical system that is down is never queued behind a mouse
+        row = self.conn.execute(
+            "SELECT i.clinical_impact, i.min_priority FROM catalogue_item i JOIN service_component c ON c.component_id ="
+            " i.component_id JOIN service_action a ON a.action_id = i.action_id"
+            " WHERE c.display_name = 'BizBox HIS' AND a.display_name = 'Not working'").fetchone()
+        self.assertEqual((row[0], row[1]), (1, "P2"))
+        wid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="HIS will not open", impact="I3", urgency="U3",
+                                  requested_by=None, at=self.at,
+                                  catalogue_item_id=self.conn.execute(
+                                      "SELECT i.catalogue_item_id FROM catalogue_item i JOIN service_component c"
+                                      " ON c.component_id = i.component_id JOIN service_action a ON a.action_id = i.action_id"
+                                      " WHERE c.display_name = 'BizBox HIS' AND a.display_name = 'Not working'").fetchone()[0])
+        self.assertIn(self.conn.execute("SELECT priority FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()[0], ("P1", "P2"))
+        self.assertEqual(self.conn.execute("SELECT is_live FROM board WHERE board_id = 'PROCUREMENT'").fetchone()[0], 1)
+        self.assertEqual(pmc_pack.apply(self.conn, procurement="PROCUREMENT", at=self.at, actor="x"), [])   # once
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
