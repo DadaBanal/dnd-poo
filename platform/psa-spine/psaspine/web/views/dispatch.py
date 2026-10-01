@@ -150,7 +150,7 @@ def index(ctx):
         "<h1>Dispatch</h1><p class='sub'>The unrouted queue, ageing in plain sight, "
         "the day's visits, and who answers each board — the rota over the org chart.</p>"
         + queue + day_card + "".join(role_cards))
-    return Response(body=t.page("Dispatch", body, user=ctx.user, active="dispatch"))
+    return Response(body=t.page("Dispatch", body, user=ctx.user, active="dispatch", live="board"))
 
 
 def assign(ctx):

@@ -145,7 +145,7 @@ def index(ctx):
               "activities. A booking that clashes is refused unless you allow it; time off is never double-booked. "
               "<a href='/dispatch'>Dispatch</a> · <a href='/admin/schedule'>Setup</a></p>"
             + "<div class=card>" + nav + grid + "</div>" + forms)
-    return Response(body=t.page("Schedule", body, user=ctx.user, active="schedule"))
+    return Response(body=t.page("Schedule", body, user=ctx.user, active="schedule", live="schedule"))
 
 
 def book(ctx):

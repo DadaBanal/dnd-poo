@@ -24,6 +24,7 @@ from .views import mail as mail_view
 from .views import cmdbsetup as cmdbsetup_view
 from .views import smallsetup as smallsetup_view
 from .views import inout as inout_view
+from .views import live as live_view
 from .views import kb as kb_view
 from .views import projects as projects_view
 from .views import reportwriter as rw_view
@@ -34,6 +35,7 @@ from .views import (admin, board, companies, configurations, dispatch, files, lo
 # so a literal segment must be listed before a <capture> in the same place.
 ROUTES = [
     ("GET", "/", board.index),
+    ("GET", "/live", live_view.stamp),
     ("POST", "/bulk", board.bulk),
     ("GET", "/search.json", search.search),
     ("GET", "/reports", reports.index),

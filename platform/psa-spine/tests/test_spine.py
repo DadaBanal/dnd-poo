@@ -12320,5 +12320,42 @@ class PmcPackTest(unittest.TestCase):
         self.assertEqual(pmc_pack.apply(self.conn, procurement="PROCUREMENT", at=self.at, actor="x"), [])   # once
 
 
+class LiveTest(unittest.TestCase):
+    """Dada, 1 Oct 2026: "can it be real time". The board, Dispatch, the
+    Schedule and a ticket ask /live for a stamp and reload when it moves."""
+
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+
+    def setUp(self) -> None:
+        WebWSGITest.setUp(self)
+        self.addCleanup(self.tmp.cleanup)
+        self.alice = self._cookie_for("alice")
+        self.carol = self._cookie_for("carol")
+
+    def test_the_stamp_moves_when_a_ticket_changes_and_answers_only_who_may_see(self):
+        _, _, page = self._call("GET", "/", cookie=self.alice)
+        self.assertIn("<main data-live='board'>", page)
+        self.assertIn("/live?scope=", page)
+        _, _, page = self._call("GET", "/ticket/ITO-1", cookie=self.alice)
+        self.assertIn("<main data-live='ticket:ITO-1'>", page)
+        status, headers, before = self._call("GET", "/live", cookie=self.alice, query="scope=board")
+        self.assertTrue(status.startswith("200"), status)
+        self.assertIn(("Cache-Control", "no-store"), headers)
+        _, _, t_before = self._call("GET", "/live", cookie=self.alice, query="scope=ticket:ITO-1")
+        conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)
+        board.update_fields(conn, "ITO-1", at=datetime(2026, 9, 17, 10), actor="alice", owner="alice")
+        conn.commit()
+        _, _, after = self._call("GET", "/live", cookie=self.alice, query="scope=board")
+        _, _, t_after = self._call("GET", "/live", cookie=self.alice, query="scope=ticket:ITO-1")
+        self.assertNotEqual(before, after)
+        self.assertNotEqual(t_before, t_after)
+        # a restricted ticket's stamp is not answered to someone off its board
+        self.assertTrue(self._call("GET", "/live", cookie=self.carol, query="scope=ticket:ITO-9")[0].startswith("404"))
+        self.assertTrue(self._call("GET", "/live", cookie=self.alice, query="scope=nonsense")[0].startswith("400"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

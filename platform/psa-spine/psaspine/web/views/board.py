@@ -527,4 +527,4 @@ def _response(ctx, body: str):
     from .. import Response
     heading = ("<h1>Service Board</h1><p class='sub'>Every ticket on your boards, worst "
                "SLA first. Colour is the clock, not decoration.</p>")
-    return Response(body=t.page("Service Board", heading + body, user=ctx.user, active="board"))
+    return Response(body=t.page("Service Board", heading + body, user=ctx.user, active="board", live="board"))

@@ -598,6 +598,21 @@ d.addEventListener("keydown",function(e){
     case "Enter":if(cur>=0){var a=$("a[href^='/ticket/']",rows[cur]);if(a)location.href=a.getAttribute("href")}break}
 });
 })();
+// Real time: a page marked data-live asks /live for a stamp every ten
+// seconds while it is on screen, and reloads when the stamp moves. While the
+// person is typing it does not reload: it says so, and they choose.
+(function(){var m=document.querySelector('main[data-live]');if(!m)return;
+var scope=m.getAttribute('data-live'),last=null,dirty=false,bar=null;
+document.addEventListener('input',function(e){if(e.target&&e.target.closest&&e.target.closest('form'))dirty=true},true);
+function busy(){var a=document.activeElement;return dirty||(a&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))||document.querySelector('dialog[open]')}
+function tell(){if(bar)return;bar=document.createElement('div');bar.setAttribute('role','status');
+bar.style.cssText='position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:60;background:var(--accent,#2563eb);color:#fff;padding:8px 14px;border-radius:999px;box-shadow:0 6px 20px rgba(0,0,0,.25);font-size:14px';
+bar.innerHTML='Something changed. <button type=button style="margin-left:8px;background:#fff;color:#111;border:0;border-radius:999px;padding:3px 10px;cursor:pointer">Refresh</button>';
+bar.querySelector('button').addEventListener('click',function(){location.reload()});document.body.appendChild(bar)}
+function tick(){if(document.hidden)return;fetch('/live?scope='+encodeURIComponent(scope),{credentials:'same-origin',cache:'no-store'})
+.then(function(r){return r.ok?r.text():null}).then(function(s){if(s===null)return;if(last===null){last=s;return}
+if(s!==last){last=s;if(busy())tell();else location.reload()}}).catch(function(){})}
+setInterval(tick,10000);tick();document.addEventListener('visibilitychange',function(){if(!document.hidden)tick()})})();
 """
 
 # The icon set: two dozen 24-grid stroke icons drawn here (no icon font, no
@@ -853,7 +868,7 @@ def _quick_default(nav_items) -> str:
 
 
 def page(title: str, body: str, *, user=None, active: str = "", requester: bool | None = None,
-         quick: str | None = None) -> str:
+         quick: str | None = None, live: str | None = None) -> str:
     """The shell every page shares: header, nav, the acting user, the body.
 
     A break-glass session is marked in the corner, in amber, on every page. Who
@@ -942,7 +957,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         f'<header class="top"><a class="brand" href="{"/my" if requester else "/"}"><i></i>'
         f'{"PMC Requests" if requester else "Dada PSA"}</a>'
         f"<nav>{nav}</nav>{who}</header>"
-        f"<main>{body}</main>"
+        + (f"<main data-live='{esc(live)}'>" if live else "<main>") + f"{body}</main>"
         + (quick if quick is not None else (_quick_default(nav_items) if user is not None and not requester else ""))
         + ("<footer>PMC Requests — a request reaches the department it is for.</footer>" if requester else
            "<footer>PMC PSA spine — Phase B pilot. LAN only, Dada IT only. "
