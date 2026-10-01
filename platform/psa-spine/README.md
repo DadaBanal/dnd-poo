@@ -1370,8 +1370,13 @@ Message-ID. This was the third different cause of the same symptom, so:
 pass, and says which one it is: the tasks (registered, enabled, last run,
 last result), the sign-in certificate (found, and the day it expires, never
 the thumbprint), the delta link per mailbox and the tail of its log, the
-drop and files folders including anything in `failed\`, and one real pass
-per mailbox in preview so Graph's own answer is on the record. Preview by
+drop and files folders including anything in `failed\`, **what the desk itself has
+taken** (`psaspine mail-health`: when a message last arrived, what came of
+the ones since, which addresses a board claims), and one real pass per
+mailbox in preview so Graph's own answer is on the record. The desk's side
+is what tells the two faults apart: a silent desk with a busy mailbox is
+the pickup's, and messages taken but set aside are intake's, which
+`mail-why` then names message by message. Preview by
 default. With `-Apply` it enables and starts a task that is disabled or
 stopped, and with `-ResetDelta` it forgets an expired link, keeping a copy.
 It never registers a task, never writes a certificate, never imports mail

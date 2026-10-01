@@ -6866,6 +6866,15 @@ class MailRepairScriptTest(unittest.TestCase):
             self.assertIn(name, self.text)
             self.assertIn(name, pickup)
 
+    def test_it_asks_the_desk_whether_mail_is_becoming_tickets(self):
+        # a silent desk with a busy mailbox is the pickup's fault, not intake's,
+        # and only the desk can say which (Dada, 2 Oct 2026: "the tickets aren't
+        # syncing again from the mailbox").
+        self.assertIn("mail-health", self.text)
+        self.assertIn("NOTHING arrived in that window", self.text)
+        self.assertIn("were set aside with an error", self.text)
+        self.assertIn("mail-retry", self.text)
+
     def test_it_names_each_cause_with_what_fixes_it(self):
         for cause in ("is DISABLED", "HAS EXPIRED", "410", "is not registered"):
             self.assertIn(cause, self.text, cause)
@@ -12342,6 +12351,41 @@ class MailCutoverTest(unittest.TestCase):
         # the same thread, as the engine hands it out
         who = [x["who"] for x in outbox.conversation(self.conn, wid)]
         self.assertEqual(who, ["Bob from PMO Helpdesk (resolution)", "You", "Bob from PMO Helpdesk", "You"])
+
+    def test_the_desk_says_whether_mail_is_becoming_tickets_at_all(self):
+        """Dada, 2 Oct 2026: "the tickets aren't syncing again from the
+        mailbox". mail-health is the desk's own side: a silent desk means the
+        fault is before it, in the pickup; messages set aside mean it is
+        intake's, and mail-why names which."""
+        import contextlib
+        import io
+        from psaspine import intake
+        from psaspine.__main__ import main
+        h = intake.health(self.conn, days=2)
+        self.assertIsNone(h["last"])
+        self.assertEqual((h["total"], h["errors"]), (0, 0))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(main(["mail-health", TEST_DB or str(Path(self.tmp.name) / "spine.db")]), 0)
+        self.assertIn("the desk has taken NO mail, ever", out.getvalue())
+        self.assertIn("NOTHING arrived in that window", out.getvalue())
+        # now one arrives and becomes a ticket
+        intake.set_addresses(self.conn, "IT_HELP", "helpdesk@pmcne.ph", at=self.at, actor="t")
+        self._msg(subject="printer", to="helpdesk@pmcne.ph")
+        intake.import_drop(self.conn, self.drop, run_id="h1", board_id="IT_HELP", at=self.at)
+        self.conn.commit()
+        h = intake.health(self.conn, days=2)
+        self.assertEqual(h["last"]["disposition"], "NEW_TICKET")
+        self.assertTrue(h["last"]["work_item_id"])
+        self.assertEqual(h["by_disposition"].get("NEW_TICKET"), 1)
+        self.assertEqual(h["claims"], {"helpdesk@pmcne.ph": "IT_HELP"})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            main(["mail-health", TEST_DB or str(Path(self.tmp.name) / "spine.db")])
+        said = out.getvalue()
+        self.assertIn("last message the desk took:", said)
+        self.assertIn("NEW_TICKET", said)
+        self.assertNotIn("NOTHING arrived", said)
 
     def test_the_unrouted_queue_claims_helpdesk_and_help_and_the_dispatcher_routes(self):
         """Dada, 1 Oct 2026: "for the unrouted board add helpdesk and help@

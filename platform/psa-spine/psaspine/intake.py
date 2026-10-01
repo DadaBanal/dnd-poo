@@ -678,6 +678,30 @@ def _record(conn: sqlite3.Connection, message_id: str, stamp: str, sender: str,
          disposition, work_item_id, duplicate_of, run_id, to_address))
 
 
+def health(conn: sqlite3.Connection, *, days: int = 2) -> dict:
+    """Is mail becoming tickets at all (Dada, 2 Oct 2026: "the tickets aren't
+    syncing again from the mailbox")? The one question the host cannot answer
+    from a log: the desk's own side of it. When a message last arrived, what
+    came of the messages since, and which addresses a board claims.
+
+    A silent desk and a busy mailbox is the pickup's fault; a desk taking
+    messages and setting them aside is intake's, and `why` names which."""
+    since = (datetime.now() - timedelta(days=max(1, days))).isoformat(sep=" ", timespec="minutes")
+    last = conn.execute("SELECT received_at, from_address, to_address, disposition, work_item_id"
+                        "  FROM intake_message ORDER BY received_at DESC, message_id LIMIT 1").fetchone()
+    by = {r["disposition"]: r["n"] for r in conn.execute(
+        "SELECT disposition, COUNT(*) AS n FROM intake_message WHERE received_at >= ?"
+        " GROUP BY disposition", (since,))}
+    errors = conn.execute("SELECT COUNT(*) FROM data_quality WHERE code = 'INTAKE_ERROR'"
+                          " AND subject_kind = 'intake_message'").fetchone()[0]
+    claims = {r["address"]: r["board_id"] for r in conn.execute(
+        "SELECT address, board_id FROM board_intake_address ORDER BY address")}
+    return {"since": since, "days": days,
+            "last": dict(last) if last else None,
+            "by_disposition": by, "total": sum(by.values()),
+            "errors": errors, "claims": claims}
+
+
 def why(conn: sqlite3.Connection, *, subject: str | None = None, sender: str | None = None,
         since: str | None = None) -> dict:
     """What intake did with the messages matching a subject fragment or a

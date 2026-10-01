@@ -29,6 +29,17 @@ If the preview said **410** for a mailbox, its Graph bookmark has expired. Clear
 
 A copy of the old bookmark is kept beside it, and no message is imported twice: the import is keyed by Message-ID.
 
+One of its steps asks the desk itself, and that is the step that tells the two faults apart. You can run it alone,
+as the task account:
+
+    cd D:\dnd-poo\platform\psa-spine
+    C:\PMC\Python312\python.exe -m psaspine mail-health "<the desk's connection>"
+
+It prints when the desk last took a message and what became of it, what came of the ones since, and which
+addresses a board claims. **A silent desk with a busy mailbox is the pickup's fault**: nothing is reaching the
+desk at all, so the task, the certificate or the delta link is the cause. **Messages taken but set aside** is
+intake's fault instead, and `psaspine mail-why --sender <them>` names it for one of them.
+
 **Look at PSA-Mail-Helpdesk first.** SQL01's part 30 listed PSA-Rules, PSA-Notify, PSA-Mail-Support and
 PSA-Calendar as healthy and did not mention PSA-Mail-Helpdesk at all. If that task is missing or disabled, mail to
 helpdesk@ and help@ is not being picked up and nothing else explains it. The script says which it is.

@@ -214,8 +214,29 @@ if (Test-Path $failed) {
     }
 }
 
-# --------------------------------------------------- 5. one real pass, preview
-Write-Step '5. one pass per mailbox, in preview (nothing is written)'
+# ------------------------------------------- 5. the desk's own side of it
+Write-Step '5. what the desk has taken (its side, not the mailbox''s)'
+if (-not (Test-Path $PythonExe)) {
+    Write-Step ('  skipped: ' + $PythonExe + ' is not there')
+} else {
+    Push-Location $SpineDir
+    $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { $h = & $PythonExe -m psaspine mail-health $Database --days 2 2>&1; $hc = $LASTEXITCODE } finally { $ErrorActionPreference = $eap; Pop-Location }
+    foreach ($l in @($h)) { Write-Step ('    | ' + $l) }
+    if ($hc -ne 0) {
+        Add-Finding ('the desk could not be asked what it has taken (exit ' + $hc + ').') `
+                    'Run as the task account: a SQL sysadmin resolves to schema [dbo], which the desk refuses.'
+    } elseif (($h | Out-String) -match 'NOTHING arrived in that window') {
+        Add-Finding 'The desk has taken NO mail in the last 2 days, so the fault is before the desk: the pickup, not intake.' `
+                    'The pass below says what Graph answered; that is the cause.'
+    } elseif (($h | Out-String) -match 'were set aside with an error') {
+        Add-Finding 'Mail is reaching the desk but some of it was set aside with an error, so those made no ticket.' `
+                    'psaspine mail-why --sender <the sender> names the cause; put it right, then psaspine mail-retry.'
+    }
+}
+
+# --------------------------------------------------- 6. one real pass, preview
+Write-Step '6. one pass per mailbox, in preview (nothing is written)'
 $pickup = Join-Path (Join-Path $SpineDir 'scripts') 'Invoke-PmcMailPickup.ps1'
 if (-not (Test-Path $pickup)) {
     Add-Finding ($pickup + ' is not there, so the task has nothing to run.') 'Check -SpineDir, and that the repository is where the tasks expect it.'
@@ -247,7 +268,7 @@ if ($script:Fixed.Count) {
 }
 if (-not $script:Findings.Count) {
     Write-Step 'RESULT: PASS. Nothing here is broken: the tasks run, the certificate is good, the delta links move, no message is stuck.'
-    Write-Step 'If mail still does not arrive, it never reached the mailbox: check the Exchange rule and the sender.'
+    Write-Step 'If mail still does not become a ticket, it never reached the mailbox: check the Exchange rule and the sender.'
     exit 0
 }
 Write-Step ('RESULT: ' + $script:Findings.Count + ' problem(s), worst first as listed:')

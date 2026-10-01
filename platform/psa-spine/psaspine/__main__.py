@@ -58,6 +58,10 @@ def main(argv: list[str] | None = None) -> int:
     pwhy.add_argument("--subject", help="a fragment of the subject, any case")
     pwhy.add_argument("--sender", help="the sender's address or domain, any case")
     pwhy.add_argument("--days", type=int, default=7, help="how far back (default 7)")
+    phealth = sub.add_parser("mail-health", help="is mail becoming tickets at all: when a message last arrived,"
+                                                 " what came of the ones since, and which addresses a board claims")
+    phealth.add_argument("database", help=DB_HELP)
+    phealth.add_argument("--days", type=int, default=2, help="how far back to count (default 2)")
     pretry = sub.add_parser("mail-retry", help="forget a message intake set aside (UNCLASSIFIED) so a fresh pickup"
                                                " sync imports it again, once the cause is put right")
     pretry.add_argument("database", help=DB_HELP)
@@ -366,6 +370,26 @@ def _run(conn, a) -> int:
         conn.commit()
         print(said)
         print("sysadmins now: " + (", ".join(members.sysadmins(conn)) or "none"))
+        return 0
+
+    if a.cmd == "mail-health":
+        from . import intake
+        h = intake.health(conn, days=a.days)
+        if not h["last"]:
+            print("the desk has taken NO mail, ever. Nothing has reached it from a pickup.")
+        else:
+            L = h["last"]
+            where = f" -> {L['work_item_id']}" if L["work_item_id"] else ""
+            print(f"last message the desk took: {L['received_at']}  {L['disposition']}{where}"
+                  f"  from {L['from_address'] or '-'} to {L['to_address'] or '-'}")
+        print(f"in the last {h['days']} day(s): {h['total']} message(s)"
+              + ("" if not h["by_disposition"] else "; " + ", ".join(f"{k} {v}" for k, v in sorted(h["by_disposition"].items()))))
+        if h["errors"]:
+            print(f"{h['errors']} message(s) were set aside with an error: `mail-why --sender <them>` says why for one")
+        print("claimed addresses: " + (", ".join(f"{k} -> {v}" for k, v in sorted(h["claims"].items())) or "none"))
+        if not h["total"]:
+            print(r"NOTHING arrived in that window: the fault is before the desk. Check the pickup task and its log"
+                  r" (D:\psa\mail-state\mail-pickup-<mailbox>.log), or run Repair-PsaMailPickup.ps1.")
         return 0
 
     if a.cmd == "mail-why":
