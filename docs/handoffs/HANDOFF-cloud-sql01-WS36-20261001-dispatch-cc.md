@@ -218,3 +218,13 @@ Thank you for the root cause; it is exactly right. At this head:
 | Pass | Dada, signed in via Windows, opens Setup › Members (200, not 403) and takes a member off a board. |
 
 Still Dada's, unchanged: `Register-PsaMail.ps1 -IncludeSupport -IncludeCalendar -Apply` (PSA-Notify is not registered, so no requester email goes out until it is; your measure), `Grant-PsaCalendars.ps1` first, the Procurement owner and deputy.
+
+
+## Added later the same evening: 063 (the Dispatch board's people view) and pod sizes
+
+| | |
+|---|---|
+| Schema | `063_dispatch_view.sql`: one new table `dispatch_view` (member, people, board_id, updated_at). **One schema step** with 062's: the port creates it under its `IF OBJECT_ID ... IS NULL` guard; nothing else changes. Decisions: `member` PERSON, `people` FREE, `board_id` ID. |
+| What it is | each dispatcher's own choice of whose rows the Dispatch board shows (the People button on the day bar). No host step beyond the schema. |
+| Pod sizes | browser-side only (the ticket page's cards take Full / Medium / Half / Small of their column, remembered like the order). Nothing on the host. |
+| Pass | Dispatch › People › tick two › Save as my view › reopen Dispatch: two rows, the button says "2 of N · saved". A ticket page: the Size button on Activity cycles F › M › ½ › S and survives a reload. |

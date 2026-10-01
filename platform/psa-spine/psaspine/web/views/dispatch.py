@@ -295,7 +295,8 @@ def index(ctx):
     # Save keeps it as your view, Clear forgets it. Works without a mouse.
     ticks = "".join(
         f"<label class=tick><input type=checkbox name=p value='{t.esc(p)}'{' checked' if p.lower() in {x.lower() for x in people} else ''}>"
-        f" {t.esc(_members.name_of(ctx.conn, p))} <span class=muted>{t.esc(p)}</span></label>" for p in everyone)
+        f" {t.esc(_members.name_of(ctx.conn, p))}" + (f" <span class=muted>{t.esc(p)}</span>" if _members.name_of(ctx.conn, p).lower() != p.lower() else "")
+        + "</label>" for p in everyone)
     showing = (f"{len(people)} of {len(everyone)}" if len(people) != len(everyone) else f"all {len(everyone)}")
     people_dlg = (
         "<dialog id=whodlg class=card style='max-width:560px;width:95%'><form method=dialog class=dlghead><h3 style='margin:0'>"

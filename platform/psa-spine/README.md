@@ -1289,6 +1289,30 @@ kept), see every token with its board, scope, maker and last use, and
 disable or re-enable one. `create-api-token` on the host still works and
 lands in the same list.
 
+## Pod sizes, and whose rows the Dispatch board shows (063, 1 Oct 2026)
+
+**Pod sizes** (Dada: "size the pods like small half medium full as the
+message will go all the way ... don't lose readability"). Every card on the
+ticket page has a Size button beside Fold: Full, Medium (two thirds of its
+column), Half, Small (a third), in a cycle. Two half cards sit side by side,
+so Activity and Add a note share the wide column and a note no longer runs
+the width of the screen. The browser remembers sizes with the order and the
+folds; Reset layout clears all three; on a narrow screen every card is full
+width whatever was chosen. Readability is kept by a rule as well as a
+choice: a note, a description and a card's explanatory text never run past
+80 characters a line, whatever the card's width.
+
+**Whose rows the Dispatch board shows** (Dada: "an edit view as to who will
+be displayed on the dispatch portal"): the reference PSA's dispatch portal
+shows a chosen set of resources. The **People** button on the day bar opens
+the list of everyone on the boards you see (plus anyone with a visit that
+day); tick whose rows you want. **Show** is for now (`who=` in the URL, so
+a link carries it); **Save as my view** keeps it (`dispatch_view`, one row
+per dispatcher, theirs alone) and applies whenever you open Dispatch;
+**Clear my view** goes back to everyone; **Only me** still wins over both.
+The button says how many of how many are showing, and "saved" when the
+saved view is what you see.
+
 ## A desk sysadmin by the member record (062, 1 Oct 2026)
 
 SQL01 part 29, root cause MEASURED: every member action on Setup › Members
