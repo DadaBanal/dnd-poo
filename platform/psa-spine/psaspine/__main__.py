@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from . import db, register, reports, tickets, walkthrough
@@ -52,6 +52,18 @@ def main(argv: list[str] | None = None) -> int:
                                 "(idempotent; a re-run makes no second ticket)")
     pmail.add_argument("database", help=DB_HELP)
     pmail.add_argument("drop_dir")
+    pwhy = sub.add_parser("mail-why", help="what intake did with a message, by a subject fragment or a sender:"
+                                           " its disposition, ticket and findings, or that it never arrived")
+    pwhy.add_argument("database", help=DB_HELP)
+    pwhy.add_argument("--subject", help="a fragment of the subject, any case")
+    pwhy.add_argument("--sender", help="the sender's address or domain, any case")
+    pwhy.add_argument("--days", type=int, default=7, help="how far back (default 7)")
+    pretry = sub.add_parser("mail-retry", help="forget a message intake set aside (UNCLASSIFIED) so a fresh pickup"
+                                               " sync imports it again, once the cause is put right")
+    pretry.add_argument("database", help=DB_HELP)
+    pretry.add_argument("--message-id", required=True, help="as mail-why printed it, e.g. <abc@yahoo.com>")
+    pretry.add_argument("--actor", required=True)
+    pretry.add_argument("--apply", action="store_true", help="do it; without this it only says what it would do")
     pmail.add_argument("--run-id", default="mail-1")
     pmail.add_argument("--channel", default="helpdesk",
                        help="which mailbox this drop came from; how the measured "
@@ -338,6 +350,44 @@ def _run(conn, a) -> int:
             return 1
         return 0
 
+    if a.cmd == "mail-why":
+        from . import intake
+        since = (datetime.now() - timedelta(days=a.days)).isoformat(sep=" ", timespec="minutes")
+        try:
+            r = intake.why(conn, subject=a.subject, sender=a.sender, since=since)
+        except ValueError as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 2
+        if not r["rows"]:
+            print(f"intake saw no message matching that in the last {a.days} days: nothing arrived from the pickup."
+                  " Check the mailbox's pickup task is registered and its log (D:\psa\logs\PSA-Mail-<mailbox>.log).")
+        for i in r["rows"]:
+            where = (f" -> {i['work_item_id']} on {i['board_id']}" if i["work_item_id"] else "")
+            print(f"{i['received_at']}  {i['disposition']:12}{where}  from {i['from_address'] or '-'} to {i['to_address'] or '-'}"
+                  f"  subject: {i['subject'] or '-'}  (run {i['run_id']}; message-id {i['message_id']})")
+            for f in i["findings"]:
+                print(f"    {f}")
+        if r["exclusion"]:
+            print(f"an exclusion rule catches this sender: {r['exclusion']} (Setup > Email connector)")
+        elif a.sender:
+            print(f"no exclusion rule catches this sender ({r['exclusions']} rule(s) in all)")
+        print("claimed addresses: " + (", ".join(f"{k} -> {v}" for k, v in sorted(r["claims"].items())) or "none"))
+        return 0
+    if a.cmd == "mail-retry":
+        from . import intake
+        try:
+            if not a.apply:
+                row = conn.execute("SELECT disposition FROM intake_message WHERE message_id = ?", (a.message_id,)).fetchone()
+                if row is None:
+                    raise LookupError(f"intake never saw {a.message_id}")
+                print(f"would forget {a.message_id} ({row['disposition']}); nothing changed without --apply")
+                return 0
+            print(intake.retry(conn, a.message_id, at=datetime.now(), actor=a.actor))
+            conn.commit()
+            return 0
+        except (LookupError, ValueError) as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
     if a.cmd == "import-mail":
         from . import intake
         as_of = _as_of(a.as_of)
@@ -351,7 +401,8 @@ def _run(conn, a) -> int:
               f"{c['loop_guarded']} auto-replies or bounces ignored; {c['reopened']} "
               f"closed tickets reopened; {c['reply_to_closed']} late replies as new tickets; "
               f"{c['files_kept']} files kept, {c['files_refused']} refused, "
-              f"{c['inline_skipped']} signature images skipped)")
+              f"{c['inline_skipped']} signature images skipped)"
+              + (f"; {c['errors']} could not be placed (INTAKE_ERROR, see Setup > Email connector)" if c.get("errors") else ""))
         # Losslessness, stated the same way the other importers state it: every
         # file is accounted for by exactly one outcome.
         placed = (c["new"] + c["appended"] + c["duplicate"] + c["unclassified"]

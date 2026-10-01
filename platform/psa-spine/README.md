@@ -1156,6 +1156,27 @@ Schemas 060 and 061 are one table each. On the live desk SQL01 applies them
 as schema steps; `init` seeds the four priority rows and never touches a row
 already there.
 
+### Nothing is lost, and "why" is one command (1 Oct 2026)
+
+Dada, 1 Oct 2026, on two mails from yahoo and gmail: "make sure it ingests
+all". Intake has no rule on a sender's domain (the public-domain list only
+stops company matching); both shapes open tickets here (MEASURED). What was
+weak: one unexpected error lost the whole pass, the pickup retried the same
+files every minute, and every later message waited behind it. Now each
+message is its own transaction: one that cannot be placed is recorded as
+`UNCLASSIFIED` with an `INTAKE_ERROR` finding naming the error and the file,
+the rest of the drop lands, the pickup keeps that pass's files in `failed\`
+and the delta link advances.
+
+- `psaspine mail-why <db> --sender yahoo.com` (or `--subject "..."`): what
+  intake did with the matching messages, each with its disposition, ticket
+  and findings; whether an exclusion rule catches the sender; or that nothing
+  arrived from the pickup, which points at the mailbox's task and its log.
+- `psaspine mail-retry <db> --message-id <id> --actor <who> --apply`: forget
+  a message that was set aside, once the cause is put right, so a fresh
+  pickup sync (delete the mailbox's delta file, run with `-Since`) imports it
+  again. A message that opened or joined a ticket is never forgotten.
+
 ## Configuration types, statuses and questions (056, 30 Sep 2026)
 
 021 fixed seven configuration types and three statuses in a CHECK. A

@@ -12017,6 +12017,65 @@ class MailCutoverTest(unittest.TestCase):
         self.assertEqual(cc.of(self.conn, wid), ["charge.nurse@pmcne.ph", "nurse3@pmcne.ph"])
         self.assertEqual(cc.set_(self.conn, wid, "", at=self.at, actor="alice"), "cc charge.nurse@pmcne.ph, nurse3@pmcne.ph -> -")
 
+    def test_a_message_that_cannot_be_placed_is_recorded_and_the_rest_still_land(self):
+        """Dada, 1 Oct 2026: "make sure it ingests all". One bad message used
+        to lose the whole pass and hold every later message behind it."""
+        import io, contextlib
+        from unittest import mock
+        from psaspine import intake
+        self._msg(subject="printer", to="helpdesk@pmcne.ph")
+        self._msg(subject="boom", to="helpdesk@pmcne.ph")
+        self._msg(subject="mouse", to="helpdesk@pmcne.ph")
+        real = intake._open_ticket
+
+        def fragile(conn, **kw):
+            if kw["summary"] == "boom":
+                raise RuntimeError("the attachment store is not mounted")
+            return real(conn, **kw)
+        with mock.patch.object(intake, "_open_ticket", fragile):
+            c = intake.import_drop(self.conn, self.drop, run_id="e1", board_id="IT_HELP", at=self.at)
+        self.assertEqual((c["files"], c["new"], c["unclassified"], c["errors"]), (3, 2, 1, 1))
+        rows = {r["subject"]: r["disposition"] for r in self.conn.execute("SELECT subject, disposition FROM intake_message")}
+        self.assertEqual(rows, {"printer": "NEW_TICKET", "boom": "UNCLASSIFIED", "mouse": "NEW_TICKET"})
+        [(detail,)] = self.conn.execute("SELECT detail FROM data_quality WHERE code = 'INTAKE_ERROR'").fetchall()
+        self.assertIn("RuntimeError: the attachment store is not mounted", detail)
+        self.assertIn("file 002.eml", detail)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM ticket").fetchone()[0], 2)
+        # the same drop again opens nothing twice
+        c = intake.import_drop(self.conn, self.drop, run_id="e2", board_id="IT_HELP", at=self.at)
+        self.assertEqual((c["already_seen"], c["new"]), (3, 0))
+        # why: told apart on the host - arrived and set aside, arrived and placed, never arrived
+        r = intake.why(self.conn, subject="boom")
+        self.assertEqual((r["rows"][0]["disposition"], r["rows"][0]["work_item_id"]), ("UNCLASSIFIED", None))
+        self.assertTrue(any("INTAKE_ERROR" in f for f in r["rows"][0]["findings"]))
+        r = intake.why(self.conn, sender="ward3@pmcne.ph")
+        self.assertEqual(len(r["rows"]), 3)
+        self.assertIsNone(r["exclusion"])
+        intake.add_exclusion(self.conn, "DOMAIN", "yahoo.com", at=self.at, actor="t")
+        r = intake.why(self.conn, sender="someone@yahoo.com")
+        self.assertEqual((r["rows"], r["exclusion"]), ([], "excluded domain yahoo.com"))
+        with self.assertRaises(ValueError):
+            intake.why(self.conn)
+        # retry: the set-aside message is forgotten and a fresh sync imports it; a placed one never is
+        self.assertIn("<c2@pmcne.ph> forgotten", intake.retry(self.conn, "<c2@pmcne.ph>", at=self.at, actor="t"))
+        with self.assertRaises(ValueError):
+            intake.retry(self.conn, "<c1@pmcne.ph>", at=self.at, actor="t")
+        with self.assertRaises(LookupError):
+            intake.retry(self.conn, "<nope@pmcne.ph>", at=self.at, actor="t")
+        c = intake.import_drop(self.conn, self.drop, run_id="e3", board_id="IT_HELP", at=self.at)
+        self.assertEqual((c["already_seen"], c["new"]), (2, 1))
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM ticket").fetchone()[0], 3)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM data_quality WHERE code = 'INTAKE_ERROR'").fetchone()[0], 0)
+        # the command says the same
+        from psaspine.__main__ import main
+        self.conn.commit()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = main(["mail-why", TEST_DB or str(Path(self.tmp.name) / "spine.db"), "--sender", "yahoo.com"])
+        self.assertEqual(code, 0)
+        self.assertIn("nothing arrived from the pickup", out.getvalue())
+        self.assertIn("an exclusion rule catches this sender: excluded domain yahoo.com", out.getvalue())
+
     def test_the_unrouted_queue_claims_helpdesk_and_help_and_the_dispatcher_routes(self):
         """Dada, 1 Oct 2026: "for the unrouted board add helpdesk and help@
         emails". An address belongs to one board, so the help desk gives

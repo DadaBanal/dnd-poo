@@ -250,7 +250,18 @@ function Invoke-Pass {
             Write-Log 'Import FAILED: files kept, delta link NOT advanced; the next pass retries (import is idempotent).'
             return
         }
-        if (-not $KeepFiles) { $written | ForEach-Object { Remove-Item -Force -Path $_ } }
+        # A message the importer could not place is recorded on the desk with
+        # its error (INTAKE_ERROR) and this pass's files are kept in failed\
+        # for a look; the delta link still advances, so the next message is
+        # never held behind it.
+        $failed = 0
+        if ((($out | Out-String) -match '(\d+) could not be placed')) { $failed = [int]$Matches[1] }
+        if ($failed -gt 0) {
+            $failedDir = Join-Path $DropDir 'failed'
+            if (-not (Test-Path $failedDir)) { New-Item -ItemType Directory -Path $failedDir | Out-Null }
+            $written | ForEach-Object { Move-Item -Force -Path $_ -Destination $failedDir }
+            Write-Log ('{0} message(s) could not be placed: recorded as UNCLASSIFIED with INTAKE_ERROR (Setup > Email connector); the files of this pass are kept in {1}' -f $failed, $failedDir)
+        } elseif (-not $KeepFiles) { $written | ForEach-Object { Remove-Item -Force -Path $_ } }
     }
 
     if ($deltaLink) { Set-Content -Path $DeltaFile -Value $deltaLink -Encoding ASCII }

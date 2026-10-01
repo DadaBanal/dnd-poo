@@ -134,3 +134,42 @@ C:\PMC\Python312\python.exe -m psaspine setup-pmc "<the desk's connection>" --pr
 - Which fields its Outlook sync writes is INFERRED from the indexed documentation; the subject shape is ours.
 - A PDF shown inline carries `default-src 'none'` rather than the `sandbox` flag, INFERRED from Chromium's plugin rules.
 - Column count 1,253 is INFERRED from the schema files; the port's verify block is what the apply proves.
+
+## Added the same evening: two mails not ingested (yahoo, gmail). Measure first, then step 0
+
+Dada, 1 Oct 2026, verbatim, with a screenshot of the **PMC - Central Support Desk** inbox: *"these two tickets arent
+being ingested make sure it ingests all"* · *"yahoo and gmail"* · *"and all other generic emails"*. The two: from
+`jrby_cancer2014@yahoo.com`, subject "HIMS - NETWORK PROBLEM - JRBY BILLING", 16:41, with an inline picture; and from
+Nueva Ecija Stone Center, subject "Property Request", 16:34.
+
+**MEASURED on this head, here:** a yahoo.com sender with an inline picture, and an Outlook mail that references a
+thread intake never saw, both open tickets. Intake has no rule on a sender's domain: the public-domain list only stops
+company matching, and the loop guard knows mailer-daemon, postmaster and MicrosoftExchange only. The pickup's Graph
+query is as documented (VERIFIED 1 Oct 2026, learn.microsoft.com/graph/delta-query-messages: `changeType=created`,
+`$filter=receivedDateTime ge`, nextLink then deltaLink). So the cause is on the host and is one of three. Each is one
+command, and the order is: measure, then act.
+
+**0a. Ask the desk.** As the desk, on this head (step 1 above pulled; no schema step is needed for this):
+
+```powershell
+C:\PMC\Python312\python.exe -m psaspine mail-why "<the desk's connection>" --sender yahoo.com --days 2
+C:\PMC\Python312\python.exe -m psaspine mail-why "<the desk's connection>" --sender gmail.com --days 2
+C:\PMC\Python312\python.exe -m psaspine mail-why "<the desk's connection>" --subject "Property Request" --days 2
+```
+
+It prints, per matching message, what intake did (opened a ticket, joined one, set aside and why) with its findings and
+message-id, whether an **exclusion rule catches the sender**, and which addresses are claimed. Or it says nothing arrived
+from the pickup. Subjects print: keep the output on the host; put only the disposition words in your reply.
+
+**0b. What each answer means, and what to do:**
+
+| mail-why says | Cause | Do |
+|---|---|---|
+| `UNCLASSIFIED` with `excluded domain yahoo.com` (or gmail.com) | A DOMAIN exclusion on Setup › Email connector. Dada's ruling now: ingest all. | Remove the rule there (audited). Then `mail-retry "<db>" --message-id <id> --actor "sql01 for dada.banal" --apply` for each set-aside message, delete `D:\psa\mail-state\inbox-deltalink-<slug>.txt` for that mailbox, and run that mailbox's pickup once by hand with `-Since '2026-10-01 00:00' -Apply`: the fresh sync re-fetches the day, intake skips what it already placed (by Message-ID) and imports the forgotten ones. |
+| nothing arrived, and the mailbox is support@ | The screenshot's "PMC - Central Support Desk" is `support@` (INFERRED from the record: support@ is the PCSD mailbox). Its pickup, `PSA-Mail-Support`, exists only after `Register-PsaMail.ps1 -IncludeSupport` (step 4b). Nothing from support@ is read until then. | Step 4b, with `-Since '2026-10-01 00:00'` on the first run of `PSA-Mail-Support` so the day is picked up. Check elevated first: `Get-ScheduledTask PSA-Mail-Support`. |
+| nothing arrived, and the task exists | A stuck pass: `D:\psa\logs\PSA-Mail-Support.log` (or -Helpdesk) repeating `Import FAILED ... delta link NOT advanced` every minute. At the old head one message that could not be placed lost the whole pass and held every later message behind it. | Pull this head (step 1). The next pass places the rest, records the one that cannot be placed as `UNCLASSIFIED` with an `INTAKE_ERROR` naming the error and the file, keeps that pass's files in `D:\psa\mail-drop\failed\`, and advances. Paste the INTAKE_ERROR line to WS36. |
+| `NEW_TICKET -> PMC-nnnnnn` | It was ingested; the ticket is on the board named. | Say which board; nothing else. |
+
+**Pass:** `mail-why` shows every one of the day's mails to helpdesk@ and support@ as `NEW_TICKET` or `APPENDED`, the two
+named ones included, and the Setup › Email connector page shows no exclusion on a public domain.
+
