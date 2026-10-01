@@ -843,7 +843,7 @@ def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: st
     if flag != "INTERNAL" and notify_requester:
         # The requester can read this note on the portal: tell them it is there.
         from . import outbox
-        outbox.queue_requester(conn, work_item_id, "UPDATED", at=at)
+        outbox.queue_requester(conn, work_item_id, "UPDATED", at=at, note=body)
     return {"flag": flag, "band_hours": booked, "actual_hours": prepared["actual_hours"] if prepared else None,
             "status": status}
 

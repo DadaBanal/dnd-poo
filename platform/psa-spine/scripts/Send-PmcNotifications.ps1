@@ -186,9 +186,12 @@ function Get-SenderFor($Item) {
 
 function Send-One($Item) {
     $headers = @{ Authorization = "Bearer $(Get-GraphToken)" }
+    # A requester's email carries an HTML layout beside the same words as text; the rest go as text.
+    $html = $null
+    if ($Item.PSObject.Properties['html'] -and $Item.html) { $html = [string]$Item.html }
     $msg = @{
         subject      = $Item.subject
-        body         = @{ contentType = 'Text'; content = $Item.body }
+        body         = $(if ($html) { @{ contentType = 'HTML'; content = $html } } else { @{ contentType = 'Text'; content = $Item.body } })
         toRecipients = @(@{ emailAddress = @{ address = $Item.to } })
     }
     # 061: the ticket's Cc list, already limited to the allowed domains by outbox-pending.

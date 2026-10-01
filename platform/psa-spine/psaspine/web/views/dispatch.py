@@ -248,10 +248,10 @@ def index(ctx):
                 inner += f"<i class=nowline style='left:{ctx.now.minute / 60 * 100:.0f}%' title='Now'></i>"
             cells.append(f"<td class='hr{now_cls}'{slot}>{inner}</td>")
         me = m.lower() == ctx.user.id.lower()
-        rows_html.append(f"<tr style='height:{max(1, depth) * 82 + 4}px'><th class=who>{t.esc(_members.name_of(ctx.conn, m))}"
+        rows_html.append(f"<tr style='height:{(depth * 82 + 4) if depth else 48}px'><th class=who>{t.esc(_members.name_of(ctx.conn, m))}"
                          + (" <span class=pill>me</span>" if me else "") + util_bar(hours_of(mine_b + mine_e)) + f"</th>{''.join(cells)}</tr>")
     head = "".join(f"<th>{h:02d}:00</th>" for h in HOURS)
-    grid = (f"<div class=schedwrap><table class='schedgrid dispatch'><thead><tr><th>Who</th>{head}</tr></thead>"
+    grid = (f"<div class=schedwrap><table class='schedgrid dispatch'><thead><tr><th class=whoh>Who</th>{head}</tr></thead>"
             f"<tbody>{''.join(rows_html) or '<tr><td colspan=16 class=muted>Nobody works these boards yet.</td></tr>'}</tbody></table></div>")
 
     # To schedule: open tickets on the boards you work with no visit on this day, oldest first.

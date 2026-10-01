@@ -3851,7 +3851,7 @@ class PortalTest(unittest.TestCase):
         body = conn.execute("SELECT body FROM notification WHERE recipient_role = 'REQUESTER'").fetchone()[0]
         board_name = conn.execute("SELECT display_name FROM board WHERE board_id = 'UNROUTED'").fetchone()[0]
         conn.close()
-        self.assertIn(f"{board_name} has added an update", body)
+        self.assertIn(f"from {board_name} has replied to your request", body)
         for path in ("/my", "/my/PMC-000901"):
             _, _, page = self._call("GET", path, cookie=self.nurse_a)
             main = page.split("<main>")[1].split("</main>")[0]
@@ -8312,7 +8312,7 @@ class RequesterMailTest(unittest.TestCase):
         self._note(wid, "DISCUSSION", body="And again.")
         mails = self._mail(wid)
         self.assertEqual(len(mails), 2)                 # the second update waits on the first
-        self.assertEqual(mails[1]["subject"], f"[{wid}] Your request has been updated")
+        self.assertEqual(mails[1]["subject"], f"[{wid}] the PMO Helpdesk team has replied to your request")
         self.assertNotIn("CANARY", mails[1]["body"])
         self.outbox.mark(self.conn, mails[1]["notification_id"], "SENT", at=self.at)
         self._note(wid, "RESOLUTION", body="Fixed.")
@@ -11710,7 +11710,7 @@ class SmallSetupTest(unittest.TestCase):
         self.assertIn("Yours: {ticket}", page)
         self.assertIn("the desk's words", page)
         _, h, _ = self._call("POST", "/admin/board/IT_HELP/emails", cookie=self.alice,
-                             form={"kind": "CLOSED", "subject": "Closed: {ticket}", "body": "{board} closed it. {note}"})
+                             form={"kind": "CLOSED", "subject": "Closed: {ticket}", "body": "{board} closed it. {body}"})
         self.assertIn("Not+saved", dict(h)["Location"])
         _, h, _ = self._call("POST", "/admin/board/IT_HELP/emails", cookie=self.alice,
                              form={"kind": "CLOSED", "subject": "Closed: {ticket}", "body": "{board} closed it."})
@@ -12089,9 +12089,56 @@ class MailCutoverTest(unittest.TestCase):
         self.assertEqual(self.conn.execute("SELECT board_id FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()[0], "IT_HELP")
         due = outbox.pending(self.conn, allowed_domains=("pmcne.ph",), dry_run=True)
         self.assertEqual([x["ticket"] for x in due], [])                            # the hospital's domain only: nothing goes
-        [m] = outbox.pending(self.conn, allowed_domains=("*",), dry_run=True)
+        [m] = outbox.pending(self.conn, allowed_domains=("*",), dry_run=True, portal_url="https://help.pmcne.ph")
         self.assertEqual((m["to"], m["from"], sorted(m["cc"])), ("jrby@yahoo.com", "helpdesk@pmcne.ph", ["aunt@gmail.com", "nurse3@pmcne.ph"]))
-        self.assertNotIn("NETWORK", m["subject"] + m["body"])                        # never the summary
+        self.assertNotIn("NETWORK", m["subject"] + m["body"] + m["html"])            # never the summary
+        # the first name, and the same words laid out as HTML beside the text
+        self.assertIn("Hello Jrby,", m["body"])
+        self.assertIn(f"Reference {wid}", m["html"])
+        self.assertIn('href="https://help.pmcne.ph/my/' + wid + '"', m["html"])
+        self.assertIn("See your request", m["html"])
+        self.assertIn("Premiere Medical Center", m["html"])
+        self.assertNotIn("<img", m["html"])
+        self.assertNotIn("http", m["html"].replace("https://help.pmcne.ph", ""))      # no other request
+
+    def test_a_technicians_reply_reaches_the_requester_by_email_unless_the_scan_stops_it(self):
+        """Dada, 1 Oct 2026: "make sure the replies from the tech gets advised
+        to the user on the email or on the portal"."""
+        from psaspine import board, intake, outbox
+        self.conn.execute("UPDATE board SET notify_requester = 1 WHERE board_id = 'IT_HELP'")
+        intake.set_addresses(self.conn, "IT_HELP", "helpdesk@pmcne.ph", at=self.at, actor="t")
+        self._msg(subject="printer", to="helpdesk@pmcne.ph", sender="susan.dolfo@yahoo.com")
+        intake.import_drop(self.conn, self.drop, run_id="n1", board_id="IT_HELP", at=self.at)
+        wid = self._ticket(1)["work_item_id"]
+        for d in outbox.pending(self.conn, allowed_domains=("*",)):
+            outbox.mark(self.conn, d["id"], "SENT", at=self.at)
+        board.update_fields(self.conn, wid, at=self.at, actor="bob", owner="bob")
+        for d in outbox.pending(self.conn, allowed_domains=("*",)):
+            outbox.mark(self.conn, d["id"], "SENT", at=self.at)
+        # a reply for the requester: the words go, from the technician's first name
+        board.add_note(self.conn, wid, body="We have ordered the toner; it arrives Friday.\nI will install it.", flag="DISCUSSION",
+                       actor="bob", at=self.at)
+        [m] = outbox.pending(self.conn, allowed_domains=("*",), dry_run=True, portal_url="https://help.pmcne.ph")
+        self.assertEqual(m["subject"], f"[{wid}] Bob has replied to your request")
+        self.assertIn("Hello Susan,", m["body"])
+        self.assertIn("Bob from PMO Helpdesk has replied to your request, as of 1 October 2026:\n\nWe have ordered the toner; it arrives Friday.\nI will install it.", m["body"])
+        self.assertIn("We have ordered the toner; it arrives Friday.<br>I will install it.", m["html"])
+        # a second reply before the sender runs: the one email says the newer reply
+        board.add_note(self.conn, wid, body="Correction: it arrives Monday.", flag="DISCUSSION", actor="bob", at=self.at)
+        [m] = outbox.pending(self.conn, allowed_domains=("*",), dry_run=True)
+        self.assertIn("Correction: it arrives Monday.", m["body"])
+        self.assertNotIn("toner", m["body"])
+        for d in outbox.pending(self.conn, allowed_domains=("*",)):
+            outbox.mark(self.conn, d["id"], "SENT", at=self.at)
+        # a reply the PHI scan flags goes to the portal, not into the email; an internal note goes nowhere
+        board.add_note(self.conn, wid, body="Case no. 4471 is the patient on the chart", flag="DISCUSSION", actor="bob", at=self.at)
+        [m] = outbox.pending(self.conn, allowed_domains=("*",), dry_run=True)
+        self.assertIn(outbox.PORTAL_WORDS, m["body"])
+        self.assertNotIn("4471", m["body"] + m["html"])
+        for d in outbox.pending(self.conn, allowed_domains=("*",)):
+            outbox.mark(self.conn, d["id"], "SENT", at=self.at)
+        board.add_note(self.conn, wid, body="checked the switch port", flag="INTERNAL", actor="bob", at=self.at)
+        self.assertEqual(outbox.pending(self.conn, allowed_domains=("*",), dry_run=True), [])
 
     def test_the_unrouted_queue_claims_helpdesk_and_help_and_the_dispatcher_routes(self):
         """Dada, 1 Oct 2026: "for the unrouted board add helpdesk and help@
@@ -12179,7 +12226,7 @@ class MailCutoverTest(unittest.TestCase):
         self.assertEqual(m["subject"], f"[{wid}] Your request: Assigned")
         self.assertIn("Hello Ward 3 Station,", m["body"])
         self.assertIn("Assigned to a technician", m["body"])                      # {status_text}: the portal's words
-        self.assertIn("It is with Bob Reyes.", m["body"])                          # {owner}
+        self.assertIn("It is with Bob.", m["body"])                                # {owner}: the first name
         self.assertTrue(m["body"].endswith("PMO Helpdesk\nPremiere Medical Center - Nueva Ecija"))   # {board}, {hospital}
         self.assertIn("1 October 2026", m["body"])                                 # {date}
         self.assertNotIn("chart", m["subject"] + m["body"])                        # the requester's subject never comes back
@@ -12224,7 +12271,7 @@ class MailCutoverTest(unittest.TestCase):
         shapes = {m["name"]: m["shape"] for m in outbox.status_mails(self.conn, "IT_HELP")}
         self.assertEqual((shapes["Waiting on Requester"], shapes["Waiting on Vendor"], shapes["Resolved"], shapes["Closed"]),
                          ("WAITING", "OTHER", "RESOLVED", "CLOSED"))
-        for bad in ("{summary}", "{note}", "{subject}", "{requester.__class__}", "{0}", "{", "{owner!r}",
+        for bad in ("{summary}", "{body}", "{subject}", "{requester.__class__}", "{0}", "{", "{owner!r}",
                     "{requester:>99999999}"):
             with self.assertRaises(ValueError, msg=bad):
                 outbox.set_status_mail(self.conn, "IT_HELP.IN_PROGRESS", enabled=True, subject="x",
@@ -12238,7 +12285,7 @@ class MailCutoverTest(unittest.TestCase):
         board.change_status(self.conn, wid, "IT_HELP.IN_PROGRESS", at=self.at, actor="alice")
         [n] = self._status_mails(wid)
         self.assertEqual(n["subject"], f"[{wid}] {wid} is In Progress")
-        self.assertEqual(n["body"], "Hi Bob Reyes. the PMO Helpdesk team took it on 1 October 2026: Someone is working on it."
+        self.assertEqual(n["body"], "Hi Bob. the PMO Helpdesk team took it on 1 October 2026: Someone is working on it."
                                     " Track it at {link}.")
         self.assertIsNone(n["from_address"])                                       # a portal ticket: the sender's mailbox
         [item] = [d for d in outbox.pending(self.conn, allowed_domains=("pmcne.ph",)) if d["id"] == n["notification_id"]]
@@ -12266,8 +12313,8 @@ class MailCutoverTest(unittest.TestCase):
         self.assertEqual(self._status_mails(wid), [])                               # nobody has it yet
         board.update_fields(self.conn, wid, at=self.at, actor="bob", owner="bob")
         [m] = self._status_mails(wid)
-        self.assertEqual(m["subject"], f"[{wid}] Bob Reyes has picked up your request")
-        self.assertIn("Bob Reyes from PMO Helpdesk has picked up your request, as of 1 October 2026", m["body"])
+        self.assertEqual(m["subject"], f"[{wid}] Bob has picked up your request")
+        self.assertIn("Bob from PMO Helpdesk has picked up your request, as of 1 October 2026", m["body"])
         # handed to someone else before the first has gone: one email, the newer
         board.update_fields(self.conn, wid, at=self.at, actor="bob", owner="ward3")
         [m] = self._status_mails(wid)

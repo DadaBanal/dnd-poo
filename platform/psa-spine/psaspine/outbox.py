@@ -56,7 +56,12 @@ TEMPLATE_KINDS = {
 # ticket on the portal, {date} the day it happened. Still no {summary}, no
 # {note} and no requester's subject: those are Dada's call under 6.1.
 PLACEHOLDERS = ("ticket", "board", "actor", "when", "requester", "status", "status_text", "owner", "link", "date",
-                "hospital")
+                "hospital", "note")
+# {note}: the technician's reply to the requester, in the Updated email only
+# (Dada, 1 Oct 2026: "make sure the replies from the tech gets advised to the
+# user on the email or on the portal"). It goes into the email only when the
+# PHI scan finds nothing in it; otherwise the email says to read it on the
+# portal. Elsewhere it is empty.
 PLACEHOLDER_HELP = ", ".join("{" + p + "}" for p in PLACEHOLDERS)
 # {hospital}: the name every requester email signs off with. Deployment
 # config (PSA_HOSPITAL_NAME), else PMC's own name.
@@ -70,9 +75,9 @@ DEFAULTS = {
     "OPENED": ("We have your request",
                "Hello {requester},\n\n{board} has your request, as of {date}, and it is with {owner}. You do not "
                "need to do anything; we will email you as it moves." + _WARD + _SIGN),
-    "UPDATED": ("Your request has been updated",
-                "Hello {requester},\n\n{board} has added an update to your request. Sign in to the portal to read "
-                "it." + _SIGN),
+    "UPDATED": ("{owner} has replied to your request",
+                "Hello {requester},\n\n{owner} from {board} has replied to your request, as of {date}:\n\n{note}\n\n"
+                "To answer, reply to this email and keep the reference in the subject." + _SIGN),
     "CLOSED": ("Your request is closed",
                "Hello {requester},\n\n{board} has closed your request, as of {date}. If it is not fixed, reply to "
                "this email and it reopens. On the portal you can tell us how we did, one to five." + _SIGN),
@@ -134,6 +139,31 @@ def _name(conn: sqlite3.Connection, who: str | None) -> str:
     return name_of(conn, who)
 
 
+def _first(name: str) -> str:
+    """A person's first name for an email (Dada, 1 Oct 2026: "use the first
+    name", not the user name). "Susan Dolfo" -> Susan; "Dela Cruz, Thobie" ->
+    Thobie; an identifier like thobie.delacruz -> Thobie; an address's local
+    part the same way."""
+    n = (name or "").strip()
+    if not n:
+        return ""
+    if "@" in n:
+        n = n.split("@", 1)[0]
+    # A shared mailbox or a place ("Ward 3 Station", "ER Nurses Desk") is
+    # addressed by its whole name: it has no first name.
+    _PLACE = {"ward", "station", "nurse", "nurses", "desk", "department", "dept", "office", "unit", "clinic",
+              "team", "er", "icu", "opd", "lab", "laboratory", "pharmacy", "radiology", "billing", "admin", "hr"}
+    if any(ch.isdigit() for ch in n) or any(w.lower().strip(".,") in _PLACE for w in n.split()):
+        return n
+    if "," in n:                                    # "Last, First"
+        n = n.split(",", 1)[1].strip()
+    for sep in (".", "_", "-"):
+        if sep in n and " " not in n:
+            n = n.split(sep, 1)[0]
+    first = n.split()[0] if n.split() else n
+    return first if first[:1].isupper() else first.capitalize()
+
+
 def _hospital() -> str:
     import os
     return " ".join((os.environ.get("PSA_HOSPITAL_NAME") or HOSPITAL).split())[:120]
@@ -150,13 +180,13 @@ def _values(conn: sqlite3.Connection, work_item_id: str, *, at: datetime, actor:
         (work_item_id,)).fetchone()
     if row is None:
         return {"ticket": work_item_id, "actor": actor, "when": when, "date": f"{at.day} {at:%B %Y}", "link": "{link}",
-                "hospital": _hospital()}
+                "hospital": _hospital(), "note": ""}
     status = (row["status"] or "").lstrip(">")
     return {"ticket": work_item_id, "board": row["board"], "actor": actor, "when": when,
-            "requester": _name(conn, row["requested_by"]) or "there",
+            "requester": _first(_name(conn, row["requested_by"])) or "there",
             "status": status, "status_text": row["customer_description"] or status,
-            "owner": _name(conn, row["owner"]) if row["owner"] else f"the {row['board']} team",
-            "link": "{link}", "date": f"{at.day} {at:%B %Y}", "hospital": _hospital()}
+            "owner": _first(_name(conn, row["owner"])) if row["owner"] else f"the {row['board']} team",
+            "link": "{link}", "date": f"{at.day} {at:%B %Y}", "hospital": _hospital(), "note": ""}
 
 
 def reply_from(conn: sqlite3.Connection, work_item_id: str) -> str | None:
@@ -230,9 +260,23 @@ def words(conn: sqlite3.Connection, board_id: str, kind: str, **values) -> tuple
     return tpl["subject"].format_map(fill), tpl["body"].format_map(fill)
 
 
+PORTAL_WORDS = "Sign in to the portal to read it."
+
+
+def note_for_email(note: str | None) -> str:
+    """The technician's words for the Updated email: as written when the PHI
+    scan finds nothing, else a line to read them on the portal."""
+    from . import phi
+    text = str(note or "").strip()
+    if not text or phi.scan(text, field="note"):
+        return PORTAL_WORDS
+    return text[:2000]
+
+
 def queue_requester(conn: sqlite3.Connection, work_item_id: str, reason: str, *,
-                    at: datetime) -> bool:
-    """Queue the one email a requester gets. Returns whether one was queued."""
+                    at: datetime, note: str | None = None) -> bool:
+    """Queue the one email a requester gets. Returns whether one was queued.
+    An UPDATED email carries the technician's reply (note) when it is clean."""
     from .board import _event
     from .intake import subject_token
     row = conn.execute(
@@ -245,14 +289,16 @@ def queue_requester(conn: sqlite3.Connection, work_item_id: str, reason: str, *,
         return False
     if not address_for(conn, row["requested_by"]):
         return False                          # only an address we can resolve now
-    headline, said = words(conn, row["board_id"], reason, **_values(conn, work_item_id, at=at))
+    values = _values(conn, work_item_id, at=at)
+    values["note"] = note_for_email(note) if reason == "UPDATED" else ""
+    headline, said = words(conn, row["board_id"], reason, **values)
     sender = reply_from(conn, work_item_id)
     stamp = at.isoformat(sep=" ", timespec="minutes")
     pending = conn.execute("SELECT notification_id FROM notification WHERE work_item_id = ? AND"
                            " recipient = ? AND recipient_role = ? AND status = 'PENDING'",
                            (work_item_id, row["requested_by"], REQUESTER)).fetchone()
     if pending:
-        if reason != "CLOSED":
+        if reason not in ("CLOSED", "UPDATED"):
             return False                      # one unsent email already says so
         # A close outranks an unsent "we have it": the one email says the newer thing.
         conn.execute("UPDATE notification SET subject = ?, body = ?, created_at = ? WHERE notification_id = ?",
@@ -299,7 +345,7 @@ STATUS_DEFAULTS = {
 }
 PICKUP_DEFAULT = ("{owner} has picked up your request",
                   "Hello {requester},\n\n{owner} from {board} has picked up your request, as of {date}, and is "
-                  "working on it now: {status_text}.\n\nIf {owner} needs anything they will contact you. To add "
+                  "working on it now.\n\nIf {owner} needs anything they will contact you. To add "
                   "something, reply to this email and keep the reference in the subject." + _WARD + _SIGN)
 _WAITS_ON_REQUESTER = re.compile(r"requester|customer|from you|your reply", re.I)
 
@@ -626,13 +672,58 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
         if n["recipient_role"] in (REQUESTER, STATUS):      # 061: the ticket's Cc hears what the requester hears
             from . import cc as _cc
             copied = [a for a in _cc.of(conn, n["work_item_id"]) if a != to and (everyone or a.rsplit("@", 1)[1] in allowed)]
-        out.append({"id": n["notification_id"], "to": to, "subject": subject,
-                    "body": body.replace("{link}", link), "ticket": n["work_item_id"],
-                    "from": n["from_address"] if n["recipient_role"] in (REQUESTER, STATUS) else None,
-                    "cc": copied})
+        item = {"id": n["notification_id"], "to": to, "subject": subject,
+                "body": body.replace("{link}", link), "ticket": n["work_item_id"],
+                "from": n["from_address"] if n["recipient_role"] in (REQUESTER, STATUS) else None,
+                "cc": copied}
+        if n["recipient_role"] in (REQUESTER, STATUS):
+            b = conn.execute("SELECT b.display_name FROM ticket t JOIN board b ON b.board_id = t.board_id WHERE t.work_item_id = ?",
+                             (n["work_item_id"],)).fetchone()
+            item["html"] = html_email((n["body"] or "").replace("{link}", link), ticket=n["work_item_id"],
+                                      link=link if portal_url else None, board=b["display_name"] if b else "", hospital=_hospital())
+        out.append(item)
     if not dry_run:
         conn.commit()
     return out
+
+
+def html_email(text: str, *, ticket: str, link: str | None, board: str, hospital: str) -> str:
+    """The same words as the plain text, laid out (Dada, 1 Oct 2026: "a better
+    formatted email this looks kinda bland"): a header with the hospital and
+    the board, the reference, the paragraphs, a button to the request, and
+    the sign-off. Inline styles only, no image and no external request, so
+    it reads the same in Outlook, a phone and a text-only client. Nothing
+    is added that the text does not say."""
+    import html as _h
+    paras = [pp.strip() for pp in (text or "").split("\n\n") if pp.strip()]
+    sign = ""
+    if paras and paras[-1].startswith(("Your reference", "To add something")):
+        pass
+    body_html = "".join(
+        f'<p style="margin:0 0 14px;font-size:15px;line-height:1.55;color:#1f2430">{_h.escape(pp).replace(chr(10), "<br>")}</p>'
+        for pp in paras)
+    if link and link.startswith("http"):
+        body_html = body_html.replace(_h.escape(link), f'<a href="{_h.escape(link)}" style="color:#3d63dd">{_h.escape(link)}</a>')
+    button = (f'<p style="margin:18px 0 6px"><a href="{_h.escape(link)}" style="display:inline-block;background:#3d63dd;color:#ffffff;'
+              f'text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px">See your request</a></p>'
+              if link and link.startswith("http") else "")
+    return (
+        '<!doctype html><html><body style="margin:0;padding:0;background:#f4f5f8;font-family:Segoe UI,Arial,sans-serif">'
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f5f8;padding:24px 12px">'
+        '<tr><td align="center">'
+        '<table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width:600px;width:100%;background:#ffffff;'
+        'border:1px solid #e3e6ee;border-radius:12px;overflow:hidden">'
+        f'<tr><td style="background:#1f2a5a;padding:18px 24px;color:#ffffff">'
+        f'<div style="font-size:12px;letter-spacing:.4px;text-transform:uppercase;opacity:.8">{_h.escape(hospital)}</div>'
+        f'<div style="font-size:18px;font-weight:650;margin-top:2px">{_h.escape(board)}</div></td></tr>'
+        f'<tr><td style="padding:22px 24px 6px">'
+        f'<div style="display:inline-block;font-size:12px;font-weight:600;color:#3d63dd;background:#e9eefc;border-radius:999px;'
+        f'padding:3px 10px;margin-bottom:14px">Reference {_h.escape(ticket)}</div>'
+        f'{body_html}{button}</td></tr>'
+        '<tr><td style="padding:12px 24px 20px;font-size:12px;line-height:1.5;color:#6b7785;border-top:1px solid #eef0f5">'
+        'Reply to this email to add something, and keep the reference in the subject. The ward, the room or the machine is all '
+        'we need; a patient\'s details never are.</td></tr>'
+        '</table></td></tr></table></body></html>')
 
 
 def mark(conn: sqlite3.Connection, notification_id: int, status: str, *, at: datetime) -> bool:

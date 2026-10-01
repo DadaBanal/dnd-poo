@@ -1134,6 +1134,27 @@ sign-in, so the dispatch portal's behaviour is from indexed excerpts
   sandboxed PDF comes up blank or downloads). The restricted-board audit
   says viewed or downloaded.
 
+- **One menu** (Dada: "the menu cuts off use the connectwise menu or do a
+  proper mega menu", then "just pull in one menu"): a Menu button opens the
+  reference PSA's modules side by side (Service Desk, Companies, Projects,
+  Time, Finance, Reports, Setup, My requests), each with its pages and a
+  line on what each is; hover, click or keyboard, Escape closes. Beside the
+  button, where you are (Service Desk › Dispatch). A module the person's
+  access does not cover is absent.
+- **The requester's emails** (Dada: "use the first name", "a better
+  formatted email", "make sure the replies from the tech gets advised to the
+  user on the email or on the portal"): people are addressed by their first
+  name (a ward or station by its whole name); every requester email carries
+  an HTML layout beside the same words as text (hospital and board header,
+  the reference, a button to the request; inline styles, no image, no
+  external request); and a technician's reply to the requester (a Discussion
+  note) goes into the "has replied" email as written when the PHI scan finds
+  nothing in it, else the email says to read it on the portal. `{note}` is
+  the placeholder, filled in that email only.
+- **The Dispatch board scrolls inside its card** with the hours and the
+  names pinned, empty rows short; the day never pushes the page down.
+- **A filter applies the moment it is picked**: any select, checkbox or date
+  in a GET form sends it (the button stays for text and the keyboard).
 - **Cc on the ticket** (061; Dada: "can we add a cc on the tickets"): the
   reference PSA's Cc field. An email's Cc addresses are kept on the ticket
   it opens and a reply's new ones are added (`ticket_cc`; never the sender,

@@ -75,12 +75,34 @@ header.top .brand{display:inline-flex;align-items:center;gap:8px;font-weight:650
 header.top .brand i{width:22px;height:22px;border-radius:7px;display:inline-block;
   background:linear-gradient(135deg,var(--accent),#7b93ff 60%,#9ad0ff);box-shadow:inset 0 0 0 1px rgb(255 255 255/.25)}
 header.top nav{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;flex:1;min-width:0}
+header.top nav.mega{overflow:visible;align-items:center}
+header.top nav .grp{position:relative;display:inline-flex}
+header.top nav button.top{position:relative;color:var(--ink-2);padding:6px 10px;border-radius:var(--r);white-space:nowrap;font-weight:500;font:inherit;font-weight:500;background:none;border:0;cursor:pointer;display:inline-flex;align-items:center;line-height:1.3}
+header.top nav button.top:hover,header.top nav .grp.open button.top{color:var(--ink);background:var(--surface-3)}
+header.top nav button.top.on{color:var(--ink)} header.top nav button.top.on::after{content:"";position:absolute;left:10px;right:10px;bottom:-1px;height:2px;border-radius:2px;background:var(--accent)}
+header.top nav button.top .ic{width:15px;height:15px;margin-right:6px;vertical-align:-3px;opacity:.8} header.top nav button.top .ic.chev{width:12px;height:12px;margin:0 0 0 4px;opacity:.6}
+header.top nav .panel{display:none;position:absolute;top:calc(100% + 8px);left:0;min-width:270px;padding:6px;z-index:40;background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:0 14px 40px rgb(10 12 18/.18)}
+header.top nav .grp:hover .panel,header.top nav .grp.open .panel,header.top nav .grp:focus-within .panel{display:grid}
+header.top nav .panel a{display:grid;grid-template-columns:18px 1fr;column-gap:10px;align-items:center;padding:8px 10px;border-radius:var(--r-sm);color:var(--ink);white-space:nowrap;font-weight:500}
+header.top nav .panel a .ic{width:16px;height:16px;opacity:.8;grid-column:1;grid-row:1/3;margin:0} header.top nav .panel a b{font-weight:600;grid-column:2;grid-row:1;line-height:1.3}
+header.top nav .panel a .why{grid-column:2;grid-row:2;font-size:12px;color:var(--ink-3);margin:0;font-weight:400;line-height:1.3;display:block}
+header.top nav .panel a:hover{background:var(--surface-3);text-decoration:none} header.top nav .panel a.on{background:color-mix(in srgb,var(--accent) 10%,transparent)}
+header.top nav .panel.full{display:none;left:0;min-width:0;width:max-content;max-width:calc(100vw - 32px);grid-template-columns:repeat(auto-fit,minmax(200px,max-content));gap:4px 18px;padding:12px 14px}
+header.top nav .grp:hover .panel.full,header.top nav .grp.open .panel.full,header.top nav .grp:focus-within .panel.full{display:grid}
+header.top nav .panel .col{display:flex;flex-direction:column;gap:2px;min-width:180px} header.top nav .panel .modname{font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--ink-3);padding:4px 10px 6px;display:flex;align-items:center;gap:6px}
+header.top nav .panel .modname .ic{width:14px;height:14px;opacity:.7}
+header.top nav .here{margin-left:6px;color:var(--ink);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0} header.top nav .here .sep{color:var(--ink-3);font-weight:400}
+@media (max-width:720px){header.top nav .panel.full{grid-template-columns:1fr 1fr;width:calc(100vw - 24px);max-height:calc(100vh - 70px);overflow:auto}header.top nav .here{display:none}}
+.dispatchwrap>.card{min-width:0} .dispatchwrap .schedwrap{max-height:calc(100vh - 330px);min-height:220px;overflow:auto;position:relative}
+table.schedgrid.dispatch thead th{position:sticky;top:0;background:var(--card);z-index:4} table.schedgrid.dispatch thead th:first-child{left:0;z-index:6}
+table.schedgrid.dispatch th.who{position:sticky;left:0;background:var(--card);z-index:5;width:132px;max-width:132px}
+table.schedgrid thead th.whoh{width:132px}
 header.top nav::-webkit-scrollbar{display:none}
 /* The menu never runs under the name and sign-out (Dada, 1 Oct): it tightens on
    narrower screens, drops its icons, and what still does not fit scrolls, with a
    fade at the edge so nothing looks cut off. */
 @media (max-width:1700px){header.top nav a{padding:6px 7px;font-size:13.5px}}
-@media (max-width:1480px){header.top nav a svg.ic{display:none}}
+@media (max-width:1000px){header.top nav a.newbtn svg.ic{display:none}}
 header.top nav.more{-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 28px),transparent);
   mask-image:linear-gradient(to right,#000 calc(100% - 28px),transparent)}
 header.top nav a{position:relative;color:var(--ink-2);padding:6px 10px;border-radius:var(--r);white-space:nowrap;font-weight:500;
@@ -410,8 +432,10 @@ em{font-style:italic}
 @media (max-width:900px){.tiles{grid-template-columns:repeat(2,1fr)}.slastrip{grid-template-columns:1fr}.grid2{grid-template-columns:1fr}.rail{grid-template-columns:1fr}}
 @media (max-width:720px){main{padding:14px 12px}h1{font-size:19px}header.top .who span.name,header.top .who .sep{display:none}.card{padding:12px 14px}.tile .n{font-size:22px}}
 /* a laptop: with every module on, the words no longer fit; the current page keeps its word, the rest show an icon and a title */
-@media (max-width:1400px){header.top nav a .lbl{display:none} header.top nav a.on .lbl{display:inline} header.top nav a .ic{margin-right:0}
+@media (max-width:1400px){header.top nav a.top,header.top nav button.top{padding:6px 7px;font-size:13.5px}header.top nav button.top .ic.chev{display:none}}
+@media (max-width:1000px){header.top nav a .lbl{display:none} header.top nav a.on .lbl{display:inline} header.top nav a .ic{margin-right:0}
   header.top nav a.on .ic{margin-right:6px}}
+@media (max-width:1000px){header.top nav button.top .lbl{display:none}header.top nav button.top.on .lbl{display:inline}header.top nav button.top .ic{margin-right:0}header.top nav button.top.on .ic{margin-right:6px}}
 /* a technician's phone (gap 5, 29 Sep): one column, thumb-sized controls, the board as a list of cards, and a
    quick bar on the ticket. Nothing is a separate app; the same page reads its width and its pointer. */
 .sm-only{display:none} .quick{display:none} header.top #pal-open .ic{display:none}
@@ -433,6 +457,7 @@ em{font-style:italic}
   table.grid.cards td:first-child{grid-row:1/3;padding-left:0;width:auto}table.grid.cards td.sum{grid-column:2}
   table.grid.cards td:last-child{grid-column:2/4;padding-top:2px}table.grid.cards td:last-child .chip{margin:0 4px 4px 0}
   header.top nav a .lbl,header.top nav a.on .lbl{display:none}header.top .who .sep,header.top .who [popovertarget=keys]{display:none}
+  header.top nav button.top .lbl{display:none}header.top nav button.top .ic{margin-right:0}header.top nav .panel{left:auto;right:0}
   header.top #pal-open .kbd{display:none}header.top #pal-open .ic{display:block}
   .tabs{overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none}.tabs a{white-space:nowrap;padding:7px 10px}
   .hdr{flex-direction:column;gap:6px}.slastrip{grid-template-columns:1fr 1fr}.slastrip .slabox:last-child:nth-child(odd){grid-column:1/-1}
@@ -619,6 +644,21 @@ d.addEventListener("keydown",function(e){
     case "Enter":if(cur>=0){var a=$("a[href^='/ticket/']",rows[cur]);if(a)location.href=a.getAttribute("href")}break}
 });
 })();
+// A filter applies the moment it is picked (Dada, 1 Oct 2026: "when the
+// drop down is picked it updates automatically"): a select or a checkbox in
+// a GET form sends the form; the button stays for the keyboard and for text.
+document.addEventListener('change',function(e){var el=e.target;if(!el||!el.form||!/^get$/i.test(el.form.method))return;
+if(el.tagName!=='SELECT'&&!(el.tagName==='INPUT'&&(el.type==='checkbox'||el.type==='date')))return;
+if(el.hasAttribute('data-manual')||el.form.hasAttribute('data-manual'))return;
+if(el.form.requestSubmit)el.form.requestSubmit();else el.form.submit()});
+// The menu's modules: a click opens one and closes the others; Escape or a
+// click outside closes; hover opens too, for a mouse.
+document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('header.top nav .grp>button.top');
+var open=document.querySelectorAll('header.top nav .grp.open');
+if(!b){open.forEach(function(g){g.classList.remove('open');g.querySelector('button.top').setAttribute('aria-expanded','false')});return}
+var g=b.parentNode,was=g.classList.contains('open');open.forEach(function(x){if(x!==g){x.classList.remove('open');x.querySelector('button.top').setAttribute('aria-expanded','false')}});
+g.classList.toggle('open',!was);b.setAttribute('aria-expanded',String(!was))});
+document.addEventListener('keydown',function(e){if(e.key!=='Escape')return;document.querySelectorAll('header.top nav .grp.open').forEach(function(g){g.classList.remove('open');g.querySelector('button.top').setAttribute('aria-expanded','false');g.querySelector('button.top').focus()})});
 // The top menu fades at its right edge only when it has more than fits.
 (function(){var n=document.querySelector('header.top nav');if(!n)return;
 function f(){n.classList.toggle('more',n.scrollWidth>n.clientWidth+2&&n.scrollLeft+n.clientWidth<n.scrollWidth-2)}
@@ -986,36 +1026,71 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
     # pages that answer 404 or "not a member".
     if requester is None:
         requester = user is not None and getattr(user, "requester", False)
-    nav_items = [
-        ("board", "/", "Service Board"),
-        ("dispatch", "/dispatch", "Dispatch"),
-        ("schedule", "/schedule", "Schedule"),
-        ("calendar", "/calendar", "Calendar"),
-        ("time", "/time", "Time"),
-        ("projects", "/projects", "Projects"),
-        ("kb", "/kb", "Knowledge"),
-        ("companies", "/companies", "Companies"),
-        ("oncall", "/oncall", "On-call"),
-        ("reports", "/reports", "Reports"),
-        ("finance", "/finance", "Finance"),
-        ("sales", "/sales", "Sales"),
-        ("uplift", "/uplift", "Uplift"),
-        ("admin", "/admin", "Setup"),
-        ("my", "/my", "My requests"),
+    # The menu as the reference PSA's modules: a few words across the top,
+    # each opening its pages (Dada, 1 Oct 2026: "the menu cuts off use the
+    # connectwise menu or do a proper mega menu"). A module with one page is
+    # a plain link. Hover or click opens a panel; Escape or a click outside
+    # closes it; the keyboard walks it.
+    groups = [
+        ("service", "Service Desk", [
+            ("board", "/", "Service Board", "Every ticket, by board"),
+            ("dispatch", "/dispatch", "Dispatch", "Who is where today; drag to book"),
+            ("schedule", "/schedule", "Schedule", "The week, by person"),
+            ("calendar", "/calendar", "Calendar", "Mine or anyone's: day, week, month"),
+            ("oncall", "/oncall", "On-call", "Who answers after hours"),
+            ("kb", "/kb", "Knowledge", "Articles for the desk and the wards")]),
+        ("companies", "Companies", [
+            ("companies", "/companies", "Companies", "Departments, suppliers, contacts"),
+            ("configurations", "/configurations", "Configurations", "Machines, and what they are"),
+            ("sales", "/sales", "Sales", "Opportunities and quotes")]),
+        ("projects", "Projects", [("projects", "/projects", "Projects", "")]),
+        ("time", "Time", [("time", "/time", "Time", "")]),
+        ("finance", "Finance", [("finance", "/finance", "Finance", "")]),
+        ("reports", "Reports", [
+            ("reports", "/reports", "Reports", "KPIs, monthly charts, the writer"),
+            ("uplift", "/uplift", "Uplift", "The programme's evidence")]),
+        ("admin", "Setup", [("admin", "/admin", "Setup", "")]),
+        ("my", "My requests", [("my", "/my", "My requests", "")]),
     ]
     levels = getattr(user, "modules", None) or {}
     gate = {"schedule": "SCHEDULE", "projects": "PROJECTS", "kb": "KNOWLEDGE", "reports": "REPORTS",
             "finance": "FINANCE", "sales": "FINANCE", "time": "TIME", "calendar": "SCHEDULE"}
-    nav_items = [n for n in nav_items if n[0] not in gate or levels.get(gate[n[0]], "READ") != "NONE"]
+    groups = [(g, label, [pg for pg in pages if pg[0] not in gate or levels.get(gate[pg[0]], "READ") != "NONE"])
+              for g, label, pages in groups]
+    groups = [g for g in groups if g[2]]
     if requester:
-        nav_items = [("my", "/my", "My requests"), ("approvals", "/my/approvals", "Approvals"), ("help", "/my/help", "Help")]
+        groups = [("my", "My requests", [("my", "/my", "My requests", "")]),
+                  ("approvals", "Approvals", [("approvals", "/my/approvals", "Approvals", "")]),
+                  ("help", "Help", [("help", "/my/help", "Help", "")])]
         if active not in ("help", "approvals"):
             active = "my"
-    nav = "".join(
-        f'<a href="{esc(href)}" title="{esc(label)}"{" class=on aria-current=page" if key == active else ""}>'
-        f'{icon({"admin": "setup", "schedule": "grip", "projects": "layers", "kb": "note", "finance": "tag", "sales": "briefcase", "help": "note", "time": "clock", "approvals": "check"}.get(key, key))}<span class=lbl>{esc(label)}</span></a>'
-        for key, href, label in nav_items)
-    nav += (f'<a class="newbtn" href="/ticket/new" title="New ticket (n)">{icon("plus")} New ticket</a>'
+    nav_items = [(key, href, name) for _, _, pages in groups for key, href, name, _ in pages]   # the phone's quick bar
+    icons = {"admin": "setup", "schedule": "grip", "projects": "layers", "kb": "note", "finance": "tag", "sales": "briefcase",
+             "help": "note", "time": "clock", "approvals": "check", "service": "ticket", "configurations": "monitor"}
+
+    def one(key, href, label, cls="", current=False):
+        return (f'<a href="{esc(href)}" title="{esc(label)}" class="{cls}{" on" if current else ""}"'
+                f'{" aria-current=page" if current else ""}>{icon(icons.get(key, key))}<span class=lbl>{esc(label)}</span></a>')
+
+    # One menu (Dada: "just pull in one menu"): a Menu button opens every
+    # module side by side, each with its pages; beside it, where you are.
+    here_group = next((label for g, label, pages in groups if any(pg[0] == active for pg in pages)), "")
+    here_page = next((pg[2] for g, label, pages in groups for pg in pages if pg[0] == active), "")
+    cols = []
+    for g, label, pages in groups:
+        links = "".join(
+            f'<a href="{esc(href)}" role=menuitem{" class=on aria-current=page" if key == active else ""}>'
+            f'{icon(icons.get(key, key))}<b>{esc(name)}</b>' + (f'<span class=why>{esc(blurb)}</span>' if blurb else "") + '</a>'
+            for key, href, name, blurb in pages)
+        cols.append(f'<div class=col><div class=modname>{icon(icons.get(g, g))}{esc(label)}</div>{links}</div>')
+    here = (f'<span class=here>{esc(here_group)}' + (f'<span class=sep> › </span>{esc(here_page)}' if here_page and here_page != here_group else "")
+            + '</span>') if here_group else ""
+    if requester:                                 # three pages: plain links, no menu to open
+        nav = "".join(one(pg[0], pg[1], pg[2], cls="top", current=pg[0] == active) for _, _, pages in groups for pg in pages)
+    nav = nav if requester else (f'<div class="grp{" on" if here_group else ""}"><button type=button class="top menubtn{" on" if here_group else ""}" aria-haspopup=true'
+           f' aria-expanded=false>{icon("rows")}<span class=lbl>Menu</span>{icon("chevron", "chev")}</button>'
+           f'<div class="panel full" role=menu aria-label="Menu">{"".join(cols)}</div></div>' + here)
+    nav += (f'<a class="newbtn" href="/ticket/new" title="New ticket (n)">{icon("plus")}<span class=lbl>New ticket</span></a>'
             if user is not None and not requester else "")
     who = ""
     if user is not None:
@@ -1060,7 +1135,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         f'<div id="nprog" aria-hidden="true"></div>{SPRITE}'
         f'<header class="top"><a class="brand" href="{"/my" if requester else "/"}"><i></i>'
         f'{"PMC Requests" if requester else "Dada PSA"}</a>'
-        f"<nav>{nav}</nav>{who}</header>"
+        f"<nav class=mega aria-label='Main'>{nav}</nav>{who}</header>"
         + (f"<main data-live='{esc(live)}'>" if live else "<main>") + f"{body}</main>"
         + (quick if quick is not None else (_quick_default(nav_items) if user is not None and not requester else ""))
         + ("<footer>PMC Requests — a request reaches the department it is for.</footer>" if requester else
