@@ -360,7 +360,7 @@ def _run(conn, a) -> int:
             return 2
         if not r["rows"]:
             print(f"intake saw no message matching that in the last {a.days} days: nothing arrived from the pickup."
-                  " Check the mailbox's pickup task is registered and its log (D:\psa\logs\PSA-Mail-<mailbox>.log).")
+                  r" Check the mailbox's pickup task is registered and its log (D:\psa\logs\PSA-Mail-<mailbox>.log).")
         for i in r["rows"]:
             where = (f" -> {i['work_item_id']} on {i['board_id']}" if i["work_item_id"] else "")
             print(f"{i['received_at']}  {i['disposition']:12}{where}  from {i['from_address'] or '-'} to {i['to_address'] or '-'}"
