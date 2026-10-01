@@ -2388,3 +2388,44 @@ Cloud Build's note after part 24: the connection was the test's own, not the Ema
    - What part 24 measured still stands: the connection outlived the test until the collector ran. Only the guess at
      whose it was is withdrawn.
 5. **Nothing else on the host**, as asked.
+
+### Part 26: 2026-10-01, 10:45 +08:00. **Board members set as Dada listed them; the ticket reset waits on one answer**
+
+**Dada, 1 Oct, verbatim** (with a screenshot of 14 people): "edit the current boards PMO Helpdesk and Unrouted to add
+all of these users as work users except dada.banal rubylyn jefferson thobie these four are admins / also add these
+four as admin to all the other boards / reset all tickets to 0".
+
+Everything below is MEASURED.
+
+1. **The 14 names resolve to AD accounts.** Each matched exactly one enabled account by display name; a control name
+   matched none.
+   - **The four admins:** `dada.banal`, `rubylyn.martinez`, `jefferson.simon`, `thobie.delacruz`.
+   - **The ten work members:** `kevin.cadano`, `andrei.nakpil`, `shane.decastro`, `encoder` (Philhealth Encoder),
+     `via.soriano`, `pmo-vc01` (VC01 PMO), `patrick.biteno`, `jaycee.bernardo`, `susan.dolfo`, `sam.garcia`.
+2. **Applied at 10:45:21, in one transaction.** It went through the desk's own `members.add` and
+   `members.set_membership`, in the desk user's database context (`EXECUTE AS USER` psa_desk, default schema `psa`),
+   with actor "sql01 for dada.banal".
+   - **7 new member records**, the people the desk did not know yet, with their AD display names.
+   - **32 membership changes**, with **39 MEMBER audit rows** for the records and changes together.
+   - **Shane, Susan and Samantha** go from ADMIN to WORK on PMO Helpdesk, as his list puts them.
+   - **Not in the list, and left exactly as they were:** `abigil` (ADMIN) and `melanie.arceo` (WORK) on PMO Helpdesk.
+3. **Read back:** every wanted row is as wanted, and no other row changed.
+
+   | Board | Admins | Work |
+   |---|---|---|
+   | PMO Helpdesk | 5 (the four, and abigil) | 11 (the ten, and melanie.arceo) |
+   | Unrouted | 4 | 10 |
+   | IT Change | 4 | — |
+   | IT Projects | 4 | — |
+   | Procurement | 4 | — |
+   | ZZ SQL01 test | 4 | — |
+
+4. **"Reset all tickets to 0": not done. It waits on Dada's answer.**
+   - **What there is:** 10 tickets, `PMC-000001` to `PMC-000010`; 7 open and 3 closed. Staff raised them: Melanie 4,
+     Jefferson, Rubylyn and Shane 1 each, and 3 with no requester recorded.
+   - **What a reset deletes:** 124 rows name these tickets, across `ticket`, `work_item`, `ticket_event` (59),
+     `ticket_clock` (29), `ticket_handover` (3), `attachment` (2), `survey_response` (1) and `ticket_number` (10).
+   - **The desk's own rule D4** (`numbering.py`): a ticket number is never reused. Restarting at `PMC-000001`
+     overrides it, and the people who raised these tickets have seen the numbers.
+   - SQL01 asked which Dada means: delete all 10 and restart at `PMC-000001`, or delete all 10 and continue at
+     `PMC-000011`. Either way, a COPY_ONLY backup comes first.
