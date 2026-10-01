@@ -195,6 +195,27 @@ def main(argv: list[str] | None = None) -> int:
     ppk.add_argument("--deputy", help="the procurement board's deputy (a member)")
     ppk.add_argument("--actor", required=True, help="who this is done for, for the audit trail")
     ppk.add_argument("--apply", action="store_true", help="write it; without this nothing is changed")
+    pcp = sub.add_parser("calendar-pending", help="059: due Outlook calendar writes as JSON for Sync-PsaCalendars.ps1")
+    pcp.add_argument("database", help=DB_HELP)
+    pcp.add_argument("--allowed-domain", action="append", required=True)
+    pcp.add_argument("--desk-url", help="https:// address of the desk, for the link in a visit's event")
+    pcp.add_argument("--dry-run", action="store_true")
+    pcm = sub.add_parser("calendar-mark", help="059: record what the calendar sync did with one write")
+    pcm.add_argument("database", help=DB_HELP)
+    pcm.add_argument("--id", type=int, required=True)
+    pcm.add_argument("--status", choices=("SENT", "FAILED"), required=True)
+    pcm.add_argument("--event-id")
+    pcb = sub.add_parser("calendar-members", help="059: the members whose Outlook calendars are synced, as JSON")
+    pcb.add_argument("database", help=DB_HELP)
+    pcb.add_argument("--allowed-domain", action="append", required=True)
+    pci = sub.add_parser("calendar-busy", help="059: replace members' Outlook busy times from a JSON file")
+    pci.add_argument("database", help=DB_HELP)
+    pci.add_argument("--file", required=True)
+    pci.add_argument("--from", dest="start", required=True, help="YYYY-MM-DD HH:MM")
+    pci.add_argument("--to", dest="end", required=True, help="YYYY-MM-DD HH:MM")
+    pcf = sub.add_parser("calendar-backfill", help="059: queue every future visit and block never written to Outlook")
+    pcf.add_argument("database", help=DB_HELP)
+    pcf.add_argument("--apply", action="store_true")
     pom = sub.add_parser("outbox-mark", help="record what the sender did with one notification")
     pom.add_argument("database", help=DB_HELP)
     pom.add_argument("--id", type=int, required=True)
@@ -468,6 +489,35 @@ def _run(conn, a) -> int:
             print(f"refused: {exc}", file=sys.stderr)
             return 1
         print(outbox.as_json(items))
+        return 0
+
+    if a.cmd in ("calendar-pending", "calendar-mark", "calendar-members", "calendar-busy", "calendar-backfill"):
+        import json as _json
+        from . import calsync, outbox
+        if a.cmd == "calendar-pending":
+            print(outbox.as_json(calsync.pending(conn, allowed_domains=tuple(a.allowed_domain),
+                                                 desk_url=a.desk_url or "", dry_run=a.dry_run)))
+            return 0
+        if a.cmd == "calendar-mark":
+            ok = calsync.mark(conn, a.id, a.status, at=datetime.now(), event_id=a.event_id)
+            return 0 if ok else 1
+        if a.cmd == "calendar-members":
+            print(outbox.as_json(calsync.members(conn, allowed_domains=tuple(a.allowed_domain))))
+            return 0
+        if a.cmd == "calendar-busy":
+            with open(a.file, encoding="utf-8-sig") as fh:
+                data = _json.load(fh)
+            n = calsync.import_busy(conn, data.get("busy", []), members_read=data.get("members", []),
+                                    start=a.start, end=a.end, at=datetime.now())
+            print(f"{n} busy time(s) for {len(data.get('members', []))} member(s)")
+            return 0
+        n = calsync.backfill(conn, at=datetime.now())
+        if a.apply:
+            conn.commit()
+            print(f"{n} visit(s) and block(s) queued for Outlook")
+        else:
+            conn.rollback()
+            print(f"PREVIEW: {n} visit(s) and block(s) would be queued; re-run with --apply")
         return 0
 
     if a.cmd == "setup-pmc":

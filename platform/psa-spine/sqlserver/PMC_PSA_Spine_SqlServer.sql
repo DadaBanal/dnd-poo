@@ -226,6 +226,8 @@ BEGIN
     PRINT N'    psa.member_presence';
     PRINT N'    psa.board_intake_address';
     PRINT N'    psa.status_mail';
+    PRINT N'    psa.calendar_sync';
+    PRINT N'    psa.outlook_busy';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -279,13 +281,15 @@ BEGIN
     PRINT N'    psa.ix_audit_event_actor';
     PRINT N'    psa.ix_audit_event_subject';
     PRINT N'    psa.ix_configuration_question_type';
+    PRINT N'    psa.ix_calendar_sync_status';
+    PRINT N'    psa.ix_outlook_busy_member';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  128 tables, 52 indexes, 4 triggers.';
+    PRINT N'  130 tables, 54 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -3328,6 +3332,52 @@ CREATE TABLE psa.[status_mail] (
 END;
 
 -- --------------------------------------------------------------------------
+-- calendar_sync   (from schema/059_outlook_calendar.sql)
+-- What to write: one row per change. A visit or block removed before it was
+-- ever written is SUPERSEDED, never sent.
+IF OBJECT_ID(N'psa.[calendar_sync]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[calendar_sync] (
+    [sync_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_calendar_sync] PRIMARY KEY,
+    [kind] NVARCHAR(32) NOT NULL CONSTRAINT [CK_calendar_sync_01] CHECK (kind IN ('VISIT', 'BLOCK')),
+    [ref_id] INT NOT NULL,
+    [member] NVARCHAR(200) NOT NULL,
+    [action] NVARCHAR(32) NOT NULL CONSTRAINT [CK_calendar_sync_02] CHECK (action IN ('UPSERT', 'DELETE')),
+    [event_id] NVARCHAR(400) NULL,
+    [created_at] NVARCHAR(64) NOT NULL,
+    [status] NVARCHAR(32) NOT NULL CONSTRAINT [DF_calendar_sync_status] DEFAULT ('PENDING') CONSTRAINT [CK_calendar_sync_03] CHECK (status IN ('PENDING', 'SENT', 'FAILED', 'NO_MAILBOX', 'SUPERSEDED')),
+    [sent_at] NVARCHAR(64) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END)),
+    [sent_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [sent_at], 126), CASE WHEN [sent_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [sent_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- outlook_busy   (from schema/059_outlook_calendar.sql)
+-- What each member's Outlook calendar says they are doing, as busy blocks
+-- only: never a subject, an attendee or a body. Replaced on every pull.
+IF OBJECT_ID(N'psa.[outlook_busy]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[outlook_busy] (
+    [busy_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_outlook_busy] PRIMARY KEY,
+    [member] NVARCHAR(200) NOT NULL,
+    [starts_at] NVARCHAR(64) NOT NULL,
+    [ends_at] NVARCHAR(64) NOT NULL,
+    [show_as] NVARCHAR(32) NOT NULL CONSTRAINT [CK_outlook_busy_01] CHECK (show_as IN ('BUSY', 'TENTATIVE', 'OOF', 'WORKING_ELSEWHERE')),
+    [pulled_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [starts_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [starts_at], 126), CASE WHEN [starts_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [starts_at], 112) END)),
+    [ends_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [ends_at], 126), CASE WHEN [ends_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [ends_at], 112) END)),
+    [pulled_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [pulled_at], 126), CASE WHEN [pulled_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [pulled_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -3734,6 +3784,23 @@ ALTER TABLE psa.[board] ADD [auto_assign] NVARCHAR(32) NULL CONSTRAINT [CK_board
 IF COL_LENGTH(N'psa.[notification]', N'from_address') IS NULL
 ALTER TABLE psa.[notification] ADD [from_address] NVARCHAR(200) NULL;
 
+-- 059: the desk's schedule on each member's Outlook calendar, and their
+-- Outlook busy times on the desk (Dada, 1 Oct 2026: "the members should have
+-- their accounts calendars synced with the actual calendars on outlook").
+--
+-- The desk holds no mail or calendar credential. It queues what changed;
+-- scripts/Sync-PsaCalendars.ps1 on DND-SQL01 writes it to the member's
+-- calendar through Microsoft Graph (the mail app's certificate, Exchange RBAC
+-- for Applications "Application Calendars.ReadWrite" scoped to the desk's
+-- members) and reports back, then reads each member's busy times back in.
+
+-- The Outlook event a visit or a block is, once it has been written.
+IF COL_LENGTH(N'psa.[ticket_schedule]', N'outlook_event_id') IS NULL
+ALTER TABLE psa.[ticket_schedule] ADD [outlook_event_id] NVARCHAR(400) NULL;
+
+IF COL_LENGTH(N'psa.[schedule_block]', N'outlook_event_id') IS NULL
+ALTER TABLE psa.[schedule_block] ADD [outlook_event_id] NVARCHAR(400) NULL;
+
 IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
 ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
 
@@ -3904,6 +3971,12 @@ CREATE INDEX [ix_audit_event_subject] ON psa.[audit_event] ([subject_kind], [sub
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_configuration_question_type' AND object_id = OBJECT_ID(N'psa.[configuration_question]'))
 CREATE INDEX [ix_configuration_question_type] ON psa.[configuration_question] ([type_id]);
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_calendar_sync_status' AND object_id = OBJECT_ID(N'psa.[calendar_sync]'))
+CREATE INDEX [ix_calendar_sync_status] ON psa.[calendar_sync] ([status]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_outlook_busy_member' AND object_id = OBJECT_ID(N'psa.[outlook_busy]'))
+CREATE INDEX [ix_outlook_busy_member] ON psa.[outlook_busy] ([member], [starts_at]);
+
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
@@ -4039,10 +4112,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 128 OR @Triggers <> 4 OR @Indexes < 52
+IF @Tables <> 130 OR @Triggers <> 4 OR @Indexes < 54
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 128), %d triggers (expected 4), %d indexes (expected at least 52). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 130), %d triggers (expected 4), %d indexes (expected at least 54). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -4098,6 +4171,8 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[outlook_busy];
+    DROP TABLE IF EXISTS psa.[calendar_sync];
     DROP TABLE IF EXISTS psa.[status_mail];
     DROP TABLE IF EXISTS psa.[board_intake_address];
     DROP TABLE IF EXISTS psa.[member_presence];

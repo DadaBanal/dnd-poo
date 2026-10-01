@@ -17,6 +17,9 @@ from .. import templates as t
 from . import common
 
 
+OUTLOOK_WORD = {"BUSY": "Busy", "TENTATIVE": "Tentative", "OOF": "Out of office", "WORKING_ELSEWHERE": "Working elsewhere"}
+
+
 def _monday(d: date) -> date:
     return d - timedelta(days=d.weekday())
 
@@ -53,6 +56,8 @@ def index(ctx):
         common.audit_restricted_read(ctx, board_id, detail=f"schedule listed {n} visit(s) on restricted board "
                                                             f"{board_id} via {ctx.user.via}")
     days = [start + timedelta(days=i) for i in range(7)]
+    from ... import calsync
+    outlook = calsync.busy(ctx.conn, people, f"{start.isoformat()} 00:00", f"{(start + timedelta(days=7)).isoformat()} 00:00")
     can_book = any(common.may_access_board(ctx, b, need="WORK") for b in boards)
 
     def cell(member: str, d: date) -> str:
@@ -79,6 +84,11 @@ def index(ctx):
                     + (" ★" if v["is_lead"] else "") + f"<br>{t.esc((v['summary'] or '')[:36])}"
                     + (f"<br><span class=muted>{t.esc(v['status_name'] or '')}"
                        f"{' · ' + t.esc(v['location_name']) if v['location_name'] else ''}</span>") + "</a>")
+        for o in outlook:
+            if o["member"].lower() == member.lower() and o["starts_at"] < hi and o["ends_at"] > lo:
+                span = (f"{o['starts_at'][11:]}–{o['ends_at'][11:]}" if o["starts_at"][:10] == o["ends_at"][:10] else "all day")
+                chips.append(f"<div class='sch block outlook' title='From their Outlook calendar'><b>Outlook</b> {t.esc(span)}"
+                             f"<br>{t.esc(OUTLOOK_WORD[o['show_as']])}</div>")
         slot = f" data-slot='{t.esc(member)}|{d.isoformat()}'" if can_book else ""
         return f"<td class='{'today' if d == ctx.now.date() else ''}'{slot}>{''.join(chips)}</td>"
 

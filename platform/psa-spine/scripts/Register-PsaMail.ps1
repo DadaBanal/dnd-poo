@@ -14,6 +14,9 @@
       PSA-Mail-Support   the same for support@pmcne.ph. Registered ONLY with -IncludeSupport, which is for after
                          PCSD has stopped reading support@ (Dada, 1 Oct: "yes will stop pcsd"); before that, every
                          message to support@ would become two tickets, one in each system.
+      PSA-Calendar       Sync-PsaCalendars.ps1 -Apply (one pass): visits and tasks onto members' Outlook calendars,
+                         their busy times back. Registered ONLY with -IncludeCalendar, which is for after Dada has
+                         given the app Application Calendars.ReadWrite on the desk members' scope.
       PSA-Notify         Send-PmcNotifications.ps1 -Mailbox helpdesk@pmcne.ph -SendAs support@pmcne.ph
                          -PortalUrl https://help.pmcne.ph -Apply (one pass): the requester emails go out.
 
@@ -37,19 +40,20 @@
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Register-PsaMail.ps1 -Undo -Apply
 #>
 [CmdletBinding()]
-param([switch]$Apply, [switch]$Undo, [switch]$IncludeSupport)
+param([switch]$Apply, [switch]$Undo, [switch]$IncludeSupport, [switch]$IncludeCalendar)
 $ErrorActionPreference = 'Stop'
 
 $Acct     = 'DND-SQL01\psa_desk'
 $Spine    = 'D:\dnd-poo\platform\psa-spine'
 $Pickup   = $Spine + '\scripts\Invoke-PmcMailPickup.ps1'
 $Notifier = $Spine + '\scripts\Send-PmcNotifications.ps1'
+$Calendar = $Spine + '\scripts\Sync-PsaCalendars.ps1'
 $AppFile  = 'D:\psa\mail-app.txt'
 $CertFile = 'D:\psa\mail-cert.txt'
 $Logs     = 'D:\psa\logs'
 $LogFile  = $Logs + '\Register-PsaMail.log'
 $Db       = 'Driver={ODBC Driver 17 for SQL Server};Server=DND-SQL01\PMC_SS;Database=PMC_PSA;Trusted_Connection=yes;Encrypt=yes;TrustServerCertificate=yes'
-$AllTasks = @('PSA-Mail-Helpdesk', 'PSA-Mail-Support', 'PSA-Notify')
+$AllTasks = @('PSA-Mail-Helpdesk', 'PSA-Mail-Support', 'PSA-Notify', 'PSA-Calendar')
 
 function Write-Step([string]$Text) {
     $line = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '  ' + $Text
@@ -79,7 +83,7 @@ if ($Undo) {
 
 # --- preflight (changes nothing)
 $fail = @()
-foreach ($f in @($Pickup, $Notifier, $AppFile, $CertFile)) { if (-not (Test-Path $f)) { $fail += $f + ' is missing' } }
+foreach ($f in @($Pickup, $Notifier, $Calendar, $AppFile, $CertFile)) { if (-not (Test-Path $f)) { $fail += $f + ' is missing' } }
 $ids = @{}
 if (Test-Path $AppFile) {
     foreach ($l in Get-Content $AppFile) { if ($l -match '^\s*(\w+)\s*=\s*(\S+)\s*$') { $ids[$Matches[1]] = $Matches[2] } }
@@ -93,7 +97,8 @@ if (Test-Path $CertFile) {
 if ($thumb -and -not (Test-Path ('Cert:\LocalMachine\My\' + $thumb))) { $fail += 'the mail certificate is not in LocalMachine\My' }
 # A task already registered is left exactly as it is, so -IncludeSupport later adds support@ alone.
 $want = @()
-foreach ($t in @('PSA-Mail-Helpdesk', 'PSA-Notify') + $(if ($IncludeSupport) { @('PSA-Mail-Support') } else { @() })) {
+foreach ($t in @('PSA-Mail-Helpdesk', 'PSA-Notify') + $(if ($IncludeSupport) { @('PSA-Mail-Support') } else { @() }) +
+                $(if ($IncludeCalendar) { @('PSA-Calendar') } else { @() })) {
     if (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue) { Write-Step ('  ' + $t + ' is already registered: left as it is') }
     else { $want += $t }
 }
@@ -116,6 +121,8 @@ $jobs = @{
                              Pass = 'new message\(s\)'; What = 'mail to helpdesk@ (and help@) becomes tickets on PMO Helpdesk' }
     'PSA-Mail-Support'  = @{ Script = $Pickup; Args = " -Mailbox 'support@pmcne.ph' -BoardId 'IT_HELP' -DropDir 'D:\psa\mail-drop'"
                              Pass = 'new message\(s\)'; What = 'mail to support@ becomes tickets on PMO Helpdesk' }
+    'PSA-Calendar'      = @{ Script = $Calendar; Args = " -DeskUrl 'https://desk.pmcne.ph'"
+                             Pass = 'write\(s\) due: \d+ written'; What = "the desk's visits and tasks on members' Outlook calendars, and their busy times back" }
     'PSA-Notify'        = @{ Script = $Notifier; Args = " -Mailbox 'helpdesk@pmcne.ph' -SendAs 'support@pmcne.ph' -PortalUrl 'https://help.pmcne.ph'"
                              Pass = '\d+ due: \d+ sent, \d+ failed'; What = 'the requester emails go out' }
 }

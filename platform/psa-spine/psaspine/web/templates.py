@@ -30,7 +30,7 @@ import re
 # bulk bar and selected rows, @starting-style for enter transitions,
 # color-mix() with plain fallbacks declared first, sticky table headings.
 STYLE = """
-[data-slot]{cursor:copy}[data-slot]:hover{background:var(--accent-bg,#e9eefc)}
+[data-slot]{cursor:copy}.sch.outlook{background:var(--surface-3,#eceef3);border-style:dashed;color:var(--ink-2,#4a5260)}[data-slot]:hover{background:var(--accent-bg,#e9eefc)}
 #slotdlg::backdrop{background:rgb(0 0 0/.35)}
 :root{color-scheme:light dark;
   --canvas:#f4f5f8; --surface:#ffffff; --surface-2:#f6f7fa; --surface-3:#eceef3;

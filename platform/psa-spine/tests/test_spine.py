@@ -6917,6 +6917,25 @@ class TeamsSenderScriptTest(unittest.TestCase):
         for shape in ("client_secret", "convertto-securestring", "Write-Host $thumb", "Write-Step ($thumb"):
             self.assertNotIn(shape, text.lower() if shape.islower() else text)
 
+    def test_the_calendar_scripts_preview_first_and_keep_to_the_desk_members(self):
+        # 059: Sync-PsaCalendars.ps1 writes nothing without -Apply, leaves its own
+        # events out of the busy read, and never logs a subject; Grant-PsaCalendars.ps1
+        # scopes Calendars.ReadWrite to a group in Exchange, never in Entra.
+        sync = self._text("Sync-PsaCalendars.ps1")
+        self.assertLess(sync.index("if (-not $Apply) {"), sync.index("Write-One $item"))
+        self.assertIn("if (@($e.categories) -contains $Category) { continue }", sync)
+        self.assertIn("$Category = 'Dada PSA'", sync)
+        for line in sync.splitlines():
+            if "Write-Log" in line and "function" not in line:
+                self.assertNotIn(".subject", line)
+                self.assertNotIn(".mailbox", line)
+        grant = self._text("Grant-PsaCalendars.ps1")
+        self.assertLess(grant.index("if (-not $Apply) {"), grant.index("New-ManagementRoleAssignment"))
+        self.assertIn("MemberOfGroup -eq '", grant)
+        self.assertIn("$Role = 'Application Calendars.ReadWrite'", grant)
+        self.assertNotIn("New-MgServicePrincipalAppRoleAssignment", grant)        # no Entra grant
+        self.assertIn("-IncludeCalendar", self._text("Register-PsaMail.ps1"))
+
     def test_an_idle_pass_counts_zero_on_windows_powershell(self):
         for name in ("Send-PsaTeamsNotifications.ps1", "Send-PmcNotifications.ps1"):
             text = self._text(name)
@@ -12405,6 +12424,97 @@ class ClickATimeTest(unittest.TestCase):
                                               starts_at="2026-09-18T09:00", ends_at="2026-09-18T10:00"))
         self.assertTrue(self._post(what="task", member="alice", kind="MEETING", name="x", starts_at="2026-09-19T09:00",
                                    ends_at="2026-09-19T10:00", back="//evil.example").startswith("/schedule?"))
+
+
+class OutlookCalendarTest(unittest.TestCase):
+    """059, Dada 1 Oct 2026: the desk's visits and tasks go onto each member's
+    Outlook calendar, and their Outlook busy times come back onto the desk.
+    The desk queues; the host script writes; nothing private leaves."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.conn = _fresh(self.tmp)
+        self.addCleanup(self.conn.close)
+        self.at = datetime(2026, 10, 1, 9)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        for m in ("bob", "alice"):
+            self.conn.execute("INSERT OR REPLACE INTO board_member (board_id, member, access) VALUES ('IT_HELP', ?, 'WORK')", (m,))
+            self.conn.execute("INSERT INTO contact (contact_id, entity_id, display_name, email, sam_account, source, inactive,"
+                              " created_at) VALUES (?, 'PMC', ?, ?, ?, 'AD', 0, '2026')", (f"C_{m}", m.title(), f"{m}@pmcne.ph", m))
+        self.wid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="A patient's chart will not print",
+                                       impact="I3", urgency="U3", requested_by=None, at=self.at)
+
+    def _pending(self):
+        from psaspine import calsync
+        return calsync.pending(self.conn, allowed_domains=("pmcne.ph",), desk_url="https://desk.pmcne.ph")
+
+    def test_a_visit_is_written_moved_and_removed_and_never_carries_the_summary(self):
+        from psaspine import calsync, schedule
+        sid = schedule.add(self.conn, self.wid, member="bob", starts_at=datetime(2026, 10, 2, 9),
+                           ends_at=datetime(2026, 10, 2, 10), note="bring the chart printer key", actor="alice", at=self.at)
+        [w] = self._pending()
+        self.assertEqual((w["action"], w["mailbox"], w["start"], w["end"]), ("UPSERT", "bob@pmcne.ph", "2026-10-02 09:00", "2026-10-02 10:00"))
+        self.assertIn(self.wid, w["subject"])
+        self.assertIn(f"https://desk.pmcne.ph/ticket/{self.wid}", w["body"])
+        self.assertNotIn("chart", w["subject"] + w["body"])                    # neither the summary nor the note
+        self.assertEqual(w["category"], calsync.CATEGORY)
+        calsync.mark(self.conn, w["id"], "SENT", at=self.at, event_id="EV1")
+        self.assertEqual(self.conn.execute("SELECT outlook_event_id FROM ticket_schedule WHERE schedule_id = ?", (sid,)).fetchone()[0], "EV1")
+        # moved to another person: the old event goes, the new person's is written
+        schedule.update(self.conn, sid, actor="alice", at=self.at, member="alice")
+        due = self._pending()
+        self.assertEqual(sorted((d["action"], d["mailbox"], d["event_id"]) for d in due),
+                         [("DELETE", "bob@pmcne.ph", "EV1"), ("UPSERT", "alice@pmcne.ph", None)])
+        for d in due:
+            calsync.mark(self.conn, d["id"], "SENT", at=self.at, event_id="EV2" if d["action"] == "UPSERT" else None)
+        # two changes before the sync runs: one write, the newer
+        schedule.update(self.conn, sid, actor="alice", at=self.at, starts_at=datetime(2026, 10, 2, 11), ends_at=datetime(2026, 10, 2, 12))
+        schedule.update(self.conn, sid, actor="alice", at=self.at, starts_at=datetime(2026, 10, 2, 13), ends_at=datetime(2026, 10, 2, 14))
+        [w] = self._pending()
+        self.assertEqual((w["event_id"], w["start"]), ("EV2", "2026-10-02 13:00"))
+        calsync.mark(self.conn, w["id"], "SENT", at=self.at, event_id="EV2")
+        schedule.remove(self.conn, sid, actor="alice", at=self.at)
+        [w] = self._pending()
+        self.assertEqual((w["action"], w["event_id"]), ("DELETE", "EV2"))
+
+    def test_a_task_is_written_and_one_removed_before_it_was_written_sends_nothing(self):
+        from psaspine import schedule
+        bid = schedule.add_block(self.conn, member="alice", kind="TIME_OFF", name="Leave", starts_at=datetime(2026, 10, 5, 8),
+                                 ends_at=datetime(2026, 10, 5, 17), actor="alice", at=self.at)
+        b2 = schedule.add_block(self.conn, member="alice", kind="MEETING", name="Vendor", starts_at=datetime(2026, 10, 6, 8),
+                                ends_at=datetime(2026, 10, 6, 9), actor="alice", at=self.at)
+        schedule.remove_block(self.conn, b2, actor="alice", at=self.at)
+        [w] = self._pending()
+        self.assertEqual((w["subject"], w["show_as"]), ("Time off: Leave", "oof"))
+        self.assertTrue(bid)
+
+    def test_busy_times_come_back_without_a_subject_and_show_on_the_desk(self):
+        from psaspine import calsync
+        self.assertEqual({m["member"]: m["mailbox"] for m in calsync.members(self.conn, allowed_domains=("pmcne.ph",))},
+                         {"alice": "alice@pmcne.ph", "bob": "bob@pmcne.ph"})
+        n = calsync.import_busy(self.conn, [
+            {"member": "bob", "start": "2026-10-02T13:00:00", "end": "2026-10-02T14:00:00", "show_as": "busy", "subject": "x"},
+            {"member": "bob", "start": "2026-10-03T08:00", "end": "2026-10-03T17:00", "show_as": "oof"},
+            {"member": "bob", "start": "2026-10-03T08:00", "end": "2026-10-03T09:00", "show_as": "free"},
+            {"member": "mallory", "start": "2026-10-03T08:00", "end": "2026-10-03T09:00", "show_as": "busy"},
+        ], members_read=["bob"], start="2026-10-01 00:00", end="2026-10-29 00:00", at=self.at)
+        self.assertEqual(n, 2)
+        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(outlook_busy)")] if db.backend(self.conn) != "mssql" else []
+        self.assertNotIn("subject", cols)
+        got = calsync.busy(self.conn, ["bob"], "2026-10-02 00:00", "2026-10-04 00:00")
+        self.assertEqual([(g["starts_at"], g["show_as"]) for g in got], [("2026-10-02 13:00", "BUSY"), ("2026-10-03 08:00", "OOF")])
+        # a second pull replaces the first
+        calsync.import_busy(self.conn, [], members_read=["bob"], start="2026-10-01 00:00", end="2026-10-29 00:00", at=self.at)
+        self.assertEqual(calsync.busy(self.conn, ["bob"], "2026-10-01 00:00", "2026-10-29 00:00"), [])
+
+    def test_backfill_queues_what_was_booked_before_the_sync(self):
+        from psaspine import calsync, schedule
+        schedule.add(self.conn, self.wid, member="bob", starts_at=datetime(2026, 10, 2, 9), ends_at=datetime(2026, 10, 2, 10),
+                     note=None, actor="alice", at=self.at)
+        self.conn.execute("DELETE FROM calendar_sync")
+        self.assertEqual(calsync.backfill(self.conn, at=self.at), 1)
+        self.assertEqual(len(self._pending()), 1)
 
 
 if __name__ == "__main__":

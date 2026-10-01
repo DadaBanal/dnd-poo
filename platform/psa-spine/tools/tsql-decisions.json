@@ -1053,6 +1053,20 @@
   "status_mail.body": "FREE",
   "status_mail.updated_at": "TIMESTAMP_TEXT",
   "status_mail.updated_by": "PERSON",
-  "notification.from_address": "PERSON"
+  "notification.from_address": "PERSON",
+  "ticket_schedule.outlook_event_id": "REF",
+  "schedule_block.outlook_event_id": "REF",
+  "calendar_sync.kind": "CODE",
+  "calendar_sync.member": "PERSON",
+  "calendar_sync.action": "CODE",
+  "calendar_sync.event_id": "REF",
+  "calendar_sync.created_at": "TIMESTAMP_TEXT",
+  "calendar_sync.status": "CODE",
+  "calendar_sync.sent_at": "TIMESTAMP_TEXT",
+  "outlook_busy.member": "PERSON",
+  "outlook_busy.starts_at": "TIMESTAMP_TEXT",
+  "outlook_busy.ends_at": "TIMESTAMP_TEXT",
+  "outlook_busy.show_as": "CODE",
+  "outlook_busy.pulled_at": "TIMESTAMP_TEXT"
  }
 }

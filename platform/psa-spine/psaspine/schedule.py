@@ -319,6 +319,8 @@ def add(conn: sqlite3.Connection, work_item_id: str, *, member: str, starts_at: 
     touch(conn, work_item_id, at)
     from . import outbox
     outbox.queue_scheduled(conn, cur.lastrowid, at=at, actor=actor)
+    from . import calsync
+    calsync.visit_changed(conn, cur.lastrowid, at=at)
     flow_into_ticket(conn, work_item_id, member=member, at=at, actor=actor)
     return cur.lastrowid
 
@@ -410,6 +412,8 @@ def update(conn, schedule_id: int, *, actor: str, at: datetime, member: str | No
     if moved and new_member.lower() != r["member"].lower():
         from . import outbox
         outbox.queue_scheduled(conn, schedule_id, at=at, actor=actor)
+    from . import calsync
+    calsync.visit_changed(conn, schedule_id, at=at, old_member=r["member"], old_event_id=r["outlook_event_id"])
     return "; ".join(changed)
 
 
@@ -453,6 +457,8 @@ def remove(conn: sqlite3.Connection, schedule_id: int, *, actor: str, at: dateti
     if row is None:
         return None
     conn.execute("DELETE FROM ticket_schedule WHERE schedule_id = ?", (schedule_id,))
+    from . import calsync
+    calsync.removed(conn, "VISIT", row, at=at)
     _event(conn, row["work_item_id"], _stamp(at), "SCHEDULE", actor,
            f"visit cancelled: {row['member']}, {row['starts_at']}")
     touch(conn, row["work_item_id"], at)
@@ -483,6 +489,8 @@ def add_block(conn, *, member: str, kind: str, name: str, starts_at: datetime, e
     _audit(conn, at=at, actor=actor, action="SCHEDULE_BLOCK", kind="schedule_block", subject=str(cur.lastrowid),
            detail=f"{BLOCK_KINDS[kind].lower()} added: {member}, {_stamp(starts_at)} to {_stamp(ends_at)}, {name}"
            + (", over a booking (allowed)" if allowed else ""))
+    from . import calsync
+    calsync.queue(conn, "BLOCK", cur.lastrowid, "UPSERT", member=member, at=at)
     return cur.lastrowid
 
 
@@ -491,6 +499,8 @@ def remove_block(conn, block_id: int, *, actor: str, at: datetime) -> bool:
     if row is None:
         return False
     conn.execute("DELETE FROM schedule_block WHERE block_id = ?", (block_id,))
+    from . import calsync
+    calsync.removed(conn, "BLOCK", row, at=at)
     _audit(conn, at=at, actor=actor, action="SCHEDULE_BLOCK", kind="schedule_block", subject=str(block_id),
            detail=f"{BLOCK_KINDS[row['kind']].lower()} removed: {row['member']}, {row['starts_at']} to "
                   f"{row['ends_at']}, {row['name']}")

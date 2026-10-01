@@ -60,6 +60,9 @@ def _items(conn, member: str, boards, first: date, end: date) -> list[dict]:
                           (member, hi, lo)):
         out.append({"kind": "oncall", "role": s["role"], "starts_at": s["starts_at"], "ends_at": s["ends_at"],
                     "board_id": s["board_id"], "board_name": s["board_name"]})
+    from ... import calsync
+    for o in calsync.busy(conn, [member], lo, hi):
+        out.append({"kind": "outlook", "starts_at": o["starts_at"], "ends_at": o["ends_at"], "show_as": o["show_as"]})
     out.sort(key=lambda x: x["starts_at"])
     return out
 
@@ -89,6 +92,10 @@ def _chip(it: dict, *, day_of: str) -> str:
     if it["kind"] == "block":
         return (f"<div class='sch block {it['block_kind'].lower()}'><b>{t.esc(schedule.BLOCK_KINDS[it['block_kind']])}</b> "
                 f"{t.esc(span())}<br>{t.esc(it['name'])}</div>")
+    if it["kind"] == "outlook":
+        from .schedule import OUTLOOK_WORD
+        return (f"<div class='sch block outlook' title='From their Outlook calendar'><b>Outlook</b> {t.esc(span())}"
+                f"<br>{t.esc(OUTLOOK_WORD[it['show_as']])}</div>")
     word = "On call" if it["role"] == "ON_CALL" else "Duty manager"
     return f"<div class='sch block oncall'><b>{t.esc(word)}</b> {t.esc(span())}<br>{t.esc(it['board_name'])}</div>"
 
@@ -223,7 +230,7 @@ def feed(ctx, token):
     boards = {r["board_id"] for r in ctx.conn.execute("SELECT board_id FROM board_member WHERE LOWER(member) = LOWER(?)", (who,))}
     first = ctx.now.date() - timedelta(days=30)
     end = ctx.now.date() + timedelta(days=90)
-    items = _items(ctx.conn, who, boards, first, end)
+    items = [it for it in _items(ctx.conn, who, boards, first, end) if it["kind"] != "outlook"]
     lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Dada PSA//Calendar feed//EN", "CALSCALE:GREGORIAN",
              f"X-WR-CALNAME:{_ics_escape('Dada PSA · ' + members.name_of(ctx.conn, who))}"]
     stamp = _ics_stamp(ctx.now.isoformat(sep=" ", timespec="minutes")) + "Z"
