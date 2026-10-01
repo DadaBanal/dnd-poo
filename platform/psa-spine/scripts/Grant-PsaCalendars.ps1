@@ -37,7 +37,7 @@ param(
     [string]$GroupName = 'PSA desk calendars',
     [string]$GroupAlias = 'psa-desk-calendars',
     [string]$ScopeName = 'PSA desk calendars',
-    [string]$AllowedDomain = 'pmcne.ph',
+    [string[]]$AllowedDomain = @('pmcne.ph'),
     [string]$MembersFile = '',
     [string]$Database = 'Driver={ODBC Driver 17 for SQL Server};Server=DND-SQL01\PMC_SS;Database=PMC_PSA;Trusted_Connection=yes;Encrypt=yes;TrustServerCertificate=yes',
     [string]$SpineDir = 'D:\dnd-poo\platform\psa-spine',
@@ -76,12 +76,16 @@ if ($MembersFile) {
     Write-Step ('member mailboxes read from ' + $MembersFile)
 } else {
     Push-Location $SpineDir
-    try { $out = & $PythonExe -m psaspine calendar-members $Database --allowed-domain $AllowedDomain 2>&1; $code = $LASTEXITCODE } finally { Pop-Location }
+    # One --allowed-domain for each: a member whose mailbox is on a second
+    # domain (Dada, 2 Oct 2026: encoder@premieremedicalcenter.net) is in the
+    # sync only when that domain is named here as well.
+    $domArgs = @(); foreach ($d in $AllowedDomain) { $domArgs += @('--allowed-domain', $d) }
+    try { $out = & $PythonExe -m psaspine calendar-members $Database @domArgs 2>&1; $code = $LASTEXITCODE } finally { Pop-Location }
     if ($code -ne 0) { throw ('calendar-members failed (exit ' + $code + '). Run as a SQL sysadmin resolves to schema [dbo], which the desk refuses; pass -MembersFile instead, or run the python step as the task account. Nothing was done.') }
 }
 $wanted = @()
 foreach ($x in (($out | Out-String).Trim() | ConvertFrom-Json)) { if ($null -ne $x -and $x.PSObject.Properties['mailbox']) { $wanted += $x.mailbox.ToLowerInvariant() } }
-Write-Step ('the desk has ' + $wanted.Count + ' member(s) with a mailbox in ' + $AllowedDomain)
+Write-Step ('the desk has ' + $wanted.Count + ' member(s) with a mailbox in ' + ($AllowedDomain -join ', '))
 
 Write-Step 'signing in to Exchange Online (a browser window opens) ...'
 Connect-ExchangeOnline -ShowBanner:$false

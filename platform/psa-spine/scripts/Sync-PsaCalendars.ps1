@@ -39,7 +39,7 @@ param(
     [Parameter(Mandatory = $true)] [string] $CertThumbprint,
     [Parameter(Mandatory = $true)] [string] $Database,
     [Parameter(Mandatory = $true)] [string] $StateDir,
-    [string] $AllowedDomain = 'pmcne.ph',
+    [string[]] $AllowedDomain = @('pmcne.ph'),
     [string] $DeskUrl,
     [string] $SpineDir,
     [string] $PythonExe = 'C:\PMC\Python312\python.exe',
@@ -227,7 +227,10 @@ function Read-Busy($Member, $FromText, $ToText) {
 }
 
 function Invoke-Pass {
-    $args1 = @('calendar-pending', $Database, '--allowed-domain', $AllowedDomain)
+    # One --allowed-domain for each (Dada, 2 Oct 2026: a member's mailbox on a
+    # second domain). A mailbox on no named domain is never written to.
+    $domArgs = @(); foreach ($d in $AllowedDomain) { $domArgs += @('--allowed-domain', $d) }
+    $args1 = @('calendar-pending', $Database) + $domArgs
     if (-not $Apply) { $args1 += '--dry-run' }
     if ($DeskUrl) { $args1 += @('--desk-url', $DeskUrl) }
     $r = Invoke-Spine $args1
@@ -235,7 +238,7 @@ function Invoke-Pass {
     $items = @()
     if ($r.Out) { foreach ($x in ($r.Out | ConvertFrom-Json)) { if ($null -ne $x -and $x.PSObject.Properties['id']) { $items += $x } } }
 
-    $m = Invoke-Spine @('calendar-members', $Database, '--allowed-domain', $AllowedDomain)
+    $m = Invoke-Spine (@('calendar-members', $Database) + $domArgs)
     if ($m.Code -ne 0) { throw ('calendar-members failed (exit ' + $m.Code + ')') }
     $people = @()
     if ($m.Out) { foreach ($x in ($m.Out | ConvertFrom-Json)) { if ($null -ne $x -and $x.PSObject.Properties['mailbox']) { $people += $x } } }
@@ -249,7 +252,10 @@ function Invoke-Pass {
 
     $sent = 0; $failed = 0
     foreach ($item in $items) {
-        if (-not $item.mailbox.ToLower().EndsWith('@' + $AllowedDomain.ToLower())) {
+        $box = $item.mailbox.ToLower()
+        $allowed = $false
+        foreach ($d in $AllowedDomain) { if ($box.EndsWith('@' + $d.ToLower())) { $allowed = $true } }
+        if (-not $allowed) {
             [void](Invoke-Spine @('calendar-mark', $Database, '--id', "$($item.id)", '--status', 'FAILED'))
             $failed++
             continue

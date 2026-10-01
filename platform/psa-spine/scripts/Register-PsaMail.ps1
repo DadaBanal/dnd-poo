@@ -40,7 +40,12 @@
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Register-PsaMail.ps1 -Undo -Apply
 #>
 [CmdletBinding()]
-param([switch]$Apply, [switch]$Undo, [switch]$IncludeSupport, [switch]$IncludeCalendar)
+param([switch]$Apply, [switch]$Undo, [switch]$IncludeSupport, [switch]$IncludeCalendar,
+      # The mail domains whose members have an Outlook calendar to sync. Named
+      # once, here, so PSA-Calendar's own command carries them (Dada, 2 Oct
+      # 2026: a member's mailbox on premieremedicalcenter.net). A mailbox on no
+      # named domain is never written to.
+      [string[]]$CalendarDomain = @('pmcne.ph'))
 $ErrorActionPreference = 'Stop'
 
 $Acct     = 'DND-SQL01\psa_desk'
@@ -121,7 +126,7 @@ $jobs = @{
                              Pass = 'new message\(s\)'; What = 'mail to helpdesk@ (and help@) becomes tickets on PMO Helpdesk' }
     'PSA-Mail-Support'  = @{ Script = $Pickup; Args = " -Mailbox 'support@pmcne.ph' -BoardId 'IT_HELP' -DropDir 'D:\psa\mail-drop'"
                              Pass = 'new message\(s\)'; What = 'mail to support@ becomes tickets on PMO Helpdesk' }
-    'PSA-Calendar'      = @{ Script = $Calendar; Args = " -DeskUrl 'https://desk.pmcne.ph'"
+    'PSA-Calendar'      = @{ Script = $Calendar; Args = " -DeskUrl 'https://desk.pmcne.ph' -AllowedDomain " + (($CalendarDomain | ForEach-Object { "'" + $_ + "'" }) -join ',')
                              Pass = 'write\(s\) due: \d+ written'; What = "the desk's visits and tasks on members' Outlook calendars, and their busy times back" }
     'PSA-Notify'        = @{ Script = $Notifier; Args = " -Mailbox 'helpdesk@pmcne.ph' -SendAs 'support@pmcne.ph' -PortalUrl 'https://help.pmcne.ph' -AllowedDomain '*'"
                              Pass = '\d+ due: \d+ sent, \d+ failed'; What = 'the requester emails go out' }

@@ -1344,6 +1344,40 @@ per dispatcher, theirs alone) and applies whenever you open Dispatch;
 The button says how many of how many are showing, and "saved" when the
 saved view is what you see.
 
+## When inbound mail stops, and a member's mailbox on a second domain (2 Oct 2026)
+
+Dada, 2 Oct 2026: *"add encoder@premieremedicalcenter.net to the calendar
+sync"* and *"the emails aren't syncing in again"*.
+
+**A second mail domain.** `calsync.members` only counts a member whose
+mailbox is on an allowed domain, and both calendar scripts named one. They
+now take a list: `-AllowedDomain pmcne.ph, premieremedicalcenter.net` on
+`Grant-PsaCalendars.ps1` and `Sync-PsaCalendars.ps1`, one
+`--allowed-domain` passed to the desk for each. A mailbox on no named
+domain is still never written to, so the fence is unchanged: naming a
+domain is the decision, and it is made once, out loud, on the command.
+A person is in the sync only when all three hold: a member record with that
+email, WORK or ADMIN on a board, and their domain named.
+
+**A delta link that expired stopped the pickup for ever.** Graph answers
+HTTP 410 for a saved delta link it no longer knows, and the pass threw on
+every run from then on: mail stopped and nothing started it again. The
+pickup now forgets the link on a 410, reads from `-Since` instead, and says
+so in its log. Nothing arrives twice, because the import is keyed by the
+Message-ID. This was the third different cause of the same symptom, so:
+
+**`scripts\Repair-PsaMailPickup.ps1`** reads every place it can be, in one
+pass, and says which one it is: the tasks (registered, enabled, last run,
+last result), the sign-in certificate (found, and the day it expires, never
+the thumbprint), the delta link per mailbox and the tail of its log, the
+drop and files folders including anything in `failed\`, and one real pass
+per mailbox in preview so Graph's own answer is on the record. Preview by
+default. With `-Apply` it enables and starts a task that is disabled or
+stopped, and with `-ResetDelta` it forgets an expired link, keeping a copy.
+It never registers a task, never writes a certificate, never imports mail
+and never types a credential; anything else it finds it names, with the one
+command that fixes it.
+
 ## A desk sysadmin by the member record (062, 1 Oct 2026)
 
 SQL01 part 29, root cause MEASURED: every member action on Setup › Members

@@ -6829,6 +6829,51 @@ class OutboxTest(unittest.TestCase):
         self.assertFalse(self.outbox.mark(self.conn, due[0]["id"], "SENT", at=datetime(2026, 9, 23)))
 
 
+class MailRepairScriptTest(unittest.TestCase):
+    """scripts/Repair-PsaMailPickup.ps1 says why inbound mail stopped and fixes
+    only what is safe. Nothing here can run it, so its fences are text: ASCII
+    for PowerShell 5.1, preview unless -Apply, no credential, and the same slug
+    the pickup uses or it reads the wrong files."""
+
+    SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "Repair-PsaMailPickup.ps1"
+    PICKUP = Path(__file__).resolve().parent.parent / "scripts" / "Invoke-PmcMailPickup.ps1"
+
+    def setUp(self) -> None:
+        self.text = self.SCRIPT.read_bytes().decode("ascii")      # raises if not pure ASCII
+
+    def test_it_holds_no_secret_and_prints_no_identifier(self):
+        lowered = self.text.lower()
+        for shape in ("client_secret", "password", "convertto-securestring", "apikey"):
+            self.assertNotIn(shape, lowered, shape)
+        # the ids are read from mail-app.txt and passed on, never written to the log
+        self.assertNotIn("+ $ids['Thumbprint']", self.text)
+        self.assertNotIn("+ $ids['TenantId']", self.text)
+
+    def test_it_changes_nothing_without_apply(self):
+        self.assertIn("[switch] $Apply", self.text)
+        self.assertIn("(preview: nothing is changed)", self.text)
+        for verb in ("Enable-ScheduledTask", "Start-ScheduledTask", "Remove-Item -Path $df"):
+            i = self.text.index(verb)
+            window = self.text[max(0, i - 400):i]
+            self.assertIn("$Apply", window, verb)       # every change sits under -Apply
+
+    def test_it_reads_the_same_files_the_pickup_writes(self):
+        slug = "($Address.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')"
+        self.assertIn(slug, self.text)
+        pickup = self.PICKUP.read_bytes().decode("ascii")
+        self.assertIn("($Mailbox.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')", pickup)
+        for name in ("inbox-deltalink-", "mail-pickup-"):
+            self.assertIn(name, self.text)
+            self.assertIn(name, pickup)
+
+    def test_it_names_each_cause_with_what_fixes_it(self):
+        for cause in ("is DISABLED", "HAS EXPIRED", "410", "is not registered"):
+            self.assertIn(cause, self.text, cause)
+        self.assertIn("New-PsaMailApp.ps1", self.text)
+        self.assertIn("Register-PsaMail.ps1", self.text)
+        self.assertIn("mail-why", self.text)
+
+
 class NotificationSenderScriptTest(unittest.TestCase):
     """scripts/Send-PmcNotifications.ps1: ASCII, certificate not secret, preview
     unless -Apply, domain checked again before sending, counts-only logs."""
@@ -6865,6 +6910,49 @@ class NotificationSenderScriptTest(unittest.TestCase):
         self.assertIn("if ($from -and ($script:Senders -contains $from)) { return $from }", self.text)
         self.assertIn("$mbx = [Uri]::EscapeDataString((Get-SenderFor $Item))", self.text)
         self.assertEqual(self.text.count("/sendMail"), 1)
+
+
+class CalendarDomainScriptTest(unittest.TestCase):
+    """Dada, 2 Oct 2026: a member whose mailbox is on a second domain
+    (encoder@premieremedicalcenter.net) is in the calendar sync only when that
+    domain is named. Both scripts take a list and pass one --allowed-domain for
+    each; a mailbox on no named domain is still never written to."""
+
+    DIR = Path(__file__).resolve().parent.parent / "scripts"
+
+    def test_both_calendar_scripts_take_more_than_one_domain(self):
+        grant = (self.DIR / "Grant-PsaCalendars.ps1").read_bytes().decode("ascii")
+        sync = (self.DIR / "Sync-PsaCalendars.ps1").read_bytes().decode("ascii")
+        self.assertIn("[string[]]$AllowedDomain = @('pmcne.ph')", grant)
+        self.assertIn("[string[]] $AllowedDomain = @('pmcne.ph')", sync)
+        for text in (grant, sync):
+            self.assertIn("foreach ($d in $AllowedDomain) { $domArgs += @('--allowed-domain', $d) }", text)
+        # the write still refuses a mailbox on no named domain
+        self.assertIn("foreach ($d in $AllowedDomain) { if ($box.EndsWith('@' + $d.ToLower())) { $allowed = $true } }", sync)
+        self.assertIn("if (-not $allowed) {", sync)
+
+    def test_the_engine_already_takes_a_list_of_domains(self):
+        from psaspine import calsync
+        conn = db.connect(":memory:")
+        self.addCleanup(conn.close)
+        db.init(":memory:")
+        self.assertEqual(calsync.members.__kwdefaults__, None)   # allowed_domains is required, never assumed
+
+
+class MailPickupDeltaRecoveryTest(unittest.TestCase):
+    """Dada, 2 Oct 2026: "the emails aren't syncing in again". An expired delta
+    link made Graph answer 410 and the pass threw on every run from then on.
+    The pickup now forgets the link and reads from -Since instead."""
+
+    SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "Invoke-PmcMailPickup.ps1"
+
+    def test_an_expired_delta_link_starts_a_fresh_window_instead_of_throwing(self):
+        text = self.SCRIPT.read_bytes().decode("ascii")
+        self.assertIn("if ($st -ne 410 -or $first) { throw }", text)      # only a saved link, and only 410
+        self.assertIn("Remove-Item -Path $DeltaFile -Force", text)
+        self.assertIn("$newIds.Clear()", text)                            # nothing from the dead page is kept
+        i = text.index("Graph says the saved delta link has expired")
+        self.assertIn("$first = $true", text[i:i + 700])                  # and it reads from -Since
 
 
 class TeamsSenderScriptTest(unittest.TestCase):

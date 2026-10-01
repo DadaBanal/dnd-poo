@@ -213,7 +213,28 @@ function Invoke-Pass {
     $newIds = New-Object System.Collections.Generic.List[string]
     $deltaLink = $null
     while ($uri) {
-        $page = Invoke-Graph $uri
+        # A saved delta link expires, and Graph then answers 410 Gone with
+        # error code syncStateNotFound: without this the pass threw on every
+        # run from then on and no mail was ever picked up again (Dada, 2 Oct
+        # 2026: "the emails aren't syncing in again"). Forget the link and
+        # start a fresh window from -Since; nothing already imported is
+        # imported twice, because the import is keyed by Message-ID.
+        try {
+            $page = Invoke-Graph $uri
+        } catch {
+            $st = 0
+            if ($_.Exception.PSObject.Properties['Response'] -and $_.Exception.Response) { $st = [int]$_.Exception.Response.StatusCode }
+            if ($st -ne 410 -or $first) { throw }
+            Write-Log 'Graph says the saved delta link has expired (410). Forgetting it and reading from -Since instead.'
+            if (Test-Path $DeltaFile) { Remove-Item -Path $DeltaFile -Force }
+            $sinceUtc = $Since.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+            $uri = "$Graph/users/$mbx/mailFolders/inbox/messages/delta?changeType=created" +
+                   "&`$select=id,receivedDateTime&`$filter=receivedDateTime+ge+$sinceUtc"
+            $first = $true
+            $newIds.Clear()
+            $deltaLink = $null
+            continue
+        }
         foreach ($m in $page.value) {
             $removed = $m.PSObject.Properties['@removed']
             if (-not $removed) { $newIds.Add($m.id) }

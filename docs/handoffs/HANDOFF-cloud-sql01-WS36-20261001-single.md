@@ -38,3 +38,20 @@
 ## Not verified, said once
 
 Nothing in this message was run against `DND-SQL01\PMC_SS` or Outlook from here; every "expect" is from the suite and the demo desk. Step 2's two statements are read from the generated script (MEASURED), not from a run on the live store.
+
+
+---
+
+## Added 2 Oct 2026: inbound mail, and a member's mailbox on a second domain
+
+Dada is running these himself; they are here so the record has them. **Neither needs a schema step.**
+
+| | |
+|---|---|
+| `Invoke-PmcMailPickup.ps1` | an expired delta link made Graph answer 410 and the pass threw on every run from then on, so mail stopped and nothing restarted it. It now forgets the link, reads from `-Since`, and logs that it did. No message arrives twice: the import is keyed by Message-ID. |
+| `Repair-PsaMailPickup.ps1` (new) | one pass over the tasks, the certificate, the delta links and logs, the folders, and a live preview pass per mailbox; says which of them is the cause. Preview by default; `-Apply` starts a stopped task, `-ResetDelta` forgets an expired link. |
+| `Grant-PsaCalendars.ps1`, `Sync-PsaCalendars.ps1` | `-AllowedDomain` takes a list, so a member whose mailbox is on a second domain is in the calendar sync once that domain is named. A mailbox on no named domain is still never written to. |
+
+If PSA-Calendar is registered, re-register it once so its command carries the second domain
+(`Register-PsaMail.ps1 -IncludeSupport -IncludeCalendar -Apply` leaves a registered task as it is, so remove
+`PSA-Calendar` first if its arguments must change).
