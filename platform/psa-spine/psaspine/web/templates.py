@@ -87,12 +87,9 @@ header.top nav .panel a{display:grid;grid-template-columns:18px 1fr;column-gap:1
 header.top nav .panel a .ic{width:16px;height:16px;opacity:.8;grid-column:1;grid-row:1/3;margin:0} header.top nav .panel a b{font-weight:600;grid-column:2;grid-row:1;line-height:1.3}
 header.top nav .panel a .why{grid-column:2;grid-row:2;font-size:12px;color:var(--ink-3);margin:0;font-weight:400;line-height:1.3;display:block}
 header.top nav .panel a:hover{background:var(--surface-3);text-decoration:none} header.top nav .panel a.on{background:color-mix(in srgb,var(--accent) 10%,transparent)}
-header.top nav .panel.full{display:none;left:0;min-width:0;width:max-content;max-width:calc(100vw - 32px);grid-template-columns:repeat(auto-fit,minmax(200px,max-content));gap:4px 18px;padding:12px 14px}
-header.top nav .grp:hover .panel.full,header.top nav .grp.open .panel.full,header.top nav .grp:focus-within .panel.full{display:grid}
-header.top nav .panel .col{display:flex;flex-direction:column;gap:2px;min-width:180px} header.top nav .panel .modname{font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--ink-3);padding:4px 10px 6px;display:flex;align-items:center;gap:6px}
-header.top nav .panel .modname .ic{width:14px;height:14px;opacity:.7}
-header.top nav .here{margin-left:6px;color:var(--ink);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0} header.top nav .here .sep{color:var(--ink-3);font-weight:400}
-@media (max-width:720px){header.top nav .panel.full{grid-template-columns:1fr 1fr;width:calc(100vw - 24px);max-height:calc(100vh - 70px);overflow:auto}header.top nav .here{display:none}}
+header.top nav .panel.wide{grid-template-columns:repeat(2,minmax(220px,max-content));gap:2px 10px;padding:8px}
+header.top nav .grp.on>button.top::after{content:"";position:absolute;left:10px;right:10px;bottom:-1px;height:2px;border-radius:2px;background:var(--accent)}
+header.top nav .grp.all{display:none}header.top nav .panel .col{display:flex;flex-direction:column;gap:2px}header.top nav .panel .modname{font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--ink-3);padding:10px 10px 4px;display:flex;align-items:center;gap:6px}header.top nav .panel .modname .ic{width:14px;height:14px;opacity:.7}@media (max-width:720px){header.top{padding:0 10px;gap:2px}header.top .brand{margin-right:4px}header.top .brand span{display:none}header.top nav.mega{overflow:visible;gap:0}header.top nav.mega.more{-webkit-mask-image:none;mask-image:none}header.top nav.mega>.grp:not(.all),header.top nav.mega>a.top,header.top nav.mega>a.newbtn{display:none}header.top nav .grp.all{display:inline-flex}header.top nav .grp.all .lbl{display:inline}header.top nav .grp{position:static}header.top nav .panel,header.top nav .panel.full{display:none;position:absolute;left:10px;right:10px;top:calc(100% + 4px);grid-template-columns:1fr;width:auto;min-width:0;max-height:calc(100vh - 70px);overflow:auto;padding:4px 6px 10px}header.top nav .grp.open .panel.full,header.top nav .grp:focus-within .panel.full{display:grid}}
 .dispatchwrap>.card{min-width:0} .dispatchwrap .schedwrap{max-height:calc(100vh - 330px);min-height:220px;overflow:auto;position:relative}
 table.schedgrid.dispatch thead th{position:sticky;top:0;background:var(--card);z-index:4} table.schedgrid.dispatch thead th:first-child{left:0;z-index:6}
 table.schedgrid.dispatch th.who{position:sticky;left:0;background:var(--card);z-index:5;width:132px;max-width:132px}
@@ -435,7 +432,7 @@ em{font-style:italic}
 @media (max-width:1400px){header.top nav a.top,header.top nav button.top{padding:6px 7px;font-size:13.5px}header.top nav button.top .ic.chev{display:none}}
 @media (max-width:1000px){header.top nav a .lbl{display:none} header.top nav a.on .lbl{display:inline} header.top nav a .ic{margin-right:0}
   header.top nav a.on .ic{margin-right:6px}}
-@media (max-width:1000px){header.top nav button.top .lbl{display:none}header.top nav button.top.on .lbl{display:inline}header.top nav button.top .ic{margin-right:0}header.top nav button.top.on .ic{margin-right:6px}}
+@media (max-width:1180px){header.top nav button.top .lbl,header.top nav a.top .lbl,header.top nav button.top .ic.chev{display:none}header.top nav button.top.on .lbl,header.top nav a.top.on .lbl{display:inline}header.top nav button.top .ic,header.top nav a.top .ic{margin-right:0}header.top nav button.top.on .ic,header.top nav a.top.on .ic{margin-right:6px}}
 /* a technician's phone (gap 5, 29 Sep): one column, thumb-sized controls, the board as a list of cards, and a
    quick bar on the ticket. Nothing is a separate app; the same page reads its width and its pointer. */
 .sm-only{display:none} .quick{display:none} header.top #pal-open .ic{display:none}
@@ -1072,24 +1069,36 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         return (f'<a href="{esc(href)}" title="{esc(label)}" class="{cls}{" on" if current else ""}"'
                 f'{" aria-current=page" if current else ""}>{icon(icons.get(key, key))}<span class=lbl>{esc(label)}</span></a>')
 
-    # One menu (Dada: "just pull in one menu"): a Menu button opens every
-    # module side by side, each with its pages; beside it, where you are.
-    here_group = next((label for g, label, pages in groups if any(pg[0] == active for pg in pages)), "")
-    here_page = next((pg[2] for g, label, pages in groups for pg in pages if pg[0] == active), "")
-    cols = []
-    for g, label, pages in groups:
+    # A mega menu (Dada, 1 Oct 2026: "do a mega menu instead or side menu
+    # whichever fits best"): the modules across the bar, each a word that
+    # opens its pages beneath it on hover, click or keyboard, so every page
+    # is one hover away and the pages keep their full width (a side rail
+    # would take it from the Dispatch grid and the tables). A module with
+    # one page is a plain link. The module that holds the page is underlined.
+    def panel(g, label, pages):
         links = "".join(
             f'<a href="{esc(href)}" role=menuitem{" class=on aria-current=page" if key == active else ""}>'
             f'{icon(icons.get(key, key))}<b>{esc(name)}</b>' + (f'<span class=why>{esc(blurb)}</span>' if blurb else "") + '</a>'
             for key, href, name, blurb in pages)
-        cols.append(f'<div class=col><div class=modname>{icon(icons.get(g, g))}{esc(label)}</div>{links}</div>')
-    here = (f'<span class=here>{esc(here_group)}' + (f'<span class=sep> › </span>{esc(here_page)}' if here_page and here_page != here_group else "")
-            + '</span>') if here_group else ""
+        on = any(pg[0] == active for pg in pages)
+        return (f'<div class="grp{" on" if on else ""}"><button type=button class="top{" on" if on else ""}" title="{esc(label)}" aria-haspopup=true'
+                f' aria-expanded=false>{icon(icons.get(g, g))}<span class=lbl>{esc(label)}</span>{icon("chevron", "chev")}</button>'
+                f'<div class="panel{" wide" if len(pages) > 4 else ""}" role=menu aria-label="{esc(label)}">{links}</div></div>')
     if requester:                                 # three pages: plain links, no menu to open
         nav = "".join(one(pg[0], pg[1], pg[2], cls="top", current=pg[0] == active) for _, _, pages in groups for pg in pages)
-    nav = nav if requester else (f'<div class="grp{" on" if here_group else ""}"><button type=button class="top menubtn{" on" if here_group else ""}" aria-haspopup=true'
-           f' aria-expanded=false>{icon("rows")}<span class=lbl>Menu</span>{icon("chevron", "chev")}</button>'
-           f'<div class="panel full" role=menu aria-label="Menu">{"".join(cols)}</div></div>' + here)
+    else:
+        nav = "".join(panel(g, label, pages) if len(pages) > 1 else one(pages[0][0], pages[0][1], label, cls="top", current=pages[0][0] == active)
+                      for g, label, pages in groups)
+        # On a phone the words do not fit across: one Menu button opens every
+        # module stacked, the same pages (CSS swaps the two by width).
+        cols = "".join(
+            f'<div class=col><div class=modname>{icon(icons.get(g, g))}{esc(label)}</div>' + "".join(
+                f'<a href="{esc(href)}" role=menuitem{" class=on aria-current=page" if key == active else ""}>'
+                f'{icon(icons.get(key, key))}<b>{esc(name)}</b>' + (f'<span class=why>{esc(blurb)}</span>' if blurb else "") + '</a>'
+                for key, href, name, blurb in pages) + '</div>'
+            for g, label, pages in groups)
+        nav += (f'<div class="grp all"><button type=button class="top" aria-haspopup=true aria-expanded=false>{icon("rows")}'
+                f'<span class=lbl>Menu</span></button><div class="panel full" role=menu aria-label="Menu">{cols}</div></div>')
     nav += (f'<a class="newbtn" href="/ticket/new" title="New ticket (n)">{icon("plus")}<span class=lbl>New ticket</span></a>'
             if user is not None and not requester else "")
     who = ""
@@ -1134,7 +1143,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         f"<style>{STYLE}</style></head><body{' data-requester' if requester else ''}>"
         f'<div id="nprog" aria-hidden="true"></div>{SPRITE}'
         f'<header class="top"><a class="brand" href="{"/my" if requester else "/"}"><i></i>'
-        f'{"PMC Requests" if requester else "Dada PSA"}</a>'
+        f'<span>{"PMC Requests" if requester else "Dada PSA"}</span></a>'
         f"<nav class=mega aria-label='Main'>{nav}</nav>{who}</header>"
         + (f"<main data-live='{esc(live)}'>" if live else "<main>") + f"{body}</main>"
         + (quick if quick is not None else (_quick_default(nav_items) if user is not None and not requester else ""))

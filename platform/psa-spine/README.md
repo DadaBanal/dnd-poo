@@ -1134,13 +1134,18 @@ sign-in, so the dispatch portal's behaviour is from indexed excerpts
   sandboxed PDF comes up blank or downloads). The restricted-board audit
   says viewed or downloaded.
 
-- **One menu** (Dada: "the menu cuts off use the connectwise menu or do a
-  proper mega menu", then "just pull in one menu"): a Menu button opens the
-  reference PSA's modules side by side (Service Desk, Companies, Projects,
-  Time, Finance, Reports, Setup, My requests), each with its pages and a
-  line on what each is; hover, click or keyboard, Escape closes. Beside the
-  button, where you are (Service Desk › Dispatch). A module the person's
-  access does not cover is absent.
+- **A mega menu** (Dada, 1 Oct 2026: "the menu cuts off use the connectwise
+  menu or do a proper mega menu", then "do a mega menu instead or side menu
+  whichever fits best"): the reference PSA's modules across the bar (Service
+  Desk, Companies, Projects, Time, Finance, Reports, Setup, My requests),
+  each a word that opens its pages beneath it with a line on what each is;
+  hover, click or keyboard, Escape closes; the module that holds the page is
+  underlined. A mega menu over a side rail because the desk's pages are wide
+  tables and the Dispatch grid, which a permanent rail would narrow. A
+  module the person's access does not cover is absent. It fits at 1280 with
+  nothing cut off (MEASURED); from 1180 down the modules show as icons with
+  the current one named; on a phone (720 and under) one Menu button opens
+  every module stacked, and the quick bar at the bottom stays.
 - **The requester's emails** (Dada: "use the first name", "a better
   formatted email", "make sure the replies from the tech gets advised to the
   user on the email or on the portal"): people are addressed by their first
