@@ -54,3 +54,9 @@ PMO Helpdesk also received the pack's helpdesk catalogue (it was empty) and the 
 Dada: "also the users or members cannot be removed". **Root cause (MEASURED on DND-SQL01):** every member-mutating handler in `web/views/members.py` (`board_remove`, `deactivate`, `role`, `capacity`, and add) calls `common.require_sysadmin`, which checks `ctx.user.is_sysadmin`. `auth.authenticate_windows` returns a `User` with `is_sysadmin` left at its default `False` - it is set only for a break-glass local account or an Entra/JWT `sysadmin` claim. So a **Windows (AD) sign-in is never a sysadmin**, and every member change answers 403 "a system administrator changes it". The backend `members.deactivate` works (SQL01 reproduced it as the task account).
 
 **Please let a Windows admin be a sysadmin on the desk** - a `member.is_sysadmin` flag, a `PSA_SYSADMINS` account list, or membership of an AD group checked in `authenticate_windows`. Until then member management only works through the break-glass door.
+
+## Added 1 Oct evening: Grant-PsaCalendars fails for a SQL sysadmin caller
+
+`Grant-PsaCalendars.ps1` is run by Dada (Exchange admin), who is a **SQL sysadmin** → his PMC_PSA connection resolves to schema **[dbo]**, and the desk's `db.connect` refuses it ("default schema must be [psa]"). So its step 1, `psaspine calendar-members`, throws and the grant never runs. `calsync.members` itself works (SQL01 ran it as the task account: 8 members).
+
+**SQL01's stopgap (committed):** added `-MembersFile` to the script — a JSON array of `{"mailbox": ...}` the desk produced (`D:\psa\calendar-members.json`, written as the task account), used instead of the live python call. Dada runs `Grant-PsaCalendars.ps1 -MembersFile D:\psa\calendar-members.json` (preview, then `-Apply`). **WS36:** the real fix is to run the `calendar-members` step as the task account (or let a read-only desk command accept a dbo/sysadmin connection); then `-MembersFile` is unnecessary.
