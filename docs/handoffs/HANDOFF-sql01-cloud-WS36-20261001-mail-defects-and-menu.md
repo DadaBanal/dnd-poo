@@ -48,3 +48,9 @@ PMO Helpdesk also received the pack's helpdesk catalogue (it was empty) and the 
 
 - The menu design and the per-defect code fixes above.
 - Whether Procurement's generic statuses (Assigned, In Progress, Scheduled, Waiting on Requester/Vendor, Resolved) are retired now that the procurement flow is in — Dada, on Setup.
+
+## Added 1 Oct evening: members cannot be removed from a Windows sign-in
+
+Dada: "also the users or members cannot be removed". **Root cause (MEASURED on DND-SQL01):** every member-mutating handler in `web/views/members.py` (`board_remove`, `deactivate`, `role`, `capacity`, and add) calls `common.require_sysadmin`, which checks `ctx.user.is_sysadmin`. `auth.authenticate_windows` returns a `User` with `is_sysadmin` left at its default `False` - it is set only for a break-glass local account or an Entra/JWT `sysadmin` claim. So a **Windows (AD) sign-in is never a sysadmin**, and every member change answers 403 "a system administrator changes it". The backend `members.deactivate` works (SQL01 reproduced it as the task account).
+
+**Please let a Windows admin be a sysadmin on the desk** - a `member.is_sysadmin` flag, a `PSA_SYSADMINS` account list, or membership of an AD group checked in `authenticate_windows`. Until then member management only works through the break-glass door.
