@@ -382,6 +382,19 @@ def _table(ctx, boards, shown, f, total: int) -> str:
         head.append(f"<th class='sort{' on' if on else ''}{' sm-hide' if key in SM_HIDE else ''}'>"
                     f"<a href='{t.esc(_link(f, sort=key, dir=nxt))}'>{t.esc(label)}{arrow}</a></th>")
 
+    from ... import members as _members
+    names: dict[str, str] = {}
+
+    def who(m: str) -> str:
+        # A person's name, not their sign-in: an email address as owner made the
+        # column wide enough to push the SLA chips off the card (Dada, 1 Oct).
+        if m.lower() not in names:
+            n = _members.name_of(ctx.conn, m)
+            if n == m and "@" in m:
+                n = m.split("@", 1)[0]
+            names[m.lower()] = n
+        return names[m.lower()]
+
     lines = []
     for x in shown:
         r = x["r"]
@@ -414,10 +427,10 @@ def _table(ctx, boards, shown, f, total: int) -> str:
             f"<td class='wrap sm-hide'>{t.esc(r['board_name'])}</td>"
             f"<td class=sm-hide>{t.esc(r['status_name'] or r['state'].replace('_', ' ').title())}</td>"
             f"<td>{t.badge(r['priority'])}</td>"
-            f"<td class=sm-hide>{t.esc(r['owner'] or '—')}</td>"
+            f"<td class='wrap sm-hide' title='{t.esc(r['owner'] or '')}'>{t.esc(who(r['owner']) if r['owner'] else '—')}</td>"
             f"<td class=sm-hide>{t.esc(common.human_age(r['opened_at'], now=ctx.now))}</td>"
             f"<td class='muted sm-hide'>{t.esc(common.human_age(r['updated_at'] or r['opened_at'], now=ctx.now))}</td>"
-            f"<td>{sla}</td></tr>")
+            f"<td class=sla>{sla}</td></tr>")
 
     return (
         "<div class=card style='padding:10px'>" + _bulk_bar(ctx, boards, f) +

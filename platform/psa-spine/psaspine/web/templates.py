@@ -75,6 +75,13 @@ header.top .brand i{width:22px;height:22px;border-radius:7px;display:inline-bloc
   background:linear-gradient(135deg,var(--accent),#7b93ff 60%,#9ad0ff);box-shadow:inset 0 0 0 1px rgb(255 255 255/.25)}
 header.top nav{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;flex:1;min-width:0}
 header.top nav::-webkit-scrollbar{display:none}
+/* The menu never runs under the name and sign-out (Dada, 1 Oct): it tightens on
+   narrower screens, drops its icons, and what still does not fit scrolls, with a
+   fade at the edge so nothing looks cut off. */
+@media (max-width:1700px){header.top nav a{padding:6px 7px;font-size:13.5px}}
+@media (max-width:1480px){header.top nav a svg.ic{display:none}}
+header.top nav.more{-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 28px),transparent);
+  mask-image:linear-gradient(to right,#000 calc(100% - 28px),transparent)}
 header.top nav a{position:relative;color:var(--ink-2);padding:6px 10px;border-radius:var(--r);white-space:nowrap;font-weight:500;
   transition:color var(--fast) var(--ease),background var(--fast) var(--ease)}
 header.top nav a:hover{color:var(--ink);background:var(--surface-3);text-decoration:none}
@@ -83,7 +90,7 @@ header.top nav a.on::after{content:"";position:absolute;left:10px;right:10px;bot
 header.top .newbtn{background:var(--accent);color:var(--on-accent);padding:6px 12px;border-radius:var(--r);font-weight:600;
   margin-left:6px;white-space:nowrap;transition:background var(--fast) var(--ease),transform var(--fast) var(--ease)}
 header.top .newbtn:hover{background:var(--accent-2);text-decoration:none;transform:translateY(-1px)}
-header.top .who{margin-left:auto;display:inline-flex;align-items:center;gap:10px;color:var(--ink-3);font-size:12px;white-space:nowrap}
+header.top .who{margin-left:12px;flex:0 0 auto;display:inline-flex;align-items:center;gap:10px;color:var(--ink-3);font-size:12px;white-space:nowrap}
 header.top .who a{color:var(--ink-3)}
 header.top .who .glass{color:var(--warn);font-weight:600}
 .iconbtn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:var(--r);
@@ -207,7 +214,7 @@ table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
 th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
 th{color:var(--ink-3);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
 tr:last-child td{border-bottom:none}
-.tablewrap{overflow:visible}
+.tablewrap{overflow:visible;max-width:100%}
 table.grid thead th{position:sticky;top:var(--hdr);background:var(--surface);z-index:2}
 table.grid td{padding:8px 10px;white-space:nowrap;font-variant-numeric:tabular-nums}
 table.grid td.sum{white-space:normal;min-width:220px}
@@ -241,7 +248,10 @@ input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px;margin:0;
 .muted{color:var(--ink-2)} .why{font-size:12px;color:var(--ink-3)}
 .badge{display:inline-block;min-width:28px;text-align:center;border-radius:6px;padding:1px 6px;font-weight:700;font-size:11.5px;color:#fff;letter-spacing:.2px}
 .badge.P1{background:#c62828}.badge.P2{background:#b26a00}.badge.P3{background:var(--accent)}.badge.P4{background:#6b7785}
-.sla3{display:inline-flex;gap:3px;white-space:nowrap}
+.sla3{display:inline-flex;flex-wrap:wrap;gap:3px;white-space:nowrap}
+table.grid td.sla{white-space:normal;min-width:92px;max-width:170px}
+table.grid td.wrap{overflow-wrap:anywhere}
+table.grid.cards td.muted.wrap{max-width:200px}
 .sla3 span{font-size:11px;font-weight:700;border-radius:5px;padding:1px 6px;font-variant-numeric:tabular-nums}
 .m,.o{background:var(--ok-bg);color:var(--ok)} .w{background:var(--warn-bg);color:var(--warn)}
 .b{background:var(--bad-bg);color:var(--bad)} .d{background:var(--chip);color:var(--ink-3)}
@@ -600,6 +610,10 @@ d.addEventListener("keydown",function(e){
     case "Enter":if(cur>=0){var a=$("a[href^='/ticket/']",rows[cur]);if(a)location.href=a.getAttribute("href")}break}
 });
 })();
+// The top menu fades at its right edge only when it has more than fits.
+(function(){var n=document.querySelector('header.top nav');if(!n)return;
+function f(){n.classList.toggle('more',n.scrollWidth>n.clientWidth+2&&n.scrollLeft+n.clientWidth<n.scrollWidth-2)}
+f();addEventListener('resize',f);n.addEventListener('scroll',f,{passive:true})})();
 // Click a time: a cell marked data-slot="member|YYYY-MM-DD[|HH:MM]" opens the
 // add dialog with the person and the time filled in. A click on a chip, a
 // link or a button inside the cell does what it always did.
