@@ -1044,7 +1044,13 @@ PMO Helpdesk, and the requester hears at each status change.
   name, or `PSA_HOSPITAL_NAME`).
 - **`psaspine mail-setup`**: one board's addresses, the requester switch,
   and every status and picked-up email, in one audited step; preview
-  unless `--apply`.
+  unless `--apply`. `--show` prints every email the board sends a
+  requester, on or off, with its subject and words.
+- **`scripts/Register-PsaMail.ps1`**: the host's tasks, one pass a minute
+  as the desk's task account: `PSA-Mail-Helpdesk`, `PSA-Notify`, and
+  `PSA-Mail-Support` only with `-IncludeSupport` (after PCSD stops reading
+  support@). Preview by default; a task whose first run fails is removed.
+  The run order is `docs/handoffs/HANDOFF-cloud-sql01-WS36-20261001-cutover-run.md`.
 - **More placeholders, for every email the board words.**
   `{requester}` (the requester's name from AD, else the part of the
   address before the @), `{owner}` (who has it, else *the board's team*),

@@ -6906,6 +6906,17 @@ class TeamsSenderScriptTest(unittest.TestCase):
                     self.assertFalse(m.group(1).lower() == p.lower() and m.group(1) != p,
                                      f"{path.name}: ${m.group(1)} overwrites the parameter ${p}")
 
+    def test_the_mail_tasks_hold_support_back_and_preview_first(self):
+        # 058's cut-over: Register-PsaMail.ps1 registers helpdesk@ and the sender;
+        # support@ only with -IncludeSupport (after PCSD stops reading it).
+        text = self._text("Register-PsaMail.ps1")
+        self.assertIn("if (-not $Apply) { Write-Step 'RESULT: preflight PASS. Nothing was changed", text)
+        self.assertLess(text.index("if (-not $Apply)"), text.index("Register-ScheduledTask @reg"))
+        self.assertIn("$(if ($IncludeSupport) { @('PSA-Mail-Support') } else { @() })", text)
+        self.assertIn("-SendAs 'support@pmcne.ph'", text)
+        for shape in ("client_secret", "convertto-securestring", "Write-Host $thumb", "Write-Step ($thumb"):
+            self.assertNotIn(shape, text.lower() if shape.islower() else text)
+
     def test_an_idle_pass_counts_zero_on_windows_powershell(self):
         for name in ("Send-PsaTeamsNotifications.ps1", "Send-PmcNotifications.ps1"):
             text = self._text(name)
@@ -12111,9 +12122,14 @@ class MailCutoverTest(unittest.TestCase):
             c = db.connect(path)
             self.assertEqual(c.execute("SELECT COUNT(*) FROM board_intake_address").fetchone()[0], 0)
             c.close()
-            self.assertEqual(main(args + ["--apply"]), 0)
+            self.assertEqual(main(args + ["--apply", "--show"]), 0)
             self.assertEqual(main(["mail-setup", path, "--board", "NOPE", "--actor", "x"]), 1)
         self.assertIn("PREVIEW", out.getvalue())
+        shown = out.getvalue()
+        self.assertIn("email the requester: ON", shown)
+        self.assertIn("[on] Status: Waiting on Requester", shown)
+        self.assertIn("[on] Picked up", shown)
+        self.assertIn("signed off as: Premiere Medical Center - Nueva Ecija", shown)
         c = db.connect(path)
         self.addCleanup(c.close)
         self.assertEqual(c.execute("SELECT COUNT(*) FROM board_intake_address WHERE board_id = 'IT_HELP'").fetchone()[0], 3)

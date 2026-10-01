@@ -442,6 +442,33 @@ def queue_pickup(conn: sqlite3.Connection, work_item_id: str, *, at: datetime, a
                          said_what="picked up")
 
 
+def describe_board(conn: sqlite3.Connection, board_id: str) -> str:
+    """Every email a board sends a requester, as it stands: the switch, the
+    addresses, and each email's state, subject and words, the board's own or
+    the desk's. For a person to read before mail moves; no ticket in it."""
+    from .intake import addresses_of
+    b = conn.execute("SELECT display_name, notify_requester FROM board WHERE board_id = ?", (board_id,)).fetchone()
+    out = [f"{b['display_name']} ({board_id})",
+           f"  email the requester: {'ON' if b['notify_requester'] else 'OFF (nothing below is sent)'}",
+           f"  intake addresses: {', '.join(addresses_of(conn, board_id)) or 'none'}",
+           f"  signed off as: {_hospital()}"]
+
+    def one(title, state, subject, body, whose):
+        out.append(f"\n  [{state}] {title} ({whose})")
+        out.append(f"    Subject: [PMC-000000] {subject}")
+        out.extend("    | " + line for line in body.split("\n"))
+
+    for kind in ("OPENED", "UPDATED", "CLOSED"):
+        t = template(conn, board_id, kind)
+        one(TEMPLATE_KINDS[kind], "on" if b["notify_requester"] else "off", t["subject"], t["body"],
+            "the board's words" if t["custom"] else "the desk's words")
+    for m in [pickup_mail(conn, board_id)] + status_mails(conn, board_id):
+        one("Picked up" if m["shape"] == "PICKUP" else f"Status: {m['name']}", "on" if m["enabled"] else "off",
+            m["subject"], m["body"], "the board's words" if m["custom"] else "the desk's words")
+    out.append("\n  The sender adds to each: the reference, the portal link, and how to reply.")
+    return "\n".join(out)
+
+
 OWNER = "OWNER"
 
 

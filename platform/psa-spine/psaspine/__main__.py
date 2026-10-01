@@ -182,6 +182,8 @@ def main(argv: list[str] | None = None) -> int:
                      help="every status's email and the picked-up email, keeping their words")
     pms.add_argument("--actor", required=True, help="who this is done for, for the audit trail")
     pms.add_argument("--apply", action="store_true", help="write it; without this nothing is changed")
+    pms.add_argument("--show", action="store_true",
+                     help="afterwards, print every email the board sends a requester: on or off, subject and words")
     pom = sub.add_parser("outbox-mark", help="record what the sender did with one notification")
     pom.add_argument("database", help=DB_HELP)
     pom.add_argument("--id", type=int, required=True)
@@ -484,6 +486,8 @@ def _run(conn, a) -> int:
             conn.rollback()
             print(f"refused: {exc}", file=sys.stderr)
             return 1
+        if a.show:
+            print(outbox.describe_board(conn, a.board))
         if a.apply:
             conn.commit()
             print("applied")
