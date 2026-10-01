@@ -55,17 +55,27 @@ TEMPLATE_KINDS = {
 # portal says about it (board_status.customer_description), {link} the
 # ticket on the portal, {date} the day it happened. Still no {summary}, no
 # {note} and no requester's subject: those are Dada's call under 6.1.
-PLACEHOLDERS = ("ticket", "board", "actor", "when", "requester", "status", "status_text", "owner", "link", "date")
+PLACEHOLDERS = ("ticket", "board", "actor", "when", "requester", "status", "status_text", "owner", "link", "date",
+                "hospital")
 PLACEHOLDER_HELP = ", ".join("{" + p + "}" for p in PLACEHOLDERS)
+# {hospital}: the name every requester email signs off with. Deployment
+# config (PSA_HOSPITAL_NAME), else PMC's own name.
+HOSPITAL = "Premiere Medical Center - Nueva Ecija"
+# How every desk email to a requester ends: the board that has it, then the
+# hospital. The sender adds the reference, the portal link and how to reply.
+_SIGN = "\n\n{board}\n{hospital}"
+_WARD = ("\n\nIf this is stopping care on the ward right now, call the helpdesk and quote {ticket}; "
+         "an email can wait, a patient cannot.")
 DEFAULTS = {
     "OPENED": ("We have your request",
-               "We have your request and it is in the queue. You do not need to do "
-               "anything; we will update you here as it moves."),
+               "Hello {requester},\n\n{board} has your request, as of {date}, and it is with {owner}. You do not "
+               "need to do anything; we will email you as it moves." + _WARD + _SIGN),
     "UPDATED": ("Your request has been updated",
-                "{board} has added an update to your request. Sign in to the portal to read it."),
+                "Hello {requester},\n\n{board} has added an update to your request. Sign in to the portal to read "
+                "it." + _SIGN),
     "CLOSED": ("Your request is closed",
-               "{board} has closed your request. If it is not fixed, reply to this email and it "
-               "reopens. On the portal you can tell us how we did, one to five."),
+               "Hello {requester},\n\n{board} has closed your request, as of {date}. If it is not fixed, reply to "
+               "this email and it reopens. On the portal you can tell us how we did, one to five." + _SIGN),
     "ASSIGNED": ("Assigned to you on {board}", "{ticket} on {board} was assigned to you by {actor}."),
     "SCHEDULED": ("Scheduled for you on {board}", "{ticket} on {board}: a visit booked for you by {actor}, {when}."),
     "APPROVAL": ("A request needs your approval",
@@ -124,6 +134,11 @@ def _name(conn: sqlite3.Connection, who: str | None) -> str:
     return name_of(conn, who)
 
 
+def _hospital() -> str:
+    import os
+    return " ".join((os.environ.get("PSA_HOSPITAL_NAME") or HOSPITAL).split())[:120]
+
+
 def _values(conn: sqlite3.Connection, work_item_id: str, *, at: datetime, actor: str = "desk", when: str = "") -> dict:
     """Every placeholder's value for one ticket now. {link} stays a
     placeholder: the portal's address is the sender's config, filled in by
@@ -134,13 +149,14 @@ def _values(conn: sqlite3.Connection, work_item_id: str, *, at: datetime, actor:
         "  LEFT JOIN board_status s ON s.board_status_id = t.board_status_id WHERE t.work_item_id = ?",
         (work_item_id,)).fetchone()
     if row is None:
-        return {"ticket": work_item_id, "actor": actor, "when": when, "date": f"{at.day} {at:%B %Y}", "link": "{link}"}
+        return {"ticket": work_item_id, "actor": actor, "when": when, "date": f"{at.day} {at:%B %Y}", "link": "{link}",
+                "hospital": _hospital()}
     status = (row["status"] or "").lstrip(">")
     return {"ticket": work_item_id, "board": row["board"], "actor": actor, "when": when,
             "requester": _name(conn, row["requested_by"]) or "there",
             "status": status, "status_text": row["customer_description"] or status,
             "owner": _name(conn, row["owner"]) if row["owner"] else f"the {row['board']} team",
-            "link": "{link}", "date": f"{at.day} {at:%B %Y}"}
+            "link": "{link}", "date": f"{at.day} {at:%B %Y}", "hospital": _hospital()}
 
 
 def reply_from(conn: sqlite3.Connection, work_item_id: str) -> str | None:
@@ -242,8 +258,11 @@ def queue_requester(conn: sqlite3.Connection, work_item_id: str, reason: str, *,
     return True
 
 
-# 058: an email to the requester at each status change, worded per status.
+# 058: the requester hears as their ticket moves: at each status change,
+# worded per status, and when someone picks the ticket up. Both share one
+# unsent slot per ticket, so the requester reads where it is now.
 STATUS = "REQUESTER_STATUS"
+PICKED_UP = "PICKED_UP"
 # The desk's words, by what kind of status it is. A board writes its own per
 # status on its Emails tab; these are what it starts from.
 STATUS_SHAPES = {
@@ -254,19 +273,22 @@ STATUS_SHAPES = {
 }
 STATUS_DEFAULTS = {
     "WAITING": ("We need something from you",
-                "Hello {requester},\n\nTo go on with your request we need something from you: {status_text}.\n\n"
-                "Reply to this email with it, and keep the reference in the subject so your reply joins your "
-                "request. {owner} has it on {board}."),
+                "Hello {requester},\n\nTo go on with your request, {owner} needs something from you: {status_text}."
+                "\n\nReply to this email with it and keep the reference in the subject, so your reply joins your "
+                "request. The ward, the room or the machine is all we need; never a patient's details." + _SIGN),
     "RESOLVED": ("We think your request is fixed",
-                 "Hello {requester},\n\n{board} thinks your request is fixed, as of {date}: {status_text}.\n\n"
-                 "If it is not, reply to this email and it comes back to us."),
-    "CLOSED": ("Your request is closed",
-               "Hello {requester},\n\n{board} has closed your request, as of {date}. If it is not fixed, reply to "
-               "this email and it reopens. On the portal you can tell us how we did, one to five."),
+                 "Hello {requester},\n\n{owner} thinks your request is fixed, as of {date}: {status_text}.\n\n"
+                 "Please check it on the ward. If it is not fixed, reply to this email and it comes straight back "
+                 "to us." + _SIGN),
+    "CLOSED": DEFAULTS["CLOSED"],
     "OTHER": ("Your request: {status}",
               "Hello {requester},\n\nYour request has moved on, as of {date}: {status_text}.\n\n"
-              "It is with {owner} on {board}. You do not need to do anything; we will tell you when it moves again."),
+              "It is with {owner}. You do not need to do anything; we will email you when it moves again." + _WARD + _SIGN),
 }
+PICKUP_DEFAULT = ("{owner} has picked up your request",
+                  "Hello {requester},\n\n{owner} from {board} has picked up your request, as of {date}, and is "
+                  "working on it now: {status_text}.\n\nIf {owner} needs anything they will contact you. To add "
+                  "something, reply to this email and keep the reference in the subject." + _WARD + _SIGN)
 _WAITS_ON_REQUESTER = re.compile(r"requester|customer|from you|your reply", re.I)
 
 
@@ -283,6 +305,16 @@ def status_shape(status_row) -> str:
     return "OTHER"
 
 
+def _mail(conn, board_id: str, key: str, name: str, shape: str, default: tuple[str, str]) -> dict:
+    row = conn.execute("SELECT * FROM status_mail WHERE board_id = ? AND mail_key = ?", (board_id, key)).fetchone()
+    custom = bool(row and row["subject"] and row["body"])
+    return {"board_status_id": key, "mail_key": key, "board_id": board_id, "name": name, "shape": shape,
+            "enabled": bool(row and row["enabled"]),
+            "subject": row["subject"] if custom else default[0], "body": row["body"] if custom else default[1],
+            "default": default, "custom": custom,
+            "updated_at": row["updated_at"] if row else None, "updated_by": row["updated_by"] if row else None}
+
+
 def status_mail(conn: sqlite3.Connection, board_status_id: str) -> dict:
     """One status's email: whether it is on, and its words (the board's own,
     else the desk's for that kind of status)."""
@@ -290,14 +322,12 @@ def status_mail(conn: sqlite3.Connection, board_status_id: str) -> dict:
     if st is None:
         raise ValueError("no such status")
     shape = status_shape(st)
-    row = conn.execute("SELECT * FROM status_mail WHERE board_status_id = ?", (board_status_id,)).fetchone()
-    subject, body = STATUS_DEFAULTS[shape]
-    custom = bool(row and row["subject"] and row["body"])
-    return {"board_status_id": board_status_id, "board_id": st["board_id"], "name": st["name"].lstrip(">"),
-            "shape": shape, "enabled": bool(row and row["enabled"]),
-            "subject": row["subject"] if custom else subject, "body": row["body"] if custom else body,
-            "custom": custom, "updated_at": row["updated_at"] if row else None,
-            "updated_by": row["updated_by"] if row else None}
+    return _mail(conn, st["board_id"], board_status_id, st["name"].lstrip(">"), shape, STATUS_DEFAULTS[shape])
+
+
+def pickup_mail(conn: sqlite3.Connection, board_id: str) -> dict:
+    """The email a requester gets when someone picks their ticket up."""
+    return _mail(conn, board_id, PICKED_UP, "Picked up", "PICKUP", PICKUP_DEFAULT)
 
 
 def status_mails(conn: sqlite3.Connection, board_id: str) -> list[dict]:
@@ -306,49 +336,61 @@ def status_mails(conn: sqlite3.Connection, board_id: str) -> list[dict]:
         (board_id,))]
 
 
-def set_status_mail(conn: sqlite3.Connection, board_status_id: str, *, enabled: bool, at: datetime, actor: str,
-                    subject: str | None = None, body: str | None = None, desk_words: bool = False) -> dict:
-    """Turn one status's email on or off, and keep the board's own words for
-    it, or go back to the desk's (desk_words). Words are checked as a
-    template's are."""
+def _set_mail(conn, cur: dict, *, enabled: bool, at: datetime, actor: str,
+              subject: str | None, body: str | None, desk_words: bool) -> None:
     from . import db
-    cur = status_mail(conn, board_status_id)
     if desk_words:
         subj = text = None
     elif subject is None and body is None:
         subj, text = (cur["subject"], cur["body"]) if cur["custom"] else (None, None)
     else:
         subj, text = _checked(subject, body)
-        if (subj, text) == STATUS_DEFAULTS[cur["shape"]]:
+        if (subj, text) == tuple(cur["default"]):
             subj = text = None                  # the desk's words, kept as the desk's
     stamp = at.isoformat(sep=" ", timespec="minutes")
-    conn.execute("DELETE FROM status_mail WHERE board_status_id = ?", (board_status_id,))
-    conn.execute("INSERT INTO status_mail (board_status_id, enabled, subject, body, updated_at, updated_by)"
-                 " VALUES (?,?,?,?,?,?)", (board_status_id, 1 if enabled else 0, subj, text, stamp, actor))
-    db.audit(conn, at=stamp, actor=actor, action="STATUS_MAIL", subject_kind="board_status", subject_id=board_status_id,
-             detail=("on" if enabled else "off") + ("; own words" if subj else "; the desk's words"))
+    conn.execute("DELETE FROM status_mail WHERE board_id = ? AND mail_key = ?", (cur["board_id"], cur["mail_key"]))
+    conn.execute("INSERT INTO status_mail (board_id, mail_key, enabled, subject, body, updated_at, updated_by)"
+                 " VALUES (?,?,?,?,?,?,?)", (cur["board_id"], cur["mail_key"], 1 if enabled else 0, subj, text, stamp, actor))
+    db.audit(conn, at=stamp, actor=actor, action="STATUS_MAIL", subject_kind="board", subject_id=cur["board_id"],
+             detail=f"{cur['name']}: " + ("on" if enabled else "off") + ("; own words" if subj else "; the desk's words"))
+
+
+def set_status_mail(conn: sqlite3.Connection, board_status_id: str, *, enabled: bool, at: datetime, actor: str,
+                    subject: str | None = None, body: str | None = None, desk_words: bool = False) -> dict:
+    """Turn one status's email on or off, and keep the board's own words for
+    it, or go back to the desk's (desk_words). Words are checked as a
+    template's are."""
+    _set_mail(conn, status_mail(conn, board_status_id), enabled=enabled, at=at, actor=actor,
+              subject=subject, body=body, desk_words=desk_words)
     return status_mail(conn, board_status_id)
 
 
+def set_pickup_mail(conn: sqlite3.Connection, board_id: str, *, enabled: bool, at: datetime, actor: str,
+                    subject: str | None = None, body: str | None = None, desk_words: bool = False) -> dict:
+    _set_mail(conn, pickup_mail(conn, board_id), enabled=enabled, at=at, actor=actor,
+              subject=subject, body=body, desk_words=desk_words)
+    return pickup_mail(conn, board_id)
+
+
 def set_all_status_mails(conn: sqlite3.Connection, board_id: str, *, enabled: bool, at: datetime, actor: str) -> int:
-    """Every live status on the board on (or off) at once, keeping each one's
-    words. Returns how many changed."""
+    """Every live status on the board, and the picked-up email, on (or off)
+    at once, keeping each one's words. Returns how many changed."""
     n = 0
     for m in status_mails(conn, board_id):
         if m["enabled"] != enabled:
             set_status_mail(conn, m["board_status_id"], enabled=enabled, at=at, actor=actor)
             n += 1
+    if pickup_mail(conn, board_id)["enabled"] != enabled:
+        set_pickup_mail(conn, board_id, enabled=enabled, at=at, actor=actor)
+        n += 1
     return n
 
 
-def queue_status(conn: sqlite3.Connection, work_item_id: str, board_status_id: str, *,
-                 at: datetime, actor: str) -> bool:
-    """The requester's email for the status their ticket has just entered,
-    when the board has turned that status's email on. The same gates as every
-    requester email: the board's requester switch, a person who expects to
-    hear back, an address we can resolve. One unsent status email per ticket:
-    a newer status replaces it, since the requester only needs where it is now.
-    Returns whether one is queued."""
+def _queue_moving(conn, work_item_id: str, mail_for, *, at: datetime, actor: str, said_what: str) -> bool:
+    """Queue a requester's moving-on email (a status's, or picked up) when
+    the board has it on. The same gates as every requester email: the board's
+    requester switch, a person who expects to hear back, an address we can
+    resolve. One unsent one per ticket: a newer one replaces it."""
     from .board import _event
     from .intake import subject_token
     row = conn.execute(
@@ -359,7 +401,7 @@ def queue_status(conn: sqlite3.Connection, work_item_id: str, board_status_id: s
     if row["intake_source"] not in NOTIFY_ON_OPEN or not address_for(conn, row["requested_by"]):
         return False
     try:
-        mail = status_mail(conn, board_status_id)
+        mail = mail_for(row["board_id"])
     except ValueError:
         return False
     if not mail["enabled"] or mail["board_id"] != row["board_id"]:
@@ -378,8 +420,26 @@ def queue_status(conn: sqlite3.Connection, work_item_id: str, board_status_id: s
             "INSERT INTO notification (work_item_id, recipient, recipient_role, subject, body, created_at, status,"
             " from_address) VALUES (?,?,?,?,?,?,'PENDING',?)",
             (work_item_id, row["requested_by"], STATUS, subject, said, stamp, reply_from(conn, work_item_id)))
-    _event(conn, work_item_id, stamp, "NOTIFY", "desk", f"email to the requester queued: now {mail['name']}")
+    _event(conn, work_item_id, stamp, "NOTIFY", "desk", f"email to the requester queued: {said_what}")
     return True
+
+
+def queue_status(conn: sqlite3.Connection, work_item_id: str, board_status_id: str, *,
+                 at: datetime, actor: str) -> bool:
+    """The requester's email for the status their ticket has just entered."""
+    def mail_for(board_id):
+        m = status_mail(conn, board_status_id)
+        return m if m["board_id"] == board_id else {**m, "enabled": False}
+    name = conn.execute("SELECT name FROM board_status WHERE board_status_id = ?", (board_status_id,)).fetchone()
+    return _queue_moving(conn, work_item_id, mail_for, at=at, actor=actor,
+                         said_what="now " + ((name["name"] if name else board_status_id).lstrip(">")))
+
+
+def queue_pickup(conn: sqlite3.Connection, work_item_id: str, *, at: datetime, actor: str) -> bool:
+    """The requester's email when someone picks their ticket up: the owner
+    changed to a person after the ticket was opened."""
+    return _queue_moving(conn, work_item_id, lambda b: pickup_mail(conn, b), at=at, actor=actor,
+                         said_what="picked up")
 
 
 OWNER = "OWNER"

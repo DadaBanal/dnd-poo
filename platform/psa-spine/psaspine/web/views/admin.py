@@ -440,20 +440,24 @@ def board_setup(ctx, board_id):
                 + (f"<button class=ghost type=submit name=reset value=1>Back to the desk's words</button>" if tpl["custom"] else "")
                 + "</div></form></div>")
         smails = _outbox.status_mails(ctx.conn, board_id)
-        on = sum(1 for m in smails if m["enabled"])
+        pick = _outbox.pickup_mail(ctx.conn, board_id)
+        on = sum(1 for m in smails if m["enabled"]) + (1 if pick["enabled"] else 0)
         sblocks = []
-        for m in smails:
+        for m in [pick] + smails:
             sid = t.esc(m["board_status_id"])
             sblocks.append(
                 f"<div class=card id='st-{sid}'><h3>{t.icon('mail')}{t.esc(m['name'])} "
                 + ("<span class=pill>on</span>" if m["enabled"] else "<span class=muted style='font-weight:400;font-size:.85em'>off</span>")
-                + f" <span class=muted style='font-weight:400;font-size:.85em'>a status that {t.esc(_outbox.STATUS_SHAPES[m['shape']])}"
+                + (" <span class=muted style='font-weight:400;font-size:.85em'>when someone takes the ticket"
+                   if m["shape"] == "PICKUP" else
+                   f" <span class=muted style='font-weight:400;font-size:.85em'>a status that {t.esc(_outbox.STATUS_SHAPES[m['shape']])}")
                 + (f" · the board's own words · {t.esc(m['updated_at'])} · {t.esc(m['updated_by'])}" if m["custom"] else " · the desk's words")
                 + "</span></h3>"
                 f"<form method=post action='/admin/board/{bid}/emails/status' class=stack style='max-width:none'>"
                 f"<input type=hidden name=board_status_id value='{sid}'>"
                 f"<label><input type=checkbox name=enabled value=1 style='width:auto'{' checked' if m['enabled'] else ''}> "
-                "Email the requester when a ticket enters this status</label>"
+                + ("Email the requester when someone picks the ticket up (its owner is set or changes)"
+                   if m["shape"] == "PICKUP" else "Email the requester when a ticket enters this status") + "</label>"
                 f"<label>Subject (after the ticket's reference)<input name=subject required maxlength=120 value='{t.esc(m['subject'])}'></label>"
                 f"<label>Body<textarea name=body required style='min-height:110px'>{t.esc(m['body'])}</textarea></label>"
                 "<div><button type=submit>Save</button> "
@@ -466,14 +470,14 @@ def board_setup(ctx, board_id):
                    "this board's name, <code>{requester}</code> the requester's name, <code>{owner}</code> who has it "
                    "(else the board's team), <code>{status}</code> the status's name, <code>{status_text}</code> what the "
                    "portal says about that status, <code>{link}</code> the ticket on the portal, <code>{date}</code> the "
-                   "day, <code>{actor}</code> who did it, <code>{when}</code> a visit's time. There is no placeholder for "
+                   "day, <code>{hospital}</code> the hospital's name, <code>{actor}</code> who did it, <code>{when}</code> a visit's time. There is no placeholder for "
                    "the summary, a note or the requester's own subject: a subject and a body leave the building, and the "
                    "words stay behind the sign-in. The reference, the portal link and how to reply are added by the "
                    "sender. A board with no words of its own uses the desk's, shown here.</p>"
                    f"<p class=sub>Emails to requesters on this board: {switch}.</p></div>"
                    "<h2 style='margin-top:18px'>An email at each status</h2>"
-                   f"<div class=card><p class=why>When a ticket enters a status that is on here, its requester gets "
-                   "that status's email. A status that closes the ticket sends its own email instead of the closed email "
+                   f"<div class=card><p class=why>When a ticket enters a status that is on here, or someone picks it "
+                   "up, its requester gets that email, in the hospital's words below. A status that closes the ticket sends its own email instead of the closed email "
                    "below. Two changes before the sender runs send one email, the newer. A reply keeps the reference in "
                    f"the subject and joins the ticket. <b>{on}</b> of {len(smails)} on.</p>"
                    f"<form method=post action='/admin/board/{bid}/emails/status-all' class=inline>"
@@ -2099,15 +2103,20 @@ def save_status_email(ctx, board_id):
     common.require_board(ctx, board_id, need="ADMIN")
     f = ctx.request.form()
     sid = f.get("board_status_id", "")
-    if not ctx.conn.execute("SELECT 1 FROM board_status WHERE board_status_id = ? AND board_id = ?", (sid, board_id)).fetchone():
+    if sid == _outbox.PICKED_UP:
+        def put(**kw):
+            return _outbox.set_pickup_mail(ctx.conn, board_id, **kw)
+    elif ctx.conn.execute("SELECT 1 FROM board_status WHERE board_status_id = ? AND board_id = ?", (sid, board_id)).fetchone():
+        def put(**kw):
+            return _outbox.set_status_mail(ctx.conn, sid, **kw)
+    else:
         return _done(board_id, "emails", "Not saved: that status is not on this board")
     try:
         if f.get("reset") == "1":
-            m = _outbox.set_status_mail(ctx.conn, sid, enabled=f.get("enabled") == "1", desk_words=True,
-                                        at=ctx.now, actor=ctx.user.id)
+            m = put(enabled=f.get("enabled") == "1", desk_words=True, at=ctx.now, actor=ctx.user.id)
         else:
-            m = _outbox.set_status_mail(ctx.conn, sid, enabled=f.get("enabled") == "1", subject=f.get("subject", ""),
-                                        body=f.get("body", ""), at=ctx.now, actor=ctx.user.id)
+            m = put(enabled=f.get("enabled") == "1", subject=f.get("subject", ""), body=f.get("body", ""),
+                    at=ctx.now, actor=ctx.user.id)
         ctx.conn.commit()
     except ValueError as exc:
         ctx.conn.rollback()

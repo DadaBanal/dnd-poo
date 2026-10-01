@@ -12,17 +12,20 @@ CREATE TABLE board_intake_address (
   board_id  TEXT NOT NULL REFERENCES board(board_id)
 );
 
--- The email a requester gets when their ticket enters a status. No row: that
--- status sends nothing, as before 058. A row with no words uses the desk's
--- words for that kind of status. Placeholders as for mail_template, and none
--- carries the summary, a note or the requester's own subject (6.1).
+-- The emails a requester gets as their ticket moves: one per status (mail_key
+-- is the board_status_id) and one when someone picks the ticket up (mail_key
+-- 'PICKED_UP'). No row: nothing is sent, as before 058. A row with no words
+-- uses the desk's words. Placeholders as for mail_template, and none carries
+-- the summary, a note or the requester's own subject (6.1).
 CREATE TABLE status_mail (
-  board_status_id TEXT PRIMARY KEY REFERENCES board_status(board_status_id),
+  board_id        TEXT NOT NULL REFERENCES board(board_id),
+  mail_key        TEXT NOT NULL,
   enabled         INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
   subject         TEXT,
   body            TEXT,
   updated_at      TEXT NOT NULL,
-  updated_by      TEXT NOT NULL
+  updated_by      TEXT NOT NULL,
+  PRIMARY KEY (board_id, mail_key)
 );
 
 -- Which address a notification goes out from: the one the requester wrote

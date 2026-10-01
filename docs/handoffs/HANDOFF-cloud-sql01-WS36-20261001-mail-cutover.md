@@ -106,7 +106,7 @@ The command drops `-KeySpec Signature`.
 
    **Pass:**
    - **tables:** 126 → **128** (`board_intake_address`, `status_mail`);
-   - **columns:** 1,215 → **1,224**, which is 2 + 6 + `notification.from_address`;
+   - **columns:** 1,215 → **1,225**, which is 2 + 7 + `notification.from_address`;
    - **indexes and triggers:** 52 indexes and 4 triggers, unchanged. The port's own verify block now expects 128
      tables, 52 indexes and 4 triggers (MEASURED from the generated port);
    - **rows:** none changed, except any `board.intake_address` value moving into `board_intake_address`.
@@ -133,13 +133,50 @@ The command drops `-KeySpec Signature`.
      - Move the support@ test ticket to *Waiting on Requester*. One email arrives at the test sender, from `support@`,
        asking for a reply.
      - Reply to it, keeping the reference. The reply lands on the same ticket.
-6. **Stop PCSD reading support@** before step 4's support@ task goes live. That is Dada's decision; see below.
+6. **Stop PCSD reading support@** before step 4's support@ task goes live. Dada said yes on 1 Oct.
+
+## Dada's decisions, 1 Oct 2026, verbatim, and what came of them
+
+> "turn on
+> also the reply back to each status changes or when the ticket gets picked up make sure its set for the hospital and is dynamic and yes will sto ppcsd"
+
+- **"turn on".** PMO Helpdesk gets its three addresses, the requester switch on, and every status email plus the
+  picked-up email on. **SQL01 runs it after 058, in one audited step (preview first):**
+
+  ```powershell
+  C:\PMC\Python312\python.exe -m psaspine mail-setup "<the desk's connection>" --board IT_HELP `
+    --addresses "helpdesk@pmcne.ph, help@pmcne.ph, support@pmcne.ph" --email-requester on --moving-emails on `
+    --actor "sql01 for dada.banal"
+  # then the same with --apply
+  ```
+
+  This replaces step 2 of "SQL01: in order" below. The Emails tab still shows and edits every word.
+- **"when the ticket gets picked up".** Built. A **picked-up email** goes to the requester when a ticket's owner is set
+  or changes to a person, after it was opened.
+  - It shares the one unsent slot with the status emails. So "picked up" and then "In Progress" a minute later is one
+    email, the newer one.
+  - An owner set by auto-assign while the ticket is being opened sends nothing extra: the opened email already names
+    who has it.
+  - It is a card on the Emails tab, and *Turn every status on* includes it.
+- **"set for the hospital and is dynamic".** All of the desk's requester wording is rewritten.
+  - Every email greets the requester by name.
+  - Every email says who has the ticket and the date.
+  - The status emails use the status's own portal wording.
+  - Every email signs off with the board and the hospital. `{hospital}` is a new placeholder: PMC's name, or
+    `PSA_HOSPITAL_NAME` if it is set.
+  - The opened and status emails say to call the helpdesk, quoting the reference, if the problem is stopping care on
+    the ward.
+  - "Waiting on Requester" asks for the ward, the room or the machine, never a patient's details.
+  - No phone number is written into the code; none is in the record.
+- **"yes will stop pcsd".** PCSD stops reading `support@` at cut-over. The order is: PCSD stops reading `support@`,
+  then the `support@` pickup task goes live.
 
 ## Not decided here (Dada's)
 
 - **The requester's own subject.** Whether it may be echoed back as `Re: …` is not built. Threading works without it,
   through the `[PMC-…]` reference token in the subject.
-- **What stops reading `support@`** at cut-over, on the PCSD side.
+- **What stops reading `support@`:** decided on 1 Oct. PCSD stops. When it stops is Dada's, and it comes before the
+  `support@` pickup goes live.
 
 ## Evidence
 

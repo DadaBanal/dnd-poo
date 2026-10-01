@@ -11967,14 +11967,15 @@ class MailCutoverTest(unittest.TestCase):
         board.change_status(self.conn, wid, "IT_HELP.IN_PROGRESS", at=self.at, actor="bob")
         self.assertEqual(self._status_mails(wid), [])
         self.assertEqual(outbox.set_all_status_mails(self.conn, "IT_HELP", enabled=True, at=self.at, actor="dada"),
-                         len(outbox.status_mails(self.conn, "IT_HELP")))
+                         len(outbox.status_mails(self.conn, "IT_HELP")) + 1)          # and picked up
         board.update_fields(self.conn, wid, at=self.at, actor="bob", owner="bob")
         board.change_status(self.conn, wid, "IT_HELP.ASSIGNED", at=self.at, actor="bob")
         [m] = self._status_mails(wid)
         self.assertEqual(m["subject"], f"[{wid}] Your request: Assigned")
         self.assertIn("Hello Ward 3 Station,", m["body"])
         self.assertIn("Assigned to a technician", m["body"])                      # {status_text}: the portal's words
-        self.assertIn("It is with Bob Reyes on PMO Helpdesk.", m["body"])               # {owner}, {board}
+        self.assertIn("It is with Bob Reyes.", m["body"])                          # {owner}
+        self.assertTrue(m["body"].endswith("PMO Helpdesk\nPremiere Medical Center - Nueva Ecija"))   # {board}, {hospital}
         self.assertIn("1 October 2026", m["body"])                                 # {date}
         self.assertNotIn("chart", m["subject"] + m["body"])                        # the requester's subject never comes back
         self.assertEqual(m["from_address"], "support@pmcne.ph")                    # where they wrote
@@ -12045,6 +12046,64 @@ class MailCutoverTest(unittest.TestCase):
         outbox.set_template(self.conn, "IT_HELP", "OPENED", subject="Thanks {requester}", body="{board} has it. {link}",
                             at=self.at, actor="dada")
 
+    def test_the_requester_hears_when_someone_picks_the_ticket_up(self):
+        from psaspine import board, outbox, tickets
+        self.conn.execute("UPDATE board SET notify_requester = 1 WHERE board_id = 'IT_HELP'")
+        outbox.set_pickup_mail(self.conn, "IT_HELP", enabled=True, at=self.at, actor="dada")
+        wid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="Monitor flickers", impact="I3", urgency="U3",
+                                  requested_by="ward3@pmcne.ph", at=self.at, source="PORTAL")
+        opened = self.conn.execute("SELECT body FROM notification WHERE work_item_id = ? AND recipient_role = 'REQUESTER'",
+                                   (wid,)).fetchone()["body"]
+        self.assertIn("Hello Ward 3 Station,", opened)                              # the desk's words, for the hospital
+        self.assertIn("it is with the PMO Helpdesk team", opened)
+        self.assertIn("stopping care on the ward", opened)
+        self.assertTrue(opened.endswith("Premiere Medical Center - Nueva Ecija"))
+        self.assertEqual(self._status_mails(wid), [])                               # nobody has it yet
+        board.update_fields(self.conn, wid, at=self.at, actor="bob", owner="bob")
+        [m] = self._status_mails(wid)
+        self.assertEqual(m["subject"], f"[{wid}] Bob Reyes has picked up your request")
+        self.assertIn("Bob Reyes from PMO Helpdesk has picked up your request, as of 1 October 2026", m["body"])
+        # handed to someone else before the first has gone: one email, the newer
+        board.update_fields(self.conn, wid, at=self.at, actor="bob", owner="ward3")
+        [m] = self._status_mails(wid)
+        self.assertIn("Ward 3 Station has picked up", m["subject"])
+        # cleared: nobody picked it up, nothing new is said
+        board.update_fields(self.conn, wid, at=self.at, actor="bob", owner="")
+        self.assertIn("Ward 3 Station has picked up", self._status_mails(wid)[0]["subject"])
+        # the hospital's name is deployment config
+        os.environ["PSA_HOSPITAL_NAME"] = "PMC Annex"
+        self.addCleanup(os.environ.pop, "PSA_HOSPITAL_NAME", None)
+        self.assertEqual(outbox._values(self.conn, wid, at=self.at)["hospital"], "PMC Annex")
+
+    def test_mail_setup_turns_a_board_on_in_one_step_and_previews_first(self):
+        import io
+        from contextlib import redirect_stdout, redirect_stderr
+        from psaspine.__main__ import main
+        path = str(Path(self.tmp.name) / "cli-mail.db")
+        db.init(path).close()
+        args = ["mail-setup", path, "--board", "IT_HELP", "--addresses", "helpdesk@pmcne.ph, help@pmcne.ph, support@pmcne.ph",
+                "--email-requester", "on", "--moving-emails", "on", "--actor", "sql01 for dada.banal"]
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            from psaspine import setup
+            c = db.connect(path)
+            setup.apply_starter(c, "IT_HELP", actor="t", at=self.at)
+            c.commit()
+            c.close()
+            self.assertEqual(main(args), 0)                                         # preview
+            c = db.connect(path)
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM board_intake_address").fetchone()[0], 0)
+            c.close()
+            self.assertEqual(main(args + ["--apply"]), 0)
+            self.assertEqual(main(["mail-setup", path, "--board", "NOPE", "--actor", "x"]), 1)
+        self.assertIn("PREVIEW", out.getvalue())
+        c = db.connect(path)
+        self.addCleanup(c.close)
+        self.assertEqual(c.execute("SELECT COUNT(*) FROM board_intake_address WHERE board_id = 'IT_HELP'").fetchone()[0], 3)
+        self.assertEqual(c.execute("SELECT notify_requester FROM board WHERE board_id = 'IT_HELP'").fetchone()[0], 1)
+        self.assertEqual(c.execute("SELECT COUNT(*) FROM status_mail WHERE board_id = 'IT_HELP' AND enabled = 1").fetchone()[0],
+                         c.execute("SELECT COUNT(*) FROM board_status WHERE board_id = 'IT_HELP' AND inactive = 0").fetchone()[0] + 1)
+
     def test_the_emails_tab_turns_statuses_on_and_saves_their_words(self):
         WebWSGITest.setUp(self)
         self.addCleanup(self.tmp.cleanup)
@@ -12061,16 +12120,15 @@ class MailCutoverTest(unittest.TestCase):
         self.assertIn("<b>0</b> of", body)
         status, headers, _ = self._call("POST", "/admin/board/IT_HELP/emails/status-all", cookie=root, form={"enabled": "1"})
         self.assertTrue(status.startswith("303"), status)
-        self.assertEqual(conn.execute("SELECT COUNT(*) FROM status_mail s JOIN board_status b ON b.board_status_id ="
-                                      " s.board_status_id WHERE b.board_id = 'IT_HELP' AND s.enabled = 1").fetchone()[0],
-                         conn.execute("SELECT COUNT(*) FROM board_status WHERE board_id = 'IT_HELP' AND inactive = 0").fetchone()[0])
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM status_mail WHERE board_id = 'IT_HELP' AND enabled = 1").fetchone()[0],
+                         conn.execute("SELECT COUNT(*) FROM board_status WHERE board_id = 'IT_HELP' AND inactive = 0").fetchone()[0] + 1)
         status, headers, _ = self._call("POST", "/admin/board/IT_HELP/emails/status", cookie=root,
                                         form={"board_status_id": "IT_HELP.IN_PROGRESS", "enabled": "1",
                                               "subject": "Fixed?", "body": "{summary} is fixed"})
         self.assertIn("Not+saved", dict(headers)["Location"])
         self._call("POST", "/admin/board/IT_HELP/emails/status", cookie=root,
                    form={"board_status_id": "IT_HELP.IN_PROGRESS", "subject": "Fixed?", "body": "Is it fixed, {requester}?"})
-        row = conn.execute("SELECT enabled, subject FROM status_mail WHERE board_status_id = 'IT_HELP.IN_PROGRESS'").fetchone()
+        row = conn.execute("SELECT enabled, subject FROM status_mail WHERE board_id = 'IT_HELP' AND mail_key = 'IT_HELP.IN_PROGRESS'").fetchone()
         self.assertEqual(tuple(row), (0, "Fixed?"))                               # unticked: off, words kept
         # another board's status cannot be set from this board's page
         status, headers, _ = self._call("POST", "/admin/board/IT_HELP/emails/status", cookie=root,

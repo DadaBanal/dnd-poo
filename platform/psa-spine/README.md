@@ -1032,13 +1032,26 @@ PMO Helpdesk, and the requester hears at each status change.
   requester* switch, a ticket that came from a person, an address we can
   resolve. Nothing is on until a board turns it on (one button turns every
   status on). Audited as `STATUS_MAIL`.
+- **Picked up** (`status_mail` row `PICKED_UP`; a card on the Emails tab).
+  The requester is emailed when their ticket's owner is set or changes to
+  a person after it was opened. It shares the status emails' one unsent
+  slot, so the newer wins. Auto-assign at opening sends nothing extra: the
+  opened email names who has it.
+- **The hospital's words.** Every desk default to a requester greets them
+  by name, says who has the ticket and when, uses the status's portal
+  wording, says to call the helpdesk with the reference if it is stopping
+  care on the ward, and signs off with the board and `{hospital}` (PMC's
+  name, or `PSA_HOSPITAL_NAME`).
+- **`psaspine mail-setup`**: one board's addresses, the requester switch,
+  and every status and picked-up email, in one audited step; preview
+  unless `--apply`.
 - **More placeholders, for every email the board words.**
   `{requester}` (the requester's name from AD, else the part of the
   address before the @), `{owner}` (who has it, else *the board's team*),
   `{status}`, `{status_text}` (what the portal says about the status:
   `board_status.customer_description`), `{link}` (the ticket on the
-  portal, filled in by the sender from `PSA_PORTAL_URL`), `{date}`, beside
-  `{ticket}`, `{board}`, `{actor}` and `{when}`. Still no `{summary}`, no
+  portal, filled in by the sender from `PSA_PORTAL_URL`), `{date}`, `{hospital}`,
+  beside `{ticket}`, `{board}`, `{actor}` and `{when}`. Still no `{summary}`, no
   `{note}`, and no echo of the requester's own subject: whether that may
   come back is Dada's decision under §6.1, not built.
 - **Replies come from the address the requester wrote to.** A requester

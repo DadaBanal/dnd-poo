@@ -3304,14 +3304,16 @@ END;
 
 -- --------------------------------------------------------------------------
 -- status_mail   (from schema/058_mail_cutover.sql)
--- The email a requester gets when their ticket enters a status. No row: that
--- status sends nothing, as before 058. A row with no words uses the desk's
--- words for that kind of status. Placeholders as for mail_template, and none
--- carries the summary, a note or the requester's own subject (6.1).
+-- The emails a requester gets as their ticket moves: one per status (mail_key
+-- is the board_status_id) and one when someone picks the ticket up (mail_key
+-- 'PICKED_UP'). No row: nothing is sent, as before 058. A row with no words
+-- uses the desk's words. Placeholders as for mail_template, and none carries
+-- the summary, a note or the requester's own subject (6.1).
 IF OBJECT_ID(N'psa.[status_mail]', N'U') IS NULL
 BEGIN
 CREATE TABLE psa.[status_mail] (
-    [board_status_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_status_mail] PRIMARY KEY CONSTRAINT [FK_status_mail_board_status_id] REFERENCES psa.[board_status]([board_status_id]),
+    [board_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_status_mail_board_id] REFERENCES psa.[board]([board_id]),
+    [mail_key] NVARCHAR(64) NOT NULL,
     [enabled] INT NOT NULL CONSTRAINT [DF_status_mail_enabled] DEFAULT (1) CONSTRAINT [CK_status_mail_01] CHECK (enabled IN (0, 1)),
     [subject] NVARCHAR(400) NULL,
     [body] NVARCHAR(MAX) NULL,
@@ -3320,7 +3322,8 @@ CREATE TABLE psa.[status_mail] (
 
     -- Dates are kept as the source wrote them. These read them,
     -- without deciding for the reader which shape was meant.
-    [updated_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [updated_at], 126), CASE WHEN [updated_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [updated_at], 112) END))
+    [updated_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [updated_at], 126), CASE WHEN [updated_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [updated_at], 112) END)),
+    CONSTRAINT [PK_status_mail] PRIMARY KEY ([board_id], [mail_key])
 );
 END;
 

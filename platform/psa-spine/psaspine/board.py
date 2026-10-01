@@ -538,6 +538,7 @@ def move(conn: sqlite3.Connection, work_item_id: str, to_board_id: str, *,
     from . import outbox, workflow
     if owner and owner != ticket["owner"]:
         outbox.queue_owner(conn, work_item_id, at=at, actor=actor)
+        outbox.queue_pickup(conn, work_item_id, at=at, actor=actor)
     workflow.fire(conn, work_item_id, "ON_HANDOVER", at=at)
     return {"work_item_id": work_item_id, "board_id": to_board_id,
             "board_status_id": landed}
@@ -1028,5 +1029,7 @@ def update_fields(conn: sqlite3.Connection, work_item_id: str, *, at: datetime,
         if any(c.startswith("owner ") for c in changed):
             from . import outbox, workflow
             outbox.queue_owner(conn, work_item_id, at=at, actor=actor)
+            if norm(owner):
+                outbox.queue_pickup(conn, work_item_id, at=at, actor=actor)   # 058: the requester hears who has it
             workflow.fire(conn, work_item_id, "ON_OWNER_CHANGE", at=at)
     return changed

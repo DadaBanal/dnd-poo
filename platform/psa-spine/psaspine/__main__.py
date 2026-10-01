@@ -171,6 +171,17 @@ def main(argv: list[str] | None = None) -> int:
                      help="which sender is asking: EMAIL (the Graph sender) or TEAMS (the webhook sender)")
     pob.add_argument("--desk-url",
                      help="https:// address of the desk for the link on a Teams card (else PSA_PUBLIC_URL)")
+    pms = sub.add_parser("mail-setup",
+                         help="058: one board's mail in one step - its intake addresses, the requester switch, "
+                              "and the status and picked-up emails. Preview unless --apply")
+    pms.add_argument("database", help=DB_HELP)
+    pms.add_argument("--board", required=True, help="the board_id, e.g. IT_HELP")
+    pms.add_argument("--addresses", help="the board's intake addresses, comma separated (replaces the list)")
+    pms.add_argument("--email-requester", choices=("on", "off"), help="the board's requester switch")
+    pms.add_argument("--moving-emails", choices=("on", "off"),
+                     help="every status's email and the picked-up email, keeping their words")
+    pms.add_argument("--actor", required=True, help="who this is done for, for the audit trail")
+    pms.add_argument("--apply", action="store_true", help="write it; without this nothing is changed")
     pom = sub.add_parser("outbox-mark", help="record what the sender did with one notification")
     pom.add_argument("database", help=DB_HELP)
     pom.add_argument("--id", type=int, required=True)
@@ -444,6 +455,41 @@ def _run(conn, a) -> int:
             print(f"refused: {exc}", file=sys.stderr)
             return 1
         print(outbox.as_json(items))
+        return 0
+
+    if a.cmd == "mail-setup":
+        from . import intake, outbox
+        now = datetime.now()
+        b = conn.execute("SELECT board_id, display_name, notify_requester FROM board WHERE board_id = ?",
+                         (a.board,)).fetchone()
+        if b is None:
+            print(f"refused: no board {a.board!r}", file=sys.stderr)
+            return 1
+        try:
+            if a.addresses is not None:
+                got = intake.set_addresses(conn, a.board, a.addresses, at=now, actor=a.actor)
+                print(f"{b['display_name']}: intake {', '.join(got) or 'none'}")
+            if a.email_requester:
+                want = 1 if a.email_requester == "on" else 0
+                if (b["notify_requester"] or 0) != want:
+                    conn.execute("UPDATE board SET notify_requester = ? WHERE board_id = ?", (want, a.board))
+                    db.audit(conn, at=now.isoformat(sep=" ", timespec="minutes"), actor=a.actor,
+                             action="BOARD_CONFIG", subject_kind="board", subject_id=a.board,
+                             detail=f"email the requester: {a.email_requester}")
+                print(f"{b['display_name']}: email the requester {a.email_requester}")
+            if a.moving_emails:
+                n = outbox.set_all_status_mails(conn, a.board, enabled=a.moving_emails == "on", at=now, actor=a.actor)
+                print(f"{b['display_name']}: {n} status and picked-up email(s) turned {a.moving_emails}")
+        except ValueError as exc:
+            conn.rollback()
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        if a.apply:
+            conn.commit()
+            print("applied")
+        else:
+            conn.rollback()
+            print("PREVIEW: nothing written; re-run with --apply")
         return 0
 
     if a.cmd == "outbox-mark":
