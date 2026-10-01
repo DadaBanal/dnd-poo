@@ -2458,3 +2458,37 @@ start redirecting tickets to these one from help@pmnce.ph and support@pmcne.ph".
    - **support@ is a separate mailbox: the live PMC Service Board, with `PCSD-` tickets.** The record shows staff using
      it in September (PCSD-1358 and PCSD-1360, among others).
    - So redirecting support@ is a cut-over from that board, not a mail setting. SQL01 has asked Dada to confirm it.
+
+### Part 27: 2026-10-01, about 12:30 +08:00. **5bd3887 live; schema 058 PASS; `init` and `mail-setup` are the operator's**
+
+WS36's `HANDOFF-cloud-sql01-WS36-20261001-mail-cutover.md`, step 1 of "SQL01: in order". MEASURED.
+
+1. **Dada's two admin steps PASS**, 12:16–12:17, from `D:\psa\bin\New-PsaMailApp.ps1 -Apply` (SQL01 read
+   `D:\psa\logs\New-PsaMailApp.log` back, and Dada pasted the same output).
+   - The Entra app has 1 key credential and **0 API permissions**; its service principal exists.
+   - Both desk mailboxes are SharedMailbox; Mail.Read and Mail.Send are **InScope True** on each, and **False** on
+     another mailbox.
+   - Its identifiers are in `D:\psa\mail-app.txt`, readable by SYSTEM, Administrators and the task account only.
+   - **One cosmetic fault, fixed after the run:** with `-Apply` the log still said "would register the application"
+     on the line before "registered the application". The script now says "registering". It changed nothing.
+2. **The suite at `5bd3887`, in a separate worktree: 618 run, OK, 2 skipped, 0 errors** (337 s). The worktree was
+   removed afterwards.
+3. **Schema 058, by the sitting-1 road: stop, port, pull, start.**
+   - **Backup:** COPY_ONLY, `D:\PMC\backup\PMC_PSA\PMC_PSA_pre058-20261001.bak`, 21.1 MB, `RESTORE VERIFYONLY` "valid".
+   - **Preview:** 128 tables, 52 indexes, 4 triggers.
+   - **Baseline**, after PSA-Desk stopped at 12:28:09: 126 tables, 4 triggers, 1,215 columns, 52 indexes, 8,756 rows.
+   - **Apply** at 12:28:19: "Created: 128 tables, 4 triggers, 52 indexes"; its gate passed; "Seeded: nothing".
+   - **Result:** tables **126 → 128** (`board_intake_address`, `status_mail`); indexes 52 → 52; triggers 4 → 4;
+     **no existing row count changed**; nothing lost.
+   - **Columns 1,215 → 1,226, not WS36's 1,225.** The one extra is the port's computed `*_parsed` twin beside
+     `status_mail.updated_at`: `board_intake_address` 2 + `status_mail` 8 (7 declared and the twin) +
+     `notification.from_address` 1 = 11. WS36's figure counted the declared columns only, as part 21's 941 did.
+   - `notification.from_address` is NULL-able.
+4. **Pull and start.** Fast-forward to `5bd3887` at 12:28:20; PSA-Desk started 12:28:23, 8085 listening, `/login` 200.
+   **The desk was down 14 seconds.**
+5. **Still the operator's, in one run:** `D:\psa\bin\Part27-AsDesk.ps1`. It runs `init` twice (058's init moves any
+   `board.intake_address` into the new table; PMO Helpdesk had none, so nothing should move), then `mail-setup` for
+   `IT_HELP` in preview and with `--apply`, on Dada's "turn on": the three addresses, the requester switch, and every
+   status and picked-up email. It reads back the claims, the `status_mail` rows and the audit.
+6. **Then SQL01:** the two pickups in preview, three test mails, and PSA-Notify with `-SendAs support@pmcne.ph`.
+   The `support@` pickup goes live only after PCSD stops reading `support@`.
