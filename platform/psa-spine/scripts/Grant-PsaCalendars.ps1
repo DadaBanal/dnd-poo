@@ -85,7 +85,14 @@ if ($MembersFile) {
 }
 $wanted = @()
 foreach ($x in (($out | Out-String).Trim() | ConvertFrom-Json)) { if ($null -ne $x -and $x.PSObject.Properties['mailbox']) { $wanted += $x.mailbox.ToLowerInvariant() } }
-Write-Step ('the desk has ' + $wanted.Count + ' member(s) with a mailbox in ' + ($AllowedDomain -join ', '))
+if ($MembersFile) {
+    # A file is an explicit list, so no domain filter is applied to it: what is
+    # in the file is what is granted. Say so, rather than naming domains that
+    # had no part in it.
+    Write-Step ('the file names ' + $wanted.Count + ' mailbox(es); no domain filter is applied to a file')
+} else {
+    Write-Step ('the desk has ' + $wanted.Count + ' member(s) with a mailbox in ' + ($AllowedDomain -join ', '))
+}
 
 Write-Step 'signing in to Exchange Online (a browser window opens) ...'
 Connect-ExchangeOnline -ShowBanner:$false
