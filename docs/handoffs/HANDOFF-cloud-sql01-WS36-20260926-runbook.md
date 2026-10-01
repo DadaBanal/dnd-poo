@@ -2429,3 +2429,32 @@ Everything below is MEASURED.
      overrides it, and the people who raised these tickets have seen the numbers.
    - SQL01 asked which Dada means: delete all 10 and restart at `PMC-000001`, or delete all 10 and continue at
      `PMC-000011`. Either way, a COPY_ONLY backup comes first.
+
+*Part 26, continued, 11:30 +08:00:* **the ticket reset, done.** Dada, verbatim: "start again pmc-000001 and we can
+start redirecting tickets to these one from help@pmnce.ph and support@pmcne.ph". MEASURED:
+1. **The reset.**
+   - **Backup:** COPY_ONLY, `D:\PMC\backup\PMC_PSA\PMC_PSA_pre-ticket-reset-20261001.bak`, 20.0 MB. `RESTORE
+     VERIFYONLY` says "valid".
+   - **PSA-Desk was stopped from 11:29:37 to 11:29:47.**
+   - **One transaction deleted:**
+     - the rows naming the tickets: `attachment` 2, `survey_response` 1, `ticket_clock` 29, `ticket_event` 59,
+       `ticket_handover` 3;
+     - all 10 `ticket_number` rows, the 10 tickets and the 10 work items;
+     - then `DBCC CHECKIDENT ('psa.ticket_number', RESEED, 0)`.
+   - **One `TICKETS_RESET` audit row** says what was done and on whose word.
+   - **The 2 attachment files were moved, not deleted,** to `D:\psa\files-reset-20261001`, because the database backup
+     does not carry them.
+2. **Read back:** 0 tickets, 0 work items and 0 issued numbers; no row anywhere still names a ticket; the identity is 0.
+3. **The next ticket is `PMC-000001`.** Proved on a scratch table in tempdb: identity (1,1), 10 rows, all deleted,
+   reseeded to 0, then one insert. It got **1**.
+4. **Overriding D4 was Dada's decision, 1 Oct.** The numbers `PMC-000001` to `PMC-000010` will be issued again.
+5. **Mail intake, for help@ and support@: not started, and nothing of it exists on the host.**
+   - Checked: no certificate, no `D:\psa\mail-drop` or `mail-state`, no PSA-Mail task. Control: the `*.pmcne.ph`
+     certificate is visible in the same store.
+   - The road is `HANDOFF-cloud-sql01-WS36-20260923-mail.md`: steps 2 (Entra app) and 3 (Exchange RBAC for
+     Applications) need Dada's admin roles.
+   - **help@ is recorded as an alias of `helpdesk@`** (pmc-estate), so it is the helpdesk mailbox's pickup. Not
+     re-verified today.
+   - **support@ is a separate mailbox: the live PMC Service Board, with `PCSD-` tickets.** The record shows staff using
+     it in September (PCSD-1358 and PCSD-1360, among others).
+   - So redirecting support@ is a cut-over from that board, not a mail setting. SQL01 has asked Dada to confirm it.
