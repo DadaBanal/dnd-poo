@@ -2492,3 +2492,36 @@ WS36's `HANDOFF-cloud-sql01-WS36-20261001-mail-cutover.md`, step 1 of "SQL01: in
    status and picked-up email. It reads back the claims, the `status_mail` rows and the audit.
 6. **Then SQL01:** the two pickups in preview, three test mails, and PSA-Notify with `-SendAs support@pmcne.ph`.
    The `support@` pickup goes live only after PCSD stops reading `support@`.
+
+*Part 27, continued, 12:33 +08:00:* **`init` and `mail-setup` PASS; both pickups preview clean, but only with two
+one-line fixes to `Invoke-PmcMailPickup.ps1`. The tasks are held until WS36 lands them.** MEASURED.
+
+1. **The as-desk run, 12:30:52.** `init` twice, exit 0, the same ready line; no board row changed outside
+   `intake_address`, and no board had one to move.
+2. **`mail-setup` for IT_HELP**, preview then `--apply`, on Dada's "turn on". Read back afterwards:
+   - **claimed:** `help@pmcne.ph`, `helpdesk@pmcne.ph`, `support@pmcne.ph`, all on `IT_HELP`;
+   - **`status_mail`:** 9 rows, 9 enabled (8 statuses and picked-up);
+   - **`IT_HELP`:** `notify_requester = 1`, `notify_owner = 0`;
+   - **audit:** 1 `BOARD_CONFIG`, 1 `BOARD_INTAKE_ADDRESS`, 9 `STATUS_MAIL`.
+3. **Two defects in `scripts/Invoke-PmcMailPickup.ps1` at `5bd3887`, both on this host's path, both measured.** The
+   script cannot complete one pass as written.
+   - **(a) Line 270 cannot be formatted.** It interpolates `$Database` into a `-f` format string. A SQL Server
+     connection string holds `{ODBC Driver 17 for SQL Server}`, and `-f` reads those braces as a placeholder:
+     *"Error formatting a string: Input string was not in a correct format"*, before any sign-in. A SQLite path has no
+     braces, which is why it passes in the container.
+   - **(b) Line 200 overwrites the `-Since` parameter.** `[datetime] $Since` is the parameter; line 200 assigns the
+     formatted string to `$since`. **PowerShell variable names are case-insensitive, so those are one variable.**
+     Line 220 then calls `$Since.ToString('yyyy-MM-dd HH:mm')` on a string: *"Cannot find an overload for ToString and
+     the argument count: 1"*. It fails on the first pass of every new mailbox, which is every pass until a delta link
+     is saved. This is the estate's known trap (`pmc-estate` §6, 18 Sep 2026).
+   - **Suggested, and what SQL01 tested with:** build the first line by concatenation, not `-f`; rename the local at
+     line 200 to `$sinceIso` (and its one use at line 202).
+4. **With those two fixes, in a scratch copy only (the repository is untouched), both previews PASS:**
+   - `helpdesk@pmcne.ph` → "PREVIEW: 0 new message(s) first sync from 2026-10-01 12:32. Nothing written; delta link
+     not saved.";
+   - `support@pmcne.ph` → the same.
+   - **The negative test passes:** the same call for a third mailbox fails **403 Forbidden**.
+   - So the certificate, the sign-in, `-BoardId`, and the Exchange scope are all proved for both mailboxes, 15 minutes
+     after the grant rather than the documented 2 hours.
+5. **Held until WS36 lands the two fixes:** the test mails and the two PSA-Mail tasks. A task must run the repository's
+   script, not a scratch copy. Nothing on the host runs a pickup today, and `support@` still feeds PCSD alone.
