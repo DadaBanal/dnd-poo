@@ -1289,6 +1289,35 @@ kept), see every token with its board, scope, maker and last use, and
 disable or re-enable one. `create-api-token` on the host still works and
 lands in the same list.
 
+## The ticket screen in the reference PSA's shape: Screen layout, Pod configuration, pod height (1 Oct 2026)
+
+Dada: "make the ticket view similar to the ticket view from ConnectWise and
+all of its function, making the pods adjustable pod height". VERIFIED 1 Oct
+2026 against the vendor's blog and three integrators' guides (Thread,
+1Stream, Visionary 360): the reference ticket screen has a **Screen Layout**
+gear that opens **Pod Configuration** with Available and Displayed lists,
+pods are dragged into place, and notes carry an avatar and a colour per
+author. The desk's ticket page now has the same:
+
+- **The gear** at the right of the ticket's actions opens **Pod
+  configuration**: every card on the page under Displayed or Available,
+  tick to show, untick to hide, arrows to order, Save. Reset layout puts
+  everything back.
+- **Pod height**: drag a card's bottom edge and it keeps that height, the
+  rest scrolling inside, as the reference pods do; the page remembers it.
+- With the Size button (Full, Medium, Half, Small), the fold, the move
+  arrows, the column swap and drag: order, column, size, height, folded or
+  hidden, each per person, in their browser, with one Reset.
+- Already there and unchanged: avatars and a colour per author on the
+  notes, Discussion / Internal / Resolution, the Contact tick, time on the
+  note, standard notes, files with the viewer, tasks, configurations,
+  schedule, the audit trail under History.
+
+Not built, said once: rich text and inline images inside a note (the
+reference's 2019 note features) and issue tags. A note here is plain text
+with files beside it, by the PHI fence (an image is reviewed before anyone
+else sees it).
+
 ## Pod sizes, and whose rows the Dispatch board shows (063, 1 Oct 2026)
 
 **Pod sizes** (Dada: "size the pods like small half medium full as the

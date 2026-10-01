@@ -7533,6 +7533,11 @@ class DeskLookTest(unittest.TestCase):
         pods = _re.findall(r"data-pod=([a-z]+)", ticket)
         # two columns, each with its shipped order; every card is in one of them
         cols = _re.findall(r"<div class=pods data-col=([a-z]+) data-order='([a-z,]+)'>", ticket)
+        # the reference PSA's Screen Layout gear and Pod configuration (Displayed / Available)
+        self.assertIn("data-open=poddlg", ticket)
+        self.assertIn("<dialog id=poddlg", ticket)
+        self.assertIn("data-list=on", ticket)
+        self.assertIn("data-list=off", ticket)
         self.assertEqual([c for c, _ in cols], ["left", "right"])
         order = [k for _, o in cols for k in o.split(",")]
         self.assertTrue(set(pods) <= set(order), set(pods) - set(order))

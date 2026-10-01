@@ -191,6 +191,12 @@ td.center{text-align:center} th.colhead label{font-weight:600;white-space:nowrap
 /* words stay readable whatever the width: a note never runs past a comfortable line */
 .stream li>div:first-child,.card .prose,.card p.why,.card .note-body{max-width:80ch}
 .pods .card[data-pod] h3{padding-right:140px}
+/* a card's body: drag its bottom edge for the height you want (the reference PSA's pods scroll inside); hidden cards are the Pod configuration's */
+.pods .card[data-pod]>.podbody{resize:vertical;overflow:auto;min-height:48px;padding-bottom:6px}
+.pods .card.hidden{display:none}
+.podlist li{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:var(--r-sm)} .podlist li:hover{background:var(--surface-3)}
+.podlist li .nm{flex:1} .podlist li .iconbtn{width:24px;height:24px} .podlist li .iconbtn .ic{width:13px;height:13px}
+#poddlg::backdrop{background:rgb(0 0 0/.35)} #poddlg h4{margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.3px;color:var(--ink-3)}
 .pods:empty::after,.pods.blank::after{content:"Drop a card here";display:block;color:var(--ink-3);font-size:12px;text-align:center;padding:14px;border:1px dashed var(--line-2);border-radius:var(--r-lg)}
 .pods .podreset{font-size:12px;color:var(--ink-3);text-align:right;margin:-6px 0 12px}
 .pods .podreset button{padding:2px 8px;font-size:12px}
@@ -575,7 +581,7 @@ addEventListener("pageshow",function(){if(np)np.className=""});
 (function(){var cols=$$(".rail .pods");if(!cols.length)return;var KEY="psa-pods";
   function state(){var st;try{st=JSON.parse(localStorage.getItem(KEY)||"{}")}catch(e){st={}}
     if(!st.cols&&st.order){st.cols={right:st.order};delete st.order}      /* the one-column layout of before: that was the right column */
-    st.cols=st.cols||{};st.folded=st.folded||{};st.sizes=st.sizes||{};return st}
+    st.cols=st.cols||{};st.folded=st.folded||{};st.sizes=st.sizes||{};st.hidden=st.hidden||{};st.heights=st.heights||{};return st}
   var SIZES=["full","m","half","s"],SIZEWORD={full:"Full width",m:"Medium (two thirds)",half:"Half",s:"Small (a third)"};
   function sizeOf(p){return SIZES.filter(function(z){return z!=="full"&&p.classList.contains("sz-"+z)})[0]||"full"}
   function setSize(p,z){SIZES.forEach(function(x){p.classList.remove("sz-"+x)});if(z!=="full")p.classList.add("sz-"+z);
@@ -586,7 +592,7 @@ addEventListener("pageshow",function(){if(np)np.className=""});
   function all(){return cols.reduce(function(a,c){return a.concat(pods(c))},[])}
   function byKey(k){return all().filter(function(c){return c.dataset.pod===k})[0]}
   function ic(n){return '<svg class=ic aria-hidden=true><use href=#i-'+n+'></use></svg>'}
-  function customised(st){return Object.keys(st.folded).length>0||Object.keys(st.sizes).length>0||cols.some(function(c){var want=(st.cols[c.dataset.col]||[]).join(),
+  function customised(st){return Object.keys(st.folded).length>0||Object.keys(st.sizes).length>0||Object.keys(st.hidden).length>0||Object.keys(st.heights).length>0||cols.some(function(c){var want=(st.cols[c.dataset.col]||[]).join(),
     shipped=(c.dataset.order||"").split(",").filter(function(k){return byKey(k)}).join();return want&&want!==shipped})}
   function apply(){var st=state();
     cols.forEach(function(c){(st.cols[c.dataset.col]||[]).forEach(function(k){var p=byKey(k);if(p)c.appendChild(p)})});
@@ -594,14 +600,20 @@ addEventListener("pageshow",function(){if(np)np.className=""});
     cols.forEach(function(c){pods(c).forEach(function(p){var named=(st.cols[c.dataset.col]||[]).indexOf(p.dataset.pod)>=0;
       if(!named)c.appendChild(p)})});
     all().forEach(function(p){p.classList.toggle("collapsed",!!st.folded[p.dataset.pod]);setSize(p,st.sizes[p.dataset.pod]||"full");
+      p.classList.toggle("hidden",!!st.hidden[p.dataset.pod]);var pb=$(":scope>.podbody",p);if(pb)pb.style.height=st.heights[p.dataset.pod]?st.heights[p.dataset.pod]+"px":"";
       var sw=$(".swap",p);if(sw){var here=p.parentNode.dataset.col,to=here==="left"?"right":"left";$("use",sw).setAttribute("href","#i-"+to);
         sw.title="Move to the "+to+" column";sw.setAttribute("aria-label",sw.title)}});
     cols.forEach(function(c){c.classList.toggle("blank",pods(c).length===0)});
     var r=$(".podreset");if(r)r.style.display=customised(st)?"":"none"}
   function remember(){var st=state();st.cols={};cols.forEach(function(c){st.cols[c.dataset.col]=pods(c).map(function(p){return p.dataset.pod})});
     st.folded={};all().forEach(function(p){if(p.classList.contains("collapsed"))st.folded[p.dataset.pod]=1});
-    st.sizes={};all().forEach(function(p){var z=sizeOf(p);if(z!=="full")st.sizes[p.dataset.pod]=z});save(st);apply()}
+    st.sizes={};all().forEach(function(p){var z=sizeOf(p);if(z!=="full")st.sizes[p.dataset.pod]=z});
+    st.hidden={};all().forEach(function(p){if(p.classList.contains("hidden"))st.hidden[p.dataset.pod]=1});
+    st.heights={};all().forEach(function(p){var pb=$(":scope>.podbody",p),h=pb&&parseInt(pb.style.height,10);if(h)st.heights[p.dataset.pod]=h});save(st);apply()}
   function dropInto(from,target,before){if(!from||from===before)return;if(before)target.insertBefore(from,before);else target.appendChild(from);remember()}
+  all().forEach(function(c){var h3=$(":scope>h3",c);if(h3&&!$(":scope>.podbody",c)){var pb=d.createElement("div");pb.className="podbody";
+    Array.prototype.slice.call(c.childNodes).forEach(function(n){if(n!==h3&&!(n.classList&&n.classList.contains("podctl")))pb.appendChild(n)});c.appendChild(pb);
+    pb.addEventListener("mouseup",function(){if(pb.style.height)setTimeout(remember,0)})}});
   all().forEach(function(c){c.draggable=true;var h=$("h3",c);if(!h)return;
     var ctl=d.createElement("span");ctl.className="podctl";
     ctl.innerHTML='<button type=button class="iconbtn mv" data-dir=-1 title="Move up" aria-label="Move up">'+ic("up")+'</button>'
@@ -626,7 +638,26 @@ addEventListener("pageshow",function(){if(np)np.className=""});
     col.addEventListener("drop",function(e){e.preventDefault();col.classList.remove("over-col");dropInto(byKey(e.dataTransfer.getData("text/plain")),col,null)})});
   var rail=cols[0].parentNode,reset=d.createElement("div");reset.className="podreset";reset.innerHTML='<button type=button class=ghost>Reset layout</button>';
   reset.style.display="none";reset.style.gridColumn="1/-1";rail.insertBefore(reset,rail.firstChild);
-  $("button",reset).addEventListener("click",function(){save({});all().forEach(function(c){c.classList.remove("collapsed");setSize(c,"full")});
+  var dlg=$("#poddlg");if(dlg){
+    function fill(){var on=$("[data-list=on]",dlg),off=$("[data-list=off]",dlg);on.innerHTML="";off.innerHTML="";
+      all().forEach(function(p){var li=d.createElement("li");li.dataset.pod=p.dataset.pod;var nm=$("h3",p)?$("h3",p).textContent.trim():p.dataset.pod;
+        var hid=p.classList.contains("hidden");
+        li.innerHTML='<input type=checkbox '+(hid?"":"checked")+' aria-label="Show '+nm.replace(/"/g,"")+'"><span class=nm>'+nm.replace(/[<>&]/g,"")+'</span>'
+          +(hid?"":'<button type=button class="iconbtn up" title="Up">'+ic("up")+'</button><button type=button class="iconbtn dn" title="Down">'+ic("down")+'</button>');
+        (hid?off:on).appendChild(li)})}
+    dlg.addEventListener("click",function(e){var b=e.target.closest("button");if(!b)return;var li=b.closest("li");
+      if(b.classList.contains("up")&&li&&li.previousElementSibling)li.parentNode.insertBefore(li,li.previousElementSibling);
+      else if(b.classList.contains("dn")&&li&&li.nextElementSibling)li.parentNode.insertBefore(li.nextElementSibling,li);
+      else if(b.classList.contains("podsave")){var seen={};
+        $$("li",dlg).forEach(function(l){var p=byKey(l.dataset.pod);if(!p)return;p.classList.toggle("hidden",!$("input",l).checked)});
+        /* the Displayed order becomes the order within each column */
+        cols.forEach(function(c){$$("li",$("[data-list=on]",dlg)).forEach(function(l){var p=byKey(l.dataset.pod);if(p&&p.parentNode===c)c.appendChild(p)});
+          pods(c).filter(function(p){return p.classList.contains("hidden")}).forEach(function(p){c.appendChild(p)})});
+        remember();dlg.close()}
+      else if(b.classList.contains("podreset-all")){$("button",reset).click();dlg.close()}});
+    dlg.addEventListener("change",function(e){if(e.target.type==="checkbox"){var li=e.target.closest("li"),p=byKey(li.dataset.pod);if(p){p.classList.toggle("hidden",!e.target.checked);fill()}}});
+    d.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest("[data-open=poddlg]");if(b)fill()},true)}
+  $("button",reset).addEventListener("click",function(){save({});all().forEach(function(c){c.classList.remove("collapsed","hidden");setSize(c,"full");var pb=$(":scope>.podbody",c);if(pb)pb.style.height=""});
     cols.forEach(function(c){(c.dataset.order||"").split(",").forEach(function(k){var p=byKey(k);if(p)c.appendChild(p)})});apply()});
   apply()})();
 /* a button with data-open opens that dialog; data-tick ticks every box in its form, or none */

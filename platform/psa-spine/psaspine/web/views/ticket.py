@@ -291,6 +291,24 @@ def detail(ctx, work_item_id):
                     "<button class='ghost' type=submit title='Take ownership; no visit is booked'>Assign me</button></form>")
         buttons += (" <a class='btn ghost' href='#schedadd' title='Book yourself a time on it; it becomes yours if "
                     "nobody has it'>Schedule me</a>")
+    # The reference PSA's Screen Layout gear and its Pod Configuration
+    # (VERIFIED 1 Oct 2026 against the vendor's and three integrators' guides:
+    # a gear on the ticket, Pod Configuration, Available and Displayed, drag
+    # to arrange). Which cards show, in what order, at what size and height
+    # is this person's own and lives in their browser; the dialog's lists are
+    # built from the cards on the page.
+    buttons += (" <button type=button class='iconbtn' data-open=poddlg title='Screen layout: which cards show, and where'"
+                " aria-label='Screen layout'>" + t.icon("setup") + "</button>")
+    pod_dialog = (
+        "<dialog id=poddlg class=card style='max-width:640px;width:95%'><form method=dialog class=dlghead>"
+        "<h3 style='margin:0'>" + t.icon("setup") + "Pod configuration</h3>"
+        "<button type=submit class=iconbtn aria-label=Close>" + t.icon("x") + "</button></form>"
+        "<p class=why>Tick the cards you want on this ticket screen and put them in order; the arrows on each card and "
+        "the Size button do the rest. Drag a card's bottom edge to set its height; the page remembers it. Yours alone, "
+        "in this browser.</p><div class=grid2><div><h4>Displayed</h4><ul class='plain podlist' data-list=on></ul></div>"
+        "<div><h4>Available</h4><ul class='plain podlist' data-list=off></ul></div></div>"
+        "<p class=row style='margin-top:12px;gap:8px'><button type=button class=podsave>Save</button>"
+        "<button type=button class='ghost podreset-all'>Reset layout</button></p></dialog>")
     header = (
         (f"<div class='banner ok'>{t.icon('layers')} Merged into <a href='/ticket/{t.esc(tk['merged_into'])}'>"
          f"{t.esc(tk['merged_into'])}</a>; the work continues there.</div>" if tk["merged_into"] else "") +
@@ -555,7 +573,7 @@ def detail(ctx, work_item_id):
     configs += (project_views.ticket_card(ctx, tk, can_work=can_work) + kb_views.ticket_card(ctx, tk, can_work=can_work)
                 + finance_views.ticket_card(ctx, tk, can_work=can_work))
     from . import paging as paging_view
-    body = header + strip + paging_view.banner(ctx, tk, can_work=can_work) + (
+    body = header + strip + paging_view.banner(ctx, tk, can_work=can_work) + pod_dialog + (
         f"<div class=rail>{left}<div class=pods data-col=right data-order='ticket,change,approval,family,"
                              f"schedule,tasks,files,links,configurations,project,knowledge,finance,time,commercial,details'>{fields}{configs}{time_card}"
                              f"{commercial}{details}</div></div>")
