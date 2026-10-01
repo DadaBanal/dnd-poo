@@ -2553,3 +2553,20 @@ After all three: the support@ drop cleared, delta link saved, tickets 9 -> 16, t
 - **Procurement team (Dada's list) added** as WORK on PROCUREMENT, via the desk's own functions: ethel.luciano (Ethel Niña Luciano), cherry.almayda, althea.audencial, mark.recidoro, liezell.caluducan, lyn.delacruz, and BIOMED repair: ginalyn.mongcal, adson.javier. Procurement now has 4 ADMIN + 8 WORK. Still not live (owner/deputy is Dada's).
 - **PSA-Notify is not registered (MEASURED):** the task list holds PSA-Mail-Helpdesk, PSA-Mail-Support, PSA-Rules, PSA-Teams, PSA-BizBox, PSA-Desk - no PSA-Notify. Its log's last line is 07:46. So the requester emails (opened, status, picked-up) are **not being sent**. Dada's `Unregister-ScheduledTask PSA-Notify` ran but the re-register did not. **Dada must run `Register-PsaMail.ps1 -IncludeSupport -IncludeCalendar -Apply` (elevated, psa_desk password)** - it re-adds PSA-Notify with `-AllowedDomain '*'`, keeps the two pickups, and adds PSA-Calendar.
 - **"Members cannot be removed" (Dada, 1 Oct) - root cause MEASURED:** every member action in the web layer (`board_remove`, `deactivate`, `role`, `capacity`, add) calls `common.require_sysadmin`, which needs `ctx.user.is_sysadmin`. `authenticate_windows` returns a `User` that never sets `is_sysadmin` (it is set only for a break-glass local account or the Entra/JWT claim). So a Windows (AD) sign-in - how Dada signs in - is never a sysadmin and every member change returns 403. `members.deactivate` itself works (SQL01 reproduced it via the task account). **Interim:** sign in through the break-glass door as `dada.banal` (a local account with is_sysadmin=1). **WS36:** let a Windows admin be a sysadmin on the desk - e.g. a `member` flag, an env list, or an AD group - so member management works from the normal Windows sign-in.
+
+### Part 30: 2026-10-01, ~19:20 +08:00. **1c78345 live; 062-063 PASS; dada.banal is a desk sysadmin - "members cannot be removed" fixed.**
+
+Ran `HANDOFF-cloud-sql01-WS36-20261001-single.md` top to bottom. MEASURED.
+
+1. **Suite at 1c78345: 645 run, OK, 2 skipped, 0 errors.**
+2. **Schema 062-063 by the sitting-1 road** (backup `PMC_PSA_pre062-063-20261001.bak`, 26.3 MB, valid):
+   - tables **132 -> 133** (`dispatch_view`);
+   - columns 1259 -> 1265 (`member.is_sysadmin` + the port's 5 computed twins on dispatch_view);
+   - indexes 54, triggers 4, **no existing row count changed**; `member.is_sysadmin` is NULL-able.
+   - Desk down ~10 s (19:19:29 -> 19:19:39); loopback and desk `/login` 200 after.
+3. **`dada.banal` is now a desk sysadmin** (062), set via the task account: "dada.banal is now a sysadmin." This is the fix for part 29's "members cannot be removed" - a Windows sign-in with is_sysadmin can run Setup › Members. The break-glass interim is no longer needed.
+4. **Health:** PSA-Rules, PSA-Notify, PSA-Mail-Support, PSA-Calendar all last result 0 on the new code. (WS36's handoff line "PSA-Notify is not registered" is stale - Dada re-registered it earlier; it is running.)
+
+**Dada's checks (his):** signed in via Windows - Setup › Members answers 200 and a member can be taken off a board; Dispatch › People save-my-view; the ticket page's Pod configuration gear and drag-to-resize; an Updated email shows "Earlier in this request, newest first".
+
+**Still Dada's:** `Grant-PsaCalendars.ps1 -MembersFile D:\psa\calendar-members.json -Apply` (he is running it now; the list now has 22 members, not 8). Procurement is already live (part 29 continued).
