@@ -170,6 +170,14 @@ from the pickup. Subjects print: keep the output on the host; put only the dispo
 | nothing arrived, and the task exists | A stuck pass: `D:\psa\logs\PSA-Mail-Support.log` (or -Helpdesk) repeating `Import FAILED ... delta link NOT advanced` every minute. At the old head one message that could not be placed lost the whole pass and held every later message behind it. | Pull this head (step 1). The next pass places the rest, records the one that cannot be placed as `UNCLASSIFIED` with an `INTAKE_ERROR` naming the error and the file, keeps that pass's files in `D:\psa\mail-drop\failed\`, and advances. Paste the INTAKE_ERROR line to WS36. |
 | `NEW_TICKET -> PMC-nnnnnn` | It was ingested; the ticket is on the board named. | Say which board; nothing else. |
 
+**0c. They hear back.** Replies were released to `pmcne.ph` only (`-AllowedDomain`, the 058 default): a requester on
+yahoo or gmail got a ticket and no "we have your request". At this head `Register-PsaMail.ps1` registers `PSA-Notify`
+with `-AllowedDomain '*'`, and a public mail domain can no longer be excluded (one address still can). `PSA-Notify` is
+already registered with the old value, so once: elevated, `Unregister-ScheduledTask -TaskName PSA-Notify -Confirm:$false`,
+then `Register-PsaMail.ps1 -Apply` (it registers only what is missing). Pass: the task's Execute shows
+`-AllowedDomain '*'`; the next acknowledgement to a yahoo address goes SENT.
+
 **Pass:** `mail-why` shows every one of the day's mails to helpdesk@ and support@ as `NEW_TICKET` or `APPENDED`, the two
-named ones included, and the Setup › Email connector page shows no exclusion on a public domain.
+named ones included; the Setup › Email connector page shows no exclusion on a public domain; the yahoo requester's
+acknowledgement is SENT.
 

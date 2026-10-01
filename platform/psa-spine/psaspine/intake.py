@@ -337,6 +337,14 @@ def add_exclusion(conn: sqlite3.Connection, kind: str, pattern: str, *, note=Non
     if not pat or (kind == "ADDRESS" and "@" not in pat) or (kind == "DOMAIN" and ("@" in pat or "." not in pat)):
         raise ValueError({"ADDRESS": "An address looks like someone@somewhere.", "DOMAIN": "A domain looks like somewhere.com.",
                           "SUBJECT": "A subject phrase is a few words."}[kind])
+    if kind == "DOMAIN":
+        from .contacts import PUBLIC_DOMAINS
+        if pat in PUBLIC_DOMAINS or any(pat.endswith("." + d) for d in PUBLIC_DOMAINS):
+            # Dada, 1 Oct 2026: yahoo, gmail "and all other generic emails" are
+            # requesters. A rule on a public mail domain would turn every one
+            # of them away; one sender is excluded by their address instead.
+            raise ValueError(f"{pat} is a public mail domain: every requester on it would be turned away."
+                             " Exclude the one address instead.")
     if conn.execute("SELECT 1 FROM mail_exclusion WHERE kind = ? AND pattern = ?", (kind, pat)).fetchone():
         raise ValueError("That exclusion already exists.")
     cur = conn.execute("INSERT INTO mail_exclusion (kind, pattern, note, created_at, created_by) VALUES (?,?,?,?,?)",

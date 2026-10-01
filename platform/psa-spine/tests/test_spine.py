@@ -12051,9 +12051,12 @@ class MailCutoverTest(unittest.TestCase):
         r = intake.why(self.conn, sender="ward3@pmcne.ph")
         self.assertEqual(len(r["rows"]), 3)
         self.assertIsNone(r["exclusion"])
-        intake.add_exclusion(self.conn, "DOMAIN", "yahoo.com", at=self.at, actor="t")
-        r = intake.why(self.conn, sender="someone@yahoo.com")
-        self.assertEqual((r["rows"], r["exclusion"]), ([], "excluded domain yahoo.com"))
+        # a public mail domain cannot be excluded: its senders are requesters (one address can be)
+        with self.assertRaises(ValueError):
+            intake.add_exclusion(self.conn, "DOMAIN", "gmail.com", at=self.at, actor="t")
+        intake.add_exclusion(self.conn, "ADDRESS", "spammer@yahoo.com", at=self.at, actor="t")
+        r = intake.why(self.conn, sender="spammer@yahoo.com")
+        self.assertEqual((r["rows"], r["exclusion"]), ([], "excluded address spammer@yahoo.com"))
         with self.assertRaises(ValueError):
             intake.why(self.conn)
         # retry: the set-aside message is forgotten and a fresh sync imports it; a placed one never is
@@ -12071,10 +12074,24 @@ class MailCutoverTest(unittest.TestCase):
         self.conn.commit()
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            code = main(["mail-why", TEST_DB or str(Path(self.tmp.name) / "spine.db"), "--sender", "yahoo.com"])
+            code = main(["mail-why", TEST_DB or str(Path(self.tmp.name) / "spine.db"), "--sender", "spammer@yahoo.com"])
         self.assertEqual(code, 0)
         self.assertIn("nothing arrived from the pickup", out.getvalue())
-        self.assertIn("an exclusion rule catches this sender: excluded domain yahoo.com", out.getvalue())
+        self.assertIn("an exclusion rule catches this sender: excluded address spammer@yahoo.com", out.getvalue())
+
+    def test_a_requester_on_a_public_domain_hears_back_when_every_domain_is_released(self):
+        from psaspine import intake, outbox
+        self.conn.execute("UPDATE board SET notify_requester = 1 WHERE board_id = 'IT_HELP'")
+        intake.set_addresses(self.conn, "IT_HELP", "helpdesk@pmcne.ph", at=self.at, actor="t")
+        self._msg(subject="HIMS - NETWORK PROBLEM", to="helpdesk@pmcne.ph", sender="jrby@yahoo.com", cc="nurse3@pmcne.ph, aunt@gmail.com")
+        intake.import_drop(self.conn, self.drop, run_id="y1", board_id="IT_HELP", at=self.at)
+        wid = self._ticket(1)["work_item_id"]
+        self.assertEqual(self.conn.execute("SELECT board_id FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()[0], "IT_HELP")
+        due = outbox.pending(self.conn, allowed_domains=("pmcne.ph",), dry_run=True)
+        self.assertEqual([x["ticket"] for x in due], [])                            # the hospital's domain only: nothing goes
+        [m] = outbox.pending(self.conn, allowed_domains=("*",), dry_run=True)
+        self.assertEqual((m["to"], m["from"], sorted(m["cc"])), ("jrby@yahoo.com", "helpdesk@pmcne.ph", ["aunt@gmail.com", "nurse3@pmcne.ph"]))
+        self.assertNotIn("NETWORK", m["subject"] + m["body"])                        # never the summary
 
     def test_the_unrouted_queue_claims_helpdesk_and_help_and_the_dispatcher_routes(self):
         """Dada, 1 Oct 2026: "for the unrouted board add helpdesk and help@

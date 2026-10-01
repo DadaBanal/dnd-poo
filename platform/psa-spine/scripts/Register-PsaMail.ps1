@@ -123,7 +123,7 @@ $jobs = @{
                              Pass = 'new message\(s\)'; What = 'mail to support@ becomes tickets on PMO Helpdesk' }
     'PSA-Calendar'      = @{ Script = $Calendar; Args = " -DeskUrl 'https://desk.pmcne.ph'"
                              Pass = 'write\(s\) due: \d+ written'; What = "the desk's visits and tasks on members' Outlook calendars, and their busy times back" }
-    'PSA-Notify'        = @{ Script = $Notifier; Args = " -Mailbox 'helpdesk@pmcne.ph' -SendAs 'support@pmcne.ph' -PortalUrl 'https://help.pmcne.ph'"
+    'PSA-Notify'        = @{ Script = $Notifier; Args = " -Mailbox 'helpdesk@pmcne.ph' -SendAs 'support@pmcne.ph' -PortalUrl 'https://help.pmcne.ph' -AllowedDomain '*'"
                              Pass = '\d+ due: \d+ sent, \d+ failed'; What = 'the requester emails go out' }
 }
 $passed = @(); $failed = @()

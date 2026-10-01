@@ -1172,6 +1172,12 @@ and the delta link advances.
   intake did with the matching messages, each with its disposition, ticket
   and findings; whether an exclusion rule catches the sender; or that nothing
   arrived from the pickup, which points at the mailbox's task and its log.
+- **Generic senders are requesters.** A DOMAIN exclusion on a public mail
+  domain (gmail, yahoo, outlook, ...) is refused: one address can be
+  excluded, a whole public domain never. And they hear back: `outbox-pending
+  --allowed-domain '*'` (`Send-PmcNotifications.ps1 -AllowedDomain '*'`, which
+  `Register-PsaMail.ps1` now passes to `PSA-Notify`) releases every domain;
+  the words are the same for everyone, a reference and a link.
 - `psaspine mail-retry <db> --message-id <id> --actor <who> --apply`: forget
   a message that was set aside, once the cause is put right, so a fresh
   pickup sync (delete the mailbox's delta file, run with `-Since`) imports it

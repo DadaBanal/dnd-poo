@@ -229,7 +229,8 @@ function Invoke-Pass {
     foreach ($item in $items) {
         # The desk released only -AllowedDomain; check again here, because a
         # browser is not a control and neither is one process trusting another.
-        if (-not $item.to.ToLower().EndsWith('@' + $AllowedDomain.ToLower())) {
+        # -AllowedDomain '*' releases every domain (requesters on yahoo, gmail and the rest hear back).
+        if ($AllowedDomain -ne '*' -and -not $item.to.ToLower().EndsWith('@' + $AllowedDomain.ToLower())) {
             [void](Invoke-Spine @('outbox-mark', $Database, '--id', "$($item.id)", '--status', 'FAILED'))
             $failed++
             continue

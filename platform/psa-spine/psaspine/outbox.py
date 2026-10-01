@@ -592,11 +592,15 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
     if portal_url and not portal_url.lower().startswith("https://"):
         raise ValueError("the portal address must be https://")
     allowed = tuple(d.lower().lstrip("@") for d in allowed_domains)
+    # "*" releases every domain: a requester on yahoo or gmail hears back too
+    # (Dada, 1 Oct 2026: "all other generic emails"). The words are the same
+    # for everyone: a reference and a link, never the summary or a note.
+    everyone = "*" in allowed
     out = []
     for n in conn.execute("SELECT * FROM notification WHERE status = 'PENDING' AND COALESCE(channel, 'EMAIL') = 'EMAIL'"
                           " ORDER BY notification_id LIMIT ?", (limit,)).fetchall():
         to = address_for(conn, n["recipient"])
-        if not to or to.rsplit("@", 1)[1] not in allowed:
+        if not to or (not everyone and to.rsplit("@", 1)[1] not in allowed):
             if dry_run:
                 continue
             conn.execute("UPDATE notification SET status = 'NO_SENDER' WHERE notification_id = ?",
@@ -621,7 +625,7 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
         copied = []
         if n["recipient_role"] in (REQUESTER, STATUS):      # 061: the ticket's Cc hears what the requester hears
             from . import cc as _cc
-            copied = [a for a in _cc.of(conn, n["work_item_id"]) if a != to and a.rsplit("@", 1)[1] in allowed]
+            copied = [a for a in _cc.of(conn, n["work_item_id"]) if a != to and (everyone or a.rsplit("@", 1)[1] in allowed)]
         out.append({"id": n["notification_id"], "to": to, "subject": subject,
                     "body": body.replace("{link}", link), "ticket": n["work_item_id"],
                     "from": n["from_address"] if n["recipient_role"] in (REQUESTER, STATUS) else None,
