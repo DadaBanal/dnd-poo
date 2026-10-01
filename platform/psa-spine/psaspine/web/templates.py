@@ -190,7 +190,7 @@ td.center{text-align:center} th.colhead label{font-weight:600;white-space:nowrap
 @media (max-width:900px){.pods>.card[data-pod]{grid-column:span 12}}
 /* words stay readable whatever the width: a note never runs past a comfortable line */
 .stream li>div:first-child,.card .prose,.card p.why,.card .note-body{max-width:80ch}
-.pods .card[data-pod] h3{padding-right:140px}
+.pods .card[data-pod] h3{padding-right:196px}
 /* a card's body: drag its bottom edge for the height you want (the reference PSA's pods scroll inside); hidden cards are the Pod configuration's */
 .pods .card[data-pod]>.podbody{resize:vertical;overflow:auto;min-height:48px;padding-bottom:6px}
 .pods .card.hidden{display:none}
@@ -619,10 +619,16 @@ addEventListener("pageshow",function(){if(np)np.className=""});
     ctl.innerHTML='<button type=button class="iconbtn mv" data-dir=-1 title="Move up" aria-label="Move up">'+ic("up")+'</button>'
       +'<button type=button class="iconbtn mv" data-dir=1 title="Move down" aria-label="Move down">'+ic("down")+'</button>'
       +'<button type=button class="iconbtn swap" title="Move to the other column" aria-label="Move to the other column">'+ic("right")+'</button>'
+      +'<button type=button class="iconbtn hless" title="Shorter (the rest scrolls inside)" aria-label="Shorter">'+ic("minus")+'</button>'
+      +'<button type=button class="iconbtn hmore" title="Taller" aria-label="Taller">'+ic("plus")+'</button>'
       +'<button type=button class="iconbtn size" title="Size" aria-label="Size"><b class=szw>F</b></button>'
       +'<button type=button class="iconbtn fold" title="Fold" aria-label="Fold or unfold" aria-expanded=true>'+ic("chevron")+'</button>';
     c.appendChild(ctl);
     $(".size",ctl).addEventListener("click",function(){var i=SIZES.indexOf(sizeOf(c));setSize(c,SIZES[(i+1)%SIZES.length]);remember()});
+    /* the reference PSA's plus and minus on a pod: the height in steps of 80px, from where it stands; below 48px it is as good as folded */
+    var STEP=80;function bump(dir){var pb=$(":scope>.podbody",c);if(!pb)return;var h=parseInt(pb.style.height,10)||pb.getBoundingClientRect().height;
+      h=Math.max(48,Math.round(h+dir*STEP));pb.style.height=h+"px";remember()}
+    $(".hless",ctl).addEventListener("click",function(){bump(-1)});$(".hmore",ctl).addEventListener("click",function(){bump(1)});
     $(".fold",ctl).addEventListener("click",function(){c.classList.toggle("collapsed");this.setAttribute("aria-expanded",String(!c.classList.contains("collapsed")));remember()});
     $(".swap",ctl).addEventListener("click",function(){var here=c.parentNode.dataset.col,other=colOf(here==="left"?"right":"left");if(other)dropInto(c,other,null)});
     $$(".mv",ctl).forEach(function(b){b.addEventListener("click",function(){var dir=+b.dataset.dir,col=c.parentNode,list=pods(col),i=list.indexOf(c),j=i+dir;
@@ -800,6 +806,7 @@ ICONS = {
     "setup": "M4 7h10M18 7h2M4 17h4M12 17h8M14 4v6M8 14v6",
     "my": "M20 21a8 8 0 0 0-16 0M12 13a4 4 0 1 0 0-8 4 4 0 0 0 0 8",
     "plus": "M12 5v14M5 12h14",
+    "minus": "M5 12h14",
     "search": "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14M20 20l-4-4",
     "sun": "M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8",
     "ticket": "M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4zM13 6v12",

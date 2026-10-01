@@ -1303,8 +1303,10 @@ author. The desk's ticket page now has the same:
   configuration**: every card on the page under Displayed or Available,
   tick to show, untick to hide, arrows to order, Save. Reset layout puts
   everything back.
-- **Pod height**: drag a card's bottom edge and it keeps that height, the
-  rest scrolling inside, as the reference pods do; the page remembers it.
+- **Pod height**: the reference's plus and minus on every card (Dada: "they
+  have a plus minus to adjust pod size height"), 80 px a press from where
+  the card stands, or drag the card's bottom edge; the rest scrolls inside,
+  and the page remembers it.
 - With the Size button (Full, Medium, Half, Small), the fold, the move
   arrows, the column swap and drag: order, column, size, height, folded or
   hidden, each per person, in their browser, with one Reset.
