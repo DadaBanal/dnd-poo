@@ -39,8 +39,13 @@ needed for it, and the index stays as narrow as it was designed to be.
 Elevated, on DND-SQL01, from `D:\dnd-poo\platform\psa-spine\scripts`, after `git pull`. Two things that
 failed at 10:05 are fixed in this pull, so these are not the same lines again.
 
-**1. The schema step.** `-SchemaPreview` and `-SchemaApply` answered `unrecognized arguments` before: in
-PowerShell `1..0` counts down, so a one-word command went in twice. Fixed.
+**1. The schema step, and the restart that goes with it.** The desk does not pick up new code until
+PSA-Desk restarts, so the ticket editor, the pods behind the Edit button and the portal 404 fix are all in the
+repo but not yet on your screen. The order is the usual one: COPY_ONLY backup, preview, **stop PSA-Desk**,
+apply, `init`, **start PSA-Desk**.
+
+`-SchemaPreview` and `-SchemaApply` answered `unrecognized arguments` before: in PowerShell `1..0` counts down,
+so a one-word command went in twice. Fixed.
 
     .\Invoke-PsaSpine.ps1 -SchemaPreview
     .\Invoke-PsaSpine.ps1 -SchemaApply
@@ -62,6 +67,15 @@ cleared at 09:39, then every pass `0 new message(s) since last pass`, while a pr
 12 and 66. The pass that follows a reset is now this script's to run, with the window, for real.
 
 **3. Then the calendar work**, which is section 2 below and still needs Setup > Members first.
+
+### What the restart brings with it
+
+All of this is already on the branch and needs nothing from SQL01 beyond PSA-Desk coming back up: the note box
+is a real editor (copy and paste, bold, lists, a link, and a paste out of Outlook that keeps the words and none
+of the markup); the side pods are fixed and move only behind the **Edit layout** button, with small/half/medium/
+full widths and plus-minus height; the mega menu; and the portal 404 fix for a requester whose mail address and
+sign-in are on different domains. The editor needs 064 as well as the restart -- without those two columns a
+note will not save.
 
 ### Or the one line, for everything that does not need a decision
 

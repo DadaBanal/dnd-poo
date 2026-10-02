@@ -51,21 +51,42 @@ command went in twice. `-MailHealth` had the same fault. Fixed and tested.
 
 Elevated, on DND-SQL01, from `D:\dnd-poo\platform\psa-spine\scripts`, after `git pull`.
 
-**Step 1 — the 064 schema step.** `ticket_event.body_format` and `notification.body_html`,
-both nullable, both guarded. Until they exist, a note written in the new editor will not
-save and an import that writes a ticket event fails.
+**Step 1 — 063 and 064, by the sitting-1 road.** Not just the ALTERs: this head also
+changes the desk's own code (the ticket editor, the pods behind an Edit button, the portal's
+identity match), and none of that reaches a browser until PSA-Desk restarts. So:
+
+1. a COPY_ONLY backup;
+2. the preview;
+3. **stop PSA-Desk**;
+4. apply the port;
+5. `init`;
+6. **start PSA-Desk**.
+
+Steps 2 and 4–5 as the desk's own account:
 
     .\Invoke-PsaSpine.ps1 -SchemaPreview
     .\Invoke-PsaSpine.ps1 -SchemaApply
 
-That runs as `DND-SQL01\psa_desk`. **If that account is refused for want of ALTER rights**,
-run the generated port instead as a sysadmin, which does not go through the desk's
-connection guard at all:
+**If `psa_desk` is refused for want of ALTER rights**, run the generated port as a sysadmin
+instead — it does not go through the desk's connection guard at all:
 
     sqlcmd -I -S "DND-SQL01\PMC_SS" -d PMC_PSA -i D:\dnd-poo\platform\psa-spine\sqlserver\PMC_PSA_Spine_SqlServer.sql
 
 with `@Apply = 1` and `@AllowExisting = 1` set at the head of the file — `@AllowExisting`
 is what makes a re-run add only what is missing. It is one transaction with a verify gate.
+
+**What 063 and 064 add:** `dispatch_view` (one table: member, people, board_id, updated_at);
+`ticket_event.body_format` (NVARCHAR(32) NULL) and `notification.body_html`
+(NVARCHAR(MAX) NULL). No existing row changes, and a note written before today stays plain
+text and reads as it did. Until those columns exist, a note written in the new editor will
+not save and an import that writes a ticket event fails.
+
+**What the restart is what makes visible** (all of it already on this branch, none of it
+needing anything from you beyond the restart): the ticket note box is a real editor with
+copy and paste, bold, lists and a link, and a paste out of Outlook that keeps the words and
+none of the markup; the side pods are fixed in place and move only behind an **Edit layout**
+button, with small/half/medium/full widths and plus-minus height; the mega menu; and the
+portal's 404 fix for a requester whose mail address and sign-in are on different domains.
 
 **Step 2 — import the window.** One line, and it is the whole of it now:
 
