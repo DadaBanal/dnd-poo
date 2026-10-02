@@ -39,6 +39,14 @@ because it remembers the Message-ID. There were about seventy of them, so there 
 
     .\Invoke-PsaSpine.ps1 -MailRetry
     .\Invoke-PsaSpine.ps1 -MailRetry -All -Apply
+
+It runs as the desk's own task account, `DND-SQL01\psa_desk`, a local account on the server whose database user
+in PMC_PSA has default schema `psa`. The script reads that name from whichever desk task is registered rather
+than assuming it. If the password prompt is refused, add `-ViaTask` to any of these and none is asked for:
+elevated, it registers a one-shot task that runs as that account under S4U, where Windows issues the token, and
+removes the task again.
+
+    .\Invoke-PsaSpine.ps1 -MailRetry -All -Apply -ViaTask
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Repair-PsaMailPickup.ps1 -Apply -ResetDelta
 
 The first lists what was set aside and changes nothing. The second releases them all, one audit row each; a

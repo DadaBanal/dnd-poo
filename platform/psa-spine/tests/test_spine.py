@@ -6954,10 +6954,12 @@ class RunAsTaskAccountScriptTest(unittest.TestCase):
     def test_the_password_is_prompted_for_and_written_nowhere(self):
         self.assertIn("Get-Credential", self.text)
         lowered = self.text.lower()
-        for shape in ("convertto-securestring", "-asplaintext", "client_secret",
-                      "add-content", "set-content", "out-file"):
+        for shape in ("convertto-securestring", "-asplaintext", "client_secret", "$password"):
             self.assertNotIn(shape, lowered, shape)
         self.assertNotIn("$Credential.GetNetworkCredential", self.text)
+        # the one file it writes is the command, and the credential is not in it
+        written = self.text[self.text.index("$lines = @("):self.text.index("Set-Content -Path $runner")]
+        self.assertNotIn("Credential", written)
 
     def test_the_caller_never_types_a_connection_string(self):
         self.assertIn("$cmd = @($words[0], $Database)", self.text)
@@ -6975,9 +6977,28 @@ class RunAsTaskAccountScriptTest(unittest.TestCase):
         # and it says what it takes rather than failing silently
         self.assertIn("Nothing asked for. One of:", self.text)
 
+    def test_the_account_is_read_from_the_desks_own_tasks(self):
+        # MEASURED on DND-SQL01, 2 Oct 2026: the guessed account name was wrong
+        # and the password prompt failed. The name is read, not guessed.
+        self.assertNotIn("PMCNE\\psa_desk", self.text)       # the guess that was wrong
+        self.assertIn("'PSA-Desk', 'PSA-Mail-Helpdesk', 'PSA-Rules'", self.text)
+        self.assertIn("$task.Principal.UserId", self.text)
+        # and the fallback is the local account on the server, not a domain one
+        self.assertIn('$Account = "$env:COMPUTERNAME\\psa_desk"', self.text)
+
+    def test_there_is_a_way_through_that_needs_no_password(self):
+        self.assertIn("[switch] $ViaTask", self.text)
+        self.assertIn("-LogonType S4U", self.text)          # Windows issues the token; nothing is typed
+        self.assertIn("Unregister-ScheduledTask -TaskName $name", self.text)   # and the task is removed again
+        # the arguments go in as an array, never pasted into a command line
+        self.assertIn("$a = @(", self.text)
+        self.assertIn("-m psaspine @a", self.text)
+
     def test_it_says_why_a_sysadmin_cannot_run_it_directly(self):
         self.assertIn("maps every member of the sysadmin role to the", self.text)
-        self.assertIn("runas /user:", self.text)       # and the way round it if the account may not log on
+        # and the way round it when that account may not log on here
+        self.assertIn("may not log on at this machine", self.text)
+        self.assertIn("-ViaTask, which needs no password", self.text)
 
 
 class NoteRichTextTest(unittest.TestCase):

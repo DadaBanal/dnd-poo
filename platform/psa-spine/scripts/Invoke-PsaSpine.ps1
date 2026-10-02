@@ -10,7 +10,8 @@
     That is not a fault to fix on the account. SQL Server maps every member of the sysadmin role to the
     database user `dbo`, whose default schema is `dbo` and cannot be changed; the desk refuses `dbo` on
     purpose, so that it can never write to the wrong schema. The answer is to run the command as the
-    account the desk itself runs as, which is not a sysadmin.
+    account the desk itself runs as, which is not a sysadmin: `DND-SQL01\psa_desk`, a local account on
+    the server whose database user in PMC_PSA is the same name with default schema `psa`.
 
     This asks for that account once, runs the command as it, and shows what it said. The password is
     read by the Windows credential prompt, is held only for the life of this run, and is written
@@ -45,7 +46,12 @@ param(
     # Anything else: the whole psaspine command as one string, without the
     # connection, e.g. -Spine "calendar-members --allowed-domain pmcne.ph".
     [string] $Spine,
-    [string] $Account = 'PMCNE\psa_desk',
+    # Read from the desk's own scheduled tasks when it is not given, so the
+    # name is measured rather than guessed (2 Oct 2026: the guess was wrong).
+    [string] $Account,
+    # Run it through a one-shot scheduled task instead, which needs no
+    # password at all.
+    [switch] $ViaTask,
     [string] $Database = 'Driver={ODBC Driver 17 for SQL Server};Server=DND-SQL01\PMC_SS;Database=PMC_PSA;Trusted_Connection=yes;Encrypt=yes;TrustServerCertificate=yes',
     [string] $SpineDir,
     [string] $PythonExe = 'C:\PMC\Python312\python.exe',
@@ -58,6 +64,25 @@ $ErrorActionPreference = 'Stop'
 if (-not $SpineDir) { $SpineDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path) }
 if (-not (Test-Path $PythonExe)) { throw ($PythonExe + ' is not there. Correct -PythonExe.') }
 if (-not (Test-Path $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null }
+
+if (-not $Account) {
+    foreach ($t in 'PSA-Desk', 'PSA-Mail-Helpdesk', 'PSA-Rules', 'PSA-Notify', 'PSA-Mail-Support') {
+        $task = Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue
+        if ($task -and $task.Principal -and $task.Principal.UserId) {
+            $Account = $task.Principal.UserId
+            Write-Host ('the desk runs as ' + $Account + ' (read from the ' + $t + ' task)')
+            break
+        }
+    }
+}
+if (-not $Account) {
+    # The desk's task account, told by Dada 2 Oct 2026: a LOCAL account on the
+    # server, not a domain one, whose database user in PMC_PSA is the same
+    # name with default schema psa. Reading it from a task above is better
+    # still, because it cannot go stale.
+    $Account = "$env:COMPUTERNAME\psa_desk"
+    Write-Host ('no desk task to read it from; using ' + $Account)
+}
 
 # What to run. The database goes in as the command's first argument, exactly
 # where every psaspine command takes it, so the caller never types a
@@ -92,6 +117,66 @@ if ($MailHealth) {
 $cmd = @($words[0], $Database) + @($words[1..($words.Count - 1)] | Where-Object { $null -ne $_ })
 Write-Host ('running as ' + $Account + ': psaspine ' + ($words -join ' '))
 
+if ($ViaTask) {
+    # No password: an administrator registers a one-shot task that runs as the
+    # account under S4U, where Windows issues the token and no secret is
+    # typed, stored or prompted for. The task runs once and is removed.
+    $me = [Security.Principal.WindowsIdentity]::GetCurrent()
+    if (-not ([Security.Principal.WindowsPrincipal]$me).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw 'Registering a task to run as another account needs an elevated PowerShell. Nothing was run.'
+    }
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $out = Join-Path $WorkDir ('spine-' + $stamp + '.out')
+    $runner = Join-Path $WorkDir ('spine-' + $stamp + '.ps1')
+    $name = 'PSA-Command-' + $stamp
+    # A task has no console, so the command is written as a small script that
+    # sends its words to a file this session then reads. The arguments are
+    # written as a PowerShell array, never pasted into a command line.
+    $lines = @(
+        '$ErrorActionPreference = ''Continue''',
+        ('Set-Location ' + ("'" + $SpineDir.Replace("'", "''") + "'")),
+        ('$a = @(' + (($cmd | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ', ') + ')'),
+        ('& ' + ("'" + $PythonExe.Replace("'", "''") + "'") + ' -m psaspine @a *> ' +
+            ("'" + $out.Replace("'", "''") + "'")),
+        'exit $LASTEXITCODE')
+    Set-Content -Path $runner -Value $lines -Encoding ASCII
+    $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
+                -Argument ('-NoProfile -ExecutionPolicy Bypass -File "' + $runner + '"')
+    $principal = New-ScheduledTaskPrincipal -UserId $Account -LogonType S4U -RunLevel Highest
+    try {
+        Register-ScheduledTask -TaskName $name -Action $action -Principal $principal `
+                               -Description 'Dada PSA: one desk command, then gone' | Out-Null
+    } catch {
+        Remove-Item $runner -Force -ErrorAction SilentlyContinue
+        throw ('could not register a task that runs as ' + $Account + ': ' + $_.Exception.Message +
+               '. Leave -ViaTask off to be asked for that account''s password instead.')
+    }
+    $code = 1
+    try {
+        Start-ScheduledTask -TaskName $name
+        $waited = 0
+        while ($waited -lt 300) {
+            Start-Sleep -Seconds 2
+            $waited += 2
+            if ((Get-ScheduledTask -TaskName $name).State -ne 'Running' -and
+                (Get-ScheduledTaskInfo -TaskName $name).LastRunTime.Year -gt 1999) { break }
+        }
+        $code = (Get-ScheduledTaskInfo -TaskName $name).LastTaskResult
+    } finally {
+        Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue
+        Remove-Item $runner -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path $out) {
+        Get-Content $out | ForEach-Object { Write-Host $_ }
+        Remove-Item $out -Force -ErrorAction SilentlyContinue
+    } else {
+        Write-Host ('the task wrote nothing. ' + $Account + ' may not be allowed to run a task here,' +
+                    ' or S4U gave it a token the database would not take; run it with the password instead.')
+    }
+    Write-Host ('exit ' + $code)
+    exit $code
+}
+
 if (-not $Credential) {
     $Credential = Get-Credential -UserName $Account -Message (
         'Password for ' + $Account + ' (the account the desk runs as; it is used for this command and kept nowhere)')
@@ -112,8 +197,9 @@ try {
     $code = $p.ExitCode
 } catch {
     throw ('could not start it as ' + $Account + ': ' + $_.Exception.Message +
-           '. If that account may not log on here, run the command from a session opened with' +
-           ' runas /user:' + $Account + ' instead.')
+           '. Either that is not the password, or that account may not log on at this machine' +
+           ' (a task account is often allowed to run as a batch job and nothing else).' +
+           ' Try the same command with -ViaTask, which needs no password.')
 }
 
 foreach ($f in @($out, $err)) {
