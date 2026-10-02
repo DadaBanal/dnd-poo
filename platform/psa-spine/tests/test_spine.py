@@ -7379,6 +7379,23 @@ class MailPickupDeltaRecoveryTest(unittest.TestCase):
         i = text.index("Graph says the saved delta link has expired")
         self.assertIn("$first = $true", text[i:i + 700])                  # and it reads from -Since
 
+    def test_a_pass_that_fetched_nothing_still_imports_what_is_waiting(self):
+        """SQL01, part 31, 2 Oct 2026: the pass imports as whoever launched it,
+        and a SQL sysadmin resolves to [dbo], which the desk refuses. So a
+        repair run by hand fetches the window and cannot place it -- and the
+        import ran only when THIS pass had written a file, so no later pass ever
+        looked at the folder again: the next pass found 0 new, skipped the
+        import, and the window sat on disk. The minute task runs as the desk's
+        own account, so it is the one that can place them."""
+        text = self.SCRIPT.read_bytes().decode("ascii")
+        self.assertIn("if ($written.Count -gt 0 -or $waiting.Count -gt 0) {", text)
+        self.assertIn("-Filter *.eml -File", text)
+        self.assertIn("$written -notcontains $_.FullName", text)          # not counted twice
+        self.assertIn("are waiting in the drop folder; importing them.", text)
+        # and once they are on the desk they are cleared, or they import every minute
+        i = text.index("} elseif (-not $KeepFiles) {")
+        self.assertIn("$waiting | ForEach-Object { $_.FullName }", text[i:i + 500])
+
 
 class TeamsSenderScriptTest(unittest.TestCase):
     """scripts/Send-PsaTeamsNotifications.ps1 and its siblings, after SQL01's

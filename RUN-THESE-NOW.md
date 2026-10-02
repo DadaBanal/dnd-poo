@@ -12,6 +12,25 @@ copies away and take the tested ones (this touches nothing outside that one fold
     git clean -fd platform/psa-spine/scripts
     git pull
 
+## Done, 2 Oct 2026 (SQL01 part 31, MEASURED on the host)
+
+064 applied by the sitting-1 road with COPY_ONLY backups either side; PSA-Desk stopped and started, so the note
+editor, the pods behind the Edit layout button, the mega menu and the portal's cross-domain 404 fix are on the
+running code; **the 78-message window is in — tickets 26 to 90**, and a sweep of the gap found nothing missed.
+The pollers are back, bookmarked, last result 0.
+
+Two of its findings changed the code again (see the reply in
+`docs/handoffs/HANDOFF-cloud-sql01-WS36-20261002-mail-window-and-schema.md`): a pass now imports whatever is
+waiting in the drop folder even when it fetched nothing, so a window fetched by someone the desk refuses is
+still placed by the minute task; and `-ViaTask` cannot work on this host at all (S4U needs a privilege an
+elevated administrator does not hold), so the password prompt is the only road.
+
+**What is left:** three messages set aside UNCLASSIFIED — `.\Invoke-PsaSpine.ps1 -MailWhy <sender>` names the
+cause for one, `-MailRetry` lists them, `-MailRetry -All -Apply` releases them once the cause is put right. And
+the calendar work in section 2, which still needs Setup > Members first.
+
+---
+
 ## Where you are now (MEASURED, from your own runs on 2 Oct 2026)
 
 | | |

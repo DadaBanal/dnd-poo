@@ -24,7 +24,10 @@
       6. one real pass per mailbox  in PREVIEW, so Graph's own answer is in the log, whatever it is -- EXCEPT for a
                                     mailbox whose delta link step 3 just forgot, where the pass runs for real with
                                     -Since, because that is the only thing that re-reads the window. The task's own
-                                    -Since defaults to now, so a reset alone imports nothing.
+                                    -Since defaults to now, so a reset alone imports nothing. That pass fetches as
+                                    whoever ran it and imports as them too, so under a sysadmin's login the placing
+                                    is refused; the messages still land in the drop folder and the minute task, which
+                                    runs as the desk's own account, imports them from there.
 
     What it changes, and only with -Apply:
       - enables and starts a task that is registered but disabled or stopped;
@@ -320,8 +323,21 @@ if (-not (Test-Path $pickup)) {
             Add-Finding ($mb + ': a pass failed (exit ' + $code + '). The lines above are Graph''s own answer.') `
                         'If it says 410, use -ResetDelta -Apply. If it says 401, the certificate or the grant is the cause. If it says 403, the mail scope does not cover this mailbox.'
         } elseif ($real) {
-            $script:Fixed += ($mb + ': one real pass from ' + $Since.ToString('yyyy-MM-dd HH:mm') +
-                              '; what it imported is in the lines above, and the minute task carries on from there.')
+            # Who ran it decides whether it could place them: the pass imports
+            # as the launching identity, and a SQL sysadmin resolves to [dbo],
+            # which the desk refuses (SQL01, part 31). That is not a loss -- the
+            # messages are fetched and waiting, and the minute task, which runs
+            # as the desk's own account, imports them on its next pass.
+            $said = ($out | Out-String)
+            if ($said -match 'default schema' -or $said -match 'Import FAILED') {
+                $script:Fixed += ($mb + ': fetched the window from ' + $Since.ToString('yyyy-MM-dd HH:mm') +
+                                  ' into the drop folder. Placing them was refused under this login, so the minute' +
+                                  ' task will import them as the desk''s own account within a minute or two;' +
+                                  ' nothing is lost and nothing arrives twice.')
+            } else {
+                $script:Fixed += ($mb + ': one real pass from ' + $Since.ToString('yyyy-MM-dd HH:mm') +
+                                  '; what it imported is in the lines above, and the minute task carries on from there.')
+            }
         }
     }
 }

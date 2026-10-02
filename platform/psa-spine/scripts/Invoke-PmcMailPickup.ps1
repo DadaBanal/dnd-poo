@@ -22,7 +22,8 @@
          so the mailbox's history is not dragged in by accident.
       3. Download each new message as its original MIME ($value) and write it,
          byte for byte, to the drop folder.
-      4. Run `psaspine import-mail`. It is keyed by Message-ID, so a message
+      4. Run `psaspine import-mail` on the drop folder -- this pass's files and anything an earlier
+         pass fetched but could not place. It is keyed by Message-ID, so a message
          seen twice never makes a second ticket.
       5. Only when the import succeeds: save the new delta link and remove the
          imported .eml files (they may hold patient details; the mailbox itself
@@ -260,7 +261,25 @@ function Invoke-Pass {
         $written += $file
     }
 
-    if ($written.Count -gt 0) {
+    # A pass that fetched nothing still imports what is waiting. Until 2 Oct 2026
+    # the import ran only when this pass had written a file, and the drop folder
+    # is imported whole, so a pass whose import was refused left its files there
+    # and no later pass ever looked at them again: the next pass found 0 new,
+    # skipped the import, and the window sat on disk. SQL01 (part 31) found the
+    # road into that: the pass imports as whoever launched it, and a SQL
+    # sysadmin resolves to [dbo], which the desk refuses -- so a repair run by
+    # hand fetches the window and then cannot place it. Now the minute task,
+    # which runs as the desk's own account, picks those files up by itself. The
+    # import is keyed by Message-ID, so nothing arrives twice.
+    $waiting = @()
+    if (Test-Path $DropDir) {
+        $waiting = @(Get-ChildItem -Path $DropDir -Filter *.eml -File -ErrorAction SilentlyContinue |
+                     Where-Object { $written -notcontains $_.FullName })
+    }
+    if ($written.Count -eq 0 -and $waiting.Count -gt 0) {
+        Write-Log ("$($waiting.Count) message(s) from an earlier pass are waiting in the drop folder; importing them.")
+    }
+    if ($written.Count -gt 0 -or $waiting.Count -gt 0) {
         $runId = "mail-$Slug-" + (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss')
         Push-Location $SpineDir
         try {
@@ -289,9 +308,15 @@ function Invoke-Pass {
         if ($failed -gt 0) {
             $failedDir = Join-Path $DropDir 'failed'
             if (-not (Test-Path $failedDir)) { New-Item -ItemType Directory -Path $failedDir | Out-Null }
-            $written | ForEach-Object { Move-Item -Force -Path $_ -Destination $failedDir }
+            @($written) + @($waiting | ForEach-Object { $_.FullName }) |
+                ForEach-Object { Move-Item -Force -Path $_ -Destination $failedDir -ErrorAction SilentlyContinue }
             Write-Log ('{0} message(s) could not be placed: recorded as UNCLASSIFIED with INTAKE_ERROR (Setup > Email connector); the files of this pass are kept in {1}' -f $failed, $failedDir)
-        } elseif (-not $KeepFiles) { $written | ForEach-Object { Remove-Item -Force -Path $_ } }
+        } elseif (-not $KeepFiles) {
+            # Both this pass's files and any that were waiting: they are on the
+            # desk now, and leaving them would import them again every minute.
+            @($written) + @($waiting | ForEach-Object { $_.FullName }) |
+                ForEach-Object { Remove-Item -Force -Path $_ -ErrorAction SilentlyContinue }
+        }
     }
 
     if ($deltaLink) { Set-Content -Path $DeltaFile -Value $deltaLink -Encoding ASCII }

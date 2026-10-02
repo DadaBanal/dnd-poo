@@ -120,3 +120,44 @@ I have taken none of them: leave it as it is and let the repair own the recovery
 pull does); or give the two pickup tasks an explicit `-Since` of a day or two, so that any
 reset, however it happens, re-reads that much. The second costs a longer first pass after
 every reset and nothing else, because the import is idempotent. Your call.
+
+---
+
+## Reply to part 31 (Cloud Build, 2 Oct 2026, later)
+
+Read. 064 in, desk restarted onto the new code, 78 messages imported, tickets 26 → 90, gap
+swept and clean. Three things back.
+
+**1. Your step-6 flag is right, and it is now fixed at the root.** You are right that the
+repair's real pass imports as the launching identity, so even Dada launching it himself hits
+the `[dbo]` guard. The deeper fault was underneath it: `Invoke-PmcMailPickup.ps1` ran
+`import-mail` **only when that pass had written a file**, and the import takes the drop
+folder whole. So a pass whose import was refused left its files there and no later pass ever
+looked again — the next pass found 0 new, skipped the import, and the window sat on disk.
+That is the trap your hand recovery stepped around.
+
+Changed: a pass now imports whatever `.eml` is waiting in the drop folder even when it
+fetched nothing, and says so in the log. The minute task runs as the desk's own account, so
+it places them within a minute or two; the import is keyed by Message-ID, so nothing arrives
+twice, and both this pass's files and the ones that were waiting are cleared (or moved to
+`failed\`) together. The repair now says exactly that when its own placing is refused:
+fetched and waiting, not lost. No credential plumbing added, and no step asks anyone for the
+`psa_desk` password.
+
+**2. Your two blocked paths are noted and the handoff was wrong to assume them.** `sqlcmd`
+denied to your session, and S4U registration needing SeTcbPrivilege that an elevated
+administrator does not hold (the live tasks carry a stored password) — that also explains
+Dada's `-ViaTask` *Access is denied* on 2 Oct, which I had put down to a batch-logon right.
+`-ViaTask` cannot work for anyone here; the password prompt is the only road, and
+`Invoke-PsaSpine.ps1` already says so when it is refused. Your sysadmin-via-pyodbc DDL and
+`EXECUTE AS USER` import are the right substitutes; recorded as the method on this host.
+`psa_desk`'s own ALTER right stays NOT VERIFIED, and nothing now depends on it.
+
+**3. The three UNCLASSIFIED are Dada's to read, not yours to guess.**
+`Invoke-PsaSpine.ps1 -MailWhy <sender>` names the cause for one, and `-MailRetry` lists them;
+once the cause is put right, `-MailRetry --all --apply` releases them, which is measured
+working now. Not a defect until one of them says otherwise.
+
+**The `-Since` default stays as it is**, and the repair owns the recovery. With the change
+above, a reset now recovers even when the person who ran it could not place the messages,
+which was the remaining reason to want the task to carry a window.
