@@ -1226,7 +1226,18 @@ and the delta link advances.
 - `psaspine mail-retry <db> --message-id <id> --actor <who> --apply`: forget
   a message that was set aside, once the cause is put right, so a fresh
   pickup sync (delete the mailbox's delta file, run with `-Since`) imports it
-  again. A message that opened or joined a ticket is never forgotten.
+  again. A message that opened or joined a ticket is never forgotten. `--all`
+  releases every one of them in one command, one audit row each.
+- **The audit key is shaped where both stores read the same code** (2 Oct 2026,
+  MEASURED on the host): `audit_event.subject_id` is class `ID`, 64 characters,
+  because it is a key -- indexed beside `subject_kind`, joined to
+  `ticket.work_item_id` by Setup > Audit. A Message-ID is not our key and is
+  longer, so releasing a set-aside message failed on SQL Server with *string or
+  binary data would be truncated* and released none. `db.audit` now cuts the key
+  to that width, marks it cut, and writes the whole identifier into `detail`,
+  which is `FREE` and is the field Setup > Audit searches. SQLite would have
+  stored the long value silently, which is why the shaping is in the code and
+  not left to the host.
 
 ## Configuration types, statuses and questions (056, 30 Sep 2026)
 
@@ -1408,6 +1419,35 @@ address", and tells them neither.
 `Invoke-PsaSpine.ps1 -WhoSees PMC-000155 -Person <them>` says which it is:
 the address the ticket was raised from, every address the desk knows for
 that person, and whether they see it.
+
+### Running a desk command on the host, as the desk (2 Oct 2026)
+
+A SQL sysadmin cannot run one: SQL Server maps every sysadmin to database user
+`dbo`, whose default schema cannot be changed, and the desk refuses `dbo` so it
+can never write to the wrong schema. `scripts\Invoke-PsaSpine.ps1` runs the
+command as the account the desk itself runs as, whose name it reads from the
+desk's own scheduled tasks rather than guessing it. One switch per thing it is
+for, because PowerShell reads a bare `--word` as a parameter it does not have
+and stops to ask, which once swallowed three lines of an operator's session:
+
+    .\Invoke-PsaSpine.ps1 -MailHealth
+    .\Invoke-PsaSpine.ps1 -MailRetry                      # lists what was set aside
+    .\Invoke-PsaSpine.ps1 -MailRetry -All -Apply          # releases every one
+    .\Invoke-PsaSpine.ps1 -SchemaPreview                  # what a new schema file would add
+    .\Invoke-PsaSpine.ps1 -SchemaApply                    # adds it; guarded, so a re-run adds nothing
+    .\Invoke-PsaSpine.ps1 -Spine "<any psaspine command>" # anything else, as one quoted string
+
+It asks for that account at the Windows prompt and keeps it nowhere. `-OutFile`
+puts what the command wrote where a caller can read it without this script's own
+lines mixed in. `-ViaTask` needs nothing typed at all -- elevated, it registers a
+one-shot task under S4U and removes it again -- but S4U needs that account to be
+allowed to log on as a batch job here, and it says so plainly when it is refused
+instead of failing three more times afterwards.
+
+`Repair-PsaMailPickup.ps1 -AsDesk` and `Fix-PsaToday.ps1 -AsDesk` put their own
+questions to the desk the same way. Without it, those questions are asked under
+the caller's login and refused, which is not a fault in the desk or in the mail,
+and they now say so rather than reporting it as one.
 
 ## The words in a note can be selected and copied (2 Oct 2026)
 

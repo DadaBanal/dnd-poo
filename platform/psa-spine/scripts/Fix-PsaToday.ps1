@@ -23,11 +23,14 @@
         and a person decides it. Until it is done, no script can put them in the sync.
       - register or re-register a scheduled task: that asks for the task account's password, so it is
         yours to run, and the line to run is printed.
-      - type a credential, or print a tenant id, an app id or a thumbprint.
+      - type a credential, or print a tenant id, an app id or a thumbprint. With -AsDesk the questions it
+        puts to the desk go through Invoke-PsaSpine.ps1, which does its own asking at the Windows prompt;
+        this script still holds nothing.
 
 .EXAMPLE
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Fix-PsaToday.ps1
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Fix-PsaToday.ps1 -Apply
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Fix-PsaToday.ps1 -Apply -AsDesk   # a sysadmin needs this
 #>
 [CmdletBinding()]
 param(
@@ -35,6 +38,13 @@ param(
     [switch] $NoPull,
     [switch] $SkipMail,
     [switch] $SkipCalendar,
+    # Ask the desk as the account the desk runs as, through Invoke-PsaSpine.ps1,
+    # which asks at the Windows prompt once. Without it, every question put to
+    # the desk here is put under the caller's own login, and a SQL sysadmin's
+    # login resolves to database user [dbo], which the desk refuses on purpose
+    # (MEASURED on DND-SQL01, 2 Oct 2026). It is refused, not answered wrongly,
+    # so the steps that only read the mail plumbing are unaffected either way.
+    [switch] $AsDesk,
     # The mail domains whose members have a calendar to sync. Both are named because a member's mailbox is
     # on the second one (Dada, 2 Oct 2026: encoder@premieremedicalcenter.net).
     [string[]] $CalendarDomain = @('pmcne.ph', 'premieremedicalcenter.net'),
@@ -105,17 +115,18 @@ if ($SkipMail) { Say 'skipping the mail (-SkipMail)' } else {
         Say ('MISSING: ' + $repair)
         Later ('Repair-PsaMailPickup.ps1 is not in ' + $ScriptDir + '. Pull the repository, or save it there.')
     } else {
-        $look = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $repair -Database $Database -SpineDir $SpineDir -PythonExe $PythonExe 2>&1
+        $asDeskArgs = @(); if ($AsDesk) { $asDeskArgs = @('-AsDesk') }
+        $look = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $repair -Database $Database -SpineDir $SpineDir -PythonExe $PythonExe @asDeskArgs 2>&1
         foreach ($l in @($look)) { Write-Host ('    ' + $l) }
         $said = ($look | Out-String)
         $gone = $said -match '\b410\b'
         if ($Apply) {
             Rule '2b. letting it fix what is safe'
-            $fix = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $repair -Database $Database -SpineDir $SpineDir -PythonExe $PythonExe -Apply 2>&1
+            $fix = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $repair -Database $Database -SpineDir $SpineDir -PythonExe $PythonExe @asDeskArgs -Apply 2>&1
             foreach ($l in @($fix)) { Write-Host ('    ' + $l) }
             if ($gone -or (($fix | Out-String) -match '\b410\b')) {
                 Rule '2c. a delta link has expired (410): forgetting it, keeping a copy'
-                $rd = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $repair -Database $Database -SpineDir $SpineDir -PythonExe $PythonExe -Apply -ResetDelta 2>&1
+                $rd = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $repair -Database $Database -SpineDir $SpineDir -PythonExe $PythonExe @asDeskArgs -Apply -ResetDelta 2>&1
                 foreach ($l in @($rd)) { Write-Host ('    ' + $l) }
             }
         } elseif ($gone) {
@@ -143,12 +154,35 @@ if ($SkipCalendar) { Say 'skipping the calendar (-SkipCalendar)' } else {
         Later 'Correct -PythonExe; the desk cannot be asked for its members without it.'
     } else {
         $domArgs = @(); foreach ($d in $CalendarDomain) { $domArgs += @('--allowed-domain', $d) }
+        $asDeskScript = Join-Path $ScriptDir 'Invoke-PsaSpine.ps1'
+        $jsonFile = $null
         Push-Location $SpineDir
-        try { $json = & $PythonExe -m psaspine calendar-members $Database @domArgs 2>&1; $code = $LASTEXITCODE } finally { Pop-Location }
+        try {
+            if ($AsDesk -and (Test-Path $asDeskScript)) {
+                # -OutFile, so what comes back is the command's own output and
+                # not that script's lines about which account it used.
+                $jsonFile = Join-Path $env:TEMP ('psa-members-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.json')
+                $shown = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $asDeskScript `
+                             -Spine ('calendar-members ' + ($domArgs -join ' ')) -OutFile $jsonFile `
+                             -Database $Database -SpineDir $SpineDir -PythonExe $PythonExe 2>&1
+                $code = $LASTEXITCODE
+                foreach ($l in @($shown)) { Say ('  | ' + $l) }
+                $json = if (Test-Path $jsonFile) { Get-Content $jsonFile -Raw } else { '' }
+            } else {
+                $json = & $PythonExe -m psaspine calendar-members $Database @domArgs 2>&1
+                $code = $LASTEXITCODE
+            }
+        } finally {
+            Pop-Location
+            if ($jsonFile) { Remove-Item $jsonFile -Force -ErrorAction SilentlyContinue }
+        }
         if ($code -ne 0) {
             foreach ($l in @($json)) { Say ('  | ' + $l) }
             Say 'the desk refused to list its members'
-            Later ('Run this as the task account: a SQL sysadmin''s connection resolves to schema [dbo], which the desk refuses.')
+            Later ('Ask as the account the desk runs as: add -AsDesk to this line, or run' +
+                   ' scripts\Invoke-PsaSpine.ps1 -Spine "calendar-members --allowed-domain pmcne.ph' +
+                   ' --allowed-domain premieremedicalcenter.net". A SQL sysadmin''s own connection resolves' +
+                   ' to schema [dbo], which the desk refuses on purpose.')
         } else {
             $text = ($json | Out-String).Trim()
             $people = @()
@@ -196,6 +230,17 @@ if ($SkipCalendar) { Say 'skipping the calendar (-SkipCalendar)' } else {
         }
     }
 }
+
+# ------------------------------- the two the desk's own account has to be asked
+# Neither can be run from here under a sysadmin's login, and neither is safe to
+# assume: the schema step is what lets the desk store a note written in the new
+# editor, and the release is what puts the messages intake set aside onto the
+# board. Both are guarded, and a second run of either changes nothing.
+Later ('If this pull''s schema step is not applied yet: Invoke-PsaSpine.ps1 -SchemaPreview, then' +
+       ' Invoke-PsaSpine.ps1 -SchemaApply. Until it is, a note written in the ticket editor will not save.')
+Later ('To put the messages intake set aside onto the board: Invoke-PsaSpine.ps1 -MailRetry to see them,' +
+       ' then Invoke-PsaSpine.ps1 -MailRetry -All -Apply. A message that already made a ticket is never' +
+       ' released, so nothing is duplicated.')
 
 # ------------------------------------------------------------------- what is left
 Rule 'what is left for you'

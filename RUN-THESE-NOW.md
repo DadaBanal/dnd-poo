@@ -1,98 +1,82 @@
-# Two things to run on DND-SQL01, 2 Oct 2026
+# What to run on DND-SQL01, 2 Oct 2026
 
-Both scripts are in the repo. Get them with one pull on the host, as the account that owns the checkout:
+Everything below is in the repo. Take it with one pull on the host, as the account that owns the checkout:
 
     cd D:\dnd-poo
     git pull
 
-Nothing below needs SQL01 to do anything, and neither changes the schema.
+If the pull refuses because the two scripts saved by hand differ from the repository, throw the hand-saved
+copies away and take the tested ones (this touches nothing outside that one folder):
 
-## Where you are now (2 Oct 2026, 08:44 on DND-SQL01, MEASURED from your own run)
-
-The pull worked, the certificate is good until 1 Oct 2027, all four tasks run every minute with result 0, and
-both delta links were cleared. The preview straight after said **13 messages waiting on helpdesk@ and 68 on
-support@**, first sync from 30 Sep. So mail is reaching those two Inboxes after all; the fault was never there.
-
-Two things still stand between those messages and tickets on the board.
-
-### Your own sign-in cannot talk to the desk
-
-Every `psaspine` command you ran answered:
-
-    the desk's login must have default schema [psa] on this database; it has [dbo].
-
-That is not a fault on your account. SQL Server maps every member of the sysadmin role to the database user
-`dbo`, whose default schema is `dbo` and cannot be changed, and the desk refuses `dbo` on purpose so it can
-never write to the wrong schema. Run desk commands as the account the desk itself runs as:
-
-    cd D:\dnd-poo\platform\psa-spine\scripts
-    .\Invoke-PsaSpine.ps1 -MailHealth
-
-It asks for the psa_desk password once, runs the command as that account, prints what it said, and keeps the
-password nowhere. (Where you typed `"<the desk's connection>"` literally, that was a placeholder, which is why
-Python fell back to SQLite and said "unable to open database file". This script fills it in for you.)
-
-### The messages already set aside have to be released
-
-Every subjectless mail so far was recorded UNCLASSIFIED, and the pickup will never offer it again on its own
-because it remembers the Message-ID. There were about seventy of them, so there is now one command for all:
-
-    .\Invoke-PsaSpine.ps1 -MailRetry
-    .\Invoke-PsaSpine.ps1 -MailRetry -All -Apply
-
-It runs as the desk's own task account, `DND-SQL01\psa_desk`, a local account on the server whose database user
-in PMC_PSA has default schema `psa`. The script reads that name from whichever desk task is registered rather
-than assuming it. If the password prompt is refused, add `-ViaTask` to any of these and none is asked for:
-elevated, it registers a one-shot task that runs as that account under S4U, where Windows issues the token, and
-removes the task again.
-
-    .\Invoke-PsaSpine.ps1 -MailRetry -All -Apply -ViaTask
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Repair-PsaMailPickup.ps1 -Apply -ResetDelta
-
-The first lists what was set aside and changes nothing. The second releases them all, one audit row each; a
-message that already made a ticket is never released, so nothing is duplicated. The third makes the pickup read
-back over the last two days, and within a minute or two those requests appear on the Service Board.
-
----
-
-## First: the pull refused, so the host is still on the old code
-
-MEASURED on DND-SQL01, 2 Oct 2026. The scripts saved into `scripts\` by hand differ from the repository, so
-`git pull` would overwrite them and refused. Everything after it read the old code, which is why `mail-health`
-came back as an unknown command.
-
-Throw away the hand-saved copies and take the repository's, which are the tested ones:
-
-    cd D:\dnd-poo
     git checkout -- platform/psa-spine/scripts
     git clean -fd platform/psa-spine/scripts
     git pull
 
-`git clean -fd` on that one folder removes files git does not track, which here is exactly the two scripts saved
-by hand. It touches nothing outside `platform\psa-spine\scripts`.
+## Where you are now (MEASURED, from your own runs on 2 Oct 2026)
 
----
+| | |
+|---|---|
+| The mail plumbing | healthy. All four tasks run every minute with result 0, the certificate is good until 1 Oct 2027, both delta links move. |
+| The mailbox | has the mail. After the delta reset the preview found **12 waiting on helpdesk@ and 67 on support@**, first sync from 30 Sep. The fault was never there. |
+| Your own sign-in | cannot talk to the desk, and that is by design: SQL Server maps every sysadmin to database user `dbo`, and the desk refuses `dbo` so it can never write to the wrong schema. `Invoke-PsaSpine.ps1` runs a command as the desk's own account instead, reads that account's name from the PSA-Desk task, and worked. |
+| Set aside | **7 messages**, not the seventy I guessed from the screenshot. Your `-MailRetry` listing is the measurement. |
+| `-MailRetry -All -Apply` | failed on `String or binary data would be truncated ... column 'subject_id'`. **Fixed in this pull** (see below). |
+| `-ViaTask` | failed with `Access is denied` registering the one-shot task, then buried that error under three more. Fixed to stop at the first one and say why. Use the password prompt, which worked. |
 
-## The one line
+### What was wrong with `-MailRetry -All -Apply`, and what changed
 
-Elevated, on DND-SQL01:
+The audit row each release writes names its subject in `audit_event.subject_id`, a key column 64 characters
+wide. A mail Message-ID is not our key and is longer than that, so SQL Server refused the whole statement and
+nothing was released. (SQLite would have stored it and said nothing, which is why the cloud suite never saw it.
+The same defect SQL01 found in part 28 for `data_quality.subject_id`.)
 
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File D:\dnd-poo\platform\psa-spine\scripts\Fix-PsaToday.ps1
+The key is now cut to what the column holds and marked as cut, and the **whole** Message-ID is written into
+`detail`, which is unbounded and is the field Setup > Audit searches. Nothing is lost, no schema change is
+needed for it, and the index stays as narrow as it was designed to be.
+
+## The order to run them in
+
+Elevated, on DND-SQL01, from `D:\dnd-poo\platform\psa-spine\scripts`. Each asks for the desk account's
+password once and keeps it nowhere.
+
+**1. The schema step, first.** This pull carries 063 and 064, and the desk writes the new columns on every
+note and every imported mail. Until they exist, a note will not save and an import will fail:
+
+    .\Invoke-PsaSpine.ps1 -SchemaPreview      # prints the plan, changes nothing
+    .\Invoke-PsaSpine.ps1 -SchemaApply        # adds the columns; guarded, so a re-run adds nothing twice
+
+**2. Release the seven set-aside messages.**
+
+    .\Invoke-PsaSpine.ps1 -MailRetry                  # lists them, changes nothing
+    .\Invoke-PsaSpine.ps1 -MailRetry -All -Apply      # releases every one, one audit row each
+
+A message that already made a ticket is never released, so nothing is duplicated.
+
+**3. Make the pickup read back over them.**
+
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Repair-PsaMailPickup.ps1 -Apply -ResetDelta
+
+Within a minute or two those requests appear on the Service Board. Add `-AsDesk` to that line if you want its
+step 5 to ask the desk under the right account instead of reporting a problem that is not one.
+
+**4. Then the calendar work**, which is section 2 below and still needs Setup > Members first.
+
+### Or the one line, for everything that does not need a decision
+
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File D:\dnd-poo\platform\psa-spine\scripts\Fix-PsaToday.ps1 -AsDesk
 
 That changes nothing: it pulls the code, runs the mail repair in preview, asks the desk what it has taken, and
-checks whether encoder is in the calendar list. Read what it says, then run it again with `-Apply`:
+checks whether encoder is in the calendar list. Read it, then run it again with `-Apply -AsDesk`, which starts a
+stopped mail task, clears a delta link Graph says has expired, writes the members list and runs the calendar
+grant (a browser window opens for Exchange Online). It ends with a numbered **what is left for you**, which
+includes steps 1 and 2 above, because those two are the desk's own account to be asked and it will not guess
+whether you have run them.
 
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File D:\dnd-poo\platform\psa-spine\scripts\Fix-PsaToday.ps1 -Apply
+`-AsDesk` is new and a sysadmin needs it: without it every question this line puts to the desk is put under your
+own login, which resolves to `dbo` and is refused. It does not change what the line may write.
 
-With `-Apply` it starts a stopped mail task, clears a delta link that Graph says has expired, writes the members
-list, and runs the calendar grant (a browser window opens for Exchange Online). It ends with a numbered list
-headed **what is left for you**, which is only ever the things a script may not decide: a member record, and
-re-registering a scheduled task, because that asks for the task account's password.
-
-It will NOT grant the calendars if encoder is missing from the list, because the grant is the last step and the
-list is what it grants. Do Setup > Members first, then run the line again.
-
-The rest of this file is the same jobs by hand, if you would rather do them one at a time.
+It will NOT grant the calendars if encoder is missing from the list, because the list is what it grants. Do
+Setup > Members first, then run the line again.
 
 ---
 
@@ -116,11 +100,14 @@ If the preview said **410** for a mailbox, its Graph bookmark has expired. Clear
 
 A copy of the old bookmark is kept beside it, and no message is imported twice: the import is keyed by Message-ID.
 
-One of its steps asks the desk itself, and that is the step that tells the two faults apart. You can run it alone,
-as the task account:
+One of its steps asks the desk itself, and that is the step that tells the two faults apart. Add `-AsDesk` to any
+of the three lines above so it is asked under the right account, or ask it alone:
 
-    cd D:\dnd-poo\platform\psa-spine
-    C:\PMC\Python312\python.exe -m psaspine mail-health "<the desk's connection>"
+    cd D:\dnd-poo\platform\psa-spine\scripts
+    .\Invoke-PsaSpine.ps1 -MailHealth
+
+(Do not type the connection string. `<the desk's connection>` in an earlier note was a placeholder; typed
+literally, Python read it as a SQLite filename and said "unable to open database file". These scripts fill it in.)
 
 It prints when the desk last took a message and what became of it, what came of the ones since, and which
 addresses a board claims. **A silent desk with a busy mailbox is the pickup's fault**: nothing is reaching the
@@ -186,5 +173,9 @@ Without `-Apply` it signs in, says how many writes are due and how many calendar
 
 ## Not verified
 
-Nothing here was run against DND-SQL01 or Exchange from the cloud session. The two script changes and the new
-script are covered by the suite as text (652 tests, OK), not by a run on the host.
+Nothing here was run against DND-SQL01 or Exchange from the cloud session: there is no PowerShell and no route to
+the host here, so every script change is checked as text by the suite (701 tests, OK) and by nothing else. What is
+labelled MEASURED above was measured by you, in the output you pasted.
+
+The audit fix is covered by a test on both stores. Whether the 064 schema step and the release then run clean on
+PMC_PSA is NOT VERIFIED until you run them.

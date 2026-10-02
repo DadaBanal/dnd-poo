@@ -67,3 +67,20 @@ If PSA-Calendar is registered, re-register it once so its command carries the se
 | What it is | the note box on a ticket is an editor: bold, lists, a link, and a paste out of Outlook or Word that keeps the words and none of the markup. Nothing is stored until `richtext.clean` has rebuilt it, and the PHI scan reads the words, never the markup. |
 | Also | the requester's email carries the note as written (`notification.body_html`), with the text of the email always sent as well. |
 | Pass | write a note with a bold word and a bullet, save: the ticket shows them. Paste a block out of Outlook: the words arrive, no fonts or colours do. An Updated email in Outlook shows the bold word. |
+
+---
+
+## Added 2 Oct 2026, later still: the audit key a Message-ID would not fit in
+
+MEASURED on DND-SQL01 by Dada, 2 Oct 2026. Releasing the messages intake had set aside
+(`mail-retry --all --apply`) failed on the host and released none of them:
+
+    String or binary data would be truncated in table 'PMC_PSA.psa.audit_event', column 'subject_id'
+
+| | |
+|---|---|
+| Cause | `audit_event.subject_id` is class `ID`, `NVARCHAR(64)`: a key, indexed beside `subject_kind` (054) and joined to `ticket.work_item_id` by Setup > Audit. Every subject the spine names itself is far shorter. A mail Message-ID is not ours and is longer. The same defect you found in part 28 for `data_quality.subject_id`, which is why that one is class `REF`. |
+| Why the cloud suite never saw it | SQLite stores the long value and says nothing. So the audit row is now shaped in `psaspine/db.py`, where both stores read the same code, rather than relying on the host to refuse it. |
+| The fix | **no schema change.** The key is cut to the width the column promises and marked as cut (a trailing ellipsis), and the **whole** identifier is written into `detail`, which is class `FREE` and is the field Setup > Audit searches. Nothing is lost, and the index stays as narrow as it was designed to be. Covered by a test on both stores. |
+| Also | `Invoke-PsaSpine.ps1` grew `-SchemaPreview` / `-SchemaApply`, because the schema step cannot be run as a sysadmin either (same `[dbo]` refusal), and `-OutFile` for a caller that reads the answer. `-ViaTask` now stops at a refused `Register-ScheduledTask` instead of failing three more times after it: that error is non-terminating. `Repair-PsaMailPickup.ps1` and `Fix-PsaToday.ps1` take `-AsDesk`, which puts their questions to the desk through the desk's own account instead of reporting a refusal as a fault. |
+| Pass | `Invoke-PsaSpine.ps1 -MailRetry -All -Apply` releases every set-aside message, one audit row each; Setup > Audit shows a MAIL_RETRY row per message whose detail carries the full Message-ID. |

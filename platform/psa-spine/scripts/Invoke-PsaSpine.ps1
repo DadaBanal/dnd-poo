@@ -41,6 +41,12 @@ param(
     [string] $WhoSees,
     [string] $Person,
     [string] $MailWhy,
+    # The schema step. -SchemaPreview prints the generated port's plan and
+    # changes nothing; -SchemaApply runs it, which is how a new schema file
+    # (064, say) reaches the live store. Both are guarded and idempotent: a
+    # re-run adds nothing twice.
+    [switch] $SchemaPreview,
+    [switch] $SchemaApply,
     [int] $Days,
     [string] $Actor = $env:USERNAME,
     # Anything else: the whole psaspine command as one string, without the
@@ -49,6 +55,11 @@ param(
     # Read from the desk's own scheduled tasks when it is not given, so the
     # name is measured rather than guessed (2 Oct 2026: the guess was wrong).
     [string] $Account,
+    # Where to put what the command wrote on standard output, as well as showing
+    # it. A caller that reads the answer rather than a person (Fix-PsaToday.ps1
+    # asking for the members list, which is JSON) needs it without this script's
+    # own lines mixed in.
+    [string] $OutFile,
     # Run it through a one-shot scheduled task instead, which needs no
     # password at all.
     [switch] $ViaTask,
@@ -102,6 +113,10 @@ if ($MailHealth) {
 } elseif ($MailWhy) {
     $words = @('mail-why', '--sender', $MailWhy)
     if ($Days) { $words += @('--days', "$Days") }
+} elseif ($SchemaPreview) {
+    $words = @('schema-preview')
+} elseif ($SchemaApply) {
+    $words = @('init')
 } elseif ($Spine) {
     $words = @($Spine -split '\s+' | Where-Object { $_ })
 } else {
@@ -111,6 +126,8 @@ if ($MailHealth) {
     Write-Host '  -MailRetry -All -Apply                   release every one of them'
     Write-Host '  -MailWhy <sender>                        what intake did with their mail'
     Write-Host '  -WhoSees <ticket> -Person <them>         why a requester does or does not see it'
+    Write-Host '  -SchemaPreview                           what the schema step would add, changing nothing'
+    Write-Host '  -SchemaApply                             add it (guarded; a re-run adds nothing twice)'
     Write-Host '  -Spine "<any psaspine command>"          anything else, as one quoted string'
     exit 2
 }
@@ -143,13 +160,21 @@ if ($ViaTask) {
     $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
                 -Argument ('-NoProfile -ExecutionPolicy Bypass -File "' + $runner + '"')
     $principal = New-ScheduledTaskPrincipal -UserId $Account -LogonType S4U -RunLevel Highest
+    # -ErrorAction Stop, because this one writes a NON-TERMINATING error:
+    # MEASURED on DND-SQL01, 2 Oct 2026, 'Access is denied' did not enter the
+    # catch, so the run carried on to Start-ScheduledTask and
+    # Get-ScheduledTaskInfo on a task that was never registered and failed
+    # three more times, burying the one error that mattered.
     try {
         Register-ScheduledTask -TaskName $name -Action $action -Principal $principal `
-                               -Description 'Dada PSA: one desk command, then gone' | Out-Null
+                               -Description 'Dada PSA: one desk command, then gone' `
+                               -ErrorAction Stop | Out-Null
     } catch {
         Remove-Item $runner -Force -ErrorAction SilentlyContinue
         throw ('could not register a task that runs as ' + $Account + ': ' + $_.Exception.Message +
-               '. Leave -ViaTask off to be asked for that account''s password instead.')
+               '. S4U needs the account to be allowed to log on as a batch job on this machine, and an' +
+               ' elevated session to register it. Leave -ViaTask off to be asked for that account''s' +
+               ' password instead, which is the path that worked.')
     }
     $code = 1
     try {
@@ -168,6 +193,7 @@ if ($ViaTask) {
     }
     if (Test-Path $out) {
         Get-Content $out | ForEach-Object { Write-Host $_ }
+        if ($OutFile) { Copy-Item -Path $out -Destination $OutFile -Force }
         Remove-Item $out -Force -ErrorAction SilentlyContinue
     } else {
         Write-Host ('the task wrote nothing. ' + $Account + ' may not be allowed to run a task here,' +
@@ -205,6 +231,7 @@ try {
 foreach ($f in @($out, $err)) {
     if ((Test-Path $f) -and (Get-Item $f).Length -gt 0) { Get-Content $f | ForEach-Object { Write-Host $_ } }
 }
+if ($OutFile -and (Test-Path $out)) { Copy-Item -Path $out -Destination $OutFile -Force }
 Remove-Item $out, $err -Force -ErrorAction SilentlyContinue
 Write-Host ('exit ' + $code)
 exit $code

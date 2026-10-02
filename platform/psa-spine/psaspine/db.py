@@ -401,9 +401,38 @@ def current_source() -> str | None:
     return _SOURCE.get()
 
 
+# How wide `audit_event.subject_id` is on the host: class ID, NVARCHAR(64)
+# (tools/tsql-decisions.json). It is a key, not prose -- indexed beside
+# subject_kind (054) and joined to ticket.work_item_id by Setup > Audit -- and
+# every subject the spine names itself is far shorter than that. A mail
+# Message-ID is not ours, and a real one is longer: MEASURED on DND-SQL01,
+# 2 Oct 2026, `mail-retry --all --apply` stopped on
+#
+#   String or binary data would be truncated in table
+#   'PMC_PSA.psa.audit_event', column 'subject_id'
+#
+# with a Gmail Message-ID, so the seven set-aside messages could not be
+# released. (The same defect SQL01 reported in part 28 for
+# data_quality.subject_id, which is why that one is class REF.) SQLite would
+# have stored the long value and said nothing, so the audit row has to be
+# shaped here, where both stores read the same code, rather than at the host.
+#
+# Shaped, not dropped: the key is cut to what the column promises and marked as
+# cut, and the whole identifier is written into `detail`, which is class FREE.
+# Nothing is lost -- `detail` is the field Setup > Audit searches -- and the
+# index stays as narrow as it was designed to be.
+SUBJECT_ID_MAX = 64
+
+
 def audit(conn: sqlite3.Connection, *, at: str, actor: str, action: str,
           subject_kind: str, subject_id: str | None = None,
           detail: str | None = None, override_reason: str | None = None) -> None:
+    if subject_id is not None:
+        subject_id = str(subject_id)
+        if len(subject_id) > SUBJECT_ID_MAX:
+            whole = subject_id
+            subject_id = subject_id[:SUBJECT_ID_MAX - 1] + "\u2026"
+            detail = f"{detail} [{subject_kind} {whole}]" if detail else f"{subject_kind} {whole}"
     conn.execute(
         "INSERT INTO audit_event (occurred_at, actor, action, subject_kind, subject_id, detail, override_reason, source)"
         " VALUES (?,?,?,?,?,?,?,?)",

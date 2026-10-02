@@ -7000,6 +7000,24 @@ class RunAsTaskAccountScriptTest(unittest.TestCase):
         self.assertIn("may not log on at this machine", self.text)
         self.assertIn("-ViaTask, which needs no password", self.text)
 
+    def test_a_registration_that_is_refused_stops_there(self):
+        # MEASURED on DND-SQL01, 2 Oct 2026: Register-ScheduledTask answered
+        # 'Access is denied' as a NON-TERMINATING error, so -ViaTask carried on
+        # to Start-ScheduledTask and twice to Get-ScheduledTaskInfo on a task
+        # that was never registered, and three later failures buried the first.
+        reg = self.text[self.text.index("Register-ScheduledTask -TaskName $name"):]
+        self.assertIn("-ErrorAction Stop", reg[:reg.index("} catch {")])
+
+    def test_the_schema_step_is_a_switch_too(self):
+        # The live store needs a new schema file applied before the desk can
+        # write what the new code writes, and that command may not be run as a
+        # sysadmin either (same [dbo] refusal). So it is here, where the account
+        # is right: a preview that changes nothing, and the step itself.
+        for switch in ("[switch] $SchemaPreview", "[switch] $SchemaApply"):
+            self.assertIn(switch, self.text, switch)
+        self.assertIn("$words = @('schema-preview')", self.text)
+        self.assertIn("$words = @('init')", self.text)
+
 
 class NoteRichTextTest(unittest.TestCase):
     """064. Dada, 2 Oct 2026: "a proper text editor via html or like html or
@@ -12566,10 +12584,10 @@ class MailCutoverTest(unittest.TestCase):
         self.conn.commit()
 
     def _msg(self, *, subject, to, sender="ward3@pmcne.ph", delivered_to=None, cc=None, in_reply_to=None,
-             body="Please help."):
+             body="Please help.", message_id=None):
         self.n += 1
         headers = [f"From: {sender}", f"To: {to}", f"Subject: {subject}", "Date: Thu, 01 Oct 2026 09:00:00 +0800",
-                   f"Message-ID: <c{self.n}@pmcne.ph>"]
+                   f"Message-ID: {message_id or f'<c{self.n}@pmcne.ph>'}"]
         if delivered_to:
             headers.append(f"Delivered-To: {delivered_to}")
         if cc:
@@ -12860,6 +12878,40 @@ class MailCutoverTest(unittest.TestCase):
         self.conn.commit()
         self.assertEqual(intake.set_aside(self.conn), [])
         self.assertEqual(intake.retry_all(self.conn, at=self.at, actor="dada"), [])
+
+    def test_a_message_id_longer_than_the_audit_key_is_still_released_whole(self):
+        """MEASURED on DND-SQL01, 2 Oct 2026: `mail-retry --all --apply` stopped on
+        "String or binary data would be truncated in table
+        'PMC_PSA.psa.audit_event', column 'subject_id'" with a Gmail Message-ID,
+        so none of the set-aside messages could be released. audit_event's key
+        column is 64 characters wide on purpose; the identifier is not ours and
+        is longer. So the key is cut and marked cut, and the whole identifier is
+        kept in detail, which is the field Setup > Audit searches."""
+        from psaspine import db, intake
+        long_id = "<CAJC6U1CZbdz8c-XPKmFmcrPaz-yhGK2HXzxaq=nrmMQkwsi+jQ@mail.gmail.com>"
+        self.assertGreater(len(long_id), db.SUBJECT_ID_MAX)
+        intake.set_addresses(self.conn, "IT_HELP", "support@pmcne.ph", at=self.at, actor="t")
+        self._msg(subject="", to="support@pmcne.ph", sender="ward3@pmcne.ph", body="   ", message_id=long_id)
+        intake.import_drop(self.conn, self.drop, run_id="w1", board_id="IT_HELP", at=self.at)
+        self.conn.commit()
+        self.assertEqual([r["message_id"] for r in intake.set_aside(self.conn)], [long_id])
+        self.assertEqual(intake.retry_all(self.conn, at=self.at, actor="dada"), [long_id])
+        self.conn.commit()
+        key, detail = self.conn.execute("SELECT subject_id, detail FROM audit_event WHERE action = 'MAIL_RETRY'").fetchone()
+        self.assertLessEqual(len(key), db.SUBJECT_ID_MAX)
+        self.assertTrue(key.endswith("\u2026"), key)              # cut, and says so
+        self.assertIn(long_id, detail)                            # and nothing is lost
+        self.assertEqual(intake.set_aside(self.conn), [])
+
+    def test_a_subject_id_that_fits_is_left_exactly_as_it_was(self):
+        """The cut is for the identifiers that are not ours. A ticket's own key
+        is short, and the audit trail must keep it exact: Setup > Audit joins on
+        it to name which ticket a row was about."""
+        from psaspine import db
+        db.audit(self.conn, at="2026-10-02 09:00", actor="dada", action="MAIL_RETRY",
+                 subject_kind="work_item", subject_id="PMC-000155", detail="nothing added")
+        key, detail = self.conn.execute("SELECT subject_id, detail FROM audit_event WHERE action = 'MAIL_RETRY'").fetchone()
+        self.assertEqual((key, detail), ("PMC-000155", "nothing added"))
 
     def test_a_mail_that_says_nothing_at_all_is_still_recorded(self):
         """Nothing is ever dropped: a mail with no subject, no words and no

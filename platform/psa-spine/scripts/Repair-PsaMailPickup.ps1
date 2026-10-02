@@ -18,14 +18,18 @@
                                     because the import is keyed by Message-ID.
       4. the drop folder            mail waiting to be imported, and anything moved to failed\ by a pass that
                                     could not place it.
-      5. one real pass per mailbox  in PREVIEW, so Graph's own answer is in the log, whatever it is.
+      5. the desk's own side         what the desk has taken in the last two days. With -AsDesk this is asked as
+                                    the account the desk runs as, because a SQL sysadmin's own login resolves to
+                                    database user [dbo] and the desk refuses that on purpose.
+      6. one real pass per mailbox  in PREVIEW, so Graph's own answer is in the log, whatever it is.
 
     What it changes, and only with -Apply:
       - enables and starts a task that is registered but disabled or stopped;
       - with -ResetDelta, deletes the saved delta link (after copying it beside itself) so the next pass
         re-reads from -Since.
     It never registers a task, never writes a certificate, never imports mail itself, and never types a
-    credential. Anything else it finds, it names, with the one command that fixes it.
+    credential of its own (with -AsDesk, step 5 hands off to Invoke-PsaSpine.ps1, which does its own asking
+    at the Windows prompt). Anything else it finds, it names, with the one command that fixes it.
 
 .EXAMPLE
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Repair-PsaMailPickup.ps1
@@ -47,6 +51,14 @@ param(
     [string] $BoardId = 'IT_HELP',
     [int] $StaleMinutes = 15,
     [switch] $ResetDelta,
+    # Ask the desk as the account the desk runs as. Without this, step 5 is
+    # asked under the caller's own login, and a SQL sysadmin's login resolves to
+    # database user [dbo], which the desk refuses on purpose -- so step 5 always
+    # reported a problem that was not one (MEASURED, 2 Oct 2026). With it, that
+    # one step hands off to scripts\Invoke-PsaSpine.ps1, which does its own
+    # asking at the Windows prompt; this script still types no credential of its
+    # own and holds none.
+    [switch] $AsDesk,
     [switch] $Apply
 )
 
@@ -235,13 +247,29 @@ Write-Step '5. what the desk has taken (its side, not the mailbox''s)'
 if (-not (Test-Path $PythonExe)) {
     Write-Step ('  skipped: ' + $PythonExe + ' is not there')
 } else {
+    $asDeskScript = Join-Path (Join-Path $SpineDir 'scripts') 'Invoke-PsaSpine.ps1'
     Push-Location $SpineDir
     $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    try { $h = & $PythonExe -m psaspine mail-health $Database --days 2 2>&1; $hc = $LASTEXITCODE } finally { $ErrorActionPreference = $eap; Pop-Location }
+    try {
+        if ($AsDesk -and (Test-Path $asDeskScript)) {
+            Write-Step '    asking as the desk''s own account (-AsDesk)'
+            $h = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $asDeskScript `
+                     -MailHealth -Days 2 -Database $Database -SpineDir $SpineDir -PythonExe $PythonExe 2>&1
+            $hc = $LASTEXITCODE
+        } else {
+            $h = & $PythonExe -m psaspine mail-health $Database --days 2 2>&1
+            $hc = $LASTEXITCODE
+        }
+    } finally { $ErrorActionPreference = $eap; Pop-Location }
     foreach ($l in @($h)) { Write-Step ('    | ' + $l) }
-    if ($hc -ne 0) {
+    if ($hc -ne 0 -and (($h | Out-String) -match 'default schema')) {
+        # Not a fault in the desk and not a fault in the mail: the question was
+        # asked under the wrong login. Say which, and how to ask again.
+        Add-Finding 'the desk was asked under this login, and a SQL sysadmin resolves to database user [dbo], which the desk refuses on purpose.' `
+                    'Ask as the account the desk runs as: add -AsDesk to this command, or run scripts\Invoke-PsaSpine.ps1 -MailHealth. Step 5 says nothing either way about whether mail is arriving; steps 1-4 and 6 do.'
+    } elseif ($hc -ne 0) {
         Add-Finding ('the desk could not be asked what it has taken (exit ' + $hc + ').') `
-                    'Run as the task account: a SQL sysadmin resolves to schema [dbo], which the desk refuses.'
+                    'Run scripts\Invoke-PsaSpine.ps1 -MailHealth, which asks as the account the desk runs as, and read what it says.'
     } elseif (($h | Out-String) -match 'NOTHING arrived in that window') {
         Add-Finding 'The desk has taken NO mail in the last 2 days, so the fault is before the desk: the pickup, not intake.' `
                     'The pass below says what Graph answered; that is the cause.'
