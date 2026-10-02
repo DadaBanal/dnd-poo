@@ -1344,6 +1344,30 @@ per dispatcher, theirs alone) and applies whenever you open Dispatch;
 The button says how many of how many are showing, and "saved" when the
 saved view is what you see.
 
+## The words in a note can be selected and copied (2 Oct 2026)
+
+Dada, 2 Oct 2026, with a ticket open: *"make sure the text here can be copy
+and pasted ... atm copy and paste doesnt work"*. MEASURED in a browser:
+selecting across a note returned nothing at all.
+
+The cause was ours and it was one line. A pod card carried `draggable=true`
+so it could be dragged into another column, and Chrome's own stylesheet
+gives every `[draggable=true]` element `user-select: none`, which its
+contents inherit. Dragging the card cost the reader every word in it.
+
+The card is now draggable only while the pointer is held on its heading,
+which is the handle it always looked like. At rest it is not draggable, so
+its words select and copy as any other text on the page. Dragging a card
+between columns is unchanged. Each note also has a **Copy** button in its
+header, which puts the note's text on the clipboard as written: useful for
+pasting a ward's words into a reply, and the way to get them on a touch
+screen. It uses the clipboard API with the older command as a fallback.
+
+Not done, because it is a decision rather than a bug: editing a note's text
+after it is saved. A note is the record of what someone said and when, the
+requester may have read it already, and the audit trail has no shape for a
+changed one yet.
+
 ## A mail with no subject is a ticket too (2 Oct 2026)
 
 Dada, 2 Oct 2026, with the support mailbox open: *"if there is no subject it

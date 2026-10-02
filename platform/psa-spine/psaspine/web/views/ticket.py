@@ -385,7 +385,9 @@ def detail(ctx, work_item_id):
             items.append(
                 f"<div class='note {flag}'><div class=h><span class=av>{t.esc(_initials(e['actor']))}</span>"
                 f"<b>{t.esc(e['actor'] or '—')}</b><span class='flag {flag}'>{FLAG_LABEL[flag]}</span>{extra}"
-                f"{t.esc(e['occurred_at'])} · {t.esc(e['kind'].replace('_', ' ').lower())}</div>"
+                f"{t.esc(e['occurred_at'])} · {t.esc(e['kind'].replace('_', ' ').lower())}"
+                "<button type=button class='iconbtn copy' data-copy title='Copy this note' aria-label='Copy this note'>"
+                + t.icon("copy") + "</button></div>"
                 f"<div style='white-space:pre-wrap'>{t.esc(e['detail'])}</div></div>")
         else:
             items.append(f"<div class=sys>{t.esc(e['occurred_at'])} · {t.esc(e['actor'] or 'system')} · "

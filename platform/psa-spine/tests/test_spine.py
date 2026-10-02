@@ -6940,6 +6940,39 @@ class NotificationSenderScriptTest(unittest.TestCase):
         self.assertEqual(self.text.count("/sendMail"), 1)
 
 
+class NoteSelectableTest(unittest.TestCase):
+    """Dada, 2 Oct 2026, on a ticket: "the text here can be copy and pasted ...
+    atm copy and paste doesnt work". Chrome's own stylesheet gives any
+    [draggable=true] element user-select:none, so a draggable pod card made
+    every word inside it unselectable (MEASURED in a browser). The card is
+    draggable only while its heading is held, and each note has a Copy button."""
+
+    T = Path(__file__).resolve().parent.parent / "psaspine" / "web" / "templates.py"
+    V = Path(__file__).resolve().parent.parent / "psaspine" / "web" / "views" / "ticket.py"
+
+    def setUp(self) -> None:
+        self.css = self.T.read_text()
+        self.view = self.V.read_text()
+
+    def test_a_card_is_not_draggable_at_rest(self):
+        self.assertIn("c.draggable=false;", self.css)
+        self.assertNotIn("c.draggable=true;var h=", self.css)
+        self.assertIn('h.addEventListener("mousedown",function(){c.draggable=true})', self.css)
+        self.assertIn('d.addEventListener("mouseup",function(){c.draggable=false})', self.css)
+        self.assertIn('c.addEventListener("dragend",function(){c.draggable=false})', self.css)
+
+    def test_the_words_in_a_card_are_selectable_and_the_handle_is_not(self):
+        self.assertIn(".pods .card[data-pod],.pods .card[data-pod] .podbody,.note,.note div{user-select:text", self.css)
+        self.assertIn("cursor:grab;user-select:none}", self.css)      # the heading stays a handle
+
+    def test_every_note_offers_a_copy_button(self):
+        self.assertIn("class='iconbtn copy' data-copy", self.view)
+        self.assertIn('button.copy[data-copy]', self.css)
+        self.assertIn("navigator.clipboard.writeText", self.css)
+        self.assertIn('d.execCommand("copy")', self.css)              # and a fallback for an old browser
+        self.assertIn('"copy": "M9 9h10v10H9zM5 15V5h10"', self.css)
+
+
 class OneLineScriptTest(unittest.TestCase):
     """scripts/Fix-PsaToday.ps1 is the one line (Dada, 2 Oct 2026: "is there a
     line i can run to run these all"). It runs the others in order and stops at

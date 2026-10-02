@@ -168,6 +168,12 @@ dialog#pal::backdrop{background:rgb(10 12 18/.35);-webkit-backdrop-filter:blur(3
 [popover]#keys dt{white-space:nowrap} [popover]#keys dd{margin:0;color:var(--ink-2)}
 .pods .card[data-pod]{position:relative}
 .pods .card[data-pod] h3{display:flex;align-items:center;gap:0;padding-right:56px;cursor:grab;user-select:none}
+/* Chrome's own stylesheet gives [draggable=true] user-select:none, so a draggable card made every word in it
+   unselectable: a technician could not copy a ward's message out of a note (MEASURED 2 Oct 2026). The card is
+   draggable only while the pointer is down on its heading (see the pods script), and its words say so. */
+.pods .card[data-pod],.pods .card[data-pod] .podbody,.note,.note div{user-select:text;-webkit-user-select:text}
+.note .h .copy{opacity:0;transition:opacity var(--fast) var(--ease)} .note:hover .copy,.note:focus-within .copy{opacity:1}
+.note .h .copy.done{opacity:1;color:var(--ok,#1a7f37)}
 .pods .card[data-pod] h3:active{cursor:grabbing}
 .pods .card[data-pod] .podctl{position:absolute;right:8px;top:10px;display:inline-flex;gap:2px;opacity:0;transition:opacity var(--fast) var(--ease)}
 .pods .card[data-pod]:hover .podctl,.pods .card[data-pod]:focus-within .podctl{opacity:1}
@@ -614,7 +620,12 @@ addEventListener("pageshow",function(){if(np)np.className=""});
   all().forEach(function(c){var h3=$(":scope>h3",c);if(h3&&!$(":scope>.podbody",c)){var pb=d.createElement("div");pb.className="podbody";
     Array.prototype.slice.call(c.childNodes).forEach(function(n){if(n!==h3&&!(n.classList&&n.classList.contains("podctl")))pb.appendChild(n)});c.appendChild(pb);
     pb.addEventListener("mouseup",function(){if(pb.style.height)setTimeout(remember,0)})}});
-  all().forEach(function(c){c.draggable=true;var h=$("h3",c);if(!h)return;
+  all().forEach(function(c){var h=$("h3",c);if(!h)return;
+    /* not draggable at rest: see the note in the stylesheet. The heading is the handle. */
+    c.draggable=false;
+    h.addEventListener("mousedown",function(){c.draggable=true});
+    d.addEventListener("mouseup",function(){c.draggable=false});
+    c.addEventListener("dragend",function(){c.draggable=false});
     var ctl=d.createElement("span");ctl.className="podctl";
     ctl.innerHTML='<button type=button class="iconbtn mv" data-dir=-1 title="Move up" aria-label="Move up">'+ic("up")+'</button>'
       +'<button type=button class="iconbtn mv" data-dir=1 title="Move down" aria-label="Move down">'+ic("down")+'</button>'
@@ -666,6 +677,15 @@ addEventListener("pageshow",function(){if(np)np.className=""});
   $("button",reset).addEventListener("click",function(){save({});all().forEach(function(c){c.classList.remove("collapsed","hidden");setSize(c,"full");var pb=$(":scope>.podbody",c);if(pb)pb.style.height=""});
     cols.forEach(function(c){(c.dataset.order||"").split(",").forEach(function(k){var p=byKey(k);if(p)c.appendChild(p)})});apply()});
   apply()})();
+/* Copy on a note: the ward's own words, as written, for a reply or a search. */
+d.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest("button.copy[data-copy]");if(!b)return;
+var note=b.closest(".note");if(!note)return;var body=note.querySelector("div:last-child");if(!body)return;
+var text=body.innerText;
+function done(){b.classList.add("done");b.title="Copied";setTimeout(function(){b.classList.remove("done");b.title="Copy this note"},1200)}
+if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done,fallback)}else{fallback()}
+function fallback(){var ta=d.createElement("textarea");ta.value=text;ta.setAttribute("readonly","");
+  ta.style.cssText="position:fixed;left:-9999px";d.body.appendChild(ta);ta.select();
+  try{d.execCommand("copy");done()}catch(err){}d.body.removeChild(ta)}});
 /* a button with data-open opens that dialog; data-tick ticks every box in its form, or none */
 d.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest("[data-open]");if(b){var dl=d.getElementById(b.dataset.open);if(dl&&dl.showModal){dl.showModal();return}}
   var k=e.target.closest&&e.target.closest("[data-tick]");if(k&&k.form){$$("input[type=checkbox]",k.form).forEach(function(c){c.checked=k.dataset.tick==="1"})}});
@@ -816,6 +836,7 @@ ICONS = {
     "checks": "M3 12l5 5L18 7M8 17l1.5 1.5L21 7",
     "clock": "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18M12 7v5l3 2",
     "paperclip": "M20 12l-8.5 8.5a5 5 0 0 1-7-7L13 5a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7",
+    "copy": "M9 9h10v10H9zM5 15V5h10",
     "link": "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7L11.5 6.8M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5",
     "monitor": "M3 5h18v11H3zM8 20h8M12 16v4",
     "briefcase": "M3 8h18v12H3zM8 8V5h8v3M3 13h18",
