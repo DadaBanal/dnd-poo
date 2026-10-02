@@ -1405,7 +1405,7 @@ else's request, now names the address they are signed in as, which is what
 tells "there is no such request" apart from "you raised it from your other
 address", and tells them neither.
 
-`psaspine who-sees --ticket PMC-000155 --person <them>` says which it is:
+`Invoke-PsaSpine.ps1 -WhoSees PMC-000155 -Person <them>` says which it is:
 the address the ticket was raised from, every address the desk knows for
 that person, and whether they see it.
 

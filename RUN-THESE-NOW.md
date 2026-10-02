@@ -26,7 +26,7 @@ That is not a fault on your account. SQL Server maps every member of the sysadmi
 never write to the wrong schema. Run desk commands as the account the desk itself runs as:
 
     cd D:\dnd-poo\platform\psa-spine\scripts
-    .\Invoke-PsaSpine.ps1 mail-health
+    .\Invoke-PsaSpine.ps1 -MailHealth
 
 It asks for the psa_desk password once, runs the command as that account, prints what it said, and keeps the
 password nowhere. (Where you typed `"<the desk's connection>"` literally, that was a placeholder, which is why
@@ -37,8 +37,8 @@ Python fell back to SQLite and said "unable to open database file". This script 
 Every subjectless mail so far was recorded UNCLASSIFIED, and the pickup will never offer it again on its own
 because it remembers the Message-ID. There were about seventy of them, so there is now one command for all:
 
-    .\Invoke-PsaSpine.ps1 mail-retry --actor dada.banal
-    .\Invoke-PsaSpine.ps1 mail-retry --all --actor dada.banal --apply
+    .\Invoke-PsaSpine.ps1 -MailRetry
+    .\Invoke-PsaSpine.ps1 -MailRetry -All -Apply
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Repair-PsaMailPickup.ps1 -Apply -ResetDelta
 
 The first lists what was set aside and changes nothing. The second releases them all, one audit row each; a

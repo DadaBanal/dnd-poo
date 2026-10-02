@@ -6960,8 +6960,20 @@ class RunAsTaskAccountScriptTest(unittest.TestCase):
         self.assertNotIn("$Credential.GetNetworkCredential", self.text)
 
     def test_the_caller_never_types_a_connection_string(self):
-        self.assertIn("$cmd = @($SpineArgs[0], $Database)", self.text)
-        self.assertIn("ValueFromRemainingArguments", self.text)
+        self.assertIn("$cmd = @($words[0], $Database)", self.text)
+
+    def test_nothing_asks_the_caller_to_type_a_double_dash(self):
+        # PowerShell reads a bare --word as a parameter it does not have and
+        # stops to ask, which swallowed the operator's next three lines
+        # (MEASURED on DND-SQL01, 2 Oct 2026). Every task has its own switch,
+        # and anything else goes in as one quoted string.
+        self.assertNotIn("ValueFromRemainingArguments", self.text)
+        self.assertNotIn("$SpineArgs", self.text)
+        for switch in ("[switch] $MailHealth", "[switch] $MailRetry", "[string] $WhoSees",
+                       "[string] $MailWhy", "[string] $Spine"):
+            self.assertIn(switch, self.text, switch)
+        # and it says what it takes rather than failing silently
+        self.assertIn("Nothing asked for. One of:", self.text)
 
     def test_it_says_why_a_sysadmin_cannot_run_it_directly(self):
         self.assertIn("maps every member of the sysadmin role to the", self.text)
