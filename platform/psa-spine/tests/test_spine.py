@@ -4849,7 +4849,11 @@ class CatalogueSetupTest(unittest.TestCase):
         _, _, body = self._call("GET", "/ticket/new", cookie=alice)
         self.assertNotIn("Label printer › Relocate", body)                    # not offered to a new ticket
         _, _, body = self._call("GET", f"/ticket/{wid}", cookie=alice)
-        self.assertIn(f"<option value='{pair}' selected>Label printer › Relocate (retired)</option>", body)
+        # it is still offered on the ticket that carries it, and it now says
+        # which Type and Subtype it belongs to, because the three selects read
+        # that off the option itself (2 Oct 2026).
+        self.assertIn(f"<option value='{pair}' data-f='Clinical apps' data-s='Label printer'"
+                      f" data-i='Relocate (retired)' selected>Label printer › Relocate (retired)</option>", body)
         _, h, _ = self._call("POST", "/admin/catalogue/subtype/save", cookie=self.root,
                              form={"component_id": "LABEL_PRINTER", "name": "Label printers",
                                    "family_id": "CLINICAL_APPS", "act": "rename"})
@@ -8123,6 +8127,32 @@ class DeskLookTest(unittest.TestCase):
                          ["/", "tel:0281234567301"])
         _, _, portal = self._call("GET", "/my", cookie=self._cookie_for("nurse", email="nurse@pmcne.ph"))
         self.assertNotIn("class=quick", portal)                                 # the requester's shell has none
+
+    def test_the_note_box_is_one_composer_frame(self):
+        """SQL01's spec to WS36, 2 Oct 2026: the toolbar made to feel like the
+        Teams composer -- grouped buttons, one frame, a box that grows."""
+        from psaspine.web import templates
+        _, _, ticket = self._call("GET", "/ticket/ITO-1", cookie=self._cookie_for("alice"))
+        i = ticket.index("<div class=composer>")
+        frame = ticket[i:ticket.index("</textarea>", i)]
+        self.assertLess(frame.index("class=edbar"), frame.index("class=editor"))   # toolbar above the box
+        self.assertEqual(frame.count("<span class=g>"), 3)                         # marks, lists, links
+        self.assertEqual(frame.count("<span class=sep>"), 2)                       # one rule between each
+        self.assertIn("data-ph='Type a note.", frame)
+        css = templates.CSS if hasattr(templates, "CSS") else templates.STYLE
+        self.assertIn(".composer:focus-within", css)        # the ring is the whole frame's
+        self.assertIn(".composer .editor{border:0", css)    # and never the box's own as well
+
+    def test_the_catalogue_picker_narrows_from_what_the_server_sent(self):
+        from psaspine.web import templates
+        js = templates.SCRIPT
+        self.assertIn('$$("select.cat-item")', js)
+        self.assertIn('$(".cat-type",box)', js)
+        self.assertIn('$(".cat-sub",box)', js)
+        # every choice comes off an option the server wrote, never from anywhere else
+        self.assertIn("o.dataset.f", js)
+        self.assertIn("o.dataset.s", js)
+        self.assertIn("ts.hidden=false;ss.hidden=false", js)
 
     def test_the_script_is_plain_and_escapes_what_it_shows(self):
         from psaspine.web import templates
@@ -13463,6 +13493,91 @@ class PmcPackTest(unittest.TestCase):
         self.assertIn(self.conn.execute("SELECT priority FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()[0], ("P1", "P2"))
         self.assertEqual(self.conn.execute("SELECT is_live FROM board WHERE board_id = 'PROCUREMENT'").fetchone()[0], 1)
         self.assertEqual(pmc_pack.apply(self.conn, procurement="PROCUREMENT", at=self.at, actor="x"), [])   # once
+
+
+class CataloguePickerTest(unittest.TestCase):
+    """SQL01's spec to WS36, 2 Oct 2026: "split today's single grouped dropdown
+    into three dependent selects - pick a Type and its Subtypes appear, pick a
+    Subtype and its Items appear, still resolving to one catalogue_item_id on
+    submit, board-scoped as now"."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.conn = _fresh(self.tmp)
+        self.addCleanup(self.conn.close)
+        self.at = datetime(2026, 10, 2, 9)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        setup.apply_template(self.conn, actor="t", at=self.at)
+        from psaspine import pmc_pack
+        pmc_pack.apply(self.conn, helpdesk="IT_HELP", at=self.at, actor="t")
+        self.conn.commit()
+
+    def _html(self, selected=None):
+        from psaspine.web.views import ticket as _t
+        return _t._catalogue_select(self.conn, "IT_HELP", selected)
+
+    def test_the_three_selects_and_only_one_of_them_is_the_answer(self):
+        html = self._html()
+        for part in ("<label>Type</label>", "<label>Subtype</label>", "<label>Item</label>"):
+            self.assertIn(part, html, part)
+        # the two that narrow carry no name, so they are never part of the save
+        self.assertEqual(html.count("name=catalogue_item_id"), 1)
+        self.assertIn("class=cat-type aria-label='Type' hidden", html)
+        self.assertIn("class=cat-sub aria-label='Subtype' hidden", html)
+        self.assertNotIn("name=cat_type", html)
+        # every option says which Type and Subtype it belongs to, so the script
+        # can narrow without being told the tree a second time
+        import re as _re
+        opts = _re.findall(r"<option value='(?!')[^']+'[^>]*>", html)
+        self.assertTrue(opts)
+        for o in opts:
+            for attr in ("data-f=", "data-s=", "data-i="):
+                self.assertIn(attr, o, o)
+
+    def test_the_pickers_are_not_empty_on_a_desk_set_up_the_way_pmc_is(self):
+        """Dada, 2 Oct 2026: "make sure the types subtypes and items have data
+        in them already". The seed and the PMC pack are what fill them, so this
+        holds them to it: a picker that came up empty would be a desk nobody
+        can classify a ticket on."""
+        choices = setup.catalogue_choices(self.conn, "IT_HELP")
+        types = {c["type"] for c in choices}
+        subtypes = {(c["type"], c["subtype"]) for c in choices}
+        items = {c["item"] for c in choices}
+        self.assertGreaterEqual(len(types), 10, sorted(types))
+        self.assertGreaterEqual(len(subtypes), 40)
+        self.assertGreaterEqual(len(items), 10)
+        self.assertGreaterEqual(len(choices), 150)
+        # the ones a ward actually asks for, by name
+        for ty in ("Hospital systems (BizBox)", "Computers and devices", "Network and internet"):
+            self.assertIn(ty, types, ty)
+        for sub in ("BizBox HIS", "Printer", "Wi-Fi"):
+            self.assertIn(sub, {c["subtype"] for c in choices}, sub)
+        for item in ("Not working", "Password reset or unlock", "New or install"):
+            self.assertIn(item, items, item)
+        # and every one of them reaches the page
+        html = self._html()
+        self.assertGreaterEqual(html.count("<optgroup"), 10)
+        self.assertGreaterEqual(html.count("<option"), 150)
+
+    def test_the_item_the_ticket_carries_is_the_one_selected(self):
+        cid = self.conn.execute(
+            "SELECT i.catalogue_item_id FROM catalogue_item i"
+            "  JOIN service_component c ON c.component_id = i.component_id"
+            "  JOIN service_action a ON a.action_id = i.action_id"
+            " WHERE c.display_name = 'BizBox HIS' AND a.display_name = 'Not working'").fetchone()[0]
+        html = self._html(cid)
+        self.assertIn(f"value='{cid}' data-f='Hospital systems (BizBox)' data-s='BizBox HIS'"
+                      f" data-i='Not working' selected", html)
+
+    def test_with_no_script_the_item_select_is_still_the_whole_picker(self):
+        """The two narrowing selects are hidden until the script fills them, and
+        the third is grouped by Type and labelled in full, so a browser that
+        runs no script sees exactly the picker it saw before today."""
+        html = self._html()
+        self.assertIn("<optgroup label='Hospital systems (BizBox)'>", html)
+        self.assertIn(">BizBox HIS › Not working</option>", html)
+        self.assertIn("<option value=''>(not classified)</option>", html)
 
 
 class LiveTest(unittest.TestCase):

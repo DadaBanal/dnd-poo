@@ -177,6 +177,17 @@ dialog#pal::backdrop{background:rgb(10 12 18/.35);-webkit-backdrop-filter:blur(3
 .rtx a{word-break:break-word}
 :root[data-text=s]{--note-size:13px} :root[data-text=l]{--note-size:16.5px}
 /* The editor's own toolbar, and the preview beside it. */
+/* One frame around the toolbar and the box, as a Teams composer has: the
+   border and the focus ring are the whole thing's, not the box's. */
+.composer{border:1px solid var(--line-2);border-radius:var(--r);background:var(--surface);overflow:hidden;
+  transition:border-color .12s,box-shadow .12s}
+.composer:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-bg,#e9eefc)}
+.composer .edbar{margin:0;padding:5px 7px;border-bottom:1px solid var(--line);background:var(--surface-2)}
+.composer .editor{border:0;border-radius:0;box-shadow:none;max-height:60vh}
+.composer .editor:focus{border:0;box-shadow:none}
+.composer textarea[name=body]{border:0;border-radius:0;min-height:120px;resize:vertical}
+.composer textarea[name=body]:focus{box-shadow:none}
+.edbar .g{display:flex;gap:2px;align-items:center}
 .edbar{display:flex;flex-wrap:wrap;gap:2px;margin:0 0 6px;align-items:center}
 .edbar .iconbtn{width:30px;height:28px;font-size:13px} .edbar .sep{width:1px;height:18px;background:var(--line);margin:0 5px}
 .edbar .grow{flex:1} .edbar .tab{padding:3px 10px;border-radius:var(--r-sm);font-size:12.5px;font-weight:600;color:var(--ink-3);background:none;border:0;cursor:pointer}
@@ -708,6 +719,43 @@ addEventListener("pageshow",function(){if(np)np.className=""});
   $("button",reset).addEventListener("click",function(){save({});all().forEach(function(c){c.classList.remove("collapsed","hidden");setSize(c,"full");var pb=$(":scope>.podbody",c);if(pb)pb.style.height=""});
     cols.forEach(function(c){(c.dataset.order||"").split(",").forEach(function(k){var p=byKey(k);if(p)c.appendChild(p)})});apply()});
   apply()})();
+/* Type, then Subtype, then Item. The third select is the answer and the only
+   one with a name; these two narrow what it offers. Every choice comes from an
+   option the server sent, read off its own data attributes, so this can never
+   offer a pair the catalogue does not hold. With no script the third select is
+   the whole picker, grouped and labelled in full, as it was before. */
+(function(){
+function fill(sel,list,blank){
+  while(sel.firstChild)sel.removeChild(sel.firstChild);
+  var o=d.createElement("option");o.value="";o.textContent=blank;sel.appendChild(o);
+  list.forEach(function(x){var e=d.createElement("option");e.value=x.v;e.textContent=x.t;sel.appendChild(e)})}
+function uniq(rows,key){var seen={},out=[];rows.forEach(function(r){if(!seen[r[key]]){seen[r[key]]=1;out.push(r[key])}});return out}
+$$("select.cat-item").forEach(function(item){
+  var box=item.closest("form")||d,ts=$(".cat-type",box),ss=$(".cat-sub",box);
+  if(!ts||!ss)return;
+  var all=[];
+  $$("option",item).forEach(function(o){
+    if(!o.value)return;
+    all.push({v:o.value,f:o.dataset.f||"",s:o.dataset.s||"",i:o.dataset.i||o.textContent,t:o.textContent})});
+  if(!all.length)return;
+  function showItems(){
+    var f=ts.value,sub=ss.value,was=item.value;
+    var rows=all.filter(function(r){return(!f||r.f===f)&&(!sub||r.s===sub)});
+    fill(item,rows.map(function(r){return{v:r.v,t:(f&&sub)?r.i:r.t}}),"(not classified)");
+    item.value=rows.some(function(r){return r.v===was})?was:""}
+  function showSubs(keep){
+    var f=ts.value,rows=all.filter(function(r){return!f||r.f===f});
+    var was=ss.value;
+    fill(ss,uniq(rows,"s").map(function(x){return{v:x,t:x}}),f?"(any subtype)":"(pick a type first)");
+    ss.value=(keep&&rows.some(function(r){return r.s===was}))?was:"";
+    showItems()}
+  fill(ts,uniq(all,"f").map(function(x){return{v:x,t:x}}),"(any type)");
+  var cur=all.filter(function(r){return r.v===item.value})[0];
+  if(cur){ts.value=cur.f;showSubs(false);ss.value=cur.s;showItems();item.value=cur.v}
+  else showSubs(false);
+  ts.addEventListener("change",function(){showSubs(false)});
+  ss.addEventListener("change",showItems);
+  ts.hidden=false;ss.hidden=false})})();
 /* Text size: the three the reader can choose between, kept in this browser. */
 (function(){var KEY="psa-text",SIZES=["s","","l"],NAMES={s:"Small","":"Normal",l:"Large"};
 function get(){try{return localStorage.getItem(KEY)||""}catch(e){return ""}}

@@ -1449,6 +1449,37 @@ questions to the desk the same way. Without it, those questions are asked under
 the caller's login and refused, which is not a fault in the desk or in the mail,
 and they now say so rather than reporting it as one.
 
+## The note box is a composer, and the catalogue is three selects (2 Oct 2026)
+
+SQL01's two specs to WS36, 2 Oct 2026, both on the ticket page.
+
+**The composer.** The toolbar and the box are one frame now, the way a Teams
+composer is: the border and the focus ring belong to the whole thing, the
+buttons sit above it in three groups (marks, lists and blocks, links), and the
+box grows as it is written in, to 60% of the window, then scrolls. Rich and
+Plain are still the same note written either way, and the textarea is still what
+is submitted and still what a browser with no script types into.
+
+**Type, then Subtype, then Item.** The one grouped dropdown is three dependent
+selects. Picking a Type shows its Subtypes; picking a Subtype shows its Items;
+what is submitted is the same single `catalogue_item_id` it always was, so
+nothing behind the page changed.
+
+The third select is the answer and the only one with a name. It holds every live
+pair, each option carrying its Type, Subtype and Item on its own attributes, and
+the two narrowing selects are `hidden` until the script has filled them from
+those attributes. So the script can never offer a pair the catalogue does not
+hold, and a browser that runs no script sees exactly the picker it saw before:
+one select, grouped by Type, labelled in full.
+
+**They are not empty.** `apply_template` loads the seed's 20 Areas, 56 Subtypes
+and 7 Items, and `setup-pmc` adds the hospital's own on top. MEASURED on a fresh
+help desk: **16 Types, 53 Subtypes, 210 pairs** — BizBox HIS, Printer, Wi-Fi,
+"Not working", "Password reset or unlock" and the rest. A test holds it there,
+because a picker that came up empty would be a desk nobody can classify a ticket
+on. On a desk already set up, `psaspine setup-pmc <db> --actor <you>` previews
+and answers *nothing to add: the pack is already there*.
+
 ## The words in a note can be selected and copied (2 Oct 2026)
 
 Dada, 2 Oct 2026, with a ticket open: *"make sure the text here can be copy

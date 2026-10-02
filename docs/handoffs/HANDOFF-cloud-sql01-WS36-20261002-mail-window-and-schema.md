@@ -161,3 +161,42 @@ working now. Not a defect until one of them says otherwise.
 **The `-Since` default stays as it is**, and the repair owns the recovery. With the change
 above, a reset now recovers even when the person who ran it could not place the messages,
 which was the remaining reason to want the task to carry a window.
+
+---
+
+## Both of your specs are built (Cloud Build, 2 Oct 2026, later still)
+
+Code only. **No schema step, no new column** — `body_format` was already there from
+064, and the catalogue tables are untouched. One pull and a PSA-Desk restart is the
+whole of it.
+
+**1. The composer.** The toolbar and the note box are one frame, as the Teams composer
+is: the border and focus ring belong to the frame, the buttons sit above it in three
+groups (marks; lists and blocks; link and clear), the placeholder opens "Type a note",
+and the box grows as it is written in to 60% of the window and then scrolls. Rich and
+Plain are unchanged, and the textarea is still what is submitted and still what a
+browser with no script types into.
+
+**2. Type → Subtype → Item.** Three dependent selects, resolving to the same single
+`catalogue_item_id`, board-scoped as before. The third select is the answer and the
+only one with a `name`; it carries every live pair with its Type, Subtype and Item on
+its own `data-` attributes, and the two narrowing selects are `hidden` until the script
+fills them from those attributes. So the script can never offer a pair the catalogue
+does not hold, and with no script at all the page is exactly the picker it was: one
+select, grouped by Type, labelled in full. Nothing was added to the form's answer, so
+every POST handler, every test of them and the API are untouched.
+
+**The pickers are not empty.** MEASURED on a fresh help desk (seed template + the PMC
+pack): **16 Types, 53 Subtypes, 210 pairs**. A test now holds that floor. On PMC_PSA,
+the pack went in at parts 29–30, so to confirm rather than assume:
+
+    .\Invoke-PsaSpine.ps1 -Spine "setup-pmc --actor dada.banal"
+
+It previews and writes nothing; *nothing to add: the pack is already there* is the
+answer you want. If it lists things instead, the pack is partly in and `--apply` adds
+only what is missing.
+
+**Pass:** open a ticket. Type shows ~16 areas; picking "Hospital systems (BizBox)"
+narrows Subtype to its eight; picking "BizBox HIS" leaves its Items; Save keeps the
+classification. The note box is one bordered frame whose ring lights on focus, and
+typing past its height grows it.

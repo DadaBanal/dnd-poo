@@ -122,8 +122,18 @@ def _contact_list(conn, list_id: str, entity_id: str | None = None) -> str:
 
 
 def _catalogue_select(conn, board_id, selected, *, disabled="") -> str:
-    """Type › Subtype › Item, grouped by Type (Dada PSA's three levels). The
-    board's own items are listed first within each group."""
+    """Type, then Subtype, then Item: three dependent selects, as the reference
+    PSA asks them (SQL01's spec to WS36, 2 Oct 2026). Picking a Type shows its
+    Subtypes; picking a Subtype shows its Items; what is submitted is still the
+    one `catalogue_item_id` the third carries, so nothing behind this changed.
+
+    The third select holds every live pair, each option carrying its Type and
+    Subtype, and it is the only one with a name. That is deliberate: with no
+    script at all the page still shows one working dropdown, grouped by Type and
+    labelled in full, exactly as it was before today. The script reads those two
+    attributes to fill the first two selects and to narrow what the third
+    offers; it never invents a choice the server did not send.
+    """
     from ... import setup
     choices = setup.catalogue_choices(conn, board_id)
     if selected and all(c["catalogue_item_id"] != selected for c in choices):
@@ -148,10 +158,20 @@ def _catalogue_select(conn, board_id, selected, *, disabled="") -> str:
         opts.append(f"<optgroup label='{t.esc(type_)}'>")
         for c in items:
             opts.append(f"<option value='{t.esc(c['catalogue_item_id'])}'"
+                        f" data-f='{t.esc(c['type'])}' data-s='{t.esc(c['subtype'])}'"
+                        f" data-i='{t.esc(c['item'])}'"
                         f"{' selected' if c['catalogue_item_id'] == selected else ''}>"
                         f"{t.esc(c['subtype'])} › {t.esc(c['item'])}</option>")
         opts.append("</optgroup>")
-    return (f"<label>Subtype › Item</label><select name=catalogue_item_id{disabled}>"
+    # The two narrowing selects carry no name: they are not part of the form's
+    # answer, only of how a person reaches it. `hidden` until the script has
+    # filled them, so a page without one never shows two empty boxes.
+    return ("<label>Type</label><select class=cat-type aria-label='Type'"
+            f" hidden{disabled}></select>"
+            "<label>Subtype</label><select class=cat-sub aria-label='Subtype'"
+            f" hidden{disabled}></select>"
+            "<label>Item</label>"
+            f"<select name=catalogue_item_id class=cat-item{disabled}>"
             + "".join(opts) + "</select>")
 
 
@@ -441,28 +461,36 @@ def detail(ctx, work_item_id):
             # go up in `body`, and `body_format` says they are HTML; nothing is
             # stored until richtext.clean has rebuilt it.
             "<input type=hidden name=body_format value=HTML>"
+            # One frame holds the toolbar and the box, the way a Teams composer
+            # does: the border and the focus ring belong to the whole thing, the
+            # buttons sit in groups above it, and the box grows as it is written
+            # in (SQL01's spec to WS36, 2 Oct 2026).
+            "<div class=composer>"
             "<div class=edbar role=toolbar aria-label='Formatting'>"
+            "<span class=g>"
             "<button type=button class=iconbtn data-do=bold title='Bold (Ctrl+B)' aria-label=Bold><b>B</b></button>"
             "<button type=button class=iconbtn data-do=italic title='Italic (Ctrl+I)' aria-label=Italic><i>I</i></button>"
             "<button type=button class=iconbtn data-do=underline title='Underline (Ctrl+U)' aria-label=Underline><u>U</u></button>"
             "<button type=button class=iconbtn data-do=strikeThrough title='Strikethrough' aria-label=Strikethrough><s>S</s></button>"
-            "<span class=sep></span>"
+            "</span><span class=sep></span><span class=g>"
             "<button type=button class=iconbtn data-do=insertUnorderedList title='Bulleted list' aria-label='Bulleted list'>&bull;&#8211;</button>"
             "<button type=button class=iconbtn data-do=insertOrderedList title='Numbered list' aria-label='Numbered list'><b>1.</b></button>"
             "<button type=button class=iconbtn data-do=quote title='Quote' aria-label=Quote>&ldquo;</button>"
             "<button type=button class=iconbtn data-do=code title='Code' aria-label=Code><b style='font-family:var(--mono)'>&lt;&gt;</b></button>"
-            "<span class=sep></span>"
+            "</span><span class=sep></span><span class=g>"
             "<button type=button class=iconbtn data-do=link title='Link' aria-label=Link>" + t.icon("link") + "</button>"
             "<button type=button class=iconbtn data-do=removeFormat title='Clear formatting' aria-label='Clear formatting'>" + t.icon("x") + "</button>"
+            "</span>"
             "<span class=grow></span>"
             "<button type=button class='tab on' data-plain=0 title='Write with formatting'>Rich</button>"
             "<button type=button class=tab data-plain=1 title='Write as plain text'>Plain</button></div>"
             "<div class=editor contenteditable=true role=textbox aria-multiline=true"
-            " aria-label='The note' data-ph='What you found, what you did, what is next."
+            " aria-label='The note' data-ph='Type a note. What you found, what you did, what is next."
             " The ward, room and machine say it best; a patient never needs naming (&#167;6.1).'></div>"
             # The textarea is still the thing that is submitted, and it is
             # still what a browser with no JavaScript shows and types into.
             "<textarea name=body required placeholder='What you found, what you did, what is next. The ward, room and machine say it best; a patient never needs naming (§6.1).'></textarea>"
+            "</div>"
             "<div class=row style='margin-top:10px'>"
             "<div style='flex:0 0 auto'><label>Who can read it</label><div class=seg>"
             "<label><input type=radio name=flag value=DISCUSSION checked><span>Discussion</span></label>"
