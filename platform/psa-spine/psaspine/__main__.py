@@ -65,7 +65,10 @@ def main(argv: list[str] | None = None) -> int:
     pretry = sub.add_parser("mail-retry", help="forget a message intake set aside (UNCLASSIFIED) so a fresh pickup"
                                                " sync imports it again, once the cause is put right")
     pretry.add_argument("database", help=DB_HELP)
-    pretry.add_argument("--message-id", required=True, help="as mail-why printed it, e.g. <abc@yahoo.com>")
+    pretry.add_argument("--message-id", help="as mail-why printed it, e.g. <abc@yahoo.com>")
+    pretry.add_argument("--all", action="store_true", dest="all_of_them",
+                        help="every message intake set aside, not one; use once the cause is put right")
+    pretry.add_argument("--days", type=int, help="with --all, only those that arrived in the last N days")
     pretry.add_argument("--actor", required=True)
     pretry.add_argument("--apply", action="store_true", help="do it; without this it only says what it would do")
     psys = sub.add_parser("set-sysadmin", help="grant (or with --off take back) the desk's sysadmin on a member"
@@ -416,6 +419,32 @@ def _run(conn, a) -> int:
         print("claimed addresses: " + (", ".join(f"{k} -> {v}" for k, v in sorted(r["claims"].items())) or "none"))
         return 0
     if a.cmd == "mail-retry":
+        from . import intake
+        since = ((datetime.now() - timedelta(days=a.days)).isoformat(sep=" ", timespec="minutes")
+                 if getattr(a, "days", None) else None)
+        if not a.all_of_them and not a.message_id:
+            rows = intake.set_aside(conn, since=since)
+            if not rows:
+                print("nothing was set aside: there is nothing to retry")
+                return 0
+            print(f"{len(rows)} message(s) set aside. --message-id one of them, or --all for every one:")
+            for r in rows[:50]:
+                print(f"  {r['received_at']}  from {r['from_address'] or '-'} to {r['to_address'] or '-'}"
+                      f"  subject: {r['subject'] or '(none)'}  {r['message_id']}")
+            if len(rows) > 50:
+                print(f"  ... and {len(rows) - 50} more")
+            return 0
+        if a.all_of_them:
+            rows = intake.set_aside(conn, since=since)
+            if not a.apply:
+                print(f"would forget {len(rows)} set-aside message(s) so the next pickup imports them again."
+                      " Nothing was changed; add --apply.")
+                return 0
+            done = intake.retry_all(conn, at=datetime.now(), actor=a.actor, since=since)
+            conn.commit()
+            print(f"{len(done)} message(s) forgotten. Now clear the delta link so the pickup reads back over them:"
+                  r" Repair-PsaMailPickup.ps1 -Apply -ResetDelta")
+            return 0
         from . import intake
         try:
             if not a.apply:

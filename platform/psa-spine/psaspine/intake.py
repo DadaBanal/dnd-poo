@@ -777,6 +777,29 @@ def why(conn: sqlite3.Connection, *, subject: str | None = None, sender: str | N
     return {"rows": rows, "exclusion": caught, "exclusions": len(rules), "claims": board_addresses(conn)}
 
 
+def set_aside(conn: sqlite3.Connection, *, since: str | None = None) -> list[dict]:
+    """Every message intake set aside and never turned into anything, newest
+    first. These are the ones `retry` can release."""
+    sql = ("SELECT message_id, received_at, from_address, to_address, subject FROM intake_message"
+           " WHERE disposition = 'UNCLASSIFIED'")
+    args: list = []
+    if since:
+        sql += " AND received_at >= ?"
+        args.append(since)
+    return [dict(r) for r in conn.execute(sql + " ORDER BY received_at DESC, message_id", args)]
+
+
+def retry_all(conn: sqlite3.Connection, *, at: datetime, actor: str, since: str | None = None) -> list[str]:
+    """Release every set-aside message at once (Dada, 2 Oct 2026: sixty-eight
+    of them, after the cause - a mail with no subject - was put right). One
+    audit row each, exactly as one at a time would write."""
+    done = []
+    for row in set_aside(conn, since=since):
+        retry(conn, row["message_id"], at=at, actor=actor)
+        done.append(row["message_id"])
+    return done
+
+
 def retry(conn: sqlite3.Connection, message_id: str, *, at: datetime, actor: str) -> str:
     """Forget a message intake set aside (UNCLASSIFIED: excluded, guarded, or
     an INTAKE_ERROR) so that a fresh pickup sync imports it again, after the

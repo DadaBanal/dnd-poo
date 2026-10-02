@@ -6940,6 +6940,34 @@ class NotificationSenderScriptTest(unittest.TestCase):
         self.assertEqual(self.text.count("/sendMail"), 1)
 
 
+class RunAsTaskAccountScriptTest(unittest.TestCase):
+    """scripts/Invoke-PsaSpine.ps1. Dada, 2 Oct 2026: every psaspine command he
+    ran was refused, because SQL Server maps a sysadmin to the user dbo and the
+    desk refuses schema [dbo] on purpose. The command runs as the account the
+    desk itself runs as; the password is prompted for and kept nowhere."""
+
+    SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "Invoke-PsaSpine.ps1"
+
+    def setUp(self) -> None:
+        self.text = self.SCRIPT.read_bytes().decode("ascii")      # raises if not pure ASCII
+
+    def test_the_password_is_prompted_for_and_written_nowhere(self):
+        self.assertIn("Get-Credential", self.text)
+        lowered = self.text.lower()
+        for shape in ("convertto-securestring", "-asplaintext", "client_secret",
+                      "add-content", "set-content", "out-file"):
+            self.assertNotIn(shape, lowered, shape)
+        self.assertNotIn("$Credential.GetNetworkCredential", self.text)
+
+    def test_the_caller_never_types_a_connection_string(self):
+        self.assertIn("$cmd = @($SpineArgs[0], $Database)", self.text)
+        self.assertIn("ValueFromRemainingArguments", self.text)
+
+    def test_it_says_why_a_sysadmin_cannot_run_it_directly(self):
+        self.assertIn("maps every member of the sysadmin role to the", self.text)
+        self.assertIn("runas /user:", self.text)       # and the way round it if the account may not log on
+
+
 class NoteSelectableTest(unittest.TestCase):
     """Dada, 2 Oct 2026, on a ticket: "the text here can be copy and pasted ...
     atm copy and paste doesnt work". Chrome's own stylesheet gives any
@@ -12487,6 +12515,48 @@ class MailCutoverTest(unittest.TestCase):
         self.assertEqual((counts["new"], counts["duplicate"]), (2, 0))
         names = sorted(r[0] for r in self.conn.execute("SELECT name FROM work_item"))
         self.assertEqual(names, ["the ECG trolley will not charge", "the printer is jammed"])
+
+    def test_every_set_aside_message_can_be_released_at_once(self):
+        """Dada, 2 Oct 2026: sixty-eight of them, after the cause was put right.
+        One at a time was not a plan."""
+        import contextlib
+        import io
+        from psaspine import intake
+        from psaspine.__main__ import main
+        db_arg = TEST_DB or str(Path(self.tmp.name) / "spine.db")
+        intake.set_addresses(self.conn, "IT_HELP", "support@pmcne.ph", at=self.at, actor="t")
+        for n in range(3):
+            self._msg(subject="", to="support@pmcne.ph", sender=f"w{n}@pmcne.ph", body="   ")
+        intake.import_drop(self.conn, self.drop, run_id="r1", board_id="IT_HELP", at=self.at)
+        self.conn.commit()
+        self.assertEqual(len(intake.set_aside(self.conn)), 3)
+        # the listing, when neither --all nor --message-id is given
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(main(["mail-retry", db_arg, "--actor", "dada"]), 0)
+        self.assertIn("3 message(s) set aside", out.getvalue())
+        # a preview changes nothing
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            main(["mail-retry", db_arg, "--all", "--actor", "dada"])
+        self.assertIn("would forget 3", out.getvalue())
+        self.assertEqual(len(intake.set_aside(self.conn)), 3)
+        # and --apply releases every one, with an audit row each
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(main(["mail-retry", db_arg, "--all", "--actor", "dada", "--apply"]), 0)
+        self.assertIn("3 message(s) forgotten", out.getvalue())
+        self.assertIn("-ResetDelta", out.getvalue())
+        self.assertEqual(intake.set_aside(self.conn), [])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'MAIL_RETRY'").fetchone()[0], 3)
+        # a message that made a ticket is never forgotten by --all
+        for f in self.drop.glob("*.eml"):      # the released three are still here, and would say nothing again
+            f.unlink()
+        self._msg(subject="printer", to="support@pmcne.ph", sender="ward3@pmcne.ph")
+        intake.import_drop(self.conn, self.drop, run_id="r2", board_id="IT_HELP", at=self.at)
+        self.conn.commit()
+        self.assertEqual(intake.set_aside(self.conn), [])
+        self.assertEqual(intake.retry_all(self.conn, at=self.at, actor="dada"), [])
 
     def test_a_mail_that_says_nothing_at_all_is_still_recorded(self):
         """Nothing is ever dropped: a mail with no subject, no words and no

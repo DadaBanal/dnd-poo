@@ -7,6 +7,46 @@ Both scripts are in the repo. Get them with one pull on the host, as the account
 
 Nothing below needs SQL01 to do anything, and neither changes the schema.
 
+## Where you are now (2 Oct 2026, 08:44 on DND-SQL01, MEASURED from your own run)
+
+The pull worked, the certificate is good until 1 Oct 2027, all four tasks run every minute with result 0, and
+both delta links were cleared. The preview straight after said **13 messages waiting on helpdesk@ and 68 on
+support@**, first sync from 30 Sep. So mail is reaching those two Inboxes after all; the fault was never there.
+
+Two things still stand between those messages and tickets on the board.
+
+### Your own sign-in cannot talk to the desk
+
+Every `psaspine` command you ran answered:
+
+    the desk's login must have default schema [psa] on this database; it has [dbo].
+
+That is not a fault on your account. SQL Server maps every member of the sysadmin role to the database user
+`dbo`, whose default schema is `dbo` and cannot be changed, and the desk refuses `dbo` on purpose so it can
+never write to the wrong schema. Run desk commands as the account the desk itself runs as:
+
+    cd D:\dnd-poo\platform\psa-spine\scripts
+    .\Invoke-PsaSpine.ps1 mail-health
+
+It asks for the psa_desk password once, runs the command as that account, prints what it said, and keeps the
+password nowhere. (Where you typed `"<the desk's connection>"` literally, that was a placeholder, which is why
+Python fell back to SQLite and said "unable to open database file". This script fills it in for you.)
+
+### The messages already set aside have to be released
+
+Every subjectless mail so far was recorded UNCLASSIFIED, and the pickup will never offer it again on its own
+because it remembers the Message-ID. There were about seventy of them, so there is now one command for all:
+
+    .\Invoke-PsaSpine.ps1 mail-retry --actor dada.banal
+    .\Invoke-PsaSpine.ps1 mail-retry --all --actor dada.banal --apply
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Repair-PsaMailPickup.ps1 -Apply -ResetDelta
+
+The first lists what was set aside and changes nothing. The second releases them all, one audit row each; a
+message that already made a ticket is never released, so nothing is duplicated. The third makes the pickup read
+back over the last two days, and within a minute or two those requests appear on the Service Board.
+
+---
+
 ## First: the pull refused, so the host is still on the old code
 
 MEASURED on DND-SQL01, 2 Oct 2026. The scripts saved into `scripts\` by hand differ from the repository, so
