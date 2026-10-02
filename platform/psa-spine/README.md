@@ -1480,6 +1480,12 @@ because a picker that came up empty would be a desk nobody can classify a ticket
 on. On a desk already set up, `psaspine setup-pmc <db> --actor <you>` previews
 and answers *nothing to add: the pack is already there*.
 
+To ask the **live** desk rather than trust a seed ran, `psaspine catalogue-health
+<db>` (host: `Invoke-PsaSpine.ps1 -CatalogueHealth`) reads the tree and the pairs
+each board's picker would offer, and names any board below `setup.THIN` (20
+pairs) so a desk that cannot classify a ticket is caught before a technician
+meets it. It writes nothing.
+
 ## The words in a note can be selected and copied (2 Oct 2026)
 
 Dada, 2 Oct 2026, with a ticket open: *"make sure the text here can be copy

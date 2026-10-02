@@ -24,6 +24,7 @@
     .\Invoke-PsaSpine.ps1 -MailRetry -All -Apply           # releases every one of them
     .\Invoke-PsaSpine.ps1 -WhoSees PMC-000155 -Person via.soriano
     .\Invoke-PsaSpine.ps1 -MailWhy pmcnicu@gmail.com
+    .\Invoke-PsaSpine.ps1 -CatalogueHealth                 # do the pickers have Types, Subtypes and Items
 
 .EXAMPLE
     # anything else: the whole command as one quoted string
@@ -47,6 +48,11 @@ param(
     # re-run adds nothing twice.
     [switch] $SchemaPreview,
     [switch] $SchemaApply,
+    # What the Type, Subtype and Item pickers on a ticket actually hold, per
+    # board, read off the live store rather than assumed from a seed. -Board
+    # narrows it to one.
+    [switch] $CatalogueHealth,
+    [string] $Board,
     [int] $Days,
     [string] $Actor = $env:USERNAME,
     # Anything else: the whole psaspine command as one string, without the
@@ -117,6 +123,9 @@ if ($MailHealth) {
     $words = @('schema-preview')
 } elseif ($SchemaApply) {
     $words = @('init')
+} elseif ($CatalogueHealth) {
+    $words = @('catalogue-health')
+    if ($Board) { $words += @('--board', $Board) }
 } elseif ($Spine) {
     $words = @($Spine -split '\s+' | Where-Object { $_ })
 } else {
@@ -128,6 +137,7 @@ if ($MailHealth) {
     Write-Host '  -WhoSees <ticket> -Person <them>         why a requester does or does not see it'
     Write-Host '  -SchemaPreview                           what the schema step would add, changing nothing'
     Write-Host '  -SchemaApply                             add it (guarded; a re-run adds nothing twice)'
+    Write-Host '  -CatalogueHealth                         what the Type/Subtype/Item pickers hold, per board'
     Write-Host '  -Spine "<any psaspine command>"          anything else, as one quoted string'
     exit 2
 }

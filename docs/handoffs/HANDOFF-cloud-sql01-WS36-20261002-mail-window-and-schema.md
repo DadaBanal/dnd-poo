@@ -200,3 +200,14 @@ only what is missing.
 narrows Subtype to its eight; picking "BizBox HIS" leaves its Items; Save keeps the
 classification. The note box is one bordered frame whose ring lights on focus, and
 typing past its height grows it.
+
+**Before you demo it, confirm the pickers hold something** (Dada asked twice to be sure):
+
+    .\Invoke-PsaSpine.ps1 -CatalogueHealth
+
+Reads only. It prints the tree (Types, Subtypes, Items, pairs) and, per board, how many
+pairs its picker offers, flagging any board below 20 pairs as THIN. On PMC_PSA the pack
+went in at parts 29–30, so expect no THIN boards and PMO Helpdesk showing its own pairs; if
+anything reads THIN, `setup-pmc --apply` (or Setup › Catalogue › Apply the template) fills
+only what is missing. This is the live-store answer to "do the pickers have data", rather
+than my test DB's.

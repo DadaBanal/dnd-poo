@@ -7045,6 +7045,13 @@ class RunAsTaskAccountScriptTest(unittest.TestCase):
         self.assertIn("$words = @('schema-preview')", self.text)
         self.assertIn("$words = @('init')", self.text)
 
+    def test_catalogue_health_is_reachable_from_the_host(self):
+        # Dada, 2 Oct 2026: "make sure the types subtypes and items have data in
+        # them already". The way to ask the live desk, through the account the
+        # desk runs as, because a sysadmin's own login is refused.
+        self.assertIn("[switch] $CatalogueHealth", self.text)
+        self.assertIn("$words = @('catalogue-health')", self.text)
+
 
 class NoteRichTextTest(unittest.TestCase):
     """064. Dada, 2 Oct 2026: "a proper text editor via html or like html or
@@ -13578,6 +13585,48 @@ class CataloguePickerTest(unittest.TestCase):
         self.assertIn("<optgroup label='Hospital systems (BizBox)'>", html)
         self.assertIn(">BizBox HIS › Not working</option>", html)
         self.assertIn("<option value=''>(not classified)</option>", html)
+
+    def test_catalogue_health_reports_what_each_board_can_classify_with(self):
+        """Dada, 2 Oct 2026, twice: "make sure the types subtypes and items have
+        data in them already". So there is a way to ask the live desk, not just
+        trust that a seed ran: catalogue-health reads the tree and names any
+        board whose picker would open too thin to classify a ticket on."""
+        h = setup.catalogue_health(self.conn)
+        self.assertGreaterEqual(h["types"], 10)
+        self.assertGreaterEqual(h["subtypes"], 40)
+        self.assertGreaterEqual(h["pairs"], 150)
+        it = next(b for b in h["boards"] if b["board_id"] == "IT_HELP")
+        self.assertGreaterEqual(it["offered"], 150)
+        self.assertEqual(it["offered"], it["own"])                 # IT_HELP's own pairs
+        self.assertEqual(h["thin"], [])                            # nothing thin here
+
+    @unittest.skipUnless(ON_SQLITE, "makes a second, bare database")
+    def test_catalogue_health_names_a_board_whose_picker_is_empty(self):
+        """A board with no pairs it can offer is the thing this is for: it would
+        open a picker a technician cannot classify with, and the report leads
+        with it rather than letting it pass silently."""
+        import os
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = db.init(os.path.join(tmp, "bare.db"))
+            setup.apply_starter(conn, "IT_HELP", actor="t", at=self.at)
+            conn.commit()
+            h = setup.catalogue_health(conn)
+            self.assertEqual(h["pairs"], 0)
+            self.assertIn("IT_HELP", h["thin"])
+            conn.close()
+
+    def test_the_command_prints_the_tree_and_flags_thin_boards(self):
+        import contextlib, io
+        from psaspine.__main__ import main
+        db_arg = TEST_DB or str(Path(self.tmp.name) / "spine.db")
+        self.conn.commit()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(main(["catalogue-health", db_arg]), 0)
+        said = out.getvalue()
+        self.assertIn("Type(s)", said)
+        self.assertIn("pair(s) in its picker", said)
+        self.assertIn("every board's picker has something to classify with.", said)
 
 
 class LiveTest(unittest.TestCase):

@@ -67,6 +67,11 @@ def main(argv: list[str] | None = None) -> int:
                                                  " what came of the ones since, and which addresses a board claims")
     phealth.add_argument("database", help=DB_HELP)
     phealth.add_argument("--days", type=int, default=2, help="how far back to count (default 2)")
+    pcat = sub.add_parser("catalogue-health",
+                          help="what the Type, Subtype and Item pickers hold on this desk, per board, and what"
+                               " fills them if they are thin. Reads only; writes nothing")
+    pcat.add_argument("database", help=DB_HELP)
+    pcat.add_argument("--board", help="one board_id, instead of every board")
     pretry = sub.add_parser("mail-retry", help="forget a message intake set aside (UNCLASSIFIED) so a fresh pickup"
                                                " sync imports it again, once the cause is put right")
     pretry.add_argument("database", help=DB_HELP)
@@ -438,6 +443,34 @@ def _run(conn, a) -> int:
         if not h["total"]:
             print(r"NOTHING arrived in that window: the fault is before the desk. Check the pickup task and its log"
                   r" (D:\psa\mail-state\mail-pickup-<mailbox>.log), or run Repair-PsaMailPickup.ps1.")
+        return 0
+
+    if a.cmd == "catalogue-health":
+        from . import setup as _setup
+        h = _setup.catalogue_health(conn)
+        print(f"the tree: {h['types']} Type(s), {h['subtypes']} Subtype(s), {h['items']} Item(s),"
+              f" {h['pairs']} Subtype x Item pair(s)"
+              + (f" ({h['types_retired']} Type(s) retired)" if h["types_retired"] else ""))
+        rows = [b for b in h["boards"] if not a.board or b["board_id"] == a.board]
+        if a.board and not rows:
+            print(f"refused: no board {a.board}", file=sys.stderr)
+            return 2
+        for b in rows:
+            mark = "  THIN" if b["offered"] < _setup.THIN else ""
+            print(f"  {b['board_id']:<14} {b['offered']:>4} pair(s) in its picker"
+                  f" ({b['own']} its own), {len(b['types'])} Type(s), {b['subtypes']} Subtype(s){mark}")
+            if b["types"]:
+                shown = ", ".join(b["types"][:6])
+                print(f"                 {shown}" + (", ..." if len(b["types"]) > 6 else ""))
+        thin = [b["board_id"] for b in rows if b["offered"] < _setup.THIN]
+        if thin:
+            print(f"THIN: {', '.join(thin)} would open a picker with less than {_setup.THIN} pairs, so a"
+                  " technician has nothing to classify with.")
+            print("  Setup > Catalogue > Apply the template loads the seed's Areas, Subtypes and Items;"
+                  " `psaspine setup-pmc <db> --actor <you> --apply` adds the hospital's own on top."
+                  " Both add only what is missing.")
+        else:
+            print("every board's picker has something to classify with.")
         return 0
 
     if a.cmd == "mail-why":

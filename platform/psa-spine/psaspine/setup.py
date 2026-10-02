@@ -420,6 +420,46 @@ def apply_template(conn: sqlite3.Connection, *, actor: str, at: datetime) -> dic
     return {"created": created, "items": loaded, "targets": targets, "waiting": waiting}
 
 
+# What a picker needs before it is worth opening. A Type on its own classifies
+# nothing: a ticket is classified by a pair, so pairs are what this counts.
+THIN = 20
+
+
+def catalogue_health(conn: sqlite3.Connection) -> dict:
+    """What the Type, Subtype and Item pickers actually hold, per board.
+
+    Dada, 2 Oct 2026: *"make sure the types subtypes and items have data in them
+    already"*. The three selects on a ticket are drawn from live catalogue pairs
+    and nothing else, so an empty tree is a desk on which nobody can classify a
+    ticket. This reads the tree on the store it is given -- the live one, when it
+    is asked on the host -- rather than trusting that a seed ever ran.
+
+    Nothing is written. `thin` names the boards whose picker would open with less
+    than `THIN` pairs, which is what a report should lead with.
+    """
+    def one(sql):
+        return conn.execute(sql).fetchone()[0]
+    out = {
+        "types": one("SELECT COUNT(*) FROM service_family WHERE COALESCE(inactive, 0) = 0"),
+        "types_retired": one("SELECT COUNT(*) FROM service_family WHERE COALESCE(inactive, 0) = 1"),
+        "subtypes": one("SELECT COUNT(*) FROM service_component WHERE is_draft = 0"),
+        "items": one("SELECT COUNT(*) FROM service_action WHERE COALESCE(inactive, 0) = 0"),
+        "pairs": one("SELECT COUNT(*) FROM catalogue_item WHERE is_draft = 0"),
+        "boards": [], "thin": [],
+    }
+    for b in conn.execute("SELECT board_id, display_name FROM board ORDER BY display_name").fetchall():
+        offered = catalogue_choices(conn, b["board_id"])
+        row = {"board_id": b["board_id"], "display_name": b["display_name"],
+               "offered": len(offered),
+               "own": sum(1 for c in offered if c["on_board"]),
+               "types": sorted({c["type"] for c in offered}),
+               "subtypes": len({(c["type"], c["subtype"]) for c in offered})}
+        out["boards"].append(row)
+        if row["offered"] < THIN:
+            out["thin"].append(b["board_id"])
+    return out
+
+
 def catalogue_choices(conn: sqlite3.Connection, board_id: str | None = None) -> list[dict]:
     """Every live catalogue item as Type › Subtype › Item, for the pickers: a
     retired area, subtype, item or pair (Setup › Catalogue) is not offered.
