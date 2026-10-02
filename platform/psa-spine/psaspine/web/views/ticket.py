@@ -297,15 +297,17 @@ def detail(ctx, work_item_id):
     # to arrange). Which cards show, in what order, at what size and height
     # is this person's own and lives in their browser; the dialog's lists are
     # built from the cards on the page.
-    buttons += (" <button type=button class='iconbtn' data-open=poddlg title='Screen layout: which cards show, and where'"
+    buttons += (" <button type=button class='iconbtn' data-layedit aria-pressed=false"
+                " title='Edit layout: move the cards about' aria-label='Edit layout'>" + t.icon("grip") + "</button>"
+                " <button type=button class='iconbtn' data-open=poddlg title='Screen layout: which cards show, and where'"
                 " aria-label='Screen layout'>" + t.icon("setup") + "</button>")
     pod_dialog = (
         "<dialog id=poddlg class=card style='max-width:640px;width:95%'><form method=dialog class=dlghead>"
         "<h3 style='margin:0'>" + t.icon("setup") + "Pod configuration</h3>"
         "<button type=submit class=iconbtn aria-label=Close>" + t.icon("x") + "</button></form>"
-        "<p class=why>Tick the cards you want on this ticket screen and put them in order; the arrows on each card and "
-        "the Size button do the rest. Drag a card's bottom edge to set its height; the page remembers it. Yours alone, "
-        "in this browser.</p><div class=grid2><div><h4>Displayed</h4><ul class='plain podlist' data-list=on></ul></div>"
+        "<p class=why>Tick the cards you want on this ticket screen and put them in order. To move one about, close "
+        "this and press <b>Edit layout</b> beside it: the cards sit still until you do, so a stray drag cannot move "
+        "one while you are reading. Yours alone, in this browser.</p><div class=grid2><div><h4>Displayed</h4><ul class='plain podlist' data-list=on></ul></div>"
         "<div><h4>Available</h4><ul class='plain podlist' data-list=off></ul></div></div>"
         "<p class=row style='margin-top:12px;gap:8px'><button type=button class=podsave>Save</button>"
         "<button type=button class='ghost podreset-all'>Reset layout</button></p></dialog>")
@@ -351,7 +353,7 @@ def detail(ctx, work_item_id):
 
     # --------------------------------------------------------- the notes
     events = ctx.conn.execute(
-        "SELECT occurred_at, kind, actor, detail, note_flag, is_resolution FROM ticket_event"
+        "SELECT occurred_at, kind, actor, detail, note_flag, is_resolution, body_format FROM ticket_event"
         " WHERE work_item_id = ? ORDER BY ticket_event_id", (work_item_id,)).fetchall()
 
     def is_res(e):
@@ -370,6 +372,12 @@ def detail(ctx, work_item_id):
         f"{label} {counts[key]}</a>"
         for key, label in (("ALL", "All"), ("DISCUSSION", "Discussion"), ("INTERNAL", "Internal"),
                            ("RESOLUTION", "Resolution"), ("SYSTEM", "System")))
+    def _fmt(row):
+        try:
+            return row["body_format"]
+        except (KeyError, IndexError):
+            return None                      # a store that has not taken 064 yet
+
     items = []
     for e in events:
         flag = e["note_flag"]
@@ -388,7 +396,7 @@ def detail(ctx, work_item_id):
                 f"{t.esc(e['occurred_at'])} · {t.esc(e['kind'].replace('_', ' ').lower())}"
                 "<button type=button class='iconbtn copy' data-copy title='Copy this note' aria-label='Copy this note'>"
                 + t.icon("copy") + "</button></div>"
-                f"<div style='white-space:pre-wrap'>{t.esc(e['detail'])}</div></div>")
+                f"<div class=rtx>{t.note_html(e['detail'], _fmt(e))}</div></div>")
         else:
             items.append(f"<div class=sys>{t.esc(e['occurred_at'])} · {t.esc(e['actor'] or 'system')} · "
                          f"{t.esc(_system_line(ctx.conn, e))}</div>")
@@ -426,7 +434,34 @@ def detail(ctx, work_item_id):
                           f"{t.esc(n['name'])}</option>" for n in std) + "</select></div></div>")
         composer = (
             "<div class=card data-pod=composer id=composer><h3><svg class=ic aria-hidden=true><use href=#i-note></use></svg>Add a note</h3>"
-            f"<form method=post action='/ticket/{wid}/note'>" + picker +
+            f"<form method=post action='/ticket/{wid}/note' class=noting>" + picker +
+            # A note is written the way a Teams message is: the buttons act on
+            # what is selected, and a paste out of Outlook or Word keeps its
+            # bold and its lists and brings none of its markup (064). The words
+            # go up in `body`, and `body_format` says they are HTML; nothing is
+            # stored until richtext.clean has rebuilt it.
+            "<input type=hidden name=body_format value=HTML>"
+            "<div class=edbar role=toolbar aria-label='Formatting'>"
+            "<button type=button class=iconbtn data-do=bold title='Bold (Ctrl+B)' aria-label=Bold><b>B</b></button>"
+            "<button type=button class=iconbtn data-do=italic title='Italic (Ctrl+I)' aria-label=Italic><i>I</i></button>"
+            "<button type=button class=iconbtn data-do=underline title='Underline (Ctrl+U)' aria-label=Underline><u>U</u></button>"
+            "<button type=button class=iconbtn data-do=strikeThrough title='Strikethrough' aria-label=Strikethrough><s>S</s></button>"
+            "<span class=sep></span>"
+            "<button type=button class=iconbtn data-do=insertUnorderedList title='Bulleted list' aria-label='Bulleted list'>&bull;&#8211;</button>"
+            "<button type=button class=iconbtn data-do=insertOrderedList title='Numbered list' aria-label='Numbered list'><b>1.</b></button>"
+            "<button type=button class=iconbtn data-do=quote title='Quote' aria-label=Quote>&ldquo;</button>"
+            "<button type=button class=iconbtn data-do=code title='Code' aria-label=Code><b style='font-family:var(--mono)'>&lt;&gt;</b></button>"
+            "<span class=sep></span>"
+            "<button type=button class=iconbtn data-do=link title='Link' aria-label=Link>" + t.icon("link") + "</button>"
+            "<button type=button class=iconbtn data-do=removeFormat title='Clear formatting' aria-label='Clear formatting'>" + t.icon("x") + "</button>"
+            "<span class=grow></span>"
+            "<button type=button class='tab on' data-plain=0 title='Write with formatting'>Rich</button>"
+            "<button type=button class=tab data-plain=1 title='Write as plain text'>Plain</button></div>"
+            "<div class=editor contenteditable=true role=textbox aria-multiline=true"
+            " aria-label='The note' data-ph='What you found, what you did, what is next."
+            " The ward, room and machine say it best; a patient never needs naming (&#167;6.1).'></div>"
+            # The textarea is still the thing that is submitted, and it is
+            # still what a browser with no JavaScript shows and types into.
             "<textarea name=body required placeholder='What you found, what you did, what is next. The ward, room and machine say it best; a patient never needs naming (§6.1).'></textarea>"
             "<div class=row style='margin-top:10px'>"
             "<div style='flex:0 0 auto'><label>Who can read it</label><div class=seg>"
@@ -623,6 +658,7 @@ def add_note(ctx, work_item_id):
     f = ctx.request.form()
     try:
         engine.add_note(ctx.conn, work_item_id, body=f.get("body", ""),
+                        body_format=f.get("body_format") or None,
                         flag=f.get("flag", "DISCUSSION") or "DISCUSSION",
                         actor=ctx.user.id, at=ctx.now,
                         time=_time_from_form(f),

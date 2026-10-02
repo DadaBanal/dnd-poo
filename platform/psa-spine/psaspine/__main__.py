@@ -58,6 +58,11 @@ def main(argv: list[str] | None = None) -> int:
     pwhy.add_argument("--subject", help="a fragment of the subject, any case")
     pwhy.add_argument("--sender", help="the sender's address or domain, any case")
     pwhy.add_argument("--days", type=int, default=7, help="how far back (default 7)")
+    pwho = sub.add_parser("who-sees", help="why a requester does or does not see a ticket on the portal:"
+                                           " the address it was raised from, and the addresses the desk knows for them")
+    pwho.add_argument("database", help=DB_HELP)
+    pwho.add_argument("--ticket", required=True, help="e.g. PMC-000155")
+    pwho.add_argument("--person", help="their sign-in name or any address of theirs, to test against it")
     phealth = sub.add_parser("mail-health", help="is mail becoming tickets at all: when a message last arrived,"
                                                  " what came of the ones since, and which addresses a board claims")
     phealth.add_argument("database", help=DB_HELP)
@@ -373,6 +378,46 @@ def _run(conn, a) -> int:
         conn.commit()
         print(said)
         print("sysadmins now: " + (", ".join(members.sysadmins(conn)) or "none"))
+        return 0
+
+    if a.cmd == "who-sees":
+        row = conn.execute("SELECT t.requested_by, t.intake_source, t.board_id, w.name"
+                           "  FROM ticket t JOIN work_item w ON w.work_item_id = t.work_item_id"
+                           " WHERE t.work_item_id = ?", (a.ticket,)).fetchone()
+        if row is None:
+            print(f"there is no ticket {a.ticket}")
+            return 1
+        raised = (row["requested_by"] or "").strip()
+        print(f"{a.ticket} on {row['board_id']} was raised by: {raised or '(nobody: it has no requester)'}"
+              f"  (came in by {row['intake_source'] or 'the desk'})")
+        if not raised:
+            print("A ticket with no requester is on nobody's portal. Set the Contact on the ticket.")
+            return 0
+        seen = [r["address"] for r in conn.execute("SELECT address FROM ticket_cc WHERE work_item_id = ?", (a.ticket,))]
+        if seen:
+            print("copied on it (they do NOT see it on the portal, by design): " + ", ".join(seen))
+        if not a.person:
+            print("Add --person <their sign-in name or address> to test whether they would see it.")
+            return 0
+        who = a.person.strip().lower()
+        addrs = []
+        for r in conn.execute("SELECT email, upn, sam_account FROM contact WHERE inactive = 0 AND ("
+                              " LOWER(email) = ? OR LOWER(upn) = ? OR LOWER(sam_account) = ?)", (who, who, who)):
+            for v in (r["email"], r["upn"]):
+                if v and v.lower() not in addrs:
+                    addrs.append(v.lower())
+        for r in conn.execute("SELECT email FROM member WHERE LOWER(member) = ? OR LOWER(email) = ?", (who, who)):
+            if r["email"] and r["email"].lower() not in addrs:
+                addrs.append(r["email"].lower())
+        if who not in addrs:
+            addrs.append(who)
+        print(f"the desk knows these addresses for {a.person}: " + ", ".join(addrs))
+        if raised.lower() in addrs:
+            print(f"-> they DO see {a.ticket} on the portal.")
+            return 0
+        print(f"-> they do NOT see {a.ticket}: it was raised from {raised}, which is none of those.")
+        print("   Put that address on their contact record (email or upn) and they see it at once,"
+              " or change the ticket's Contact to them.")
         return 0
 
     if a.cmd == "mail-health":

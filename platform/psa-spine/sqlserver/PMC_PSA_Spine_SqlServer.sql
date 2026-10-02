@@ -3896,6 +3896,29 @@ ALTER TABLE psa.[schedule_block] ADD [outlook_event_id] NVARCHAR(400) NULL;
 IF COL_LENGTH(N'psa.[member]', N'is_sysadmin') IS NULL
 ALTER TABLE psa.[member] ADD [is_sysadmin] INT NULL CONSTRAINT [DF_member_is_sysadmin] DEFAULT (0);
 
+-- 064: a note may be written as rich text (Dada, 2 Oct 2026: "a proper text
+-- editor via html or like html or teams text editor").
+--
+-- A technician writes a note the way they write a Teams message, and pastes
+-- out of Outlook or Word. So `ticket_event.detail` may now hold HTML as well
+-- as plain text, and this column says which it is: NULL or 'TEXT' for every
+-- note ever written until now and every note that arrives by email, 'HTML'
+-- for one written in the editor.
+--
+-- Nothing is stored as HTML until `richtext.clean` has rebuilt it out of its
+-- own allow-lists, and the PHI scan reads `richtext.text` of it, never the
+-- markup, so a patient's name cannot hide inside an attribute.
+IF COL_LENGTH(N'psa.[ticket_event]', N'body_format') IS NULL
+ALTER TABLE psa.[ticket_event] ADD [body_format] NVARCHAR(32) NULL;
+
+-- NULL reads as TEXT
+
+-- And the requester's email carries the note as it was written. The text of
+-- the email is always there; this is the same email with the note's own
+-- formatting in it, built when the note is written and sent as the HTML part.
+IF COL_LENGTH(N'psa.[notification]', N'body_html') IS NULL
+ALTER TABLE psa.[notification] ADD [body_html] NVARCHAR(MAX) NULL;
+
 IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
 ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
 

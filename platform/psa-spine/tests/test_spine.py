@@ -6968,6 +6968,216 @@ class RunAsTaskAccountScriptTest(unittest.TestCase):
         self.assertIn("runas /user:", self.text)       # and the way round it if the account may not log on
 
 
+class NoteRichTextTest(unittest.TestCase):
+    """064. Dada, 2 Oct 2026: "a proper text editor via html or like html or
+    teams text editor". A note may be written as rich text and pasted out of
+    Outlook or Word. Nothing reaches the database until richtext.clean has
+    rebuilt it, and the PHI scan reads the words, never the markup."""
+
+    def test_nothing_that_can_act_is_ever_written(self):
+        from psaspine import richtext
+        for nasty in ('<script>alert(1)</script><p>hi</p>',
+                      '<p onclick="x" style="color:red">styled</p>',
+                      '<img src=x onerror=alert(1)>',
+                      '<iframe src="//evil"></iframe>x',
+                      '<a href="javascript:alert(1)">bad</a>',
+                      '<svg><animate onbegin=alert(1)>',
+                      '<p>a</p><style>p{display:none}</style>'):
+            out = richtext.clean(nasty)
+            low = out.lower()
+            for shape in ("script", "onerror", "onclick", "style=", "iframe", "javascript:", "svg", "onbegin"):
+                self.assertNotIn(shape, low, (nasty, shape))
+        # and what it does keep, it keeps
+        self.assertEqual(richtext.clean('<b>bold</b> <i>it</i> <u>u</u>'), '<b>bold</b> <i>it</i> <u>u</u>')
+        self.assertEqual(richtext.clean('<ul><li>one</li></ul>'), '<ul><li>one</li></ul>')
+        self.assertIn('href="https://a.test"', richtext.clean('<a href="https://a.test">good</a>'))
+        self.assertIn('rel="noopener noreferrer"', richtext.clean('<a href="https://a.test">good</a>'))
+
+    def test_a_paste_out_of_word_keeps_the_words_and_none_of_the_markup(self):
+        from psaspine import richtext
+        word = ('<html><head><style>p.MsoNormal{margin:0}</style></head><body>'
+                '<p class=MsoNormal style="mso-margin-top-alt:auto"><span style="font-weight:bold">Ward 3</span>'
+                '<o:p></o:p></p><table><tr><td>in a table</td></tr></table></body></html>')
+        out = richtext.clean(word)
+        self.assertIn("Ward 3", out)
+        self.assertIn("in a table", out)
+        for shape in ("mso", "msonormal", "<span", "<table", "<o:p", "style"):
+            self.assertNotIn(shape, out.lower(), shape)
+
+    def test_badly_nested_markup_comes_out_well_formed(self):
+        from psaspine import richtext
+        self.assertEqual(richtext.clean("<p><b>un <i>closed</p>"), "<p><b>un <i>closed</i></b></p>")
+
+    def test_the_words_without_the_markup_are_what_a_scan_reads(self):
+        from psaspine import richtext
+        self.assertEqual(richtext.text("<p>Hello <b>there</b></p><ul><li>one</li><li>two</li></ul>"),
+                         "Hello there\n\n- one\n- two")
+        # a name hidden in an attribute is not words, and is not kept either
+        hidden = richtext.clean('<a href="https://x.test/CaseNo-4471" title="Juan Dela Cruz">link</a>')
+        self.assertNotIn("Juan", hidden)
+
+    def test_plain_text_is_left_alone(self):
+        from psaspine import richtext
+        self.assertFalse(richtext.looks_rich("-LESTER M. BALLESTEROS\n-INSURANCE & CLAIMS"))
+        self.assertEqual(richtext.clean("just words, 3 < 4"), "just words, 3 &lt; 4")
+
+
+class RichNoteRoundTripTest(unittest.TestCase):
+    """The whole way through: written in the editor, stored cleaned, read on the
+    desk and the portal, and carried into the requester's email as written."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.conn = _fresh(self.tmp)
+        self.addCleanup(self.conn.close)
+        self.at = datetime(2026, 10, 2, 9)
+        from psaspine import setup
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        self.conn.execute("UPDATE board SET notify_requester = 1 WHERE board_id = 'IT_HELP'")
+        self.conn.execute("INSERT INTO contact (contact_id, entity_id, display_name, email, sam_account,"
+                          " source, inactive, created_at) VALUES ('C_W3','PMC','Ward 3','ward3@pmcne.ph',"
+                          "'ward3','AD',0,'2026')")
+        self.wid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="printer",
+                                       impact="I3", urgency="U3", requested_by="ward3@pmcne.ph", at=self.at)
+        self.conn.commit()
+
+    def test_it_is_stored_cleaned_and_read_as_written(self):
+        from psaspine import board, phi
+        board.add_note(self.conn, self.wid,
+                       body='<p>We ordered the <b>toner</b>.</p><script>alert(1)</script>'
+                            '<ul><li>arrives Friday</li></ul>',
+                       body_format="HTML", flag="DISCUSSION", actor="bob", at=self.at)
+        row = self.conn.execute("SELECT detail, body_format FROM ticket_event WHERE kind = 'NOTE'").fetchone()
+        self.assertEqual(row["body_format"], "HTML")
+        self.assertNotIn("script", row["detail"].lower())
+        self.assertIn("<b>toner</b>", row["detail"])
+        # the desk and the portal read it through the one call
+        from psaspine.web import templates as t
+        shown = t.note_html(row["detail"], row["body_format"])
+        self.assertIn("<b>toner</b>", shown)
+        self.assertIn("<li>arrives Friday</li>", shown)
+        # and the scan read the words, not the markup
+        from psaspine import richtext
+        self.assertEqual(phi.scan(richtext.text(row["detail"]), field="note"), [])
+
+    def test_a_note_that_says_nothing_but_markup_is_refused(self):
+        from psaspine import board
+        with self.assertRaisesRegex(ValueError, "needs some words"):
+            board.add_note(self.conn, self.wid, body="<p><br></p><p>  </p>", body_format="HTML",
+                           flag="DISCUSSION", actor="bob", at=self.at)
+
+    def test_the_requester_gets_it_as_written_and_as_words(self):
+        from psaspine import board, outbox
+        for d in outbox.pending(self.conn, allowed_domains=("*",)):
+            outbox.mark(self.conn, d["id"], "SENT", at=self.at)
+        board.add_note(self.conn, self.wid, body="<p>Installed. Please <b>try again</b>.</p>",
+                       body_format="HTML", flag="DISCUSSION", actor="bob", at=self.at)
+        [m] = outbox.pending(self.conn, allowed_domains=("*",), dry_run=True)
+        self.assertIn("Installed. Please try again.", m["body"])          # the words, always
+        self.assertIn("<b>try again</b>", m["html"])                      # and as it was written
+        self.assertNotIn("<script", m["html"].lower())
+
+    def test_a_note_the_phi_gate_holds_back_carries_no_formatting_either(self):
+        from psaspine import board, outbox
+        for d in outbox.pending(self.conn, allowed_domains=("*",)):
+            outbox.mark(self.conn, d["id"], "SENT", at=self.at)
+        board.add_note(self.conn, self.wid, body="<p><b>Case no. 4471</b> is the one waiting</p>",
+                       body_format="HTML", flag="DISCUSSION", actor="bob", at=self.at)
+        [m] = outbox.pending(self.conn, allowed_domains=("*",), dry_run=True)
+        self.assertIn(outbox.PORTAL_WORDS, m["body"])
+        self.assertNotIn("4471", m["body"] + (m["html"] or ""))
+
+
+class RichTextTest(unittest.TestCase):
+    """Dada, 2 Oct 2026: "can we have a text editor so we can properly edit the
+    replies or add font themes to it". A note stays plain text, which is what
+    the PHI scan reads and what an email carries; only the reading of it is
+    rendered, and nothing a writer types can become a tag."""
+
+    def test_nothing_a_writer_types_becomes_a_tag(self):
+        import re as _re
+        from psaspine.web import templates as t
+        for nasty in ("<script>alert(1)</script>", "<img src=x onerror=alert(1)>",
+                      "<b onclick='x'>hi</b>", "a < b and c > d", "</p><script>x</script>"):
+            out = t.rich(nasty)
+            # the characters survive as characters; none of them becomes a tag
+            for tag in ("<script", "<img", "<b onclick", "<iframe"):
+                self.assertNotIn(tag, out.lower(), (nasty, tag))
+        self.assertIn("&lt;script&gt;", t.rich("<script>alert(1)</script>"))
+        # only the tags this renderer makes itself, and no attribute but the ones it writes
+        made = t.rich("# h\n- a\n1. b\n> c\n**d** *e* `f` https://x.test/y")
+        self.assertEqual(sorted(set(_re.findall(r"<(\w+)", made))),
+                         ["a", "b", "code", "div", "i", "li", "ol", "p", "ul"])
+        self.assertEqual(sorted(set(_re.findall(r'(\w+)="', made))), ["class", "href", "rel", "target"])
+
+    def test_a_note_written_before_any_of_this_reads_as_it_did(self):
+        from psaspine.web import templates as t
+        # a real note, from the live desk: dashes that are not bullets
+        out = t.rich("-LESTER M. BALLESTEROS\n-INSURANCE & CLAIMS\n-PMCWKS-9NFI5GF")
+        self.assertIn("-LESTER M. BALLESTEROS<br>-INSURANCE &amp; CLAIMS", out)
+        self.assertNotIn("<li>", out)
+        self.assertNotIn("<ul>", out)
+
+    def test_the_marks_a_writer_means(self):
+        from psaspine.web import templates as t
+        self.assertIn("<b>bold</b>", t.rich("a **bold** word"))
+        self.assertIn("<i>soft</i>", t.rich("a *soft* word"))
+        self.assertIn("<code>x &gt; y</code>", t.rich("run `x > y`"))
+        self.assertIn("<ul><li>one</li><li>two</li></ul>", t.rich("- one\n- two"))
+        self.assertIn("<ol><li>first</li></ol>", t.rich("1. first"))
+        self.assertIn('class="rh">Heading<', t.rich("# Heading"))
+        self.assertIn('class="rq">said so<', t.rich("> said so"))
+        # a mark inside code is the characters they typed
+        self.assertIn("<code>**not bold**</code>", t.rich("`**not bold**`"))
+
+    def test_a_plain_link_is_a_link_and_carries_nothing_with_it(self):
+        from psaspine.web import templates as t
+        out = t.rich("see https://help.pmcne.ph/my/PMC-000155 for it")
+        self.assertIn('href="https://help.pmcne.ph/my/PMC-000155"', out)
+        self.assertIn('rel="noopener noreferrer"', out)
+        # a scheme that is not http(s) is never made into a link: it stays words
+        bad = t.rich("javascript:alert(1) and data:text/html,x")
+        self.assertNotIn("<a ", bad)
+        self.assertNotIn("href", bad)
+        self.assertIn("javascript:alert(1)", bad)
+
+    def test_an_email_carries_its_own_styles_because_it_has_no_stylesheet(self):
+        from psaspine.web import templates as t
+        self.assertIn("style=", t.rich("a word", email=True))
+        self.assertNotIn("style=", t.rich("a word"))
+
+    def test_a_note_written_as_text_still_reads_the_way_it_always_did(self):
+        from psaspine.web import templates as t
+        self.assertEqual(t.note_html("a **bold** word"), t.rich("a **bold** word"))
+        self.assertEqual(t.note_html("a **bold** word", "TEXT"), t.rich("a **bold** word"))
+
+
+class LayoutEditTest(unittest.TestCase):
+    """Dada, 2 Oct 2026: "the pods should remain fixed and just add an edit
+    button to move the pods similar to connectwise"."""
+
+    CSS = (Path(__file__).resolve().parent.parent / "psaspine" / "web" / "templates.py").read_text()
+    VIEW = (Path(__file__).resolve().parent.parent / "psaspine" / "web" / "views" / "ticket.py").read_text()
+
+    def test_a_card_sits_still_until_edit_layout_is_on(self):
+        self.assertIn("display:none;gap:2px;opacity:0", self.CSS)          # the controls, at rest
+        self.assertIn(":root.layedit .pods .card[data-pod] .podctl{display:inline-flex;opacity:1}", self.CSS)
+        self.assertIn('h.addEventListener("mousedown",function(){if(root.classList.contains("layedit"))c.draggable=true})',
+                      self.CSS)
+
+    def test_there_is_a_button_for_it_and_a_way_out(self):
+        self.assertIn("data-layedit", self.VIEW)
+        self.assertIn('e.target.closest("[data-layedit]")', self.CSS)
+        self.assertIn('e.key==="Escape"&&root.classList.contains("layedit")', self.CSS)
+        self.assertIn("layedit-on", self.CSS)          # the bar that says it is on, with Done
+
+    def test_the_reader_can_choose_the_text_size(self):
+        self.assertIn('id="textsize"', self.CSS)
+        self.assertIn(':root[data-text=s]{--note-size:13px}', self.CSS)
+        self.assertIn(':root[data-text=l]{--note-size:16.5px}', self.CSS)
+
+
 class NoteSelectableTest(unittest.TestCase):
     """Dada, 2 Oct 2026, on a ticket: "the text here can be copy and pasted ...
     atm copy and paste doesnt work". Chrome's own stylesheet gives any
@@ -6985,8 +7195,8 @@ class NoteSelectableTest(unittest.TestCase):
     def test_a_card_is_not_draggable_at_rest(self):
         self.assertIn("c.draggable=false;", self.css)
         self.assertNotIn("c.draggable=true;var h=", self.css)
-        self.assertIn('h.addEventListener("mousedown",function(){c.draggable=true})', self.css)
         self.assertIn('d.addEventListener("mouseup",function(){c.draggable=false})', self.css)
+        self.assertIn('if(root.classList.contains("layedit"))c.draggable=true', self.css)
         self.assertIn('c.addEventListener("dragend",function(){c.draggable=false})', self.css)
 
     def test_the_words_in_a_card_are_selectable_and_the_handle_is_not(self):
@@ -11298,6 +11508,66 @@ class SalesTest(unittest.TestCase):
         self.assertIn("No opportunity here.", page)
 
 
+
+
+class PortalIdentityTest(unittest.TestCase):
+    """Dada, 2 Oct 2026, MEASURED on a live ticket: a requester clicked the link
+    in her own email and the portal answered "No such request". PMC staff have
+    addresses on more than one domain, and intake writes whichever the mail was
+    sent from, so matching only the address on the session was not enough."""
+
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+
+    def setUp(self) -> None:
+        WebWSGITest.setUp(self)
+        self.addCleanup(self.tmp.cleanup)
+        self.at = datetime(2026, 10, 2, 9)
+        conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)
+        self.conn = conn
+        conn.execute("INSERT OR IGNORE INTO entity (entity_id, name, is_covered, note) VALUES ('PMC','PMC',1,NULL)")
+        # one person, two addresses: the mailbox she writes from, and her sign-in
+        conn.execute("INSERT INTO contact (contact_id, entity_id, display_name, email, upn, sam_account, source,"
+                     " inactive, created_at) VALUES ('C_VIA','PMC','Via Soriano','via.soriano@premieremedicalcenter.net',"
+                     "'via.soriano@pmcne.ph','via.soriano','AD',0,'2026')")
+        self.wid = tickets.open_ticket(conn, board_id="IT_HELP", summary="eClaims will not upload",
+                                       impact="I3", urgency="U3",
+                                       requested_by="via.soriano@premieremedicalcenter.net",
+                                       at=self.at, source="EMAIL")
+        conn.commit()
+
+    def test_her_own_request_is_hers_whichever_address_she_signed_in_with(self):
+        for email in ("via.soriano@pmcne.ph", "via.soriano@premieremedicalcenter.net"):
+            cookie = self._cookie_for("via.soriano", email=email, requester=True)
+            status, _, body = self._call("GET", f"/my/{self.wid}", cookie=cookie)
+            self.assertTrue(status.startswith("200"), (email, status))
+            self.assertIn("eClaims will not upload", body)
+
+    def test_somebody_elses_request_is_still_not_theirs_to_learn_exists(self):
+        cookie = self._cookie_for("other.person", email="other.person@pmcne.ph", requester=True)
+        status, _, body = self._call("GET", f"/my/{self.wid}", cookie=cookie)
+        self.assertTrue(status.startswith("404"), status)
+        self.assertIn("No such request, or it was not raised by you", body)
+        self.assertIn("other.person@pmcne.ph", body)       # which address they are, to tell the two apart
+        self.assertNotIn("eClaims", body)                  # and nothing of the ticket itself
+
+    def test_the_desk_can_say_why_in_one_command(self):
+        import contextlib
+        import io
+        from psaspine.__main__ import main
+        db_arg = TEST_DB or str(self.db_path)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(main(["who-sees", db_arg, "--ticket", self.wid, "--person", "via.soriano"]), 0)
+        said = out.getvalue()
+        self.assertIn("was raised by: via.soriano@premieremedicalcenter.net", said)
+        self.assertIn("they DO see", said)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            main(["who-sees", db_arg, "--ticket", self.wid, "--person", "someone.else@pmcne.ph"])
+        self.assertIn("they do NOT see", out.getvalue())
 
 
 class MembersTest(unittest.TestCase):

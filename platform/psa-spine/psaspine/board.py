@@ -771,19 +771,21 @@ def add_time(conn: sqlite3.Connection, work_item_id: str, *, at: datetime, actor
     return cur.lastrowid
 
 
-def _event(conn, work_item_id, stamp, kind, actor, detail, flag=None):
-    """One row of the ticket's history. Returns its id."""
+def _event(conn, work_item_id, stamp, kind, actor, detail, flag=None, body_format=None):
+    """One row of the ticket's history. Returns its id. `body_format` is 'HTML'
+    only for a note written in the desk's editor, and only after richtext.clean
+    has rebuilt it (064); everything else is plain text."""
     return conn.execute(
         "INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail,"
-        " note_flag) VALUES (?,?,?,?,?,?)",
-        (work_item_id, stamp, kind, actor, detail, flag)).lastrowid
+        " note_flag, body_format) VALUES (?,?,?,?,?,?,?)",
+        (work_item_id, stamp, kind, actor, detail, flag, body_format)).lastrowid
 
 
 def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: str,
              actor: str, at: datetime, band_hours: float | None = None,
              charge_method: str | None = None, to_status_id: str | None = None,
              resolution: bool = False, time: dict | None = None,
-             notify_requester: bool = True) -> dict:
+             notify_requester: bool = True, body_format: str | None = None) -> dict:
     """One note, the way Dada PSA takes one: flagged, optionally with time
     against it, optionally moving the status in the same action.
     `notify_requester` is Dada PSA's "Contact" tick on the note: a
@@ -798,8 +800,20 @@ def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: st
     """
     if flag not in NOTE_FLAGS:
         raise ValueError(f"a note is Discussion, Internal or Resolution, not {flag!r}")
-    body = (body or "").strip()
-    if not body:
+    # 064: a note may be written as rich text. Nothing is stored until
+    # richtext.clean has rebuilt it out of its own allow-lists, and what is
+    # read everywhere a note is read as words - the PHI scan, the plain part
+    # of an email, a search - is richtext.text of it, never the markup.
+    from . import richtext
+    if (body_format or "").upper() == "HTML":
+        body = richtext.clean(body)
+        words = richtext.text(body)
+        body_format = "HTML"
+    else:
+        body = (body or "").strip()
+        words = body
+        body_format = None
+    if not words.strip():
         raise ValueError("a note needs some words")
     ticket = conn.execute(
         "SELECT w.entity_id FROM ticket t JOIN work_item w ON w.work_item_id = t.work_item_id"
@@ -817,7 +831,7 @@ def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: st
         prepared["performed_by"] = performed_by
 
     stamp = at.isoformat(sep=" ", timespec="minutes")
-    event_id = _event(conn, work_item_id, stamp, "NOTE", actor, body, flag)
+    event_id = _event(conn, work_item_id, stamp, "NOTE", actor, body, flag, body_format)
     from . import paging
     paging.note_by(conn, work_item_id, actor, at=at)              # 050: a note answers an open page
     if resolution and flag != "RESOLUTION":
@@ -831,7 +845,7 @@ def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: st
     booked = None
     if prepared is not None:
         add_time(conn, work_item_id, at=at, actor=actor, charge_method=prepared["charge_method"],
-                 performed_by=prepared.pop("performed_by"), ticket_event_id=event_id, note=body,
+                 performed_by=prepared.pop("performed_by"), ticket_event_id=event_id, note=words,
                  authority_source="ticket note", values=prepared)
         booked = prepared["band_hours"]
     status = None
@@ -843,7 +857,7 @@ def add_note(conn: sqlite3.Connection, work_item_id: str, *, body: str, flag: st
     if flag != "INTERNAL" and notify_requester:
         # The requester can read this note on the portal: tell them it is there.
         from . import outbox
-        outbox.queue_requester(conn, work_item_id, "UPDATED", at=at, note=body)
+        outbox.queue_requester(conn, work_item_id, "UPDATED", at=at, note=words, note_html=body if body_format else None)
     return {"flag": flag, "band_hours": booked, "actual_hours": prepared["actual_hours"] if prepared else None,
             "status": status}
 

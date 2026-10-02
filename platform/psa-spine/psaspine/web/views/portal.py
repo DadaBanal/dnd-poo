@@ -70,11 +70,44 @@ FRIENDLY_STATE = {
 
 
 def _identities(ctx) -> list[str]:
-    """Who this person is, as a requester. Email first, because that is what
-    intake writes into `requested_by` when a ticket arrives by mail."""
-    out = []
-    if ctx.user.email:
-        out.append(ctx.user.email.lower())
+    """Every address this person is, as a requester. Email first, because that
+    is what intake writes into `requested_by` when a ticket arrives by mail.
+
+    One person has more than one address here: PMC has staff whose mailbox is
+    on one domain and whose sign-in name is on another, and intake writes
+    whichever one the mail was sent from. Matching only the address on the
+    session is how a requester clicked the link in their own email and was told
+    "No such request" (Dada, 2 Oct 2026, MEASURED on a live ticket). So the
+    contact and member records are asked for every address they hold for this
+    person, and any of them makes the request theirs.
+
+    It never widens past this person: each address comes from a row that
+    already matched their sign-in name or their session address."""
+    out: list[str] = []
+
+    def add(value):
+        v = (value or "").strip().lower()
+        if v and "@" in v and v not in out:
+            out.append(v)
+
+    add(getattr(ctx.user, "email", None))
+    seed = [v for v in (getattr(ctx.user, "email", None), ctx.user.id) if v]
+    if not seed:
+        return out
+    marks = ",".join("?" * len(seed))
+    lowered = [str(v).lower() for v in seed]
+    for row in ctx.conn.execute(
+            "SELECT email, upn FROM contact WHERE inactive = 0 AND ("
+            f" LOWER(email) IN ({marks}) OR LOWER(upn) IN ({marks}) OR LOWER(sam_account) IN ({marks}))",
+            lowered * 3):
+        add(row["email"])
+        add(row["upn"])
+    for row in ctx.conn.execute(
+            f"SELECT email FROM member WHERE LOWER(member) IN ({marks}) OR LOWER(email) IN ({marks})",
+            lowered * 2):
+        add(row["email"])
+    # The sign-in name itself, last: a ticket raised on the desk for somebody
+    # carries the name, not an address.
     if ctx.user.id and ctx.user.id.lower() not in out:
         out.append(ctx.user.id.lower())
     return out
@@ -249,10 +282,18 @@ def detail(ctx, work_item_id):
         MINE + clause + " AND t.work_item_id = ?", params + [work_item_id]).fetchone()
     if row is None:
         # 404 and not 403: somebody else's ticket is not theirs to learn exists.
-        raise HttpError("404 Not Found", "No such request.")
+        # The words name the address they are signed in as, which is what makes
+        # the difference between "there is no such request" and "it was raised
+        # from your other address", and tells them neither (Dada, 2 Oct 2026).
+        who = (getattr(ctx.user, "email", None) or ctx.user.id or "").strip()
+        raise HttpError("404 Not Found",
+                        "No such request, or it was not raised by you. You are signed in as "
+                        + (who or "somebody the desk does not know") +
+                        ". If you raised it from another email address, reply to the desk's email and "
+                        "they will put the two together.")
 
     events = ctx.conn.execute(
-        "SELECT occurred_at, kind, detail, note_flag, is_resolution FROM ticket_event"
+        "SELECT occurred_at, kind, detail, note_flag, is_resolution, body_format FROM ticket_event"
         "  WHERE work_item_id = ?"
         # What the requester may read: their own words, and the desk's notes
         # flagged Discussion or Resolution. Never an Internal note, never a
@@ -271,7 +312,7 @@ def detail(ctx, work_item_id):
         return (f"{t.esc(team)} — resolution" if e["note_flag"] == "RESOLUTION" or e["is_resolution"]
                 else t.esc(team))
     stream = "".join(
-        f"<li><div style='white-space:pre-wrap'>{t.esc(e['detail'])}</div>"
+        f"<li><div class=rtx>{t.note_html(e['detail'], e['body_format'])}</div>"
         f"<div class='meta'>{who(e)} &middot; {t.esc(e['occurred_at'])}</div></li>"
         for e in events) or "<li class='muted'>Nothing yet.</li>"
     shared = _visible_files(ctx, work_item_id)

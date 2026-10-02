@@ -1344,6 +1344,71 @@ per dispatcher, theirs alone) and applies whenever you open Dispatch;
 The button says how many of how many are showing, and "saved" when the
 saved view is what you see.
 
+## A note is written the way a Teams message is (064, 2 Oct 2026)
+
+Dada, 2 Oct 2026: *"can we have a text editor so we can properly edit the
+replies"*, then *"also copy pasting and a proper text editor via html or like
+html or teams text editor"*.
+
+The note box is now an editor, not a text field. Bold, italic, underline,
+strikethrough, bulleted and numbered lists, a quote, inline code, a link, and
+clear formatting; Ctrl+B, Ctrl+I and Ctrl+U where the hands already are. A
+**paste out of Outlook or Word keeps the words and the marks and brings none
+of the markup**: the paste is rebuilt in the page out of elements, so Word's
+thousand lines of `mso` styling never arrive at all. **Plain** beside
+**Rich** writes the same note as plain text for anyone who would rather.
+
+**One gate, and only one.** `psaspine/richtext.py` is the only place a note
+becomes HTML. It does not strip what it dislikes from a string; it reads what
+arrives and writes a new document made only of the tags and attributes on its
+own lists. A script, an event handler, a style, an iframe, a `javascript:`
+address: not removed, never written. Badly nested markup comes out well
+formed. `richtext.text` goes the other way, and **that** is what the PHI scan
+reads, what the plain part of an email carries and what a search matches, so
+a patient's name cannot hide inside an attribute.
+
+`ticket_event.body_format` (064) says which a note is. Every note written
+before today, and every note that arrives by email, is plain text and reads
+exactly as it always did. A note read back out of the database is cleaned
+again before it is shown, because a thing out of a database is a thing from
+outside.
+
+**The requester's email carries it as written.** `notification.body_html`
+(064) holds the same email with the note's own formatting in it, built when
+the note is written; the text of the email is always sent as well. A note the
+PHI gate holds back carries no formatting either, because it carries no
+words.
+
+**Text size**: an **Aa** button beside light and dark gives Small, Normal and
+Large, remembered in that browser.
+
+**The cards sit still.** A pod is no longer draggable at rest: its controls
+are hidden and its words select and copy. **Edit layout**, the grip button
+beside the gear, turns the handles on, outlines each card and puts a bar at
+the foot of the page; Done or Escape turns it off. That is the reference
+PSA's own shape, and it means a stray drag cannot move a card while somebody
+is reading it.
+
+## A requester could not open their own request (2 Oct 2026)
+
+MEASURED on a live ticket: a requester clicked the link in her own email and
+the portal answered "No such request". The portal matched the one address on
+her session, and PMC has staff whose mailbox is on one domain and whose
+sign-in is on another; intake writes whichever address the mail was sent
+from.
+
+The portal now asks the contact and member records for **every** address
+they hold for this person, and any of them makes the request theirs. It
+never widens past them: each address comes from a row that already matched
+their own sign-in name or session address. The refusal, when it is somebody
+else's request, now names the address they are signed in as, which is what
+tells "there is no such request" apart from "you raised it from your other
+address", and tells them neither.
+
+`psaspine who-sees --ticket PMC-000155 --person <them>` says which it is:
+the address the ticket was raised from, every address the desk knows for
+that person, and whether they see it.
+
 ## The words in a note can be selected and copied (2 Oct 2026)
 
 Dada, 2 Oct 2026, with a ticket open: *"make sure the text here can be copy

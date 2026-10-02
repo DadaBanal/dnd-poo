@@ -55,3 +55,15 @@ Dada is running these himself; they are here so the record has them. **Neither n
 If PSA-Calendar is registered, re-register it once so its command carries the second domain
 (`Register-PsaMail.ps1 -IncludeSupport -IncludeCalendar -Apply` leaves a registered task as it is, so remove
 `PSA-Calendar` first if its arguments must change).
+
+
+---
+
+## Added 2 Oct 2026, later: 064, a note written as rich text
+
+| | |
+|---|---|
+| Schema | `064_note_format.sql`: `ticket_event.body_format` and `notification.body_html`, both nullable. **One schema step**, the port's two guarded ALTERs; a re-run adds nothing twice. No existing row changes, and every note written before today stays plain text and reads as it did. |
+| What it is | the note box on a ticket is an editor: bold, lists, a link, and a paste out of Outlook or Word that keeps the words and none of the markup. Nothing is stored until `richtext.clean` has rebuilt it, and the PHI scan reads the words, never the markup. |
+| Also | the requester's email carries the note as written (`notification.body_html`), with the text of the email always sent as well. |
+| Pass | write a note with a bold word and a bullet, save: the ticket shows them. Paste a block out of Outlook: the words arrive, no fonts or colours do. An Updated email in Outlook shows the bold word. |

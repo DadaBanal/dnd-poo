@@ -321,8 +321,11 @@ def conversation_text(items: list[dict]) -> str:
     return "\n".join(lines).rstrip()
 
 
+NOTE_SLOT = "NOTEWRITTENHERE"      # where the note's own formatting goes, in the HTML part
+
+
 def queue_requester(conn: sqlite3.Connection, work_item_id: str, reason: str, *,
-                    at: datetime, note: str | None = None) -> bool:
+                    at: datetime, note: str | None = None, note_html: str | None = None) -> bool:
     """Queue the one email a requester gets. Returns whether one was queued.
     An UPDATED email carries the technician's reply (note) when it is clean."""
     from .board import _event
@@ -338,8 +341,18 @@ def queue_requester(conn: sqlite3.Connection, work_item_id: str, reason: str, *,
     if not address_for(conn, row["requested_by"]):
         return False                          # only an address we can resolve now
     values = _values(conn, work_item_id, at=at)
-    values["note"] = note_for_email(note) if reason == "UPDATED" else ""
+    plain = note_for_email(note) if reason == "UPDATED" else ""
+    values["note"] = plain
     headline, said = words(conn, row["board_id"], reason, **values)
+    # 064: the same email with the note's own formatting in it. Built here,
+    # once, so the sender has nothing to decide; the text above is always sent
+    # as well, and a note the PHI gate held back carries no formatting either.
+    said_html = None
+    if reason == "UPDATED" and note_html and plain != PORTAL_WORDS:
+        from .web.templates import rich as _rich
+        marked = dict(values, note=NOTE_SLOT)
+        _, shell = words(conn, row["board_id"], reason, **marked)
+        said_html = _rich(shell, email=True).replace(NOTE_SLOT, note_html)
     sender = reply_from(conn, work_item_id)
     stamp = at.isoformat(sep=" ", timespec="minutes")
     pending = conn.execute("SELECT notification_id FROM notification WHERE work_item_id = ? AND"
@@ -349,16 +362,18 @@ def queue_requester(conn: sqlite3.Connection, work_item_id: str, reason: str, *,
         if reason not in ("CLOSED", "UPDATED"):
             return False                      # one unsent email already says so
         # A close outranks an unsent "we have it": the one email says the newer thing.
-        conn.execute("UPDATE notification SET subject = ?, body = ?, created_at = ? WHERE notification_id = ?",
-                     (f"{subject_token(work_item_id)} {headline}", said, stamp, pending["notification_id"]))
+        conn.execute("UPDATE notification SET subject = ?, body = ?, body_html = ?, created_at = ?"
+                     " WHERE notification_id = ?",
+                     (f"{subject_token(work_item_id)} {headline}", said, said_html, stamp,
+                      pending["notification_id"]))
         _event(conn, work_item_id, stamp, "NOTIFY", "desk",
                f"email to the requester queued: {headline.lower()}")
         return True
     conn.execute(
-        "INSERT INTO notification (work_item_id, recipient, recipient_role, subject, body,"
-        " created_at, status, from_address) VALUES (?,?,?,?,?,?,'PENDING',?)",
+        "INSERT INTO notification (work_item_id, recipient, recipient_role, subject, body, body_html,"
+        " created_at, status, from_address) VALUES (?,?,?,?,?,?,?,'PENDING',?)",
         (work_item_id, row["requested_by"], REQUESTER,
-         f"{subject_token(work_item_id)} {headline}", said, stamp, sender))
+         f"{subject_token(work_item_id)} {headline}", said, said_html, stamp, sender))
     _event(conn, work_item_id, stamp, "NOTIFY", "desk",
            f"email to the requester queued: {headline.lower()}")
     return True
@@ -735,9 +750,14 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
         if n["recipient_role"] in (REQUESTER, STATUS):
             b = conn.execute("SELECT b.display_name FROM ticket t JOIN board b ON b.board_id = t.board_id WHERE t.work_item_id = ?",
                              (n["work_item_id"],)).fetchone()
+            try:
+                written = n["body_html"]
+            except (KeyError, IndexError):
+                written = None                       # a store that has not taken 064 yet
             item["html"] = html_email((n["body"] or "").replace("{link}", link), ticket=n["work_item_id"],
                                       link=link if portal_url else None, board=b["display_name"] if b else "", hospital=_hospital(),
-                                      thread=thread)
+                                      thread=thread,
+                                      written=(written or "").replace("{link}", link) or None)
         out.append(item)
     if not dry_run:
         conn.commit()
@@ -745,7 +765,7 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
 
 
 def html_email(text: str, *, ticket: str, link: str | None, board: str, hospital: str,
-               thread: list[dict] | None = None) -> str:
+               thread: list[dict] | None = None, written: str | None = None) -> str:
     """The same words as the plain text, laid out (Dada, 1 Oct 2026: "a better
     formatted email this looks kinda bland"): a header with the hospital and
     the board, the reference, the paragraphs, a button to the request, and
@@ -757,9 +777,14 @@ def html_email(text: str, *, ticket: str, link: str | None, board: str, hospital
     sign = ""
     if paras and paras[-1].startswith(("Your reference", "To add something")):
         pass
-    body_html = "".join(
-        f'<p style="margin:0 0 14px;font-size:15px;line-height:1.55;color:#1f2430">{_h.escape(pp).replace(chr(10), "<br>")}</p>'
-        for pp in paras)
+    # The one renderer the desk and the portal use, so a note that was written
+    # with a heading or a list reads the same wherever it is read (Dada, 2 Oct
+    # 2026). `email=True` carries the styles, because an email has no
+    # stylesheet. The words are still the plain text that was stored.
+    from .web.templates import rich as _rich
+    # `written` is the same words with the note's own formatting already in
+    # them (064); it is used in place of rendering the plain text again.
+    body_html = written if written else "".join(_rich(pp, email=True) for pp in paras)
     if link and link.startswith("http"):
         body_html = body_html.replace(_h.escape(link), f'<a href="{_h.escape(link)}" style="color:#3d63dd">{_h.escape(link)}</a>')
     if thread:
@@ -769,7 +794,7 @@ def html_email(text: str, *, ticket: str, link: str | None, board: str, hospital
             f'<div style="border-left:3px solid #d5dae6;padding:6px 12px;margin:0 0 10px">'
             f'<div style="font-size:12px;font-weight:600;color:#3b4454">{_h.escape(i["who"])}'
             f'<span style="font-weight:400;color:#6b7785"> &middot; {_h.escape(i["when"])}</span></div>'
-            f'<div style="font-size:14px;line-height:1.5;color:#1f2430;white-space:pre-wrap">{_h.escape(i["text"])}</div></div>'
+            f'<div style="font-size:14px;line-height:1.5;color:#1f2430">{_rich(i["text"], email=True)}</div></div>'
             for i in thread)
         body_html += (f'<div style="margin:18px 0 4px;font-size:12px;letter-spacing:.3px;text-transform:uppercase;color:#6b7785">'
                       f'{_h.escape(THREAD_TITLE)}</div>{entries}')

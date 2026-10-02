@@ -167,6 +167,37 @@ dialog#pal::backdrop{background:rgb(10 12 18/.35);-webkit-backdrop-filter:blur(3
 [popover]#keys dl{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;margin:8px 0 0}
 [popover]#keys dt{white-space:nowrap} [popover]#keys dd{margin:0;color:var(--ink-2)}
 .pods .card[data-pod]{position:relative}
+/* a note as it was written: paragraphs, lists, a heading, a quote. The words are plain text in the database;
+   only the reading of them is rendered, and nothing a person types can become a tag (see rich()). */
+.rtx{font-size:var(--note-size,14.5px);line-height:1.55} .rtx p{margin:0 0 10px} .rtx p:last-child{margin-bottom:0}
+.rtx ul,.rtx ol{margin:0 0 10px;padding-left:22px} .rtx li{margin:0 0 3px}
+.rtx .rh{font-weight:650;margin:12px 0 4px;font-size:1.03em} .rtx .rh:first-child{margin-top:0}
+.rtx .rq{margin:0 0 10px;padding:2px 0 2px 10px;border-left:3px solid var(--line-2);color:var(--ink-2)}
+.rtx code{font-family:var(--mono);font-size:.92em;background:var(--surface-3);border-radius:4px;padding:1px 4px}
+.rtx a{word-break:break-word}
+:root[data-text=s]{--note-size:13px} :root[data-text=l]{--note-size:16.5px}
+/* The editor's own toolbar, and the preview beside it. */
+.edbar{display:flex;flex-wrap:wrap;gap:2px;margin:0 0 6px;align-items:center}
+.edbar .iconbtn{width:30px;height:28px;font-size:13px} .edbar .sep{width:1px;height:18px;background:var(--line);margin:0 5px}
+.edbar .grow{flex:1} .edbar .tab{padding:3px 10px;border-radius:var(--r-sm);font-size:12.5px;font-weight:600;color:var(--ink-3);background:none;border:0;cursor:pointer}
+.edbar .tab.on{background:var(--surface-3);color:var(--ink)} .edbar .iconbtn[disabled]{opacity:.35;cursor:default}
+/* The note box itself: a page a person writes on, not a form field. */
+.editor{min-height:120px;max-height:420px;overflow:auto;border:1px solid var(--line-2);border-radius:var(--r);
+  padding:10px 12px;background:var(--surface);color:var(--ink);font-size:14.5px;line-height:1.55;outline:none}
+.editor:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-bg,#e9eefc)}
+.editor.empty::before{content:attr(data-ph);color:var(--ink-3);pointer-events:none;display:block}
+.editor p{margin:0 0 10px} .editor p:last-child{margin-bottom:0}
+.editor ul,.editor ol{margin:0 0 10px;padding-left:22px} .editor li{margin:0 0 3px}
+.editor blockquote{margin:0 0 10px;padding:2px 0 2px 10px;border-left:3px solid var(--line-2);color:var(--ink-2)}
+.editor code{font-family:var(--mono);font-size:.92em;background:var(--surface-3);border-radius:4px;padding:1px 4px}
+.editor a{color:var(--accent)}
+/* Dada, 2 Oct 2026: "the pods should remain fixed and just add an edit button to move the pods similar to
+   connectwise". At rest a card sits still and its words select; Edit layout turns the handles on. */
+:root.layedit .pods .card[data-pod]{outline:1px dashed var(--line-2);outline-offset:3px}
+:root:not(.layedit) .pods .card[data-pod] h3{cursor:default}
+.layedit-on{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:60;background:var(--accent);color:#fff;
+  padding:8px 14px;border-radius:999px;box-shadow:var(--shadow);font-size:13px;display:flex;align-items:center;gap:10px}
+.layedit-on button{background:#fff;color:#111;border:0;border-radius:999px;padding:3px 12px;cursor:pointer;font-weight:600}
 .pods .card[data-pod] h3{display:flex;align-items:center;gap:0;padding-right:56px;cursor:grab;user-select:none}
 /* Chrome's own stylesheet gives [draggable=true] user-select:none, so a draggable card made every word in it
    unselectable: a technician could not copy a ward's message out of a note (MEASURED 2 Oct 2026). The card is
@@ -175,8 +206,8 @@ dialog#pal::backdrop{background:rgb(10 12 18/.35);-webkit-backdrop-filter:blur(3
 .note .h .copy{opacity:0;transition:opacity var(--fast) var(--ease)} .note:hover .copy,.note:focus-within .copy{opacity:1}
 .note .h .copy.done{opacity:1;color:var(--ok,#1a7f37)}
 .pods .card[data-pod] h3:active{cursor:grabbing}
-.pods .card[data-pod] .podctl{position:absolute;right:8px;top:10px;display:inline-flex;gap:2px;opacity:0;transition:opacity var(--fast) var(--ease)}
-.pods .card[data-pod]:hover .podctl,.pods .card[data-pod]:focus-within .podctl{opacity:1}
+.pods .card[data-pod] .podctl{position:absolute;right:8px;top:10px;display:none;gap:2px;opacity:0;transition:opacity var(--fast) var(--ease)}
+:root.layedit .pods .card[data-pod] .podctl{display:inline-flex;opacity:1}
 .pods .card[data-pod] .podctl .iconbtn{width:26px;height:26px}
 .pods .card[data-pod] .podctl .ic{width:14px;height:14px}
 .pods .card.collapsed>*:not(h3):not(.podctl){display:none}
@@ -623,7 +654,7 @@ addEventListener("pageshow",function(){if(np)np.className=""});
   all().forEach(function(c){var h=$("h3",c);if(!h)return;
     /* not draggable at rest: see the note in the stylesheet. The heading is the handle. */
     c.draggable=false;
-    h.addEventListener("mousedown",function(){c.draggable=true});
+    h.addEventListener("mousedown",function(){if(root.classList.contains("layedit"))c.draggable=true});
     d.addEventListener("mouseup",function(){c.draggable=false});
     c.addEventListener("dragend",function(){c.draggable=false});
     var ctl=d.createElement("span");ctl.className="podctl";
@@ -677,6 +708,107 @@ addEventListener("pageshow",function(){if(np)np.className=""});
   $("button",reset).addEventListener("click",function(){save({});all().forEach(function(c){c.classList.remove("collapsed","hidden");setSize(c,"full");var pb=$(":scope>.podbody",c);if(pb)pb.style.height=""});
     cols.forEach(function(c){(c.dataset.order||"").split(",").forEach(function(k){var p=byKey(k);if(p)c.appendChild(p)})});apply()});
   apply()})();
+/* Text size: the three the reader can choose between, kept in this browser. */
+(function(){var KEY="psa-text",SIZES=["s","","l"],NAMES={s:"Small","":"Normal",l:"Large"};
+function get(){try{return localStorage.getItem(KEY)||""}catch(e){return ""}}
+function put(v){try{v?localStorage.setItem(KEY,v):localStorage.removeItem(KEY)}catch(e){}}
+function show(v){if(v)root.dataset.text=v;else root.removeAttribute("data-text");
+  var b=d.getElementById("textsize");if(b){b.title="Text size: "+NAMES[v]+" (click for the next)";b.setAttribute("aria-label",b.title)}}
+show(get());
+d.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest("#textsize");if(!b)return;
+  var i=SIZES.indexOf(get());var next=SIZES[(i+1)%SIZES.length];put(next);show(next)})})();
+
+/* Edit layout: the cards sit still until this is on (the reference PSA's own shape). */
+(function(){function off(){root.classList.remove("layedit");var n=$(".layedit-on");if(n)n.parentNode.removeChild(n);
+  $$("[data-layedit]").forEach(function(b){b.classList.remove("on");b.setAttribute("aria-pressed","false")})}
+d.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest("[data-layedit]");
+  if(b){if(root.classList.contains("layedit")){off();return}
+    root.classList.add("layedit");b.classList.add("on");b.setAttribute("aria-pressed","true");
+    var bar=d.createElement("div");bar.className="layedit-on";
+    bar.innerHTML='Moving cards: drag a heading, or use its arrows. <button type=button>Done</button>';
+    bar.querySelector("button").addEventListener("click",off);d.body.appendChild(bar);return}
+  if(root.classList.contains("layedit")&&e.target.closest&&e.target.closest(".layedit-on"))return});
+d.addEventListener("keydown",function(e){if(e.key==="Escape"&&root.classList.contains("layedit"))off()})})();
+
+/* The note editor (064). A technician writes the way they write a Teams
+   message, and pastes out of Outlook or Word. What is typed goes up in the
+   form's own textarea, so a browser with no JavaScript still works and still
+   submits; what the server stores is rebuilt by richtext.clean whatever
+   arrives, so nothing here is a gate, only a convenience. */
+(function(){
+var KEEP={B:1,STRONG:1,I:1,EM:1,U:1,S:1,STRIKE:1,DEL:1,CODE:1,BR:1,A:1,P:1,DIV:1,UL:1,OL:1,LI:1,BLOCKQUOTE:1,PRE:1,H3:1,H4:1};
+var SAME={STRONG:"B",EM:"I",STRIKE:"S",DEL:"S",DIV:"P",H1:"H3",H2:"H3",H5:"H4",H6:"H4"};
+/* A paste is rebuilt the same way the server rebuilds it: nodes are made here,
+   never a string of HTML parsed, and only these tags are made at all. */
+function rebuild(node,into){
+  for(var n=node.firstChild;n;n=n.nextSibling){
+    if(n.nodeType===3){into.appendChild(d.createTextNode(n.nodeValue));continue}
+    if(n.nodeType!==1)continue;
+    var tag=SAME[n.tagName]||n.tagName;
+    if(tag==="SCRIPT"||tag==="STYLE"||tag==="TITLE")continue;
+    if(tag==="BR"){into.appendChild(d.createElement("br"));continue}
+    if(!KEEP[tag]){rebuild(n,into);continue}
+    var el=d.createElement(tag.toLowerCase());
+    if(tag==="A"){var h=n.getAttribute("href")||"";if(!/^(https?:\/\/|mailto:)/i.test(h)){rebuild(n,into);continue}
+      el.href=h;el.target="_blank";el.rel="noopener noreferrer"}
+    rebuild(n,el);into.appendChild(el)}
+  return into}
+function sync(ed){var f=ed.closest("form"),ta=f&&f.querySelector("textarea[name=body]");if(!ta)return;
+  var plain=f.classList.contains("plain");
+  ta.value=plain?ta.value:ed.innerHTML;
+  var fmt=f.querySelector("[name=body_format]");if(fmt)fmt.value=plain?"":"HTML";
+  ed.classList.toggle("empty",!ed.textContent.trim()&&!ed.querySelector("img,br+br"))}
+function editorOf(el){var f=el.closest("form");return f?f.querySelector(".editor"):null}
+$$(".editor").forEach(function(ed){
+  var f=ed.closest("form"),ta=f&&f.querySelector("textarea[name=body]");
+  if(!ta)return;
+  ta.style.display="none";ta.removeAttribute("required");ed.classList.add("empty");
+  ed.addEventListener("input",function(){sync(ed)});
+  ed.addEventListener("blur",function(){sync(ed)});
+  /* Outlook and Word paste a document; only the writer's words and marks are taken. */
+  ed.addEventListener("paste",function(e){
+    var dt=e.clipboardData;if(!dt)return;e.preventDefault();
+    var html=dt.getData("text/html"),frag;
+    if(html){var box=d.createElement("div");box.innerHTML="";
+      var parsed=new DOMParser().parseFromString(html,"text/html");
+      frag=rebuild(parsed.body,d.createDocumentFragment())}
+    else{frag=d.createDocumentFragment();
+      (dt.getData("text/plain")||"").split("\n").forEach(function(line,i){
+        if(i)frag.appendChild(d.createElement("br"));frag.appendChild(d.createTextNode(line))})}
+    var sel=window.getSelection();if(!sel||!sel.rangeCount){ed.appendChild(frag);sync(ed);return}
+    var r=sel.getRangeAt(0);r.deleteContents();r.insertNode(frag);
+    sel.collapseToEnd();sync(ed)});
+  /* A form that submits before a blur still carries what is in the editor. */
+  f.addEventListener("submit",function(){sync(ed)});
+});
+/* A toolbar button keeps the focus on the words it acts on. Without this the
+   selection is gone before the command runs, and Bold did nothing (MEASURED
+   in a browser, 2 Oct 2026). */
+d.addEventListener("mousedown",function(e){if(e.target.closest&&e.target.closest(".edbar [data-do]"))e.preventDefault()});
+d.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest(".edbar [data-do]");if(!b)return;
+  e.preventDefault();var ed=editorOf(b);if(!ed)return;
+  var what=b.dataset.do;
+  try{
+    if(what==="quote")d.execCommand("formatBlock",false,"blockquote");
+    else if(what==="code"){var sel=String(window.getSelection()||"");
+      if(sel){var c=d.createElement("code");c.textContent=sel;
+        var r=window.getSelection().getRangeAt(0);r.deleteContents();r.insertNode(c)}}
+    else if(what==="link"){var url=window.prompt("Address (https:// or mailto:)","https://");
+      if(url&&/^(https?:\/\/|mailto:)/i.test(url))d.execCommand("createLink",false,url)}
+    else d.execCommand(what,false,null);
+  }catch(err){}
+  sync(ed)});
+/* Rich or Plain: the same note, written either way. */
+d.addEventListener("click",function(e){var t=e.target.closest&&e.target.closest(".edbar [data-plain]");if(!t)return;
+  e.preventDefault();var f=t.closest("form"),ed=f.querySelector(".editor"),ta=f.querySelector("textarea[name=body]");
+  var plain=t.dataset.plain==="1";
+  $$("[data-plain]",t.closest(".edbar")).forEach(function(x){x.classList.toggle("on",x===t)});
+  f.classList.toggle("plain",plain);
+  $$(".edbar [data-do]",f).forEach(function(x){x.disabled=plain});
+  if(plain){ta.value=ed.textContent;ta.style.display="";ta.setAttribute("required","required");ed.style.display="none";ta.focus()}
+  else{ta.style.display="none";ta.removeAttribute("required");ed.style.display="";ed.focus()}
+  sync(ed)})})();
+
 /* Copy on a note: the ward's own words, as written, for a reply or a search. */
 d.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest("button.copy[data-copy]");if(!b)return;
 var note=b.closest(".note");if(!note)return;var body=note.querySelector("div:last-child");if(!body)return;
@@ -903,6 +1035,142 @@ def esc(value) -> str:
     """The one rule. Everything user- or data-derived passes through here before
     it reaches the page."""
     return html.escape("" if value is None else str(value), quote=True)
+
+
+# ----------------------------------------------------------------- rich text
+#
+# Dada, 2 Oct 2026: "can we have a text editor so we can properly edit the
+# replies or add font themes to it". A note is still plain text in the
+# database, which is what the PHI scan reads, what an email carries and what
+# the portal shows; the marks a person types are rendered when it is read.
+#
+# The reading happens in two steps: `blocks()` turns the words into plain data
+# (paragraphs, lists, and runs of text that are bold or code or a link), and
+# `rich()` turns that data into HTML. The note composer's preview asks for the
+# data and builds the nodes itself, so no HTML string is ever handed to a
+# browser to parse. Nothing a person writes can become a tag either way.
+_B = re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*", re.S)                    # **bold**
+_I = re.compile(r"(?<![\*\w])\*(?=\S)([^\*\n]+?)(?<=\S)\*(?![\*\w])")   # *italic*
+_C = re.compile(r"`([^`\n]+)`")                                         # `code`
+_URL = re.compile(r"(?<![\w@])(https?://[^\s<>\"]+[^\s<>\".,;:!?)\]])")
+_MARK = re.compile(_C.pattern + "|" + _B.pattern + "|" + _I.pattern + "|" + _URL.pattern)
+
+
+def _runs(line: str) -> list:
+    """One line as runs: {"s": the words} with "b", "i", "c" or "a" when the
+    writer marked them. Code first, so a mark inside backticks stays the
+    characters they typed."""
+    out, at = [], 0
+    for m in _MARK.finditer(line):
+        if m.start() > at:
+            out.append({"s": line[at:m.start()]})
+        code, bold, ital, url = m.group(1), m.group(2), m.group(3), m.group(4)
+        if code is not None:
+            out.append({"s": code, "c": 1})
+        elif bold is not None:
+            out.append({"s": bold, "b": 1})
+        elif ital is not None:
+            out.append({"s": ital, "i": 1})
+        else:
+            out.append({"s": url, "a": url})
+        at = m.end()
+    if at < len(line):
+        out.append({"s": line[at:]})
+    return out or [{"s": ""}]
+
+
+def blocks(text) -> list:
+    """The words as plain data. A bullet is a dash AND a space: a line like
+    "-LESTER M. BALLESTEROS" is a name, not a list (MEASURED against a real
+    note, 2 Oct 2026). Anything unmarked stays exactly as it was typed, line
+    breaks and all, so a note written before any of this reads as it did."""
+    out: list = []
+    para: list = []
+
+    def shut():
+        if para:
+            lines = list(para)
+            para.clear()
+            out.append({"k": "p", "lines": lines})
+
+    for raw in str(text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        bare = raw.strip()
+        if not bare:
+            shut()
+            continue
+        ol = re.match(r"^(\d{1,3})[.)]\s+(.*)$", bare)
+        if bare.startswith(("- ", "* ")) or ol:
+            shut()
+            kind = "ol" if ol else "ul"
+            item = _runs((ol.group(2) if ol else bare[2:]).strip())
+            if out and out[-1].get("k") == kind:
+                out[-1]["items"].append(item)
+            else:
+                out.append({"k": kind, "items": [item]})
+            continue
+        if bare.startswith("#") and bare.lstrip("#").startswith(" "):
+            shut()
+            out.append({"k": "h", "lines": [_runs(bare.lstrip("#").strip())]})
+            continue
+        if bare.startswith("> "):
+            shut()
+            out.append({"k": "q", "lines": [_runs(bare[2:].strip())]})
+            continue
+        para.append(_runs(raw.rstrip()))
+    shut()
+    return out
+
+
+def note_html(detail, body_format=None, *, email: bool = False) -> str:
+    """A note as it should be read, whichever way it was written (064).
+
+    'HTML' means it was written in the desk's editor and was rebuilt by
+    `richtext.clean` before it was stored; it is cleaned again here, because a
+    thing read out of a database is a thing from outside. Anything else is the
+    plain text it always was, and reads exactly as it did."""
+    if (body_format or "").upper() == "HTML":
+        from ..richtext import clean
+        return clean(detail)
+    return rich(detail, email=email)
+
+
+def rich(text, *, email: bool = False) -> str:
+    """`blocks()` as safe HTML. `email` adds the inline styles a mail client
+    needs, because an email carries no stylesheet."""
+    P = ' style="margin:0 0 12px;font-size:15px;line-height:1.55;color:#1f2430"' if email else ""
+    UL = ' style="margin:0 0 12px;padding-left:22px"' if email else ""
+    LI = ' style="margin:0 0 4px;font-size:15px;line-height:1.5;color:#1f2430"' if email else ""
+    H = (' style="margin:14px 0 6px;font-size:16px;font-weight:650;color:#1f2430"' if email else ' class="rh"')
+    Q = (' style="margin:0 0 12px;padding:2px 0 2px 12px;border-left:3px solid #d5dae6;color:#3b4454"' if email
+         else ' class="rq"')
+
+    def run(r):
+        body = esc(r["s"])
+        if r.get("c"):
+            return "<code>%s</code>" % body
+        if r.get("b"):
+            return "<b>%s</b>" % body
+        if r.get("i"):
+            return "<i>%s</i>" % body
+        if r.get("a"):
+            return '<a href="%s" target="_blank" rel="noopener noreferrer">%s</a>' % (esc(r["a"]), body)
+        return body
+
+    def line(rs):
+        return "".join(run(r) for r in rs)
+
+    out = []
+    for b in blocks(text):
+        if b["k"] == "p":
+            out.append("<p%s>%s</p>" % (P, "<br>".join(line(l) for l in b["lines"])))
+        elif b["k"] == "h":
+            out.append("<div%s>%s</div>" % (H, line(b["lines"][0])))
+        elif b["k"] == "q":
+            out.append("<div%s>%s</div>" % (Q, line(b["lines"][0])))
+        else:
+            out.append("<%s%s>%s</%s>" % (b["k"], UL,
+                                          "".join("<li%s>%s</li>" % (LI, line(i)) for i in b["items"]), b["k"]))
+    return "".join(out) or ("<p%s></p>" % P)
 
 
 def _inline(text: str, file_url=None) -> str:
@@ -1193,6 +1461,8 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         shown_name = esc(user.name) if requester else f'<a href="/my/profile" title="My profile">{esc(user.name)}</a>'
         who = (f'<div class="who">{glass}<span class=name>{shown_name}</span>'
                f'<span class=sep> · </span><a href="/logout">sign out</a>' + tools +
+               f'<button class="iconbtn" id="textsize" type="button" title="Text size"'
+               f' aria-label="Text size"><b style="font-size:13px;letter-spacing:-.5px">Aa</b></button>'
                f'<button class="iconbtn" id="theme" type="button" title="Light / dark (t)"'
                f' aria-label="Toggle light or dark">{icon("sun")}</button></div>')
     palette = ""
