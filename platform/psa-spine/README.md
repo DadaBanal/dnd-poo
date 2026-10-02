@@ -1366,6 +1366,14 @@ pickup now forgets the link on a 410, reads from `-Since` instead, and says
 so in its log. Nothing arrives twice, because the import is keyed by the
 Message-ID. This was the third different cause of the same symptom, so:
 
+**`scripts\Fix-PsaToday.ps1`** is the one line (Dada: *"is there a line i
+can run to run these all"*): it pulls the code, runs the repair below,
+asks the desk for its calendar members and grants them, in order, and
+ends with what is left for a person to decide. Preview by default. It
+never registers a scheduled task, because that asks for the task
+account's password, and never grants a members list that is missing the
+person it was run for.
+
 **`scripts\Repair-PsaMailPickup.ps1`** reads every place it can be, in one
 pass, and says which one it is: the tasks (registered, enabled, last run,
 last result), the sign-in certificate (found, and the day it expires, never
