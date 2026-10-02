@@ -6875,6 +6875,25 @@ class MailRepairScriptTest(unittest.TestCase):
         self.assertIn("were set aside with an error", self.text)
         self.assertIn("mail-retry", self.text)
 
+    def test_it_reads_the_thumbprint_from_the_file_that_holds_one(self):
+        # mail-app.txt holds AppId, ObjectId and TenantId; the thumbprint is in
+        # mail-cert.txt, read with the same regex Register-PsaMail.ps1 uses.
+        # Reading the wrong file reported a certificate fault on a host whose
+        # certificate was fine (MEASURED on DND-SQL01, 2 Oct 2026).
+        self.assertIn("$CertFile = 'D:\\psa\\mail-cert.txt'", self.text)
+        self.assertIn("[regex]::Match((Get-Content $CertFile -Raw), '\\b[0-9A-Fa-f]{40}\\b')", self.text)
+        self.assertNotIn("'TenantId', 'AppId', 'Thumbprint'", self.text)
+        register = (self.SCRIPT.parent / "Register-PsaMail.ps1").read_bytes().decode("ascii")
+        self.assertIn("'\\b[0-9A-Fa-f]{40}\\b'", register)          # the one rule, in both
+
+    def test_its_closing_advice_cannot_be_read_as_a_finding(self):
+        # Fix-PsaToday greps this output; the advice line must not carry the
+        # words a finding carries (MEASURED, 2 Oct 2026: "if a link has
+        # expired" was read as an expired certificate).
+        tail = self.text[self.text.index("Nothing was changed. Re-run elevated"):]
+        self.assertNotIn("has expired", tail.split("\n")[0])
+        self.assertIn("Graph answered 410", tail.split("\n")[0])
+
     def test_it_names_each_cause_with_what_fixes_it(self):
         for cause in ("is DISABLED", "HAS EXPIRED", "410", "is not registered"):
             self.assertIn(cause, self.text, cause)
@@ -6948,6 +6967,18 @@ class OneLineScriptTest(unittest.TestCase):
             self.assertIn(other, self.text, other)
         self.assertIn("git pull", self.text)
         self.assertIn("[switch] $NoPull", self.text)
+
+    def test_a_refused_pull_is_not_reported_as_up_to_date(self):
+        # MEASURED on DND-SQL01, 2 Oct 2026: git pull refused over hand-saved
+        # scripts, and the run said "already up to date" and carried on with
+        # the old code, so every step after it misread the host.
+        self.assertIn("$pulled = ($LASTEXITCODE -eq 0)", self.text)
+        self.assertIn("THE PULL FAILED", self.text)
+        self.assertIn("git checkout -- platform/psa-spine/scripts", self.text)
+
+    def test_it_reads_an_expired_certificate_exactly(self):
+        self.assertIn("-cmatch 'certificate HAS EXPIRED'", self.text)
+        self.assertNotIn("-match 'HAS EXPIRED'", self.text)
 
     def test_it_refuses_to_grant_a_list_that_is_missing_the_person(self):
         self.assertIn("not granting: the list is missing the person this was for", self.text)

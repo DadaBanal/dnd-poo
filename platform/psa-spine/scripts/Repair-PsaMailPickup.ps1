@@ -36,6 +36,7 @@
 param(
     [string[]] $Mailbox = @('helpdesk@pmcne.ph', 'support@pmcne.ph'),
     [string] $AppFile = 'D:\psa\mail-app.txt',
+    [string] $CertFile = 'D:\psa\mail-cert.txt',
     [string] $StateDir = 'D:\psa\mail-state',
     [string] $DropDir = 'D:\psa\mail-drop',
     [string] $AttachmentDir = 'D:\psa\files',
@@ -133,17 +134,32 @@ if (-not (Test-Path $AppFile)) {
     Add-Finding ($AppFile + ' is missing, so nothing can sign in to Graph.') 'New-PsaMailApp.ps1 made it; restore it from the backup, or re-run that script.'
 } else {
     foreach ($l in Get-Content $AppFile) { if ($l -match '^\s*(\w+)\s*=\s*(\S+)\s*$') { $ids[$Matches[1]] = $Matches[2] } }
-    foreach ($k in @('TenantId', 'AppId', 'Thumbprint')) {
+    foreach ($k in @('TenantId', 'AppId')) {
         if (-not $ids.ContainsKey($k)) { Add-Finding ($AppFile + ' has no ' + $k + '.') 'Re-run New-PsaMailApp.ps1, or restore the file.' }
     }
-    if ($ids.ContainsKey('Thumbprint')) {
+}
+# The thumbprint is NOT in mail-app.txt. New-PsaMailApp.ps1 writes AppId,
+# ObjectId and TenantId there, and the certificate's thumbprint goes in
+# mail-cert.txt, which Register-PsaMail.ps1 reads with this same regex.
+# Looking in the wrong file is how this script reported a certificate fault on
+# a host whose certificate was fine (MEASURED on DND-SQL01, 2 Oct 2026).
+if (-not (Test-Path $CertFile)) {
+    Add-Finding ($CertFile + ' is missing, so the thumbprint cannot be read here.') `
+                ('The tasks carry the thumbprint in their own arguments and may be working regardless. ' +
+                 'New-PsaMailApp.ps1 writes this file.')
+} else {
+    $m = [regex]::Match((Get-Content $CertFile -Raw), '\b[0-9A-Fa-f]{40}\b')
+    if (-not $m.Success) {
+        Add-Finding ($CertFile + ' holds no certificate thumbprint.') 'Re-run New-PsaMailApp.ps1, or restore the file.'
+    } else {
+        $ids['Thumbprint'] = $m.Value
         $cert = $null
         foreach ($store in 'Cert:\LocalMachine\My', 'Cert:\CurrentUser\My') {
             $c = Get-ChildItem -Path $store -ErrorAction SilentlyContinue | Where-Object { $_.Thumbprint -eq $ids['Thumbprint'] }
             if ($c) { $cert = $c; Write-Step ('  found in ' + $store) ; break }
         }
         if (-not $cert) {
-            Add-Finding 'The certificate named in mail-app.txt is in neither certificate store for this account.' `
+            Add-Finding 'The certificate named in mail-cert.txt is in neither certificate store for this account.' `
                         'The task runs as its own account: check the store of THAT account, or re-run New-PsaMailApp.ps1.'
         } else {
             $days = [int]($cert.NotAfter - (Get-Date)).TotalDays
@@ -278,5 +294,5 @@ foreach ($f in $script:Findings) {
     Write-Step ('  ' + $i + '. ' + $f.What)
     Write-Step ('     -> ' + $f.Then)
 }
-if (-not $Apply) { Write-Step 'Nothing was changed. Re-run elevated with -Apply to start a stopped task, and add -ResetDelta if a link has expired.' }
+if (-not $Apply) { Write-Step 'Nothing was changed. Re-run elevated with -Apply to start a stopped task, and add -ResetDelta if Graph answered 410.' }
 exit 1

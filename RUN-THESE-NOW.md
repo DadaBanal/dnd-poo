@@ -7,6 +7,24 @@ Both scripts are in the repo. Get them with one pull on the host, as the account
 
 Nothing below needs SQL01 to do anything, and neither changes the schema.
 
+## First: the pull refused, so the host is still on the old code
+
+MEASURED on DND-SQL01, 2 Oct 2026. The scripts saved into `scripts\` by hand differ from the repository, so
+`git pull` would overwrite them and refused. Everything after it read the old code, which is why `mail-health`
+came back as an unknown command.
+
+Throw away the hand-saved copies and take the repository's, which are the tested ones:
+
+    cd D:\dnd-poo
+    git checkout -- platform/psa-spine/scripts
+    git clean -fd platform/psa-spine/scripts
+    git pull
+
+`git clean -fd` on that one folder removes files git does not track, which here is exactly the two scripts saved
+by hand. It touches nothing outside `platform\psa-spine\scripts`.
+
+---
+
 ## The one line
 
 Elevated, on DND-SQL01:

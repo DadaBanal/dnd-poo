@@ -74,10 +74,25 @@ if ($NoPull) {
         try {
             $before = (& git rev-parse --short HEAD 2>&1 | Out-String).Trim()
             $out = & git pull 2>&1
+            $pulled = ($LASTEXITCODE -eq 0)
             foreach ($l in @($out)) { Say ('  | ' + $l) }
             $after = (& git rev-parse --short HEAD 2>&1 | Out-String).Trim()
             Say ('head ' + $before + ' -> ' + $after)
-            if ($after -eq $before) { Say '  (already up to date)' }
+            # A pull that refused is not "already up to date": saying so once sent
+            # a whole run on with the old code, and every step after it misread the
+            # host (MEASURED on DND-SQL01, 2 Oct 2026).
+            if (-not $pulled) {
+                Say '  THE PULL FAILED: this host is still on the old code, and every step below is reading it.'
+                $why = ($out | Out-String)
+                if ($why -match 'local changes|untracked working tree') {
+                    Later ('The pull refused because files under ' + $ScriptDir + ' differ from the repository: ' +
+                           'scripts saved there by hand. To keep the repository''s copies, which are the tested ones: ' +
+                           'cd ' + $RepoDir + ' ; git checkout -- platform/psa-spine/scripts ; ' +
+                           'git clean -fd platform/psa-spine/scripts ; git pull . Then run this line again.')
+                } else {
+                    Later ('The pull refused. Read its words above, put it right in ' + $RepoDir + ', and run this line again.')
+                }
+            } elseif ($after -eq $before) { Say '  (already up to date)' }
         } finally { Pop-Location }
     }
 }
@@ -110,7 +125,10 @@ if ($SkipMail) { Say 'skipping the mail (-SkipMail)' } else {
             Later ('A mail task is not registered. That needs the task account''s password, so it is yours: ' +
                    'Register-PsaMail.ps1 -IncludeSupport -IncludeCalendar -Apply (elevated).')
         }
-        if ($said -match 'HAS EXPIRED') {
+        # -cmatch, and the word certificate: -match is case-insensitive, and the
+        # repair's own closing advice once said "if a link has expired", which this
+        # read as an expired certificate (MEASURED on DND-SQL01, 2 Oct 2026).
+        if ($said -cmatch 'certificate HAS EXPIRED') {
             Later 'The sign-in certificate has expired. Nothing else will fix it: New-PsaMailApp.ps1 makes and uploads a new one.'
         }
         if (-not $Apply) { Later 'Re-run this with -Apply to start a stopped task and clear an expired delta link.' }
