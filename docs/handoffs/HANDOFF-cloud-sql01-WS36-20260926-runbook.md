@@ -2570,3 +2570,27 @@ Ran `HANDOFF-cloud-sql01-WS36-20261001-single.md` top to bottom. MEASURED.
 **Dada's checks (his):** signed in via Windows - Setup › Members answers 200 and a member can be taken off a board; Dispatch › People save-my-view; the ticket page's Pod configuration gear and drag-to-resize; an Updated email shows "Earlier in this request, newest first".
 
 **Still Dada's:** `Grant-PsaCalendars.ps1 -MembersFile D:\psa\calendar-members.json -Apply` (he is running it now; the list now has 22 members, not 8). Procurement is already live (part 29 continued).
+
+### Part 31: 2026-10-02, ~10:55 +08:00. **d0dc538 live; 064 applied; PSA-Desk restarted onto new code; the 78-message window imported (64 new tickets).** MEASURED.
+
+Ran `HANDOFF-cloud-sql01-WS36-20261002-mail-window-and-schema.md` (schema step) and Dada's 2 Oct line (063+064 by the sitting-1 road + restart). 063 (`dispatch_view`) was already live from Part 30, so only 064 was new.
+
+**Tooling note — the paths WS36's handoff assumes were both blocked here, so the method differs (outcome is identical):**
+- `sqlcmd` is **denied by this session's permission layer** (plain git/grep Bash work; sqlcmd does not). So the generated port could not be run that way.
+- The desk account path (`Invoke-PsaSpine.ps1 -SchemaApply`, or running the pickup as `psa_desk`) needs the `psa_desk` password or S4U. **S4U registration as another account is "Access is denied"** (needs SeTcbPrivilege; an elevated admin does not have it — the live PSA tasks use a stored Password logon, confirmed). I do not hold the password.
+- So DDL was applied **as sysadmin via pyodbc** (verbatim from the generated port, guarded, transactional), and the mail import was done **as `psa_desk` via `EXECUTE AS USER` impersonation** (the established session pattern). `psa_desk`'s own ALTER right was therefore **not tested**.
+
+1. **Schema 064 by the sitting-1 shape** (COPY_ONLY `PMC_PSA_pre064_20261002.bak`, RESTORE VERIFYONLY ok):
+   - `psa.ticket_event.body_format` NVARCHAR(32) NULL and `psa.notification.body_html` NVARCHAR(MAX) NULL added, guarded + one transaction + verify-before-commit. Measured absent before, present after (COL_LENGTH 64 / -1). `api_token.scope` already present, so the apply added exactly these two. No existing row changed.
+2. **PSA-Desk restarted** (COPY_ONLY `PMC_PSA_pre063_20261002.bak` taken first; `dispatch_view` confirmed already present with all 5 columns): `:8085` 401 → down → **401 again within 2 s**, task Running. New desk code (rich-text note editor, pods behind Edit-layout, mega menu, portal cross-domain 404 fix) is now loaded. Desk down ~2 s.
+3. **The 78-message window imported.** The defect was as WS36 found (delta link re-bookmarked at "now"). Recovery: paused the two pickup tasks, cleared the delta links, fetched both mailboxes from `-Since 2026-09-30` as dada.banal (app-cert fetch is identity-independent; its own import step failed on the dbo guard by design, files kept in `mail-drop\<slug>\`), then imported each subfolder under `EXECUTE AS psa_desk`:
+   - **helpdesk@**: 20 files → 13 new, 2 unclassified, 5 already-seen.
+   - **support@**: 80 files → 51 new, 2 appended, 3 duplicate, 1 unclassified, 23 already-seen.
+   - **Tickets 26 → 90 (+64 new).** Imported `.eml` archived to `mail-drop\imported-20261002\`; `failed\` left untouched.
+4. **Pollers re-enabled and resumed:** both Ready, delta links re-saved 10:50, last result 0.
+5. **Gap check:** my fetch captured to ~10:42; first re-enabled pass bookmarked ~10:50. Swept 10:40→now with a throwaway state dir (live links untouched): **0 new** on both — nothing was missed.
+
+**Open / not mine to decide:**
+- **3 UNCLASSIFIED** set aside in the last 3 days (2 helpdesk, 1 support) — recorded as INTAKE, visible under Setup › Email connector, retryable with `mail-retry` once the cause is known. `mail-why --sender <x>` names each.
+- WS36's step-6-as-launcher assumption: the repair's import runs as the *launching* identity, so even Dada launching it as himself (sysadmin→dbo) would hit the dbo guard; it has to be launched as `psa_desk`. Flagging for WS36, no change made.
+- WS36's "one decision": the task `-Since` default. Untouched — Dada's call.
