@@ -6894,6 +6894,23 @@ class MailRepairScriptTest(unittest.TestCase):
         self.assertNotIn("has expired", tail.split("\n")[0])
         self.assertIn("Graph answered 410", tail.split("\n")[0])
 
+    def test_a_forgotten_delta_link_is_followed_by_one_real_pass(self):
+        # MEASURED on DND-SQL01, 2 Oct 2026: the links were cleared and every
+        # task pass afterwards logged "0 new message(s) since last pass", while
+        # a preview from -Since could see 12 and 66 waiting. The task runs the
+        # pickup with no -Since and that parameter defaults to now, so a reset
+        # on its own re-reads nothing and saves a fresh link over the window.
+        self.assertIn("$script:Forgot += $mb", self.text)
+        self.assertIn("$doImport = @($script:Forgot).Count -gt 0", self.text)
+        self.assertIn("$real = $doImport -and ($script:Forgot -contains $mb)", self.text)
+        self.assertIn("if ($real) { $pass += '-Apply' }", self.text)
+        # and that pass carries the window, or it would start from now as well
+        self.assertIn("'-Since', $Since.ToString(", self.text)
+        # still nothing imported without -Apply: the only road to $real is
+        # through step 3, which forgets a link only under -Apply
+        i = self.text.index("$script:Forgot += $mb")
+        self.assertIn("$Apply", self.text[max(0, i - 400):i])
+
     def test_it_names_each_cause_with_what_fixes_it(self):
         for cause in ("is DISABLED", "HAS EXPIRED", "410", "is not registered"):
             self.assertIn(cause, self.text, cause)
@@ -6963,6 +6980,12 @@ class RunAsTaskAccountScriptTest(unittest.TestCase):
 
     def test_the_caller_never_types_a_connection_string(self):
         self.assertIn("$cmd = @($words[0], $Database)", self.text)
+        # and a ONE-word command still comes out as one word: 1..0 counts down in
+        # PowerShell, so $words[1..0] put the verb in twice and psaspine
+        # answered "unrecognized arguments: init" (MEASURED on DND-SQL01,
+        # 2 Oct 2026, on -SchemaPreview, -SchemaApply and -MailHealth).
+        self.assertNotIn("@($words[0], $Database) + @($words[1..", self.text)
+        self.assertIn("if ($words.Count -gt 1) { $cmd +=", self.text)
 
     def test_nothing_asks_the_caller_to_type_a_double_dash(self):
         # PowerShell reads a bare --word as a parameter it does not have and

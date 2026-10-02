@@ -17,10 +17,10 @@ copies away and take the tested ones (this touches nothing outside that one fold
 | | |
 |---|---|
 | The mail plumbing | healthy. All four tasks run every minute with result 0, the certificate is good until 1 Oct 2027, both delta links move. |
-| The mailbox | has the mail. After the delta reset the preview found **12 waiting on helpdesk@ and 67 on support@**, first sync from 30 Sep. The fault was never there. |
+| The mailbox | has the mail: **12 on helpdesk@ and 66 on support@** at 10:06, first sync from 30 Sep. The fault was never there. |
 | Your own sign-in | cannot talk to the desk, and that is by design: SQL Server maps every sysadmin to database user `dbo`, and the desk refuses `dbo` so it can never write to the wrong schema. `Invoke-PsaSpine.ps1` runs a command as the desk's own account instead, reads that account's name from the PSA-Desk task, and worked. |
-| Set aside | **7 messages**, not the seventy I guessed from the screenshot. Your `-MailRetry` listing is the measurement. |
-| `-MailRetry -All -Apply` | failed on `String or binary data would be truncated ... column 'subject_id'`. **Fixed in this pull** (see below). |
+| Set aside | **9 messages**, released at 10:0x, exit 0. The audit truncation is fixed and now PROVEN on the host, not just in the suite. |
+| The 78 in the mailbox | still not imported, and now explained: a delta reset was being undone by the next task pass within a minute. See step 2. |
 | `-ViaTask` | failed with `Access is denied` registering the one-shot task, then buried that error under three more. Fixed to stop at the first one and say why. Use the password prompt, which worked. |
 
 ### What was wrong with `-MailRetry -All -Apply`, and what changed
@@ -36,30 +36,32 @@ needed for it, and the index stays as narrow as it was designed to be.
 
 ## The order to run them in
 
-Elevated, on DND-SQL01, from `D:\dnd-poo\platform\psa-spine\scripts`. Each asks for the desk account's
-password once and keeps it nowhere.
+Elevated, on DND-SQL01, from `D:\dnd-poo\platform\psa-spine\scripts`, after `git pull`. Two things that
+failed at 10:05 are fixed in this pull, so these are not the same lines again.
 
-**1. The schema step, first.** This pull carries 063 and 064, and the desk writes the new columns on every
-note and every imported mail. Until they exist, a note will not save and an import will fail:
+**1. The schema step.** `-SchemaPreview` and `-SchemaApply` answered `unrecognized arguments` before: in
+PowerShell `1..0` counts down, so a one-word command went in twice. Fixed.
 
-    .\Invoke-PsaSpine.ps1 -SchemaPreview      # prints the plan, changes nothing
-    .\Invoke-PsaSpine.ps1 -SchemaApply        # adds the columns; guarded, so a re-run adds nothing twice
+    .\Invoke-PsaSpine.ps1 -SchemaPreview
+    .\Invoke-PsaSpine.ps1 -SchemaApply
 
-**2. Release the seven set-aside messages.**
+If `psa_desk` is refused for want of ALTER rights, run the generated port as a sysadmin instead -- it does not
+go through the desk's connection guard: `sqlcmd -I -S "DND-SQL01\PMC_SS" -d PMC_PSA -i
+D:\dnd-poo\platform\psa-spine\sqlserver\PMC_PSA_Spine_SqlServer.sql`, with `@Apply = 1` and
+`@AllowExisting = 1` at the head of that file.
 
-    .\Invoke-PsaSpine.ps1 -MailRetry                  # lists them, changes nothing
-    .\Invoke-PsaSpine.ps1 -MailRetry -All -Apply      # releases every one, one audit row each
+**2. Import the 78 waiting messages.** One line, and this is the whole of it now:
 
-A message that already made a ticket is never released, so nothing is duplicated.
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Repair-PsaMailPickup.ps1 -Apply -ResetDelta -AsDesk
 
-**3. Make the pickup read back over them.**
+Step 6 now says `(importing from <date>)` per mailbox and then how many it took. **Why the last two resets
+imported nothing:** the scheduled task runs the pickup with no `-Since`, and that parameter defaults to *now*. So
+the first task pass after a reset asked Graph for mail since that minute, found none, and saved a fresh delta link
+over the window the reset was meant to re-read -- within 60 seconds, every time. Your own log says it: links
+cleared at 09:39, then every pass `0 new message(s) since last pass`, while a preview from `-Since` could still see
+12 and 66. The pass that follows a reset is now this script's to run, with the window, for real.
 
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Repair-PsaMailPickup.ps1 -Apply -ResetDelta
-
-Within a minute or two those requests appear on the Service Board. Add `-AsDesk` to that line if you want its
-step 5 to ask the desk under the right account instead of reporting a problem that is not one.
-
-**4. Then the calendar work**, which is section 2 below and still needs Setup > Members first.
+**3. Then the calendar work**, which is section 2 below and still needs Setup > Members first.
 
 ### Or the one line, for everything that does not need a decision
 
@@ -174,8 +176,8 @@ Without `-Apply` it signs in, says how many writes are due and how many calendar
 ## Not verified
 
 Nothing here was run against DND-SQL01 or Exchange from the cloud session: there is no PowerShell and no route to
-the host here, so every script change is checked as text by the suite (701 tests, OK) and by nothing else. What is
+the host here, so every script change is checked as text by the suite (702 tests, OK) and by nothing else. What is
 labelled MEASURED above was measured by you, in the output you pasted.
 
-The audit fix is covered by a test on both stores. Whether the 064 schema step and the release then run clean on
-PMC_PSA is NOT VERIFIED until you run them.
+The audit fix is now MEASURED good on the host: 9 messages released, exit 0. Whether `psa_desk` may ALTER in
+PMC_PSA, and whether the real pass in step 6 takes all 78 cleanly, is NOT VERIFIED until you run them.

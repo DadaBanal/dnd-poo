@@ -21,13 +21,17 @@
       5. the desk's own side         what the desk has taken in the last two days. With -AsDesk this is asked as
                                     the account the desk runs as, because a SQL sysadmin's own login resolves to
                                     database user [dbo] and the desk refuses that on purpose.
-      6. one real pass per mailbox  in PREVIEW, so Graph's own answer is in the log, whatever it is.
+      6. one real pass per mailbox  in PREVIEW, so Graph's own answer is in the log, whatever it is -- EXCEPT for a
+                                    mailbox whose delta link step 3 just forgot, where the pass runs for real with
+                                    -Since, because that is the only thing that re-reads the window. The task's own
+                                    -Since defaults to now, so a reset alone imports nothing.
 
     What it changes, and only with -Apply:
       - enables and starts a task that is registered but disabled or stopped;
-      - with -ResetDelta, deletes the saved delta link (after copying it beside itself) so the next pass
-        re-reads from -Since.
-    It never registers a task, never writes a certificate, never imports mail itself, and never types a
+      - with -ResetDelta, deletes the saved delta link (after copying it beside itself) and then runs ONE real
+        pass from -Since for that mailbox, which is what actually imports the window the link was skipping.
+    It never registers a task, never writes a certificate, imports mail only on the one pass that follows a
+    -ResetDelta -Apply (and never twice: the import is keyed by Message-ID), and never types a
     credential of its own (with -AsDesk, step 5 hands off to Invoke-PsaSpine.ps1, which does its own asking
     at the Windows prompt). Anything else it finds, it names, with the one command that fixes it.
 
@@ -68,6 +72,7 @@ if (-not $SpineDir) { $SpineDir = Split-Path -Parent (Split-Path -Parent $MyInvo
 $LogFile = Join-Path $StateDir 'repair-mail-pickup.log'
 $script:Findings = @()
 $script:Fixed = @()
+$script:Forgot = @()        # mailboxes whose delta link this run forgot
 
 function Write-Step([string] $Text) {
     $line = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '  ' + $Text
@@ -203,7 +208,8 @@ if (-not (Test-Path $StateDir)) {
                 if ($Apply) {
                     Copy-Item -Path $df -Destination ($df + '.' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.bak') -Force
                     Remove-Item -Path $df -Force
-                    $script:Fixed += ($mb + ': delta link forgotten (a copy is kept beside it); the next pass reads from ' + $Since.ToString('yyyy-MM-dd HH:mm'))
+                    $script:Forgot += $mb
+                    $script:Fixed += ($mb + ': delta link forgotten (a copy is kept beside it); the pass in step 6 reads from ' + $Since.ToString('yyyy-MM-dd HH:mm'))
                     Write-Step ('  FIXED: ' + $mb + ' delta link forgotten')
                 } else {
                     Write-Step ('  would forget the delta link for ' + $mb + ' (-Apply does it)')
@@ -279,8 +285,18 @@ if (-not (Test-Path $PythonExe)) {
     }
 }
 
-# --------------------------------------------------- 6. one real pass, preview
-Write-Step '6. one pass per mailbox, in preview (nothing is written)'
+# --------------------------------------------------- 6. one real pass
+# A forgotten delta link on its own imports NOTHING, and this is why: the
+# scheduled task runs Invoke-PmcMailPickup.ps1 with no -Since, and that
+# parameter defaults to now. So the task's first pass after a reset asks Graph
+# for mail that arrived since this minute, finds none, and saves a fresh link
+# over the window that was meant to be re-read. MEASURED on DND-SQL01, 2 Oct
+# 2026: the links were cleared at 09:39 and every task pass after it logged
+# "0 new message(s) since last pass", while a preview from -Since could see 12
+# and 66 waiting. So the pass that follows a reset is this script's to run,
+# with -Since, and it has to be a real one.
+$doImport = @($script:Forgot).Count -gt 0
+Write-Step ('6. one pass per mailbox' + $(if ($doImport) { ', FOR REAL where the delta link was just forgotten' } else { ', in preview (nothing is written)' }))
 $pickup = Join-Path (Join-Path $SpineDir 'scripts') 'Invoke-PmcMailPickup.ps1'
 if (-not (Test-Path $pickup)) {
     Add-Finding ($pickup + ' is not there, so the task has nothing to run.') 'Check -SpineDir, and that the repository is where the tasks expect it.'
@@ -290,16 +306,22 @@ if (-not (Test-Path $pickup)) {
     foreach ($mb in $Mailbox) {
         # -BoardId is only the fallback for an address no board claims; a
         # claimed address routes by itself, so this changes nothing in preview.
-        Write-Step ('  ' + $mb + ' ...')
-        $out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $pickup `
-            -TenantId $ids['TenantId'] -ClientId $ids['AppId'] -CertThumbprint $ids['Thumbprint'] `
-            -Mailbox $mb -Database $Database -DropDir $DropDir -StateDir $StateDir -SpineDir $SpineDir `
-            -AttachmentDir $AttachmentDir -BoardId $BoardId -Since $Since 2>&1
+        $real = $doImport -and ($script:Forgot -contains $mb)
+        Write-Step ('  ' + $mb + $(if ($real) { ' (importing from ' + $Since.ToString('yyyy-MM-dd HH:mm') + ') ...' } else { ' ...' }))
+        $pass = @('-TenantId', $ids['TenantId'], '-ClientId', $ids['AppId'], '-CertThumbprint', $ids['Thumbprint'],
+                  '-Mailbox', $mb, '-Database', $Database, '-DropDir', $DropDir, '-StateDir', $StateDir,
+                  '-SpineDir', $SpineDir, '-AttachmentDir', $AttachmentDir, '-BoardId', $BoardId,
+                  '-Since', $Since.ToString('yyyy-MM-dd HH:mm:ss'))
+        if ($real) { $pass += '-Apply' }
+        $out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $pickup @pass 2>&1
         $code = $LASTEXITCODE
         foreach ($l in @($out | Select-Object -Last 8)) { Write-Step ('    | ' + $l) }
         if ($code -ne 0) {
-            Add-Finding ($mb + ': a pass in preview failed (exit ' + $code + '). The lines above are Graph''s own answer.') `
+            Add-Finding ($mb + ': a pass failed (exit ' + $code + '). The lines above are Graph''s own answer.') `
                         'If it says 410, use -ResetDelta -Apply. If it says 401, the certificate or the grant is the cause. If it says 403, the mail scope does not cover this mailbox.'
+        } elseif ($real) {
+            $script:Fixed += ($mb + ': one real pass from ' + $Since.ToString('yyyy-MM-dd HH:mm') +
+                              '; what it imported is in the lines above, and the minute task carries on from there.')
         }
     }
 }

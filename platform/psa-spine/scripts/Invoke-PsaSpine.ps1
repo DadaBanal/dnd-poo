@@ -131,7 +131,12 @@ if ($MailHealth) {
     Write-Host '  -Spine "<any psaspine command>"          anything else, as one quoted string'
     exit 2
 }
-$cmd = @($words[0], $Database) + @($words[1..($words.Count - 1)] | Where-Object { $null -ne $_ })
+# $words[1..0] is NOT empty in PowerShell: 1..0 counts DOWN, so a one-word
+# command came out as @('init', <db>, 'init') and psaspine answered
+# "unrecognized arguments: init" (MEASURED on DND-SQL01, 2 Oct 2026, on
+# -SchemaPreview, -SchemaApply and -MailHealth, each of which is one word).
+$cmd = @($words[0], $Database)
+if ($words.Count -gt 1) { $cmd += @($words[1..($words.Count - 1)] | Where-Object { $null -ne $_ }) }
 Write-Host ('running as ' + $Account + ': psaspine ' + ($words -join ' '))
 
 if ($ViaTask) {
