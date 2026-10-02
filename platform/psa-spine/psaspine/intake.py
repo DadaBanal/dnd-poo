@@ -430,9 +430,45 @@ def _ticket_for_parent(conn: sqlite3.Connection, parents: list[str]):
     return None, None
 
 
+SUMMARY_MAX = 120                 # a ticket's name is one line on a board, not a paragraph
+
+
+def summary_from(subject: str, body: str, message=None) -> str:
+    """The ticket's name. The subject when there is one; otherwise the first
+    line the sender wrote (Dada, 2 Oct 2026: "if there is no subject it doesnt
+    go" - a ward writes its whole request in the body and leaves the subject
+    empty, and every one of those was set aside instead of opened).
+
+    Never invents words: it is the sender's own first line, shortened to one
+    line, or the plain fact that the mail carried only a file. Empty when the
+    mail said nothing at all, and then the message is still recorded, not
+    dropped. The PHI scan runs on this the same as on any summary, because a
+    first line can name a patient exactly as a subject can."""
+    text = " ".join(str(subject or "").split())
+    if text:
+        return text[:SUMMARY_MAX]
+    for line in str(body or "").splitlines():
+        one = " ".join(line.split())
+        if one:
+            return (one[:SUMMARY_MAX - 3] + "...") if len(one) > SUMMARY_MAX else one
+    names = []
+    if message is not None:
+        names = [n for n, _data, logo in files_of(message) if not logo]
+    if names:
+        return ("Email with an attachment: " + names[0])[:SUMMARY_MAX] if len(names) == 1 \
+            else f"Email with {len(names)} attachments"[:SUMMARY_MAX]
+    return ""
+
+
 def _recent_same_subject(conn: sqlite3.Connection, sender: str, subject: str,
                          at: datetime):
-    """The weaker guard, used only when there is no thread header. INFERRED."""
+    """The weaker guard, used only when there is no thread header. INFERRED.
+
+    Never on an empty subject: two unrelated requests from one ward, both sent
+    with no subject, are two requests, and matching them on "" would file the
+    second as a note on the first (Dada, 2 Oct 2026)."""
+    if not (subject or "").strip():
+        return None
     cutoff = (at - DUPLICATE_WINDOW).isoformat(sep=" ", timespec="minutes")
     return conn.execute(
         "SELECT message_id, work_item_id FROM intake_message"
@@ -548,7 +584,7 @@ def _import_one(conn: sqlite3.Connection, path: Path, *, run_id: str, channel: s
             # The board says a reply this late is new work. Open it, and
             # point back at the ticket it answered.
             ticket_id = _open_ticket(conn, board_id=board_id or _board_of(conn, parent_ticket),
-                                     summary=subject or f"Reply to {parent_ticket}",
+                                     summary=summary_from(subject, body, message) or f"Reply to {parent_ticket}",
                                      requester=sender, body=body, at=when)
             from . import itil
             itil.link(conn, ticket_id, parent_ticket, "RELATED", actor="intake", at=when)
@@ -587,20 +623,26 @@ def _import_one(conn: sqlite3.Connection, path: Path, *, run_id: str, channel: s
             counts["duplicate"] += 1
             return
 
-    if not board_id or not sender or not subject:
+    # A mail with no subject still says what it needs: the summary comes from
+    # the sender's own first line, or from the file they attached. Only a mail
+    # that said nothing at all, or that no board will take, is set aside.
+    summary = summary_from(subject, body, message)
+    if not board_id or not sender or not summary:
         # Nothing to hang a ticket on. Recorded and counted, never dropped.
         _record(conn, mid, stamp, sender, subject, channel, "UNCLASSIFIED",
                 None, None, run_id)
+        why = ("no board to route to" if not board_id else
+               "no sender" if not sender else
+               "no subject, no words and no file: the mail said nothing")
         conn.execute(
             "INSERT INTO data_quality (run_id, subject_kind, subject_id, code,"
             " detail, severity) VALUES (?,?,?,?,?,?)",
             (run_id, "intake_message", mid, "INTAKE_UNCLASSIFIED",
-             "no board to route to, or no sender or subject to open a ticket"
-             " with; imported and flagged rather than dropped", "ERROR"))
+             why + "; imported and flagged rather than dropped", "ERROR"))
         counts["unclassified"] += 1
         return
 
-    ticket_id = _open_ticket(conn, board_id=board_id, summary=subject,
+    ticket_id = _open_ticket(conn, board_id=board_id, summary=summary,
                              requester=sender, body=body, at=when)
     _keep_files(conn, message, ticket_id, sender=sender, at=when, run_id=run_id,
                 counts=counts)

@@ -1344,6 +1344,28 @@ per dispatcher, theirs alone) and applies whenever you open Dispatch;
 The button says how many of how many are showing, and "saved" when the
 saved view is what you see.
 
+## A mail with no subject is a ticket too (2 Oct 2026)
+
+Dada, 2 Oct 2026, with the support mailbox open: *"if there is no subject it
+doesnt go"*. MEASURED: a ward writes the whole request in the body and leaves
+the subject empty, and intake refused it, because opening a ticket needed a
+board, a sender **and a subject**. Every one of those was recorded
+UNCLASSIFIED and nobody saw it.
+
+The ticket's name now comes from the subject when there is one, else the
+sender's own first line, shortened to one line, else the plain fact that the
+mail carried a file ("Email with an attachment: photo.jpg"). It never invents
+words. Only a mail with no subject, no words and no file is set aside, and
+the reason now says which of the three it was. The PHI scan runs on that
+summary exactly as on a subject, because a first line can name a patient just
+as easily.
+
+Two other things follow from it. The weaker duplicate guard matches a sender
+and a subject inside a day; on an empty subject it would have filed a ward's
+second request as a note on their first, so it never matches an empty
+subject. And a reply whose own subject is empty takes its first line rather
+than the bare words "Reply to PMC-nnnnnn".
+
 ## When inbound mail stops, and a member's mailbox on a second domain (2 Oct 2026)
 
 Dada, 2 Oct 2026: *"add encoder@premieremedicalcenter.net to the calendar

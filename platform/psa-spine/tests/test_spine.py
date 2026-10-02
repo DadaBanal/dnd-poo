@@ -12423,6 +12423,60 @@ class MailCutoverTest(unittest.TestCase):
         who = [x["who"] for x in outbox.conversation(self.conn, wid)]
         self.assertEqual(who, ["Bob from PMO Helpdesk (resolution)", "You", "Bob from PMO Helpdesk", "You"])
 
+    def test_a_mail_with_no_subject_still_becomes_a_ticket(self):
+        """Dada, 2 Oct 2026, with the mailbox open: "if there is no subject it
+        doesnt go". A ward writes the whole request in the body and leaves the
+        subject empty, and every one of those was set aside UNCLASSIFIED. The
+        ticket's name is the sender's own first line instead."""
+        from psaspine import intake
+        intake.set_addresses(self.conn, "IT_HELP", "support@pmcne.ph", at=self.at, actor="t")
+        self._msg(subject="", to="support@pmcne.ph", sender="pmcnicu@gmail.com",
+                  body="good day maam/ sir\n\nwe would like to report that the gloves rosemed size 7.0 has zero"
+                       " balance even if we still have physical count. thank you\n\nDEVICE NAME: NICU")
+        counts = intake.import_drop(self.conn, self.drop, run_id="s1", board_id="IT_HELP", at=self.at)
+        self.assertEqual((counts["new"], counts["unclassified"]), (1, 0))
+        tk = self._ticket(1)
+        self.assertEqual(self.conn.execute("SELECT name FROM work_item WHERE work_item_id = ?",
+                                           (tk["work_item_id"],)).fetchone()[0], "good day maam/ sir")
+        # the body is still the first note, whole
+        detail = self.conn.execute("SELECT detail FROM ticket_event WHERE work_item_id = ? AND kind = 'INTAKE'",
+                                   (tk["work_item_id"],)).fetchone()[0]
+        self.assertIn("gloves rosemed size 7.0", detail)
+
+    def test_two_subjectless_mails_from_one_sender_are_two_tickets(self):
+        """The weaker duplicate guard matches on the subject; on "" it would
+        file the second request as a note on the first."""
+        from psaspine import intake
+        intake.set_addresses(self.conn, "IT_HELP", "support@pmcne.ph", at=self.at, actor="t")
+        self._msg(subject="", to="support@pmcne.ph", sender="ward3@pmcne.ph", body="the printer is jammed")
+        self._msg(subject="", to="support@pmcne.ph", sender="ward3@pmcne.ph", body="the ECG trolley will not charge")
+        counts = intake.import_drop(self.conn, self.drop, run_id="s2", board_id="IT_HELP", at=self.at)
+        self.assertEqual((counts["new"], counts["duplicate"]), (2, 0))
+        names = sorted(r[0] for r in self.conn.execute("SELECT name FROM work_item"))
+        self.assertEqual(names, ["the ECG trolley will not charge", "the printer is jammed"])
+
+    def test_a_mail_that_says_nothing_at_all_is_still_recorded(self):
+        """Nothing is ever dropped: a mail with no subject, no words and no
+        file is set aside and counted, with a reason that names which."""
+        from psaspine import intake
+        intake.set_addresses(self.conn, "IT_HELP", "support@pmcne.ph", at=self.at, actor="t")
+        self._msg(subject="", to="support@pmcne.ph", sender="ward3@pmcne.ph", body="   ")
+        counts = intake.import_drop(self.conn, self.drop, run_id="s3", board_id="IT_HELP", at=self.at)
+        self.assertEqual((counts["new"], counts["unclassified"]), (0, 1))
+        detail = self.conn.execute("SELECT detail FROM data_quality WHERE code = 'INTAKE_UNCLASSIFIED'").fetchone()[0]
+        self.assertIn("the mail said nothing", detail)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM intake_message").fetchone()[0], 1)
+
+    def test_the_summary_is_the_senders_own_words_or_the_file_they_sent(self):
+        from psaspine import intake
+        self.assertEqual(intake.summary_from("printer broken", "anything"), "printer broken")
+        self.assertEqual(intake.summary_from("", "\n\n  first line  \nsecond"), "first line")
+        long = "x" * 400
+        self.assertEqual(len(intake.summary_from("", long)), intake.SUMMARY_MAX)
+        self.assertTrue(intake.summary_from("", long).endswith("..."))
+        self.assertEqual(len(intake.summary_from(long, "")), intake.SUMMARY_MAX)   # a long subject is cut, not ended
+        self.assertEqual(intake.summary_from("", ""), "")
+
     def test_the_desk_says_whether_mail_is_becoming_tickets_at_all(self):
         """Dada, 2 Oct 2026: "the tickets aren't syncing again from the
         mailbox". mail-health is the desk's own side: a silent desk means the
