@@ -7,6 +7,27 @@ Both scripts are in the repo. Get them with one pull on the host, as the account
 
 Nothing below needs SQL01 to do anything, and neither changes the schema.
 
+## The one line
+
+Elevated, on DND-SQL01:
+
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File D:\dnd-poo\platform\psa-spine\scripts\Fix-PsaToday.ps1
+
+That changes nothing: it pulls the code, runs the mail repair in preview, asks the desk what it has taken, and
+checks whether encoder is in the calendar list. Read what it says, then run it again with `-Apply`:
+
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File D:\dnd-poo\platform\psa-spine\scripts\Fix-PsaToday.ps1 -Apply
+
+With `-Apply` it starts a stopped mail task, clears a delta link that Graph says has expired, writes the members
+list, and runs the calendar grant (a browser window opens for Exchange Online). It ends with a numbered list
+headed **what is left for you**, which is only ever the things a script may not decide: a member record, and
+re-registering a scheduled task, because that asks for the task account's password.
+
+It will NOT grant the calendars if encoder is missing from the list, because the grant is the last step and the
+list is what it grants. Do Setup > Members first, then run the line again.
+
+The rest of this file is the same jobs by hand, if you would rather do them one at a time.
+
 ---
 
 ## 1. Inbound mail has stopped again: find out which cause it is

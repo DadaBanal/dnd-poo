@@ -6921,6 +6921,46 @@ class NotificationSenderScriptTest(unittest.TestCase):
         self.assertEqual(self.text.count("/sendMail"), 1)
 
 
+class OneLineScriptTest(unittest.TestCase):
+    """scripts/Fix-PsaToday.ps1 is the one line (Dada, 2 Oct 2026: "is there a
+    line i can run to run these all"). It runs the others in order and stops at
+    what a person must decide."""
+
+    SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "Fix-PsaToday.ps1"
+
+    def setUp(self) -> None:
+        self.text = self.SCRIPT.read_bytes().decode("ascii")      # raises if not pure ASCII
+
+    def test_it_changes_nothing_without_apply(self):
+        self.assertIn("[switch] $Apply", self.text)
+        self.assertIn("(preview: nothing is changed)", self.text)
+        i = self.text.index("Set-Content -Path $MembersFile")
+        self.assertIn("$Apply", self.text[max(0, i - 500):i])
+        # the repair is only let loose inside the -Apply block, and the delta
+        # link is only cleared further inside it
+        head = self.text.index("Rule '2b.")
+        self.assertIn("if ($Apply) {", self.text[max(0, head - 200):head])
+        self.assertEqual(self.text.count("-Apply -ResetDelta"), 1)
+        self.assertLess(head, self.text.index("-Apply -ResetDelta"))
+
+    def test_it_runs_the_others_rather_than_repeating_them(self):
+        for other in ("Repair-PsaMailPickup.ps1", "Grant-PsaCalendars.ps1", "calendar-members"):
+            self.assertIn(other, self.text, other)
+        self.assertIn("git pull", self.text)
+        self.assertIn("[switch] $NoPull", self.text)
+
+    def test_it_refuses_to_grant_a_list_that_is_missing_the_person(self):
+        self.assertIn("not granting: the list is missing the person this was for", self.text)
+        self.assertIn("WORK or ADMIN on a board", self.text)
+
+    def test_it_holds_no_credential_and_leaves_registration_to_a_person(self):
+        lowered = self.text.lower()
+        for shape in ("client_secret", "password'", "convertto-securestring", "get-credential"):
+            self.assertNotIn(shape, lowered, shape)
+        self.assertIn("Register-PsaMail.ps1", self.text)          # named, never run
+        self.assertNotIn("-File $register", self.text)
+
+
 class CalendarDomainScriptTest(unittest.TestCase):
     """Dada, 2 Oct 2026: a member whose mailbox is on a second domain
     (encoder@premieremedicalcenter.net) is in the calendar sync only when that
