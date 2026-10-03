@@ -2594,3 +2594,15 @@ Ran `HANDOFF-cloud-sql01-WS36-20261002-mail-window-and-schema.md` (schema step) 
 - **3 UNCLASSIFIED** set aside in the last 3 days (2 helpdesk, 1 support) — recorded as INTAKE, visible under Setup › Email connector, retryable with `mail-retry` once the cause is known. `mail-why --sender <x>` names each.
 - WS36's step-6-as-launcher assumption: the repair's import runs as the *launching* identity, so even Dada launching it as himself (sysadmin→dbo) would hit the dbo guard; it has to be launched as `psa_desk`. Flagging for WS36, no change made.
 - WS36's "one decision": the task `-Since` default. Untouched — Dada's call.
+
+### Part 32: 2026-10-02, ~12:30 +08:00. **Catalogue Types reorganised on Dada's instruction — hospital systems split out, duplicates merged.** MEASURED, data only (no code, no schema).
+
+After WS36 shipped the Type → Subtype → Item cascade (4c5ff55, Part 31 continued), Dada reworked the Type list live. All done through the desk's own audited `catalogue.py` functions (`add_area`, `save_area`, `add_subtype`, `save_subtype` — which re-points a subtype between families — and `associate`), as `DND-SQL01\psa_desk` via `EXECUTE AS`, each a dry-run-then-apply with a COPY_ONLY backup first (`PMC_PSA_pre_catalogue_restructure_20261002.bak`, `PMC_PSA_pre_merge_20261002.bak`). **Existing tickets kept their `catalogue_item_id`** — the pairs re-homed under new Types, nothing was recreated, so no classification was lost. The picker reads the catalogue live, so no desk restart was needed.
+
+1. **Hospital systems split** (the single "Hospital systems (BizBox)" conflated BizBox modules, in-house apps and PhilHealth). Now separate Types: **HIS**, **Pharmacy** (was the mislabelled "BizBox PIS (PhilHealth)"), **FMS**, **BizBox MMS (Procurement)** (the old "BizBox procurement" family renamed, with the thin inventory subtype folded in), **PhilHealth (insurance and claims)** (eClaims moved here), and **Premiere One** for the in-house suite — Queue, Payroll, Analytics (was "Power BI reports"), Imaging, plus new HomeBase and PSA Desk (per `PMC_PremiereOne_Systems_20260930.html`). "Hospital systems (BizBox)" retired; "HIS and BizBox" became HIS.
+2. **Four duplicate Types merged** (fold the smaller into the larger): Networking → Network and internet; End user computing → Computers and devices (its 1-item "Printer" dup retired); Email and collaboration → Accounts and email; PACS → Modality and imaging.
+3. **Queue** given the 9 standard items (it had only "Outage").
+
+Live tree after: active Types with pairs went 20 → 16 (duplicates gone, hospital systems expanded), picker healthy on every board, nothing THIN. HomeBase + PSA Desk added 18 pairs; Queue +9.
+
+**Sent to WS36 (one-way), not yet built:** rename the ticket form's `record_type` field label from "Type" to "Ticket type" (keep the catalogue cascade as "Type → Subtype → Item"), to end the two-fields-both-"Type" clash Dada flagged.
