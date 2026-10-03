@@ -2603,6 +2603,17 @@ After WS36 shipped the Type → Subtype → Item cascade (4c5ff55, Part 31 conti
 2. **Four duplicate Types merged** (fold the smaller into the larger): Networking → Network and internet; End user computing → Computers and devices (its 1-item "Printer" dup retired); Email and collaboration → Accounts and email; PACS → Modality and imaging.
 3. **Queue** given the 9 standard items (it had only "Outage").
 
-Live tree after: active Types with pairs went 20 → 16 (duplicates gone, hospital systems expanded), picker healthy on every board, nothing THIN. HomeBase + PSA Desk added 18 pairs; Queue +9.
+Live tree after: active Types with pairs went 21 → 17 (duplicates gone, hospital systems expanded), picker healthy on every board, nothing THIN. HomeBase + PSA Desk added 18 pairs; Queue +9.
 
 **Sent to WS36 (one-way), not yet built:** rename the ticket form's `record_type` field label from "Type" to "Ticket type" (keep the catalogue cascade as "Type → Subtype → Item"), to end the two-fields-both-"Type" clash Dada flagged.
+
+### Part 33: 2026-10-03, ~09:15 +08:00. **73d2014 live; 065 (`time_timer`) applied; PSA-Desk restarted onto the new code.** MEASURED.
+
+Ran WS36's 3 Oct handoff (065 + restart, same shape as 064). The "Ticket type" label fix (Part 32's open item) also landed in this branch (a65431a) and went live with Part 31's earlier restart; confirmed in code (`ticket.py:194` `<label>Ticket type</label>`, catalogue cascade still `<label>Type</label>`).
+
+1. **Schema 065 by the sitting-1 road** (COPY_ONLY `PMC_PSA_pre065_20261003.bak`, VERIFYONLY ok; `time_timer` confirmed absent before): `psa.time_timer` (a per-person wall-clock stopwatch, **not** the SLA `ticket_clock`) + unique filtered index `ux_time_timer_running` (`WHERE stopped_at IS NULL`, one running timer per person per ticket) + `ix_time_timer_member`. Applied as sysadmin via pyodbc (sqlcmd/desk-account still blocked here), `QUOTED_IDENTIFIER`/`ANSI_NULLS ON` for the filtered index + computed columns, one transaction, verify-before-commit. Guarded/idempotent; nothing existing touched, no row changed. object_id 2080726465, both indexes present.
+2. **PSA-Desk stopped → applied → started** (`:8085` 401 → down → 401 in 2s). The restart carried WS36's code-only fixes: the `change_status` HTTP 500 (`CK_time_timer`-style clock guard — a status stamped before the clock's start, from a fast mail server's `Date`), the Time pod stopwatch UI, visit `To` prefilled, the follow-the-page Save bar, pod editing no longer jumping scroll, and `main` widened.
+
+**Not run here:** `tests/browsercheck.py` (Playwright/Chromium, 25 checks) — WS36 ran it, all passing; it needs `pip install playwright` + a Chromium download and drives a throwaway desk, not production. Available to run before a release if wanted.
+
+**The browser "Pass" checklist is behind the desk's Windows sign-in, so it's Dada's eyeball** (timer Start/Pause/Stop → Add time prefilled; "1 change not saved" bar; Edit-layout fold/resize/move stays put; pick a status + save → `?msg=Saved`, no 500).
