@@ -13524,6 +13524,19 @@ class CataloguePickerTest(unittest.TestCase):
         from psaspine.web.views import ticket as _t
         return _t._catalogue_select(self.conn, "IT_HELP", selected)
 
+    def test_the_record_type_field_is_ticket_type_not_type(self):
+        """SQL01's #3 to WS36, 2 Oct 2026: the ITIL record kind and the
+        catalogue's Type were both labelled "Type" on the ticket page, which
+        confused the ward. The record kind becomes "Ticket type"; the cascade
+        keeps Type -> Subtype -> Item."""
+        from psaspine.web.views import ticket as _t
+        record = _t._type_select(self.conn, "IT_HELP", None)
+        self.assertIn("<label>Ticket type</label>", record)
+        self.assertIn("name=record_type", record)
+        self.assertNotIn("<label>Type</label>", record)      # not this one any more
+        # and the catalogue cascade still owns the word Type, so they are distinct
+        self.assertIn("<label>Type</label>", self._html())
+
     def test_the_three_selects_and_only_one_of_them_is_the_answer(self):
         html = self._html()
         for part in ("<label>Type</label>", "<label>Subtype</label>", "<label>Item</label>"):

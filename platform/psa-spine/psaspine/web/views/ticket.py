@@ -185,7 +185,12 @@ def _type_select(conn, board_id: str | None, selected: str | None, *, disabled: 
     if selected and selected not in types:
         types.insert(0, selected)
     pairs = ([("", blank)] if blank else []) + [(x, itil.LABEL[x]) for x in types]
-    return (f"<label>Type</label><select name=record_type{disabled}>"
+    # "Ticket type", not "Type": the catalogue cascade below it already owns the
+    # word Type (service_family), and two fields labelled the same confused the
+    # ward (SQL01's #3 to WS36, 2 Oct 2026). This one is the ITIL record kind --
+    # Incident, Request, Problem, Event -- so it is the ticket's type; the
+    # cascade stays Type -> Subtype -> Item.
+    return (f"<label>Ticket type</label><select name=record_type{disabled}>"
             + _options(pairs, selected or "") + "</select>")
 
 

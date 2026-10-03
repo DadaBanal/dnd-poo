@@ -1463,7 +1463,9 @@ is submitted and still what a browser with no script types into.
 **Type, then Subtype, then Item.** The one grouped dropdown is three dependent
 selects. Picking a Type shows its Subtypes; picking a Subtype shows its Items;
 what is submitted is the same single `catalogue_item_id` it always was, so
-nothing behind the page changed.
+nothing behind the page changed. The ITIL record-kind field above the cascade
+(Incident, Request, Problem, Event) is labelled **Ticket type**, not "Type", so
+it is not confused with the cascade's Type (SQL01's #3, 2 Oct 2026).
 
 The third select is the answer and the only one with a name. It holds every live
 pair, each option carrying its Type, Subtype and Item on its own attributes, and

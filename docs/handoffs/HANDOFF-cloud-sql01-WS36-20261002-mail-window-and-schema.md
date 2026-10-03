@@ -211,3 +211,17 @@ went in at parts 29–30, so expect no THIN boards and PMO Helpdesk showing its 
 anything reads THIN, `setup-pmc --apply` (or Setup › Catalogue › Apply the template) fills
 only what is missing. This is the live-store answer to "do the pickers have data", rather
 than my test DB's.
+
+---
+
+## #3, the label fix (Cloud Build, 2 Oct 2026)
+
+Code only, no schema, one PSA-Desk restart. The ITIL record-kind field and the catalogue's
+Type were both labelled "Type" on the ticket page, which read as two of the same thing. The
+record kind (Incident, Request, Problem, Event) is now **Ticket type**; the cascade keeps
+Type → Subtype → Item. Renamed in both places the field appears: the ticket edit form and the
+board's New-template form. The POST field name is unchanged (`record_type`), so nothing behind
+it moved and no handler, test or the API is touched.
+
+**Pass:** open a ticket — the first classification field reads "Ticket type", the cascade below
+it reads Type / Subtype / Item. Nothing else changed.

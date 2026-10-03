@@ -307,7 +307,7 @@ def board_setup(ctx, board_id):
             f"<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-plus></use></svg>New template</h3><form method=post action='/admin/board/{bid}/template'>"
             "<div class=grid2><div><label>Name</label><input name=name required placeholder='e.g. New starter'></div>"
             "<div><label>Ticket summary</label><input name=summary placeholder='e.g. New starter: account and badge'></div>"
-            f"<div><label>Type</label><select name=record_type><option value=''>(board default)</option>{opt(types)}</select></div>"
+            f"<div><label>Ticket type</label><select name=record_type><option value=''>(board default)</option>{opt(types)}</select></div>"
             f"<div><label>Subtype › Item</label><select name=catalogue_item_id><option value=''>(not classified)</option>{opt(items)}</select></div>"
             "<div style='grid-column:1/-1'><label>Description</label><textarea name=description "
             "placeholder='What the technician should check first. The ward, room and machine, never a patient.'></textarea></div>"
