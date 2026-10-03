@@ -678,26 +678,74 @@ addEventListener("pageshow",function(){if(np)np.className=""});
   function ic(n){return '<svg class=ic aria-hidden=true><use href=#i-'+n+'></use></svg>'}
   function customised(st){return Object.keys(st.folded).length>0||Object.keys(st.sizes).length>0||Object.keys(st.hidden).length>0||Object.keys(st.heights).length>0||cols.some(function(c){var want=(st.cols[c.dataset.col]||[]).join(),
     shipped=(c.dataset.order||"").split(",").filter(function(k){return byKey(k)}).join();return want&&want!==shipped})}
+  /* Hold the reader's place. Moving a card in the DOM is what a re-order IS,
+     but the browser cannot anchor a scroll to a node that moves, so the page
+     jumped to the top on every fold, resize and height bump (MEASURED in
+     Chromium, 3 Oct 2026: scrollY 294 -> 0 on one click). Worse, re-appending
+     a card closes any native dropdown inside it, which is why the selects
+     "broke" while the pods were being edited. So: move nothing that is already
+     where it belongs, and when something must move, put the view back where
+     the person left it -- anchored on the card they are editing, so it stays
+     under the pointer even if what is above it changed height. */
+  function jump(to){
+    /* INSTANT, never smooth. The stylesheet asks for smooth scrolling, which is
+       right when a person clicks a link and wrong here: an animated restore
+       glides the page while the layout is still settling, and scrollY read
+       mid-flight is not where the page will land. That is what made a pod edit
+       "re-orient" and drift (MEASURED in Chromium, 3 Oct 2026: a single click
+       logged an animation climbing 294, 340, 385 ... and ending at 52). */
+    var was=root.style.scrollBehavior;root.style.scrollBehavior="auto";
+    try{window.scrollTo({top:to,left:0,behavior:"instant"})}catch(e){window.scrollTo(0,to)}
+    root.style.scrollBehavior=was}
+  /* Two kinds of hold, and the difference matters.
+     An IN-PLACE change -- fold, resize, a height bump -- may change the height
+     of things above the card, so the card is the anchor: it stays under the
+     eye that is editing it.
+     A REORDER -- the arrows, the swap, a drag -- moves the card ON PURPOSE,
+     and chasing it is wrong: a card sent to the top of its column would drag
+     the whole page to the top with it (MEASURED in Chromium, 3 Oct 2026:
+     scrollY 700 -> 0 on one Move up). There the viewport is the anchor; the
+     card moves and the page does not. Pass null for that. */
+  function hold(anchor,fn){
+    var y=window.scrollY||window.pageYOffset;
+    var top=anchor&&anchor.getBoundingClientRect?anchor.getBoundingClientRect().top:null;
+    fn();
+    if(top!==null&&anchor.getBoundingClientRect){
+      var now=anchor.getBoundingClientRect().top;
+      if(Math.abs(now-top)>0.5){jump((window.scrollY||window.pageYOffset)+(now-top));return}}
+    if((window.scrollY||window.pageYOffset)!==y)jump(y)}
   function apply(){var st=state();
-    cols.forEach(function(c){(st.cols[c.dataset.col]||[]).forEach(function(k){var p=byKey(k);if(p)c.appendChild(p)})});
-    /* a card the saved layout does not name stays where the server put it, after the named ones */
-    cols.forEach(function(c){pods(c).forEach(function(p){var named=(st.cols[c.dataset.col]||[]).indexOf(p.dataset.pod)>=0;
-      if(!named)c.appendChild(p)})});
+    /* a card only crosses columns when it is actually in the wrong one */
+    cols.forEach(function(c){(st.cols[c.dataset.col]||[]).forEach(function(k){var p=byKey(k);
+      if(p&&p.parentNode!==c)c.appendChild(p)})});
+    /* and within a column, nothing is touched unless the order really differs.
+       A card the saved layout does not name stays where the server put it,
+       after the named ones. */
+    cols.forEach(function(c){
+      var names=(st.cols[c.dataset.col]||[]);
+      var want=names.map(byKey).filter(function(p){return p&&p.parentNode===c});
+      var cur=pods(c);
+      var rest=cur.filter(function(p){return want.indexOf(p)<0});
+      var order=want.concat(rest);
+      var same=order.length===cur.length&&order.every(function(p,i){return p===cur[i]});
+      if(!same)order.forEach(function(p){c.appendChild(p)})});
     all().forEach(function(p){p.classList.toggle("collapsed",!!st.folded[p.dataset.pod]);setSize(p,st.sizes[p.dataset.pod]||"full");
       p.classList.toggle("hidden",!!st.hidden[p.dataset.pod]);var pb=$(":scope>.podbody",p);if(pb)pb.style.height=st.heights[p.dataset.pod]?st.heights[p.dataset.pod]+"px":"";
       var sw=$(".swap",p);if(sw){var here=p.parentNode.dataset.col,to=here==="left"?"right":"left";$("use",sw).setAttribute("href","#i-"+to);
         sw.title="Move to the "+to+" column";sw.setAttribute("aria-label",sw.title)}});
     cols.forEach(function(c){c.classList.toggle("blank",pods(c).length===0)});
     var r=$(".podreset");if(r)r.style.display=customised(st)?"":"none"}
-  function remember(){var st=state();st.cols={};cols.forEach(function(c){st.cols[c.dataset.col]=pods(c).map(function(p){return p.dataset.pod})});
+  function remember(anchor){var st=state();st.cols={};cols.forEach(function(c){st.cols[c.dataset.col]=pods(c).map(function(p){return p.dataset.pod})});
     st.folded={};all().forEach(function(p){if(p.classList.contains("collapsed"))st.folded[p.dataset.pod]=1});
     st.sizes={};all().forEach(function(p){var z=sizeOf(p);if(z!=="full")st.sizes[p.dataset.pod]=z});
     st.hidden={};all().forEach(function(p){if(p.classList.contains("hidden"))st.hidden[p.dataset.pod]=1});
-    st.heights={};all().forEach(function(p){var pb=$(":scope>.podbody",p),h=pb&&parseInt(pb.style.height,10);if(h)st.heights[p.dataset.pod]=h});save(st);apply()}
-  function dropInto(from,target,before){if(!from||from===before)return;if(before)target.insertBefore(from,before);else target.appendChild(from);remember()}
+    st.heights={};all().forEach(function(p){var pb=$(":scope>.podbody",p),h=pb&&parseInt(pb.style.height,10);if(h)st.heights[p.dataset.pod]=h});
+    save(st);hold(anchor,apply)}
+  function dropInto(from,target,before){if(!from||from===before)return;
+    hold(null,function(){if(before)target.insertBefore(from,before);else target.appendChild(from)});remember(null)}
   all().forEach(function(c){var h3=$(":scope>h3",c);if(h3&&!$(":scope>.podbody",c)){var pb=d.createElement("div");pb.className="podbody";
     Array.prototype.slice.call(c.childNodes).forEach(function(n){if(n!==h3&&!(n.classList&&n.classList.contains("podctl")))pb.appendChild(n)});c.appendChild(pb);
-    pb.addEventListener("mouseup",function(){if(pb.style.height)setTimeout(remember,0)})}});
+    pb.addEventListener("mouseup",function(){if(pb.style.height)setTimeout(function(){remember(c)},0)})}});
   all().forEach(function(c){var h=$("h3",c);if(!h)return;
     /* not draggable at rest: see the note in the stylesheet. The heading is the handle. */
     c.draggable=false;
@@ -713,15 +761,19 @@ addEventListener("pageshow",function(){if(np)np.className=""});
       +'<button type=button class="iconbtn size" title="Size" aria-label="Size"><b class=szw>F</b></button>'
       +'<button type=button class="iconbtn fold" title="Fold" aria-label="Fold or unfold" aria-expanded=true>'+ic("chevron")+'</button>';
     c.appendChild(ctl);
-    $(".size",ctl).addEventListener("click",function(){var i=SIZES.indexOf(sizeOf(c));setSize(c,SIZES[(i+1)%SIZES.length]);remember()});
+    $(".size",ctl).addEventListener("click",function(){var i=SIZES.indexOf(sizeOf(c));
+      hold(c,function(){setSize(c,SIZES[(i+1)%SIZES.length])});remember(c)});
     /* the reference PSA's plus and minus on a pod: the height in steps of 80px, from where it stands; below 48px it is as good as folded */
     var STEP=80;function bump(dir){var pb=$(":scope>.podbody",c);if(!pb)return;var h=parseInt(pb.style.height,10)||pb.getBoundingClientRect().height;
-      h=Math.max(48,Math.round(h+dir*STEP));pb.style.height=h+"px";remember()}
+      h=Math.max(48,Math.round(h+dir*STEP));pb.style.height=h+"px";remember(c)}
     $(".hless",ctl).addEventListener("click",function(){bump(-1)});$(".hmore",ctl).addEventListener("click",function(){bump(1)});
-    $(".fold",ctl).addEventListener("click",function(){c.classList.toggle("collapsed");this.setAttribute("aria-expanded",String(!c.classList.contains("collapsed")));remember()});
+    $(".fold",ctl).addEventListener("click",function(){var b=this;
+      hold(c,function(){c.classList.toggle("collapsed");
+        b.setAttribute("aria-expanded",String(!c.classList.contains("collapsed")))});remember(c)});
     $(".swap",ctl).addEventListener("click",function(){var here=c.parentNode.dataset.col,other=colOf(here==="left"?"right":"left");if(other)dropInto(c,other,null)});
     $$(".mv",ctl).forEach(function(b){b.addEventListener("click",function(){var dir=+b.dataset.dir,col=c.parentNode,list=pods(col),i=list.indexOf(c),j=i+dir;
-      if(j<0||j>=list.length)return;col.insertBefore(c,dir<0?list[j]:list[j].nextSibling);remember()})});
+      if(j<0||j>=list.length)return;
+      hold(null,function(){col.insertBefore(c,dir<0?list[j]:list[j].nextSibling)});remember(null)})});
     c.addEventListener("dragstart",function(e){c.classList.add("dragging");e.dataTransfer.effectAllowed="move";e.dataTransfer.setData("text/plain",c.dataset.pod)});
     c.addEventListener("dragend",function(){c.classList.remove("dragging");all().forEach(function(x){x.classList.remove("over")});cols.forEach(function(x){x.classList.remove("over-col")})});
     c.addEventListener("dragover",function(e){e.preventDefault();e.stopPropagation();e.dataTransfer.dropEffect="move";c.classList.add("over")});

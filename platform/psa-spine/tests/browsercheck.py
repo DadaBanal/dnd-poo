@@ -231,6 +231,44 @@ def main() -> int:
                 note(page.locator("details.timeblock[open]").count() == 1,
                      "and the Add time form is already open")
 
+            # --- editing the pods must not move the page -------------------
+            # Dada, 3 Oct 2026: "when editing pods it resets the screen or
+            # re-orients and doesn't stay, it goes back up".
+            page.goto(f"{base}/ticket/{ref}", wait_until="domcontentloaded")
+            page.wait_for_timeout(400)
+            page.locator("[data-layedit]").first.click()
+            page.wait_for_timeout(250)
+            for what, btn in (("size", ".podctl .size"), ("fold", ".podctl .fold"),
+                              ("taller", ".podctl .hmore"),
+                              ("move up", ".podctl .mv[data-dir='-1']")):
+                page.evaluate("window.scrollTo({top:700,behavior:'instant'})")
+                page.wait_for_timeout(250)
+                idx = page.evaluate("""() => {
+                  const cs=[...document.querySelectorAll('.pods .card[data-pod]')];
+                  return cs.findIndex(c => { const r=c.getBoundingClientRect();
+                    return r.top > 80 && r.top < innerHeight-40 }) }""")
+                if idx < 0:
+                    continue
+                y0 = page.evaluate("window.scrollY")
+                page.locator(".pods .card[data-pod]").nth(idx).locator(btn).click()
+                page.wait_for_timeout(600)
+                y1 = page.evaluate("window.scrollY")
+                note(abs(y1 - y0) <= 4, f"{what}: the page stays where the reader left it",
+                     f"scrollY {y0} -> {y1}")
+            # and the cascade still answers after the pods have been moved about
+            ts2 = page.locator("select.cat-type")
+            if ts2.count():
+                # the ticket already carries a pair, so the cascade opens
+                # narrowed to it; widen it first, then narrow and measure
+                ts2.select_option("")
+                page.wait_for_timeout(250)
+                n_all = page.locator("select.cat-item option").count()
+                ts2.select_option(label="Hospital systems (BizBox)")
+                page.wait_for_timeout(250)
+                n1 = page.locator("select.cat-item option").count()
+                note(0 < n1 < n_all, "the dropdowns still narrow after editing the pods",
+                     f"all {n_all} -> {n1}")
+
             note(not errors, "no console errors anywhere above",
                  " | ".join(errors[:5]) if errors else "")
             browser.close()

@@ -1449,6 +1449,35 @@ questions to the desk the same way. Without it, those questions are asked under
 the caller's login and refused, which is not a fault in the desk or in the mail,
 and they now say so rather than reporting it as one.
 
+## Editing a pod leaves the page where it was (3 Oct 2026)
+
+Dada, 3 Oct 2026: *"when editing pods it resets the screen or re-orients the
+screen and doesn't stay, it goes back up"*, and *"the drop downs broke when
+editing or moving the pods"*. Both were one fault with two faces, MEASURED in
+Chromium: **scrollY 294 → 0 on a single pod edit**.
+
+`apply()` re-appended **every** pod on every change, whether or not anything had
+moved. Two consequences: the browser cannot anchor a scroll to a node that
+moves, so the page jumped to the top; and re-appending a card closes any native
+dropdown inside it, which is why a select "broke" while the pods were being
+edited. Three things fix it:
+
+- **Move nothing that is already where it belongs.** A fold, a resize or a
+  height bump now does no DOM moves at all.
+- **Hold the reader's place**, instantly. The stylesheet asks for
+  `scroll-behavior: smooth`, which is right for a link and wrong here: an
+  animated restore glides the page while the layout is still settling, and
+  `scrollY` read mid-flight is not where the page will land. The restore is
+  explicitly `behavior: "instant"`.
+- **Anchor on the right thing.** An *in-place* change (fold, size, height) holds
+  the **card**, since what is above it may change height. A *reorder* (arrows,
+  swap, drag) holds the **viewport**: the card is meant to move, and chasing it
+  dragged the whole page to the top when a card went to the top of its column.
+
+MEASURED after: size, fold, taller and move-up all hold `scrollY` at 700, and
+the cascade still narrows once the pods have been shuffled. `tests/browsercheck.py`
+asserts all five.
+
 ## A stopwatch on the ticket, which is not the SLA clock (065, 3 Oct 2026)
 
 Dada, 3 Oct 2026: *"there is usually a clock on the ConnectWise ticketing for
