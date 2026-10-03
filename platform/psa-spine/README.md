@@ -1449,6 +1449,53 @@ questions to the desk the same way. Without it, those questions are asked under
 the caller's login and refused, which is not a fault in the desk or in the mail,
 and they now say so rather than reporting it as one.
 
+## A stopwatch on the ticket, which is not the SLA clock (065, 3 Oct 2026)
+
+Dada, 3 Oct 2026: *"there is usually a clock on the ConnectWise ticketing for
+time entries, that's apart from the SLA"*. He was right that the desk had none:
+a technician could only type a start and an end into the time entry from
+memory, afterwards.
+
+**The two clocks are different things, and 065 says so twice so nobody confuses
+them:**
+
+| | `ticket_clock` (007) | `time_timer` (065) |
+|---|---|---|
+| Measures | the hospital's obligation | one person's worked time |
+| Starts | itself, on the board's rules | when a technician presses Start |
+| Calendar | the board's working hours | none; wall-clock seconds |
+| Pauses | on the statuses that pause it | when the person steps away |
+| Feeds | the SLA numbers | `time_start` / `time_end` on a time entry |
+| By hand | never | always |
+
+**No SLA number is derived from the stopwatch, ever**, and a test asserts that
+running one leaves every `ticket_clock` row untouched.
+
+On the Time pod: **Start timer** → it counts in front of you, with **Pause** and
+**Stop**. Stopping opens *Add time* with the date, start and end already filled
+from what it measured; the hours round **up** to the quarter, because a job that
+ran sixteen minutes cost the quarter hour it ran into. The technician can still
+correct any of it before saving — the timer is evidence, the entry is the claim.
+A timer belongs to the person who started it; one may run per person per ticket
+(two would double-count the same hour), and nothing stops one person running
+timers on three tickets at once, which is what carrying three jobs looks like.
+**Discard** throws it away and records nothing.
+
+## One Save, always reachable (3 Oct 2026)
+
+The ticket's own fields were already one form with one **Save changes** — but it
+sits at the foot of a long card, out of sight exactly while the dropdowns at the
+top are being used. So the moment anything in that form changes, a bar rises and
+stays: *"3 changes not saved · Save changes · Discard"*. It submits that same
+form and adds no second road to saving; Discard reloads, which is the honest
+undo. The count is per control and it knows what a `<select>`'s own mark is —
+comparing a select to `defaultValue` (which it does not have) counted every
+select on the page and the bar read *9 changes* for one edit, MEASURED in
+Chromium before it was fixed.
+
+The page also uses the screen it is given now: `main` was capped at 1320px,
+which left a third of a ward PC empty beside a ticket that wanted the room.
+
 ## What a browser says, which the suite cannot (3 Oct 2026)
 
 Dada, 3 Oct 2026: *"there is an issue with scheduling"*, *"picking using drop

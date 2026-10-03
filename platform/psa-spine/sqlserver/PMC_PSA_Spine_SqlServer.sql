@@ -231,6 +231,7 @@ BEGIN
     PRINT N'    psa.priority';
     PRINT N'    psa.ticket_cc';
     PRINT N'    psa.dispatch_view';
+    PRINT N'    psa.time_timer';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -286,13 +287,15 @@ BEGIN
     PRINT N'    psa.ix_configuration_question_type';
     PRINT N'    psa.ix_calendar_sync_status';
     PRINT N'    psa.ix_outlook_busy_member';
+    PRINT N'    psa.ux_time_timer_running';
+    PRINT N'    psa.ix_time_timer_member';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  133 tables, 54 indexes, 4 triggers.';
+    PRINT N'  134 tables, 56 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -3459,6 +3462,44 @@ CREATE TABLE psa.[dispatch_view] (
 END;
 
 -- --------------------------------------------------------------------------
+-- time_timer   (from schema/065_time_timer.sql)
+IF OBJECT_ID(N'psa.[time_timer]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[time_timer] (
+    [timer_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_time_timer] PRIMARY KEY,
+    [work_item_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_time_timer_work_item_id] REFERENCES psa.[work_item]([work_item_id]),
+    [member] NVARCHAR(200) NOT NULL,
+    [started_at] NVARCHAR(64) NOT NULL,
+
+    -- Set when the person stops it. A stopped timer is kept until its entry is
+    -- saved or it is discarded, so a stop is never a loss.
+    [stopped_at] NVARCHAR(64) NULL,
+
+    -- Accumulated seconds the timer was paused for, and when the current pause
+    -- began (NULL when it is running). Elapsed is (stop or now) - started_at
+    -- - paused_seconds, and while paused it is paused_at - started_at - the rest.
+    [paused_seconds] INT NOT NULL CONSTRAINT [DF_time_timer_paused_seconds] DEFAULT (0) CONSTRAINT [CK_time_timer_01] CHECK (paused_seconds >= 0),
+    [paused_at] NVARCHAR(64) NULL,
+
+    -- What the person was doing, typed while it runs so it is not invented
+    -- afterwards. Carried into the time entry's note.
+    [note] NVARCHAR(MAX) NULL,
+
+    -- The entry it became, once saved. A timer with this set is spent.
+    [time_entry_id] INT NULL CONSTRAINT [FK_time_timer_time_entry_id] REFERENCES psa.[time_entry]([time_entry_id]),
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [started_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [started_at], 126), CASE WHEN [started_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [started_at], 112) END)),
+    [stopped_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [stopped_at], 126), CASE WHEN [stopped_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [stopped_at], 112) END)),
+    [paused_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [paused_at], 126), CASE WHEN [paused_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [paused_at], 112) END)),
+    CONSTRAINT [CK_time_timer_02] CHECK (stopped_at IS NULL OR stopped_at >= started_at),
+    CONSTRAINT [CK_time_timer_03] CHECK (paused_at IS NULL OR paused_at >= started_at),
+    CONSTRAINT [CK_time_timer_04] CHECK (time_entry_id IS NULL OR stopped_at IS NOT NULL)
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -4095,6 +4136,18 @@ CREATE INDEX [ix_calendar_sync_status] ON psa.[calendar_sync] ([status]);
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_outlook_busy_member' AND object_id = OBJECT_ID(N'psa.[outlook_busy]'))
 CREATE INDEX [ix_outlook_busy_member] ON psa.[outlook_busy] ([member], [starts_at]);
 
+-- One running timer per person per ticket. Two would double-count the same
+-- hour, and a person who wants a second one wants a second ticket. Nothing
+-- stops the same person running timers on several tickets at once, which is
+-- what a technician carrying three jobs actually does.
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_time_timer_running' AND object_id = OBJECT_ID(N'psa.[time_timer]'))
+CREATE UNIQUE INDEX [ux_time_timer_running] ON psa.[time_timer] ([work_item_id], [member]) WHERE [stopped_at] IS NULL;
+
+-- What the Time pod and the header indicator read: this person's timers,
+-- newest first.
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_time_timer_member' AND object_id = OBJECT_ID(N'psa.[time_timer]'))
+CREATE INDEX [ix_time_timer_member] ON psa.[time_timer] ([member], [stopped_at]);
+
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
@@ -4230,10 +4283,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 133 OR @Triggers <> 4 OR @Indexes < 54
+IF @Tables <> 134 OR @Triggers <> 4 OR @Indexes < 56
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 133), %d triggers (expected 4), %d indexes (expected at least 54). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 134), %d triggers (expected 4), %d indexes (expected at least 56). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -4289,6 +4342,7 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[time_timer];
     DROP TABLE IF EXISTS psa.[dispatch_view];
     DROP TABLE IF EXISTS psa.[ticket_cc];
     DROP TABLE IF EXISTS psa.[priority];

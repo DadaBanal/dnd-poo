@@ -57,6 +57,7 @@ ROUTES = [
     ("POST", "/ticket/<work_item_id>/status", ticket.change_status),
     ("POST", "/ticket/<work_item_id>/note", ticket.add_note),
     ("POST", "/ticket/<work_item_id>/time", ticket.add_time),
+    ("POST", "/ticket/<work_item_id>/timer/<action>", ticket.timer),
     ("POST", "/ticket/<work_item_id>/change/decide", ticket.decide_change),
     ("POST", "/ticket/<work_item_id>/approval/request", approvals_view.request),
     ("POST", "/ticket/<work_item_id>/approval/withdraw", approvals_view.withdraw),

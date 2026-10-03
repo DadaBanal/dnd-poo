@@ -195,14 +195,24 @@ def _type_select(conn, board_id: str | None, selected: str | None, *, disabled: 
             + _options(pairs, selected or "") + "</select>")
 
 
-def _time_fields(ctx, tk, *, prefix: str = "", compact: bool = False) -> str:
+def _time_fields(ctx, tk, *, prefix: str = "", compact: bool = False,
+                 prefill: dict | None = None) -> str:
     """Dada PSA's time entry fields: date, start and end OR actual hours,
     deduct, work role, work type, bill option, and the spine's charge method.
-    The same fields on the note composer and on the Time pod's own form."""
+    The same fields on the note composer and on the Time pod's own form.
+
+    `prefill` is what a stopped stopwatch measured (065): the date, the start
+    and the end it actually ran between. They arrive filled in rather than
+    recalled, and the technician may still correct any of them before saving,
+    because the timer is evidence and the entry is the claim.
+    """
     defaults = engine.time_defaults(ctx.conn, board_id=tk["board_id"])
     roles = engine.work_roles(ctx.conn)
     types = engine.work_types(ctx.conn)
     today = ctx.now.date().isoformat()
+    p = prefill or {}
+    worked_on = p.get("worked_on") or today
+    at_start, at_end = p.get("time_start", ""), p.get("time_end", "")
     # The board's own default, else the first of each, as Dada PSA defaults them.
     role_opts = _options([(r["work_role_id"], r["name"]) for r in roles], defaults["work_role_id"] or "")
     type_opts = _options([(w["work_type_id"], w["name"]) for w in types], defaults["work_type_id"] or "")
@@ -210,9 +220,9 @@ def _time_fields(ctx, tk, *, prefix: str = "", compact: bool = False) -> str:
     charge_opts = _options([("", "— choose —")] + list(CHARGE_LABEL.items()), "")
     return (
         f"<div class='timefields{' compact' if compact else ''}'>"
-        f"<div><label>Date</label><input type=date name={prefix}worked_on value='{today}'></div>"
-        f"<div><label>Start</label><input type=time name={prefix}start step=300></div>"
-        f"<div><label>End</label><input type=time name={prefix}end step=300></div>"
+        f"<div><label>Date</label><input type=date name={prefix}worked_on value='{t.esc(worked_on)}'></div>"
+        f"<div><label>Start</label><input type=time name={prefix}start step=300 value='{t.esc(at_start)}'></div>"
+        f"<div><label>End</label><input type=time name={prefix}end step=300 value='{t.esc(at_end)}'></div>"
         f"<div><label>Actual hours</label><input name={prefix}hours inputmode=decimal placeholder='or 1.5'></div>"
         f"<div><label>Deduct</label><input name={prefix}deduct inputmode=decimal placeholder='0'></div>"
         f"<div><label>Work role</label><select name={prefix}work_role>{role_opts}</select></div>"
@@ -548,7 +558,10 @@ def detail(ctx, work_item_id):
         person_line = ""
     fields = (
         "<div class='card fields' data-pod=ticket id=ticketcard><h3><svg class=ic aria-hidden=true><use href=#i-ticket></use></svg>Ticket</h3>"
-        f"<form method=post action='/ticket/{wid}/update'>"
+        # data-savebar: these fields are one save, and the bar that follows the
+        # page down submits this very form (Dada, 3 Oct 2026: "one save button
+        # for all"). It adds no second way to save; it only keeps the one.
+        f"<form id=ticketfields data-savebar method=post action='/ticket/{wid}/update'>"
         f"<label>Board</label><select name=board_id{dis}>{_options(board_pairs, tk['board_id'])}</select>"
         f"<label>Status</label><select name=to_status{dis}>"
         f"{_options(([] if tk['board_status_id'] else [('', '(none)')]) + status_pairs, tk['board_status_id'] or '')}</select>"
@@ -597,11 +610,53 @@ def detail(ctx, work_item_id):
         "<th>Hours</th><th>Deduct</th><th>Work role</th><th>Work type</th><th>Bill</th><th>Charged as</th>"
         f"<th>Band</th></tr></thead><tbody>{trs}</tbody></table></div>"
         if trs else "<div class=muted>No time yet.</div>")
+    # The stopwatch (065): the reference PSA's clock for time entries, which is
+    # not the SLA clock above it. It measures what this person worked, and its
+    # whole purpose is to fill the form below with times nobody had to recall.
+    stopwatch, prefill = "", None
+    if can_work and may:
+        from ... import timers as _timers
+        run = _timers.for_ticket(ctx.conn, wid, ctx.user.id)
+        if run is None:
+            stopwatch = (f"<form method=post action='/ticket/{wid}/timer/start' class=swatch>"
+                         "<button type=submit class=ghost>" + t.icon("clock")
+                         + " Start timer</button>"
+                         "<span class=muted>Counts your time on this ticket. Not the SLA.</span>"
+                         "</form>")
+        else:
+            secs = _timers.elapsed_seconds(run, now=ctx.now)
+            tid = run["timer_id"]
+            if run["stopped_at"]:
+                prefill = _timers.stop(ctx.conn, tid, member=ctx.user.id, at=ctx.now)
+                stopwatch = (
+                    f"<div class='swatch done'><b class=tick>{_timers.clock(secs)}</b>"
+                    f"<span class=muted>stopped · {_timers.hours(secs):g} h to save</span>"
+                    f"<form method=post action='/ticket/{wid}/timer/discard' style=display:inline>"
+                    f"<input type=hidden name=timer_id value='{tid}'>"
+                    "<button type=submit class='ghost small' title='Throw it away; no time is recorded'>"
+                    "Discard</button></form></div>")
+            else:
+                paused = bool(run["paused_at"])
+                nxt = "resume" if paused else "pause"
+                stopwatch = (
+                    f"<div class='swatch{' paused' if paused else ' live'}'>"
+                    f"<b class=tick data-tick='{secs}'{'' if paused else ' data-run=1'}>"
+                    f"{_timers.clock(secs)}</b>"
+                    + (f"<span class=muted>paused</span>" if paused
+                       else "<span class=muted>running</span>")
+                    + f"<form method=post action='/ticket/{wid}/timer/{nxt}' style=display:inline>"
+                      f"<input type=hidden name=timer_id value='{tid}'>"
+                      f"<button type=submit class='ghost small'>{'Resume' if paused else 'Pause'}"
+                      "</button></form>"
+                      f"<form method=post action='/ticket/{wid}/timer/stop' style=display:inline>"
+                      f"<input type=hidden name=timer_id value='{tid}'>"
+                      "<button type=submit class=small>Stop</button></form></div>")
     time_form = ""
     if can_work and may:
         time_form = (
-            f"<details class=timeblock><summary>{t.icon('plus')} Add time</summary>"
-            f"<form method=post action='/ticket/{wid}/time'>" + _time_fields(ctx, tk)
+            f"<details class=timeblock{' open' if prefill else ''}>"
+            f"<summary>{t.icon('plus')} Add time</summary>"
+            f"<form method=post action='/ticket/{wid}/time'>" + _time_fields(ctx, tk, prefill=prefill)
             + "<div class=row style='margin-top:8px'><div><label>Notes</label>"
               "<textarea name=body rows=2 placeholder='What was done. The ward, room and machine say it best; a patient never needs naming (§6.1).'></textarea></div>"
               "<div style='flex:0 0 auto'><label>Who can read the notes</label><div class=seg>"
@@ -616,7 +671,7 @@ def detail(ctx, work_item_id):
               "hours fit in, and is what the capacity arithmetic counts.</p></form></details>")
     time_card = (f"<div class=card data-pod=time><h3><svg class=ic aria-hidden=true><use href=#i-clock></use></svg>"
                  f"Time · {actual_total:g} h" + (f" (band {band_total:g} h)" if time_rows else "") + "</h3>"
-                 + time_table + time_form
+                 + stopwatch + time_table + time_form
                  + (f"<p class=why>{t.esc(why_not)}</p>" if not may else "") + "</div>")
     commercial = (
         "<div class=card data-pod=commercial><h3><svg class=ic aria-hidden=true><use href=#i-briefcase></use></svg>Commercial basis</h3><dl class=kv>"
@@ -753,6 +808,48 @@ def add_time(ctx, work_item_id):
         ctx.conn.rollback()
         return _back(work_item_id, err=f"Time not saved: {exc}")
     return _back(work_item_id, msg=f"Time saved: {hours:g} h")
+
+
+def timer(ctx, work_item_id, action):
+    """POST /ticket/<id>/timer/<action>: the stopwatch, which is not the SLA.
+
+    Dada, 3 Oct 2026: the reference PSA keeps a clock on the ticket for time
+    entries, apart from the SLA. 065 is that clock. Start, pause, resume and
+    stop belong to the person who pressed them; `stop` leaves the Add time
+    form open with the measured times already in it, so the hours are what the
+    job took rather than what anyone remembers it taking.
+    """
+    from ... import timers
+    tk = _load(ctx, work_item_id)
+    common.require_board(ctx, tk["board_id"], need="WORK")
+    f = ctx.request.form()
+    me = ctx.user.id
+    try:
+        if action == "start":
+            timers.start(ctx.conn, work_item_id, member=me, at=ctx.now)
+            msg = "Timer started"
+        elif action == "pause":
+            timers.pause(ctx.conn, int(f.get("timer_id", "0")), member=me, at=ctx.now)
+            msg = "Timer paused"
+        elif action == "resume":
+            timers.resume(ctx.conn, int(f.get("timer_id", "0")), member=me, at=ctx.now)
+            msg = "Timer running again"
+        elif action == "stop":
+            r = timers.stop(ctx.conn, int(f.get("timer_id", "0")), member=me, at=ctx.now)
+            msg = f"Timer stopped at {timers.clock(r['seconds'])} — check the time and save it"
+        elif action == "discard":
+            timers.discard(ctx.conn, int(f.get("timer_id", "0")), member=me)
+            msg = "Timer thrown away; no time was recorded"
+        elif action == "note":
+            timers.note(ctx.conn, int(f.get("timer_id", "0")), member=me, text=f.get("note", ""))
+            msg = "Noted"
+        else:
+            return _back(work_item_id, err=f"no such timer action: {action}")
+        ctx.conn.commit()
+    except (ValueError, LookupError, timers.NotYours, timers.AlreadyRunning) as exc:
+        ctx.conn.rollback()
+        return _back(work_item_id, err=str(exc))
+    return _back(work_item_id, msg=msg)
 
 
 def update(ctx, work_item_id):

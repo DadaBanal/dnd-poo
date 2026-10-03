@@ -225,3 +225,26 @@ it moved and no handler, test or the API is touched.
 
 **Pass:** open a ticket — the first classification field reads "Ticket type", the cascade below
 it reads Type / Subtype / Item. Nothing else changed.
+
+---
+
+## 065: a stopwatch on the ticket (Cloud Build, 3 Oct 2026)
+
+**One schema step**, plus code. Dada: *"there is usually a clock on the ConnectWise
+ticketing for time entries, that's apart from the SLA"*. The desk had none.
+
+| | |
+|---|---|
+| Schema | `065_time_timer.sql`: one new table `time_timer`, one unique filtered index (`WHERE stopped_at IS NULL`, one running timer per person per ticket) and one ordinary index. No existing table is touched and no row changes. |
+| What it is | a per-technician stopwatch on the ticket: Start, Pause, Stop. Stopping opens *Add time* with the date, start and end already filled from what it measured. The hours round up to the quarter. |
+| What it is **not** | an SLA clock. `ticket_clock` (007) measures the hospital's obligation on the board's calendar and nobody starts or stops it by hand; this counts one person's wall-clock seconds and **no SLA number is derived from it**. A test asserts that running a stopwatch leaves every `ticket_clock` row byte-identical. |
+| Translator | `tools/sqlite_to_tsql.py` learned `WHERE <col> IS NULL` for filtered indexes (it only knew `IS NOT NULL`). Same meaning on both engines, so it ports as written. The generated port is regenerated and the drift gate is clean. |
+
+**Also in this head, code only:** the ticket's Save bar (the fields were already one
+form; its Save now follows the page down saying how many changes are waiting), and
+`main` widened from 1320px to the screen, which a ward PC had a third of spare.
+
+**Pass:** open a ticket → Time pod shows **Start timer**; start it and the clock counts;
+Pause holds it; Stop opens Add time with Start and End filled. Change any field in the
+ticket's own panel and a bar rises saying *"1 change not saved"*; Save changes saves as
+before. Setup › Audit unchanged.

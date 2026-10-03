@@ -320,6 +320,12 @@ def emit_table(table: Table, dec: Decisions, tables: set[str]) -> str:
 
 
 _NOT_NULL_TERM = re.compile(r"^(\w+)\s+IS\s+NOT\s+NULL$", re.I)
+# `col IS NULL` is a filtered index in SQL Server too, and it is how "only the
+# open ones" is said: 065's one-running-timer-per-person rule is
+# `WHERE stopped_at IS NULL`. It carries the same meaning on both engines, so
+# it ports as written -- unlike IS NOT NULL, which is there to paper over a
+# disagreement about NULL in a unique index.
+_IS_NULL_TERM = re.compile(r"^(\w+)\s+IS\s+NULL$", re.I)
 
 
 def emit_index(index: Index, nullable: set[str] | None = None) -> str:
@@ -334,14 +340,24 @@ def emit_index(index: Index, nullable: set[str] | None = None) -> str:
     """
     cols = [c.strip() for c in index.columns.split(",")]
     guarded: list[str] = []
+    empty: list[str] = []
     if index.where is not None:
         for term in re.split(r"\s+AND\s+", index.where, flags=re.I):
-            m = _NOT_NULL_TERM.match(term.strip())
-            if not m or m.group(1) not in cols:
-                raise Unsupported(
-                    f"{index.name}: partial index condition {index.where!r} has no "
-                    "port decided; only '<indexed column> IS NOT NULL' terms are recognised")
-            guarded.append(m.group(1))
+            term = term.strip()
+            m = _NOT_NULL_TERM.match(term)
+            if m and m.group(1) in cols:
+                guarded.append(m.group(1))
+                continue
+            n = _IS_NULL_TERM.match(term)
+            if n:
+                # Not required to be an indexed column: "the running ones" is a
+                # condition on a column the index does not carry (065).
+                empty.append(n.group(1))
+                continue
+            raise Unsupported(
+                f"{index.name}: partial index condition {index.where!r} has no "
+                "port decided; only '<col> IS NOT NULL' and '<col> IS NULL' terms "
+                "are recognised")
     if index.unique:
         if nullable is None:
             raise Unsupported(f"{index.name}: UNIQUE index on unknown table {index.table!r}")
@@ -352,7 +368,8 @@ def emit_index(index: Index, nullable: set[str] | None = None) -> str:
                 "NULLs in SQLite and one in SQL Server; add WHERE "
                 + " AND ".join(f"{c} IS NOT NULL" for c in open_nulls))
     kind = "UNIQUE INDEX" if index.unique else "INDEX"
-    where = (" WHERE " + " AND ".join(f"[{c}] IS NOT NULL" for c in guarded)) if guarded else ""
+    terms = [f"[{c}] IS NOT NULL" for c in guarded] + [f"[{c}] IS NULL" for c in empty]
+    where = (" WHERE " + " AND ".join(terms)) if terms else ""
     col_sql = ", ".join(f"[{c}]" for c in cols)
     return f"CREATE {kind} [{index.name}] ON {SCHEMA}.[{index.table}] ({col_sql}){where};"
 

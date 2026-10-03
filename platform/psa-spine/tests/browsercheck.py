@@ -163,6 +163,74 @@ def main() -> int:
             else:
                 note(False, "the schedule form is on the page")
 
+            # --- the status dropdown, which is the one that used to 500 -----
+            page.goto(f"{base}/ticket/{ref}", wait_until="domcontentloaded")
+            page.wait_for_timeout(300)
+            st = page.locator("form#ticketfields select[name=to_status]").first
+            if st.count():
+                vals = st.locator("option").evaluate_all(
+                    "os => os.filter(o => o.value && !o.disabled).map(o => o.value)")
+                now = st.input_value()
+                pick = next((v for v in vals if v != now), None)
+                if pick is None:
+                    note(False, "the status select offers somewhere to move to", str(vals))
+                    pick = now
+                st.select_option(pick)
+                page.locator("button[type=submit]:has-text('Save changes')").first.click()
+                page.wait_for_load_state("domcontentloaded")
+                page.wait_for_timeout(300)
+                body = page.content()
+                msg = ""
+                for sel in (".flash", ".msg", ".err", "[role=alert]"):
+                    if page.locator(sel).count():
+                        msg = page.locator(sel).first.inner_text()[:200]
+                        break
+                ok = ("Internal Server Error" not in body
+                      and "Traceback" not in body
+                      and page.locator("form#ticketfields").count() > 0)
+                note(ok, "picking a status and saving does not take the desk down",
+                     msg or page.url)
+            else:
+                note(False, "the status select is on the page")
+
+            # --- one Save, always reachable --------------------------------
+            page.goto(f"{base}/ticket/{ref}", wait_until="domcontentloaded")
+            page.wait_for_timeout(300)
+            bar = page.locator(".savebar")
+            note(bar.count() == 0 or not bar.first.is_visible() or "up" not in (bar.first.get_attribute("class") or ""),
+                 "no save bar until something is changed")
+            page.locator("select[name=impact]").select_option(index=1)
+            page.wait_for_timeout(250)
+            cls = page.locator(".savebar").first.get_attribute("class") or ""
+            note("up" in cls, "changing a field raises the save bar", cls)
+            note("change" in (page.locator(".savebar b").first.inner_text() or "").lower(),
+                 "and it says how many changes are waiting",
+                 page.locator(".savebar b").first.inner_text())
+
+            # --- the stopwatch (065) ---------------------------------------
+            start = page.locator("form[action$='/timer/start'] button")
+            note(start.count() == 1, "the Time pod offers a timer")
+            if start.count():
+                start.click()
+                page.wait_for_load_state("domcontentloaded")
+                page.wait_for_timeout(1500)
+                tick = page.locator(".swatch .tick")
+                note(tick.count() == 1, "a running timer shows a clock", tick.first.inner_text() if tick.count() else "")
+                first = tick.first.inner_text()
+                page.wait_for_timeout(1600)
+                note(tick.first.inner_text() != first, "and it counts up on its own",
+                     f"{first} -> {tick.first.inner_text()}")
+                page.locator("form[action$='/timer/stop'] button").click()
+                page.wait_for_load_state("domcontentloaded")
+                page.wait_for_timeout(400)
+                tf = page.locator("form[action$='/time']")
+                st_v = tf.locator("input[name=start]").first.input_value()
+                en_v = tf.locator("input[name=end]").first.input_value()
+                note(bool(st_v and en_v), "stopping it fills the time entry's Start and End",
+                     f"Start={st_v!r} End={en_v!r}")
+                note(page.locator("details.timeblock[open]").count() == 1,
+                     "and the Add time form is already open")
+
             note(not errors, "no console errors anywhere above",
                  " | ".join(errors[:5]) if errors else "")
             browser.close()

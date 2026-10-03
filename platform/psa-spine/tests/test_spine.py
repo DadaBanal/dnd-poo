@@ -13538,6 +13538,115 @@ class PmcPackTest(unittest.TestCase):
         self.assertEqual(pmc_pack.apply(self.conn, procurement="PROCUREMENT", at=self.at, actor="x"), [])   # once
 
 
+class TimeTimerTest(unittest.TestCase):
+    """065 — the stopwatch a technician runs on a ticket, which is not the SLA.
+
+    Dada, 3 Oct 2026: "there is usually a clock on the ConnectWise ticketing
+    for time entries, that's apart from the SLA". Its whole job is to make the
+    time entry's start and end measured instead of remembered."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.conn = _fresh(self.tmp)
+        self.addCleanup(self.conn.close)
+        self.at = datetime(2026, 10, 3, 9, 0)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        self.wid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="Printer jam",
+                                       impact="I3", urgency="U3", requested_by=None, at=self.at)
+        self.conn.commit()
+
+    def test_it_counts_the_time_between_start_and_stop(self):
+        from psaspine import timers
+        tid = timers.start(self.conn, self.wid, member="tech", at=self.at)
+        row = timers.for_ticket(self.conn, self.wid, "tech")
+        self.assertEqual(timers.elapsed_seconds(row, now=self.at + timedelta(minutes=25)), 1500)
+        r = timers.stop(self.conn, tid, member="tech", at=self.at + timedelta(minutes=25))
+        self.assertEqual(r["seconds"], 1500)
+        self.assertEqual(r["time_start"], "09:00")
+        self.assertEqual(r["time_end"], "09:25")
+        self.assertEqual(r["worked_on"], "2026-10-03")
+        self.assertEqual(r["hours"], 0.5)          # 25 min, up to the next quarter
+
+    def test_a_pause_is_not_worked_time(self):
+        from psaspine import timers
+        tid = timers.start(self.conn, self.wid, member="tech", at=self.at)
+        timers.pause(self.conn, tid, member="tech", at=self.at + timedelta(minutes=10))
+        row = timers.for_ticket(self.conn, self.wid, "tech")
+        # paused: it reads the same however long you look at it
+        self.assertEqual(timers.elapsed_seconds(row, now=self.at + timedelta(minutes=10)), 600)
+        self.assertEqual(timers.elapsed_seconds(row, now=self.at + timedelta(minutes=40)), 600)
+        timers.resume(self.conn, tid, member="tech", at=self.at + timedelta(minutes=40))
+        r = timers.stop(self.conn, tid, member="tech", at=self.at + timedelta(minutes=50))
+        self.assertEqual(r["seconds"], 1200)       # 10 worked + 30 paused + 10 worked
+        self.assertEqual(r["hours"], 0.5)
+
+    def test_stopping_while_paused_does_not_count_the_pause(self):
+        from psaspine import timers
+        tid = timers.start(self.conn, self.wid, member="tech", at=self.at)
+        timers.pause(self.conn, tid, member="tech", at=self.at + timedelta(minutes=5))
+        r = timers.stop(self.conn, tid, member="tech", at=self.at + timedelta(hours=3))
+        self.assertEqual(r["seconds"], 300)        # the three hours away were not worked
+
+    def test_one_running_timer_per_person_per_ticket(self):
+        from psaspine import timers
+        timers.start(self.conn, self.wid, member="tech", at=self.at)
+        with self.assertRaises(timers.AlreadyRunning):
+            timers.start(self.conn, self.wid, member="tech", at=self.at + timedelta(minutes=1))
+        # somebody else on the same ticket is their own time, and is allowed
+        timers.start(self.conn, self.wid, member="other", at=self.at + timedelta(minutes=1))
+        self.assertEqual(len(timers.running(self.conn, "tech")), 1)
+        self.assertEqual(len(timers.running(self.conn, "other")), 1)
+
+    def test_a_timer_belongs_to_the_person_who_started_it(self):
+        from psaspine import timers
+        tid = timers.start(self.conn, self.wid, member="tech", at=self.at)
+        for call in (lambda: timers.pause(self.conn, tid, member="nosey", at=self.at),
+                     lambda: timers.stop(self.conn, tid, member="nosey", at=self.at),
+                     lambda: timers.discard(self.conn, tid, member="nosey")):
+            with self.assertRaises(timers.NotYours):
+                call()
+
+    def test_it_never_stops_before_it_started(self):
+        """The same rule 007 states for the SLA clocks, and 065 states for this
+        one, after the 500 a clock skew caused on 3 Oct 2026."""
+        from psaspine import timers
+        tid = timers.start(self.conn, self.wid, member="tech", at=self.at)
+        r = timers.stop(self.conn, tid, member="tech", at=self.at - timedelta(hours=2))
+        self.assertEqual(r["seconds"], 0)
+        row = self.conn.execute("SELECT started_at, stopped_at FROM time_timer"
+                                " WHERE timer_id = ?", (tid,)).fetchone()
+        self.assertGreaterEqual(row["stopped_at"], row["started_at"])
+
+    def test_it_is_not_an_sla_clock(self):
+        """The distinction 065 exists to keep: running a stopwatch touches no
+        SLA clock, and the SLA clocks are not stopwatches."""
+        from psaspine import timers
+        before = [dict(r) for r in self.conn.execute(
+            "SELECT clock, started_at, stopped_at FROM ticket_clock WHERE work_item_id = ?",
+            (self.wid,))]
+        tid = timers.start(self.conn, self.wid, member="tech", at=self.at)
+        timers.stop(self.conn, tid, member="tech", at=self.at + timedelta(hours=1))
+        after = [dict(r) for r in self.conn.execute(
+            "SELECT clock, started_at, stopped_at FROM ticket_clock WHERE work_item_id = ?",
+            (self.wid,))]
+        self.assertEqual(before, after)
+
+    def test_a_discarded_timer_records_no_time_and_a_spent_one_cannot_go(self):
+        from psaspine import timers
+        tid = timers.start(self.conn, self.wid, member="tech", at=self.at)
+        timers.stop(self.conn, tid, member="tech", at=self.at + timedelta(minutes=5))
+        timers.discard(self.conn, tid, member="tech")
+        self.assertIsNone(timers.for_ticket(self.conn, self.wid, "tech"))
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM time_entry").fetchone()[0], 0)
+
+    def test_the_clock_reads_as_a_stopwatch_does(self):
+        from psaspine import timers
+        self.assertEqual(timers.clock(0), "0:00:00")
+        self.assertEqual(timers.clock(61), "0:01:01")
+        self.assertEqual(timers.clock(3671), "1:01:11")
+
+
 class CataloguePickerTest(unittest.TestCase):
     """SQL01's spec to WS36, 2 Oct 2026: "split today's single grouped dropdown
     into three dependent selects - pick a Type and its Subtypes appear, pick a

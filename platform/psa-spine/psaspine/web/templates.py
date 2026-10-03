@@ -68,8 +68,14 @@ a:hover{text-decoration:underline;text-underline-offset:2px}
 h1{font-size:22px;font-weight:600;letter-spacing:-.4px;margin:0 0 4px;line-height:1.25}
 h3{font-size:13px;font-weight:600;letter-spacing:.2px;color:var(--ink-2);text-transform:uppercase;margin:0 0 10px}
 .sub{color:var(--ink-2);margin:0 0 18px}
-main{max-width:1320px;margin:0 auto;padding:22px 20px}
-footer{max-width:1320px;margin:0 auto;padding:8px 20px 36px;color:var(--ink-3);font-size:12px}
+/* Dada, 3 Oct 2026: "make the layout bigger so it fits the width of screen".
+   A ward PC is 1920 wide and the desk was stopping at 1320, which left a third
+   of the screen empty beside a ticket that wanted the room. It now uses what is
+   there, with a gutter so nothing touches the edge, and still centres on the
+   very wide screens where a line of text would otherwise run too far to read. */
+main{max-width:min(2200px,100% - 40px);margin:0 auto;padding:22px 0}
+footer{max-width:min(2200px,100% - 40px);margin:0 auto;padding:8px 0 36px;color:var(--ink-3);font-size:12px}
+@media (max-width:760px){main,footer{max-width:100%;padding-left:14px;padding-right:14px}}
 
 /* ---- header: sticky, frosted, one accent ------------------------------ */
 header.top{position:sticky;top:0;z-index:20;height:var(--hdr);display:flex;align-items:center;gap:6px;
@@ -177,6 +183,36 @@ dialog#pal::backdrop{background:rgb(10 12 18/.35);-webkit-backdrop-filter:blur(3
 .rtx a{word-break:break-word}
 :root[data-text=s]{--note-size:13px} :root[data-text=l]{--note-size:16.5px}
 /* The editor's own toolbar, and the preview beside it. */
+/* Dada, 3 Oct 2026: "it should also have one save button for all". The fields
+   already save together -- they are one form -- but its Save sits at the foot
+   of a long card, out of sight exactly while the dropdowns at the top are being
+   used. So the moment anything in that form changes, a bar comes up and stays
+   reachable, saying how many changes are waiting. It submits the same form and
+   adds no second road to saving. */
+.savebar{position:fixed;left:50%;transform:translate(-50%,120%);bottom:18px;z-index:60;
+  display:flex;align-items:center;gap:12px;padding:9px 12px 9px 16px;border-radius:999px;
+  border:1px solid var(--line-2);background:var(--surface);color:var(--ink);
+  box-shadow:0 8px 30px rgba(0,0,0,.18);transition:transform .18s ease;max-width:calc(100% - 28px)}
+.savebar.up{transform:translate(-50%,0)}
+.savebar b{font-size:13px;font-weight:600;white-space:nowrap}
+.savebar .muted{font-size:12.5px}
+.savebar button{height:auto;padding:6px 14px;font-size:13px}
+@media (prefers-reduced-motion:reduce){.savebar{transition:none}}
+@media (max-width:620px){.savebar{left:14px;right:14px;transform:translateY(120%);max-width:none}
+  .savebar.up{transform:translateY(0)}}
+/* The stopwatch on a ticket (065). Deliberately unlike the SLA badges: this is
+   one person's own time, not the hospital's clock, and the two must never be
+   read as the same thing. */
+.swatch{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 10px;padding:8px 10px;
+  border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface-2)}
+.swatch .tick{font-family:var(--mono);font-size:17px;font-variant-numeric:tabular-nums;letter-spacing:.5px}
+.swatch.live{border-color:var(--accent)} .swatch.live .tick{color:var(--accent)}
+.swatch.paused .tick{color:var(--ink-3)}
+.swatch.done{border-color:var(--line-2)}
+.swatch form{display:inline;margin:0} .swatch .muted{font-size:12.5px}
+.swatch button.small,.swatch .small{padding:3px 10px;font-size:12.5px;height:auto;min-width:0}
+@media (prefers-reduced-motion:no-preference){.swatch.live .tick{animation:swtick 2s ease-in-out infinite}}
+@keyframes swtick{0%,100%{opacity:1}50%{opacity:.72}}
 /* One frame around the toolbar and the box, as a Teams composer has: the
    border and the focus ring are the whole thing's, not the box's. */
 .composer{border:1px solid var(--line-2);border-radius:var(--r);background:var(--surface);overflow:hidden;
@@ -756,6 +792,52 @@ $$("select.cat-item").forEach(function(item){
   ts.addEventListener("change",function(){showSubs(false)});
   ss.addEventListener("change",showItems);
   ts.hidden=false;ss.hidden=false})})();
+/* One Save, always reachable. The ticket's own fields are already one form;
+   this only makes its Save impossible to lose behind a scroll, and names how
+   many changes are waiting so nobody saves wondering what they changed.
+   Discard reloads the page, which is the honest undo: whatever is stored is
+   what comes back. */
+(function(){var f=$("form[data-savebar]");if(!f)return;
+var bar=null,label=null;
+/* What "changed" means, per kind of control. A select has no defaultValue, so
+   comparing to one counted every select on the page as changed and the bar
+   read "9 changes not saved" for a single edit (MEASURED in Chromium, 3 Oct
+   2026). A select's own mark is the option the server sent as selected. */
+function moved(el){
+  if(el.type==="checkbox"||el.type==="radio")return el.checked!==el.defaultChecked;
+  if(el.tagName==="SELECT"){
+    var o=el.options[el.selectedIndex];
+    return !!o&&!o.defaultSelected;
+  }
+  return el.value!==el.defaultValue}
+function changed(){var n=0;
+  $$("input,select,textarea",f).forEach(function(el){
+    if(el.type==="hidden"||el.disabled||!el.name)return;
+    if(moved(el))n++});
+  return n}
+function build(){if(bar)return bar;
+  bar=d.createElement("div");bar.className="savebar";bar.setAttribute("role","status");
+  label=d.createElement("b");bar.appendChild(label);
+  var save=d.createElement("button");save.type="submit";save.textContent="Save changes";
+  save.setAttribute("form",f.id||(f.id="ticketfields"));bar.appendChild(save);
+  var undo=d.createElement("button");undo.type="button";undo.className="ghost";
+  undo.textContent="Discard";undo.addEventListener("click",function(){location.reload()});
+  bar.appendChild(undo);
+  d.body.appendChild(bar);return bar}
+function show(){var n=changed();
+  if(!n){if(bar)bar.classList.remove("up");return}
+  build();label.textContent=n===1?"1 change not saved":n+" changes not saved";
+  bar.classList.add("up")}
+f.addEventListener("input",show);f.addEventListener("change",show);
+f.addEventListener("submit",function(){if(bar)bar.classList.remove("up")})})();
+/* The stopwatch counts in front of the person it belongs to (065). The server
+   sends the seconds it had when the page was drawn; this only paints the one
+   that is running, so a reload and a tick never disagree about the total. */
+(function(){var el=$(".swatch .tick[data-run]");if(!el)return;
+var n=+el.dataset.tick||0;
+function paint(){var h=Math.floor(n/3600),m=Math.floor(n%3600/60),s=n%60;
+  el.textContent=h+":"+String(m).padStart(2,"0")+":"+String(s).padStart(2,"0")}
+setInterval(function(){n++;paint()},1000);paint()})();
 /* A visit's To follows its From. Moving the start of a visit and leaving the
    end behind it is how a form ends up refusing to submit with nothing said;
    the end keeps whatever length the person had set, and an end they have
