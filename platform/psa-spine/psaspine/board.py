@@ -76,6 +76,13 @@ def open_clocks(conn: sqlite3.Connection, work_item_id: str, *, at: datetime,
     return started
 
 
+def _paused_at(conn: sqlite3.Connection, pause_id) -> str | None:
+    """When this pause began, so a resume is never stamped before it (007)."""
+    row = conn.execute("SELECT paused_at FROM ticket_clock_pause WHERE pause_id = ?",
+                       (pause_id,)).fetchone()
+    return row["paused_at"] if row else None
+
+
 def running_clocks(conn: sqlite3.Connection, work_item_id: str) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT * FROM ticket_clock WHERE work_item_id = ? AND stopped_at IS NULL",
@@ -110,6 +117,24 @@ def change_status(conn: sqlite3.Connection, work_item_id: str, to_status_id: str
     escalation = new["escalation_status"]
     stopped, paused, resumed = [], [], []
 
+    def not_before(mark: str, floor: str | None) -> str:
+        """A clock never stops before it started, nor resumes before it paused.
+
+        007 says so as a CHECK, and until 3 Oct 2026 nothing here honoured it:
+        a status change stamped earlier than the clock's own start made SQLite
+        refuse the UPDATE and the desk answer 500 to a technician who had only
+        picked from a dropdown (MEASURED in Chromium, booking a visit on a
+        ticket whose clock began a few minutes ahead of the desk's own now).
+
+        It happens whenever the two stamps come from different clocks, which is
+        ordinary: intake takes a ticket's time from the sender's Date header,
+        and a mail server a little fast is enough. The honest record then is a
+        clock that ran for no time at all, not a crash: a stop at the moment it
+        started says exactly that, and the elapsed time it reports is zero,
+        which is true.
+        """
+        return mark if not floor or mark >= floor else floor
+
     for clock in running_clocks(conn, work_item_id):
         open_pause = conn.execute(
             "SELECT pause_id FROM ticket_clock_pause WHERE clock_id = ?"
@@ -119,21 +144,25 @@ def change_status(conn: sqlite3.Connection, work_item_id: str, to_status_id: str
             # Close any pause first, or the paused interval runs past the stop.
             if open_pause:
                 conn.execute("UPDATE ticket_clock_pause SET resumed_at = ? WHERE pause_id = ?",
-                             (stamp, open_pause["pause_id"]))
+                             (not_before(stamp, _paused_at(conn, open_pause["pause_id"])),
+                              open_pause["pause_id"]))
                 resumed.append(clock["clock"])
             conn.execute(
                 "UPDATE ticket_clock SET stopped_at = ?, stopped_by_status = ?"
-                " WHERE clock_id = ?", (stamp, to_status_id, clock["clock_id"]))
+                " WHERE clock_id = ?",
+                (not_before(stamp, clock["started_at"]), to_status_id, clock["clock_id"]))
             stopped.append(clock["clock"])
         elif clocks.is_pause(escalation, clock["clock"]):
             if not open_pause:
                 conn.execute(
                     "INSERT INTO ticket_clock_pause (clock_id, paused_at, board_status_id)"
-                    " VALUES (?,?,?)", (clock["clock_id"], stamp, to_status_id))
+                    " VALUES (?,?,?)",
+                    (clock["clock_id"], not_before(stamp, clock["started_at"]), to_status_id))
                 paused.append(clock["clock"])
         elif open_pause:
             conn.execute("UPDATE ticket_clock_pause SET resumed_at = ? WHERE pause_id = ?",
-                         (stamp, open_pause["pause_id"]))
+                         (not_before(stamp, _paused_at(conn, open_pause["pause_id"])),
+                          open_pause["pause_id"]))
             resumed.append(clock["clock"])
 
     # The universal lifecycle follows the board's status, never the other way.

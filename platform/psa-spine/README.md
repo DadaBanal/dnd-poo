@@ -1449,6 +1449,45 @@ questions to the desk the same way. Without it, those questions are asked under
 the caller's login and refused, which is not a fault in the desk or in the mail,
 and they now say so rather than reporting it as one.
 
+## What a browser says, which the suite cannot (3 Oct 2026)
+
+Dada, 3 Oct 2026: *"there is an issue with scheduling"*, *"picking using drop
+downs have issues when being clicked"*. The suite proves the HTML a view
+returns; it cannot prove a person can click the thing. So `tests/browsercheck.py`
+starts a desk on a throwaway database, signs in with a real Chromium, and
+clicks what a technician clicks, reporting every console error on the way. It
+is not part of `python -m unittest` (CI has no chromium); run it by hand:
+
+    pip install playwright && python tests/browsercheck.py
+
+It found both faults on its first run, and neither was in the dropdowns:
+
+- **Booking a visit was impossible.** `To` is `required` and the page shipped it
+  **empty**, so the browser blocked the submit and the button looked dead. It is
+  now prefilled an hour after `From`, and a script keeps it following `From`
+  whenever that moves (never shortening an end someone has dragged out).
+- **Booking then answered HTTP 500.** `CHECK constraint failed: stopped_at IS
+  NULL OR stopped_at >= started_at`. 007 states that rule and `change_status`
+  never honoured it: a status change stamped earlier than the clock's own start
+  took the desk down in front of whoever picked it. The two stamps come from
+  different clocks in the ordinary way — intake takes a ticket's time from the
+  sender's `Date` header, and a mail server running fast is enough. A clock now
+  never stops before it started, nor resumes before it paused; the honest record
+  is a clock that ran for no time, which is what a stop at its own start says.
+
+**The dropdowns themselves measured clean**: Type fills Subtype, narrows Item
+211 → 73, Subtype narrows 73 → 10, the pick survives Save and comes back showing
+its Type, and there were no console errors anywhere on the page.
+
+**One Save, or many?** MEASURED: the ticket page carries 18 submit buttons —
+Add, Ask, Assign me, Attach, Link, Merge, Page the on-call, Save, Save changes,
+Save note, Schedule the visit. That is close to what the reference PSA does: one
+Save for the ticket's own fields (status, owner, company, contact, Cc, Ticket
+type, the Type → Subtype → Item cascade, impact, urgency, priority — all in one
+form behind **Save changes**), and a separate action for each thing that is its
+own record: a note, a time entry, a visit, a link, a merge. The rest are verbs,
+not saves.
+
 ## The note box is a composer, and the catalogue is three selects (2 Oct 2026)
 
 SQL01's two specs to WS36, 2 Oct 2026, both on the ticket page.

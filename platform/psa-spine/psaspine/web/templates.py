@@ -756,6 +756,21 @@ $$("select.cat-item").forEach(function(item){
   ts.addEventListener("change",function(){showSubs(false)});
   ss.addEventListener("change",showItems);
   ts.hidden=false;ss.hidden=false})})();
+/* A visit's To follows its From. Moving the start of a visit and leaving the
+   end behind it is how a form ends up refusing to submit with nothing said;
+   the end keeps whatever length the person had set, and an end they have
+   dragged out themselves is never shortened. */
+d.addEventListener("change",function(e){
+  var from=e.target;if(!from||from.name!=="starts_at"||from.type!=="datetime-local")return;
+  var f=from.form;if(!f)return;var to=f.querySelector("input[name=ends_at]");if(!to)return;
+  var a=new Date(from.value),b=new Date(to.value);
+  if(isNaN(a))return;
+  var span=(!isNaN(b)&&b>a)?0:(from.dataset.span?+from.dataset.span:3600000);
+  if(!isNaN(b)&&b>a)return;                       /* already sound: leave it */
+  var end=new Date(a.getTime()+(span||3600000));
+  var p=function(n){return String(n).padStart(2,"0")};
+  to.value=end.getFullYear()+"-"+p(end.getMonth()+1)+"-"+p(end.getDate())+
+           "T"+p(end.getHours())+":"+p(end.getMinutes())});
 /* Text size: the three the reader can choose between, kept in this browser. */
 (function(){var KEY="psa-text",SIZES=["s","","l"],NAMES={s:"Small","":"Normal",l:"Large"};
 function get(){try{return localStorage.getItem(KEY)||""}catch(e){return ""}}

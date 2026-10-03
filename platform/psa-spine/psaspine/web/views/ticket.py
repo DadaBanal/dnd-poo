@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 import urllib.parse
+from datetime import timedelta
 
 from ... import board as engine
 from ... import phi, tickets
@@ -1155,13 +1156,20 @@ def _schedule_card(ctx, tk, *, can_work: bool) -> str:
     add = ""
     if can_work and not tk["closed_at"]:
         start = ctx.now.replace(minute=0, second=0, microsecond=0)
+        # To is `required`, so leaving it empty made the button do nothing at
+        # all: the browser blocks the submit on a field the page never filled,
+        # and a technician sees a dead button (MEASURED in Chromium, 3 Oct
+        # 2026, after Dada: "there is an issue with scheduling"). An hour is
+        # what a visit is unless someone says otherwise, and the script below
+        # keeps To following From.
+        end = start + timedelta(hours=1)
         add = (f"<form method=post action='/ticket/{wid}/schedule/add' class=grid2 style='margin-top:8px' id=schedadd>"
                "<div><label>Who</label>" + common.owner_select(ctx.conn, [tk["board_id"]], tk["owner"] or ctx.user.id, me=ctx.user.id,
                                                                name="member", blank="(pick a person)", attrs=" required")
                + "</div>"
                f"<div><label>Status</label><select name=status_id>{opts([(x['status_id'], x['name']) for x in statuses], schedule.default_status(ctx.conn))}</select></div>"
                f"<div><label>From</label><input type=datetime-local name=starts_at value='{start.strftime('%Y-%m-%dT%H:%M')}' required></div>"
-               f"<div><label>To</label><input type=datetime-local name=ends_at required></div>"
+               f"<div><label>To</label><input type=datetime-local name=ends_at value='{end.strftime('%Y-%m-%dT%H:%M')}' required></div>"
                f"<div><label>Where</label><select name=location_id>{opts([(x['location_id'], x['name']) for x in places], '', '(not said)')}</select></div>"
                "<div><label>Note</label><input name=note placeholder='Ward 3, bring toner'></div>"
                "<div style='grid-column:1/-1'><label><input type=checkbox name=allow_conflict value=1> "

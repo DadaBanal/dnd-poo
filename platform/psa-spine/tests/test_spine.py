@@ -1445,6 +1445,42 @@ class BoardEngineTest(unittest.TestCase):
 
     # ------------------------------------------------------------- the clocks
 
+    def test_a_status_change_stamped_before_the_clock_started_does_not_throw(self):
+        """MEASURED in Chromium, 3 Oct 2026: booking a visit answered HTTP 500
+        with `CHECK constraint failed: stopped_at IS NULL OR stopped_at >=
+        started_at`. 007 states that rule and nothing in change_status honoured
+        it, so a status change stamped a minute earlier than the clock's own
+        start took the desk down in front of the technician who picked it.
+
+        The two stamps come from different clocks in the ordinary way -- intake
+        takes a ticket's time from the sender's Date header, and a mail server
+        running fast is enough. The truthful record is a clock that ran for no
+        time, which is what a stop at its own start says."""
+        started = self._clock("RESPOND")["started_at"]
+        before = datetime.fromisoformat(started) - timedelta(hours=3)
+        self._move("IT_HELP.DONE", before)                      # no raise
+        row = self._clock("RESPOND")
+        self.assertEqual(row["stopped_at"], started)            # clamped, not refused
+        self.assertGreaterEqual(row["stopped_at"], row["started_at"])
+
+    def test_a_pause_and_resume_are_never_stamped_before_they_began(self):
+        """The same rule on the pause table (007 again), so a resume stamped
+        early cannot throw either."""
+        started = self._clock("RESPOND")["started_at"]
+        early = datetime.fromisoformat(started) - timedelta(hours=2)
+        paused = [s["board_status_id"] for s in self.conn.execute(
+            "SELECT board_status_id FROM board_status WHERE board_id = 'IT_HELP'"
+            "   AND escalation_status = 'NO_ESCALATION' AND COALESCE(inactive, 0) = 0")]
+        if not paused:
+            self.skipTest("this board has no pausing status")
+        self._move(paused[0], early)
+        row = self.conn.execute(
+            "SELECT p.paused_at, c.started_at FROM ticket_clock_pause p"
+            "  JOIN ticket_clock c ON c.clock_id = p.clock_id"
+            " WHERE c.work_item_id = 'ITO-4001'").fetchone()
+        if row:
+            self.assertGreaterEqual(row["paused_at"], row["started_at"])
+
     def test_the_boards_sla_targets_start_the_clocks(self):
         self.assertEqual(
             {r["clock"] for r in self.conn.execute(
