@@ -1509,6 +1509,82 @@ A timer belongs to the person who started it; one may run per person per ticket
 timers on three tickets at once, which is what carrying three jobs looks like.
 **Discard** throws it away and records nothing.
 
+## Naming a ticket, and unmaking a mistake on a project (5 Oct 2026)
+
+Two asks in one line from Dada: *"for projects they cant be deleted edited any
+elements for the project cant do that also a drop down for the tickets would be
+nice or a search function wherein the ticket will be displayed on all ticket
+fields"* — the second about the field *where tickets are linked to each other*,
+which he clarified: *"there is a field where users can attach tickets or merge
+or child or link tickets"*.
+
+### Nine forms wanted a number typed from memory
+
+Link a related ticket, attach a child, make this a child of, merge into, the
+board's two bulk fields, put a ticket on a project, and the two ways of booking
+a visit all asked for `PMC-000123`. Typing a number from memory is how a ticket
+gets linked to the wrong ticket, and nothing in the field stopped it.
+
+`templates.ticket_pick` is now the one control for all nine. It is a text input
+with a `datalist`, so **the browser draws its own dropdown with its own keyboard
+handling** and nothing here reimplements a listbox; the options are filled from
+`/search.json` as you type — the same endpoint the command palette uses, which
+answers only from the boards you are on and audits a restricted board's hits.
+Each option reads the summary, who it is for, the state, and (see below) where
+the match was found. A picker never offers the ticket you are on, because a
+ticket cannot be linked to itself and offering it is a trap.
+
+**With scripting off it is the plain text input it always was.** That is also
+why the ticket number stays the value: the form posts exactly what it posted
+before, and not one view had to learn a new shape. A number typed in any case
+(`pmc-1`) is tidied to `PMC-000001` when the field loses focus.
+
+### The search behind it now matches every field
+
+It matched three things — the number, the summary, the requester's address — so
+finding a ticket meant already knowing its number. It now also matches the
+owner, the company, the status name, the Type › Subtype › Item, the contact's
+name and email, the source reference, the record type, the priority, **and the
+words of the ticket's notes**. Each hit says which field matched when the field
+is not one the dropdown shows, so a result that looks unrelated explains itself
+("in a note") instead of looking like a bug.
+
+**The note clause needed a guard.** A note written in the desk's editor, or
+arrived as an email's HTML (064), is stored as markup, so a bare SQL `LIKE` on
+it matches tag and attribute names: a search for `p`, `br` or `noopener` would
+have returned every rich note on the desk. SQL narrows the rows, then
+`richtext.text` — the same function the PHI scan reads — decides whether the
+needle is really in the *words*. One known limit, stated rather than hidden: a
+tag in the middle of a phrase (`Ward <b>3</b>`) splits it, so that exact phrase
+will not match.
+
+### A project's plan can be corrected
+
+`projects.py` opened by saying *"Nothing is deleted: a project is cancelled or
+done, a phase is done."* That is right about work and wrong about mistakes.
+A phase could be added and marked done and that was all — so a typo in a phase
+name, a predecessor set the wrong way round, a ticket on the wrong project were
+**permanent**. The worst of the three: `set_phase_status` refuses to finish a
+phase while something it waits on is open, so one wrong predecessor left two
+phases that could never both be done, with no way back.
+
+Now:
+
+| | |
+|---|---|
+| **Edit a phase** | Its name, dates, budget hours, and where it sits in the breakdown. Everything is checked before anything is written, so a refused edit leaves the phase exactly as it was. A phase cannot be moved inside itself or inside its own descendant. |
+| **Reorder a phase** | Up and down among its own siblings. `sort_order` existed from the start and nothing could change it, so the order phases were typed in was the order they stayed in. |
+| **Take a predecessor off** | Each "waits on" is a chip with a ×. |
+| **Remove a phase** | Only one carrying no work. A phase with child phases, tickets or booked hours is **kept**, and the row says which of the three and why, instead of offering a button that refuses. Pointers *at* a removed phase go with it, so nothing is left waiting on something that no longer exists. |
+| **Unlink a ticket** | From the project's own page. The engine could already do it; only the ticket's page had a way to ask. |
+| **Edit the project** | Its name and description have fields at last; `update` always supported both. |
+| **Unlink a BizBox record** | There was a Link form and no way back. |
+| **Remove a project** | Only one that never got going: no phases, no tickets, no BizBox record. A project with any of those is **cancelled**, not deleted, so its tickets keep their hours and their history — and the page says so rather than offering a delete that refuses. |
+
+Every one of those is audited. A removal is a line on the trail, not a silence.
+Hours are never deleted: they are the record of work done, and a phase holding
+them says so and offers Done instead.
+
 ## The ticket shows the email, not Outlook's fallback (5 Oct 2026)
 
 Dada, with a live ticket open: *"can we make html from emails or render the

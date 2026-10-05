@@ -72,17 +72,32 @@ def build(db_path: Path) -> str:
                     '<script>window.BROKE_IN = 1</script>'
                     '<p><img src="https://tracker.example.net/pixel.gif"></p>',
         description_format="HTML")
+    # A ticket whose only clue is a word inside a note, and a project with a
+    # typo'd phase and a predecessor set the wrong way round (5 Oct 2026): the
+    # two things a browser has to answer for -- does the ticket picker find it,
+    # and can the plan be corrected.
+    from psaspine import board, projects
+    noted = tickets.open_ticket(conn, board_id="IT_HELP", summary="Teams phone silent",
+                                impact="I3", urgency="U3", requested_by="cruz@pmcne.ph", at=at)
+    board.add_note(conn, noted, body="The handset flashes amber when a call lands.",
+                   flag="DISCUSSION", actor="tech", at=at, notify_requester=False)
+    prj = projects.create(conn, name="Ward 3 refresh", board_id="IT_HELP", at=at, actor="tech")
+    ph_a = projects.add_phase(conn, prj, name="Survey", at=at, actor="tech")
+    ph_b = projects.add_phase(conn, prj, name="Instal", at=at, actor="tech")      # a typo
+    ph_c = projects.add_phase(conn, prj, name="Handover", at=at, actor="tech")
+    projects.add_dependency(conn, ph_b, ph_c, at=at, actor="tech")                # the wrong way round
+    projects.link_ticket(conn, wid, prj, ph_a, at=at, actor="tech")
     auth.create_local_account(conn, "tech", PASSWORD, at=at, is_sysadmin=True)
     conn.commit()
     conn.close()
-    return wid, mail
+    return wid, mail, noted, prj, ph_b
 
 
 def main() -> int:
     from playwright.sync_api import sync_playwright
     tmp = tempfile.TemporaryDirectory()
     db_path = Path(tmp.name) / "desk.db"
-    ref, mailref = build(db_path)
+    ref, mailref, noted, prj, ph_b = build(db_path)
     port = free_port()
     env = dict(os.environ, PSA_ATTACHMENT_DIR=str(Path(tmp.name) / "files"))
     proc = subprocess.Popen([sys.executable, "-m", "psaspine", "serve", str(db_path),
@@ -301,6 +316,62 @@ def main() -> int:
                  f"{page.locator('.rtx img').count()} img element(s)")
             note(page.evaluate("() => !window.BROKE_IN"),
                  "a script in the email never ran")
+
+            # --- naming a ticket without typing its number ------------------
+            # Dada, 5 Oct 2026: "a dropdown for the tickets would be nice ...
+            # a search function wherein the ticket will be displayed on all
+            # ticket fields". The datalist is filled by a fetch, so only a
+            # browser can say whether the dropdown actually has anything in it.
+            page.goto(f"{base}/ticket/{ref}", wait_until="domcontentloaded")
+            page.wait_for_timeout(400)
+            picks = page.locator("input[data-tickpick]")
+            note(picks.count() == 4, "the link and family fields are pickers, not number boxes",
+                 f"{picks.count()} picker(s)")
+            note(page.locator(f"input[data-tickpick][data-not='{ref}']").count() == 4,
+                 "and each leaves this ticket out of its own list")
+            inp = picks.first
+            opts = page.locator("#" + inp.get_attribute("list") + " option")
+            inp.fill("amber")                 # a word only in the other ticket's NOTE
+            page.wait_for_timeout(900)
+            vals = [opts.nth(i).get_attribute("value") for i in range(opts.count())]
+            labs = [opts.nth(i).get_attribute("label") for i in range(opts.count())]
+            note(noted in vals, "a word that is only inside a note fills the dropdown", str(vals))
+            note(any("in a note" in (x or "") for x in labs),
+                 "and the option says where it was found", str(labs))
+            note(ref not in vals, "the ticket you are on is never offered to itself", str(vals))
+            inp.fill("noopener")              # markup, not words
+            page.wait_for_timeout(900)
+            note(opts.count() == 0, "a tag or attribute name fills it with nothing",
+                 f"{opts.count()} option(s)")
+
+            # --- a project's plan can be corrected --------------------------
+            # Dada, 5 Oct 2026: "for projects they cant be deleted edited any
+            # elements for the project cant do that".
+            page.goto(f"{base}/project/{prj}", wait_until="domcontentloaded")
+            page.wait_for_timeout(400)
+            txt = page.locator("body").inner_text()
+            note(page.locator("form[action$='/phase/unwait'] button").count() >= 1,
+                 "a predecessor set the wrong way round can be taken off")
+            note("kept:" in txt, "a phase carrying work says why, instead of a dead Remove button",
+                 next((l.strip() for l in txt.splitlines() if "kept:" in l), ""))
+            note(page.locator("form[action$='/ticket/unlink'] button").count() == 1,
+                 "a linked ticket can be unlinked here")
+            note(page.locator(f"form[action='/project/{prj}/remove']").count() == 0
+                 and "cancelled" in txt.lower(),
+                 "a project with work on it offers Cancelled, not Remove")
+            page.goto(f"{base}/project/{prj}?phase={ph_b}", wait_until="domcontentloaded")
+            page.wait_for_timeout(400)
+            card = page.locator("#edit-phase")
+            note(card.count() == 1, "Edit brings up that phase's own form")
+            if card.count():
+                card.locator("input[name=name]").fill("Install")
+                card.locator("button[type=submit]").first.click()
+                page.wait_for_timeout(700)
+                note("Install" in page.locator("body").inner_text(), "and the rename saves", page.url)
+                page.locator("form[action$='/phase/unwait'] button").first.click()
+                page.wait_for_timeout(700)
+                note("no longer waits on" in page.locator("body").inner_text(),
+                     "the wrong predecessor comes off, so both phases can finish", page.url)
 
             note(not errors, "no console errors anywhere above",
                  " | ".join(errors[:5]) if errors else "")

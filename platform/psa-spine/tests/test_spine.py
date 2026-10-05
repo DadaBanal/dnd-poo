@@ -5851,7 +5851,10 @@ class ModulesTest(unittest.TestCase):
         del c
         _, _, page = self._call("GET", f"/project/{pid}", cookie=self.alice)
         self.assertIn("1.50 of 40.00 h", page)
-        self.assertIn("waits on Survey", page)
+        # A predecessor is now a chip with a × that takes it off (5 Oct 2026),
+        # so "waits on" and the name are no longer one run of characters.
+        self.assertIn("waits on <span class=chip>Survey", page)
+        self.assertIn(f"/project/{pid}/phase/unwait", page)
         _, _, ticket = self._call("GET", "/ticket/ITO-1", cookie=self.alice)
         self.assertIn(f"<a href='/project/{pid}'>{pid}</a> Replace ward 3 switches · Survey", ticket)
         _, h, _ = self._call("POST", "/projects/new", cookie=self.alice, form={"name": "Second", "board_id": "NOPE"})
@@ -5874,6 +5877,158 @@ class ModulesTest(unittest.TestCase):
         self.assertIn("<td class=center>1</td>", page)                                         # one ticket she may see, not two
         self.assertEqual(self._conn().execute("SELECT COUNT(*) FROM audit_event WHERE action = 'RESTRICTED_READ'"
                                               " AND detail LIKE 'project %'").fetchone()[0], 1)  # alice's read of the PHI ticket
+
+    def test_a_project_and_every_element_of_it_can_be_edited_and_unmade(self):
+        """Dada, 5 Oct 2026: *"for projects they cant be deleted edited any
+        elements for the project cant do that"*.
+
+        Nothing was editable past the project's own status, manager, dates and
+        budget. A phase could be added and marked done and that was all: a typo
+        in its name, a predecessor set the wrong way round, a ticket on the
+        wrong project were permanent. Work that happened is still never
+        deleted; a mistake now is not permanent."""
+        from psaspine import projects
+        conn = self._conn()
+        pid = projects.create(conn, name="Ward 3 refesh", at=self.at, actor="alice")   # typo on purpose
+        a = projects.add_phase(conn, pid, name="Survey", at=self.at, actor="alice")
+        b = projects.add_phase(conn, pid, name="Instal", at=self.at, actor="alice")    # and here
+        c = projects.add_phase(conn, pid, name="Handover", at=self.at, actor="alice")
+
+        # ---- a phase's own fields
+        self.assertEqual(projects.update_phase(conn, b, name="Install", at=self.at, actor="alice"),
+                         "name Instal -> Install")
+        self.assertEqual(projects.update_phase(conn, b, name="Install", at=self.at, actor="alice"),
+                         "nothing changed")
+        with self.assertRaises(projects.Refused):
+            projects.update_phase(conn, b, name="  ", at=self.at, actor="alice")
+        with self.assertRaises(projects.Refused):
+            projects.update_phase(conn, b, starts_on="2026-10-31", ends_on="2026-10-01",
+                                  at=self.at, actor="alice")
+        self.assertEqual(conn.execute("SELECT name FROM project_phase WHERE phase_id = ?",
+                                      (b,)).fetchone()[0], "Install")      # a refused edit changed nothing
+
+        # ---- moving a phase in the breakdown, and never into itself
+        projects.update_phase(conn, c, parent_id=b, at=self.at, actor="alice")
+        self.assertEqual([(x["name"], x["depth"]) for x in projects.phases(conn, pid)],
+                         [("Survey", 0), ("Install", 0), ("Handover", 1)])
+        with self.assertRaises(projects.Refused):
+            projects.update_phase(conn, b, parent_id=c, at=self.at, actor="alice")      # its own child
+        with self.assertRaises(projects.Refused):
+            projects.update_phase(conn, b, parent_id=b, at=self.at, actor="alice")      # itself
+
+        # ---- the predecessor that could not be undone. set_phase_status
+        # refuses while it stands, so one wrong click used to strand two phases.
+        projects.update_phase(conn, c, parent_id=None, at=self.at, actor="alice")
+        projects.add_dependency(conn, b, c, at=self.at, actor="alice")                   # wrong way round
+        with self.assertRaises(projects.Refused):
+            projects.set_phase_status(conn, b, True, at=self.at, actor="alice")
+        self.assertEqual(projects.remove_dependency(conn, b, c, at=self.at, actor="alice"),
+                         "Install no longer waits on Handover")
+        self.assertEqual(projects.remove_dependency(conn, b, c, at=self.at, actor="alice"), "nothing changed")
+        projects.set_phase_status(conn, b, True, at=self.at, actor="alice")              # now it can finish
+
+        # ---- order, which sort_order allowed and nothing could change
+        projects.move_phase(conn, c, -1, at=self.at, actor="alice")
+        self.assertEqual([x["name"] for x in projects.phases(conn, pid)],
+                         ["Survey", "Handover", "Install"])
+        self.assertEqual(projects.move_phase(conn, a, -1, at=self.at, actor="alice"), "nothing changed")
+
+        # ---- removing a phase: only one carrying no work
+        projects.link_ticket(conn, "ITO-1", pid, a, at=self.at, actor="alice")
+        with self.assertRaises(projects.Refused) as caught:
+            projects.remove_phase(conn, a, at=self.at, actor="alice")
+        self.assertIn("1 ticket(s) are on Survey", str(caught.exception))
+        projects.add_dependency(conn, c, a, at=self.at, actor="alice")
+        projects.link_ticket(conn, "ITO-1", pid, None, at=self.at, actor="alice")        # off the phase
+        self.assertIn("Handover no longer waits on it",
+                      projects.remove_phase(conn, a, at=self.at, actor="alice"))         # the pointer goes too
+        self.assertEqual(projects.phases(conn, pid)[0]["depends_on"], [])
+
+        # hours are a record of work and hold a phase even with no ticket on it
+        projects.link_ticket(conn, "ITO-1", pid, c, at=self.at, actor="alice")
+        conn.execute("INSERT INTO time_entry (work_item_id, entity_id, worked_on, band_hours, performed_by,"
+                     " entered_by, charge_method, actual_hours) VALUES"
+                     " ('ITO-1','PMC','2026-10-02',2,'alice','alice','INCLUDED_IN_MONTHLY_FEE',1.5)")
+        self.assertEqual(projects.phase_work(conn, c)["hours"], 1.5)
+        with self.assertRaises(projects.Refused) as caught:
+            projects.remove_phase(conn, c, at=self.at, actor="alice")
+        self.assertIn("1 ticket(s) are on Handover", str(caught.exception))
+
+        # ---- the project's own name and description, which had no field at all
+        self.assertEqual(projects.update(conn, pid, name="Ward 3 refresh", at=self.at, actor="alice"),
+                         "name Ward 3 refesh -> Ward 3 refresh")
+        projects.update(conn, pid, description="Switches, phones and the nurse call.", at=self.at, actor="alice")
+        self.assertEqual(projects.get(conn, pid)["description"], "Switches, phones and the nurse call.")
+
+        # ---- removing the project: cancelled while it carries work, gone when empty
+        with self.assertRaises(projects.Refused) as caught:
+            projects.remove(conn, pid, at=self.at, actor="alice")
+        self.assertIn("cancelled", str(caught.exception))
+        self.assertIn("1 ticket(s)", str(caught.exception))
+        projects.link_ticket(conn, "ITO-1", None, at=self.at, actor="alice")
+        projects.remove_phase(conn, c, at=self.at, actor="alice")
+        projects.remove_phase(conn, b, at=self.at, actor="alice")
+        self.assertEqual(projects.project_work(conn, pid), {"phases": 0, "tickets": 0, "finance": 0})
+        self.assertEqual(projects.remove(conn, pid, at=self.at, actor="alice"), "Project Ward 3 refresh removed")
+        self.assertIsNone(projects.get(conn, pid))
+        conn.commit()
+
+        # every one of those is on the audit trail: a removal is not a silence
+        trail = [r[0] for r in self._conn().execute(
+            "SELECT detail FROM audit_event WHERE action = 'PROJECT' ORDER BY audit_id")]
+        for expected in ("phase Instal: name Instal -> Install", "no longer waits on", "phase removed: Survey",
+                         "name Ward 3 refesh -> Ward 3 refresh", "project removed: Ward 3 refresh"):
+            self.assertTrue(any(expected in d for d in trail), f"{expected!r} is not on the trail")
+
+    def test_the_project_page_offers_each_of_those_and_refuses_the_rest(self):
+        from psaspine import projects
+        conn = self._conn()
+        pid = projects.create(conn, name="Ward 3 refresh", at=self.at, actor="alice")
+        a = projects.add_phase(conn, pid, name="Survey", at=self.at, actor="alice")
+        b = projects.add_phase(conn, pid, name="Handover", at=self.at, actor="alice")
+        projects.add_dependency(conn, b, a, at=self.at, actor="alice")
+        projects.link_ticket(conn, "ITO-1", pid, a, at=self.at, actor="alice")
+        conn.commit()
+
+        _, _, page = self._call("GET", f"/project/{pid}", cookie=self.alice)
+        self.assertIn(f"/project/{pid}?phase={a}", page)                      # Edit
+        self.assertIn(f"/project/{pid}/phase/move", page)                     # up / down
+        self.assertIn(f"/project/{pid}/phase/unwait", page)                   # drop a predecessor
+        self.assertIn(f"/project/{pid}/ticket/unlink", page)                  # unlink a ticket
+        self.assertIn("kept: 1 ticket(s) are on it", page)                    # and why Survey has no Remove
+        self.assertIn("name=description", page)                               # the description has a field now
+        self.assertNotIn(f"action='/project/{pid}/remove'", page)             # it carries work
+        self.assertIn("is <b>cancelled</b>, not deleted", page)
+
+        # Edit brings that phase's own form up, with its values in it
+        _, _, page = self._call("GET", f"/project/{pid}", query=f"phase={b}", cookie=self.alice)
+        self.assertIn("id=edit-phase", page)
+        self.assertIn("Edit Handover", page)
+
+        # the rename through the page
+        _, h, _ = self._call("POST", f"/project/{pid}/phase/update", cookie=self.alice,
+                             form={"phase_id": str(b), "name": "Hand over"})
+        self.assertIn("msg=", dict(h)["Location"])
+        self.assertEqual(conn.execute("SELECT name FROM project_phase WHERE phase_id = ?", (b,)).fetchone()[0],
+                         "Hand over")
+
+        # a phase id from another project is not this project's to touch
+        other = projects.create(conn, name="Elsewhere", at=self.at, actor="alice")
+        far = projects.add_phase(conn, other, name="Not yours", at=self.at, actor="alice")
+        conn.commit()
+        for path, form in ((f"/project/{pid}/phase/update", {"phase_id": str(far), "name": "x"}),
+                           (f"/project/{pid}/phase/remove", {"phase_id": str(far)}),
+                           (f"/project/{pid}/phase/move", {"phase_id": str(far), "dir": "-1"}),
+                           (f"/project/{pid}/phase/unwait", {"phase_id": str(far), "depends_on": str(a)})):
+            _, h, _ = self._call("POST", path, cookie=self.alice, form=form)
+            self.assertIn("err=No+such+phase+on+this+project", dict(h)["Location"], path)
+        self.assertEqual(conn.execute("SELECT name FROM project_phase WHERE phase_id = ?", (far,)).fetchone()[0],
+                         "Not yours")
+
+        # read-only on the module offers none of it
+        _, _, page = self._call("GET", f"/project/{pid}", cookie=self._cookie_for("dave"))
+        for gone in ("/phase/move", "/phase/unwait", "/ticket/unlink", "id=edit-phase"):
+            self.assertNotIn(gone, page, gone)
 
     # ---------------------------------------------------- report writer
 
@@ -8592,6 +8747,89 @@ class SearchViewsNotesTest(unittest.TestCase):
         self.assertEqual(j["tickets"], [])                      # one letter asks nothing
         status, _, _ = self._call("GET", "/search.json", query="q=printer")
         self.assertTrue(status.startswith("401"))
+
+    def test_search_matches_every_ticket_field_and_the_words_of_a_note(self):
+        """Dada, 5 Oct 2026: *"a search function wherein the ticket will be
+        displayed on all ticket fields"*. It matched the number, the summary and
+        the requester's address, so finding a ticket meant knowing its number --
+        which is exactly what the nine forms that name a ticket asked for."""
+        from psaspine import board
+        conn = db.connect(self.db_path)
+        at = datetime(2026, 9, 29, 10)
+        board.update_fields(conn, "ITO-1", at=at, actor="alice", owner="carol")
+        board.add_note(conn, "ITO-1", body="The handset flashes amber when a call lands.",
+                       flag="DISCUSSION", actor="carol", at=at, notify_requester=False)
+        board.add_note(conn, "ITO-1", body="<p>Checked the <b>switch port</b> on Ward 3.</p>",
+                       flag="INTERNAL", actor="carol", at=at, body_format="HTML")
+        conn.commit()
+        conn.close()
+        carol = self._cookie_for("carol")
+
+        def hits(q):
+            return [x["id"] for x in _json.loads(
+                self._call("GET", "/search.json", cookie=carol, query="q=" + q)[2])["tickets"]]
+
+        def why(q):
+            got = _json.loads(self._call("GET", "/search.json", cookie=carol, query="q=" + q)[2])["tickets"]
+            return {x["id"]: x["where"] for x in got}
+
+        self.assertIn("ITO-1", hits("carol"), "the owner is a field people search by")
+        self.assertIn("ITO-1", hits("amber"), "a word only in a note finds its ticket")
+        self.assertEqual(why("amber")["ITO-1"], "in a note", "and the hit says where it was found")
+        self.assertIn("ITO-1", hits("switch+port"), "including a note written as rich text")
+
+        # The guard that makes note searching usable: a rich note is stored as
+        # markup, so a bare LIKE would return every one of them for a tag or
+        # attribute name. richtext.text is read instead -- the same words the
+        # PHI scan reads.
+        for markup in ("noopener", "DISCUSSION"):
+            self.assertEqual(hits(markup), [], f"{markup!r} is markup or a flag, not words")
+        self.assertEqual(hits("%3Cb%3E"), [], "a tag matches nothing")
+
+        # Still only this person's boards, and a restricted hit is still audited.
+        self.assertEqual(hits("sensitive"), [], "carol is not on the PHI board")
+        alice = self._cookie_for("alice")
+        self.assertEqual([x["id"] for x in _json.loads(self._call(
+            "GET", "/search.json", cookie=alice, query="q=sensitive")[2])["tickets"]], ["ITO-9"])
+        conn = db.connect(self.db_path)
+        self.assertTrue(conn.execute("SELECT 1 FROM audit_event WHERE action = 'RESTRICTED_READ' AND"
+                                     " detail LIKE 'search listed 1%'").fetchone())
+        conn.close()
+
+    def test_every_form_that_names_a_ticket_offers_a_picker_rather_than_a_number(self):
+        """Dada, 5 Oct 2026: *"a dropdown for the tickets would be nice"*, about
+        linking, merging and attaching. Nine forms asked for PMC-000123 typed
+        from memory, which is how a ticket gets linked to the wrong ticket."""
+        alice = self._cookie_for("alice")
+        def fields(page):
+            # The page also carries one `input[data-tickpick]` inside the
+            # script that fills these, so count the fields, not the string.
+            return re.findall(r"<input name=(\w+) list=\"[^\"]+\" data-tickpick", page)
+
+        _, _, page = self._call("GET", "/ticket/ITO-1", cookie=alice)
+        self.assertEqual(sorted(fields(page)), ["child_id", "into", "linked_id", "parent_id"],
+                         "link, attach a child, make this a child of, merge into")
+        self.assertEqual(page.count('data-not="ITO-1"'), 4,
+                         "and not one of them offers this ticket to itself")
+        self.assertEqual(page.count("<datalist"), 4, "each has its own list to fill")
+        self.assertNotIn("placeholder='PMC-000123'", page, "no field asks for a number from memory")
+
+        for path, want in (("/", ["merge_into", "parent"]), ("/schedule", ["work_item_id"])):
+            _, _, page = self._call("GET", path, cookie=alice)
+            for name in want:
+                self.assertIn(name, fields(page), f"{path}: {name}")
+
+        from psaspine import projects
+        conn = db.connect(self.db_path)
+        pid = projects.create(conn, name="Ward 3 refresh", at=datetime(2026, 9, 29, 10), actor="alice")
+        conn.commit()
+        conn.close()
+        _, _, page = self._call("GET", f"/project/{pid}", cookie=alice)
+        self.assertIn("data-tickpick", page, "and the project's Link a ticket")
+
+        # It is an input, not a select: with scripting off it is the plain field
+        # it always was, so the form posts what it has always posted.
+        self.assertIn("<input name=work_item_id list=", page)
 
     def test_a_saved_view_is_mine_named_and_cleaned(self):
         alice = self._cookie_for("alice")

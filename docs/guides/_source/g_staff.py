@@ -45,7 +45,9 @@ def staff_body():
                  ["A ticket could not be renamed",
                   "<b>The summary is editable</b> \u2014 the pencil beside it. Any Outlook appointment already made for the ticket is rewritten to match."],
                  ["An email from a ward read like <code>[cid:image004.jpg\u2026]</code> and every link twice",
-                  "<b>The ticket shows the message the sender actually composed</b>, with their formatting. Pictures from the email are on the Files card, never inside the note."]]),
+                  "<b>The ticket shows the message the sender actually composed</b>, with their formatting. Pictures from the email are on the Files card, never inside the note."],
+                 ["Type <code>PMC-000123</code> from memory to link, merge or attach a ticket",
+                  "<b>Every one of those fields is a search box.</b> Type a word from the summary, the ward, the person, the company, the status \u2014 or a word from one of its notes \u2014 and pick it from the dropdown. It never offers the ticket you are on."]]),
           H("Around the desk"),
           UL(["<b>A ticket starts with nobody owning it.</b> Someone takes it or a dispatcher gives it out. Everyone with a visit on it is a <b>resource</b>, shown beside the owner.",
               "<b>Dispatch is a day grid</b> \u2014 people down the side, hours across \u2014 with a <b>To schedule</b> list you drag tickets out of. <b>People</b> chooses whose rows you see, and can be saved.",
@@ -55,6 +57,12 @@ def staff_body():
               "<b>Files open in place</b> \u2014 a picture, a PDF or a text file opens in a viewer on the page, with Download beside it.",
               "<b>Aa</b> beside light and dark sets the text size.",
               "The menu across the top is a <b>mega menu</b> of the desk\u2019s modules, so nothing is cut off any more."]),
+          H("On a project"),
+          P("A plan used to be a thing you got right first time or lived with: a phase could be added and marked done, and nothing else. "
+            "<b>Now every part of a project can be edited</b>, and anything carrying no work can be taken off \u2014 a phase renamed, moved, reordered or "
+            "removed; a predecessor set the wrong way round taken off with a <b>\u00d7</b>; a ticket unlinked; the project\u2019s own name and description "
+            "changed. Work is still never deleted: a phase with tickets or hours on it says so and offers <b>Done</b>, and a project that got going is "
+            "<b>Cancelled</b> rather than deleted. See <b>Correcting the plan</b> in the Projects guide."),
           H("If you administer the desk"),
           UL(["<b>Setup \u203a Priorities</b>: the names, colours and order of P1\u2013P4 are yours. The codes stay fixed because the SLA targets name them.",
               "<b>A board may claim several email addresses</b>, and answers each requester from the one they wrote to.",

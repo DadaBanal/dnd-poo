@@ -1047,6 +1047,46 @@ d.addEventListener("keydown",function(e){
     case "x":if(cur>=0){var c=$("input[name=ids]",rows[cur]);if(c){c.checked=!c.checked;count()}}break;
     case "Enter":if(cur>=0){var a=$("a[href^='/ticket/']",rows[cur]);if(a)location.href=a.getAttribute("href")}break}
 });
+
+/* ---- naming a ticket: fill a field's own datalist from /search.json -------
+   Nine forms used to want PMC-000123 typed from memory (templates.ticket_pick).
+   The browser draws the dropdown and handles the keyboard; all this does is
+   keep the <option>s current. With this script off the field is the plain text
+   input it has always been, and the form posts exactly what it posted before. */
+$$("input[data-tickpick]").forEach(function(inp){
+  var dl=d.getElementById(inp.getAttribute("list")); if(!dl)return;
+  var skip=(inp.dataset.not||"").toUpperCase(),timer=null,last="";
+  function fill(list){
+    dl.innerHTML="";
+    list.forEach(function(x){
+      if(skip&&String(x.id).toUpperCase()===skip)return;       /* never offer itself */
+      var o=d.createElement("option");o.value=x.id;
+      /* The label is what the dropdown reads out: the summary, who it is for,
+         and -- when the match was somewhere the label does not show -- where it
+         was found, so a hit that looks unrelated explains itself. */
+      var bits=[(x.summary||"").slice(0,70)];
+      if(x.who)bits.push(x.who);
+      if(x.state)bits.push(String(x.state).toLowerCase().replace(/_/g," "));
+      if(x.where)bits.push(x.where);
+      o.label=bits.filter(Boolean).join(" \u00b7 ");
+      dl.appendChild(o)})}
+  inp.addEventListener("input",function(){
+    var q=inp.value.trim();
+    /* Once it holds a whole ticket number there is nothing left to look up. */
+    if(q.length<2||/^[A-Za-z]{2,10}-\d{4,}$/.test(q)){if(q.length<2)fill([]);return}
+    if(q===last)return; last=q;
+    clearTimeout(timer);
+    timer=setTimeout(function(){
+      fetch("/search.json?q="+encodeURIComponent(q),{credentials:"same-origin"})
+        .then(function(r){return r.ok?r.json():null})
+        .then(function(j){if(j&&j.q===q&&j.tickets)fill(j.tickets)})
+        .catch(function(){})},140)});
+  /* A typed number is a number whatever its case: pmc-1 is PMC-000001. */
+  inp.addEventListener("change",function(){
+    var m=inp.value.trim().match(/^([A-Za-z]{2,10})[- ]?0*(\d{1,6})$/);
+    if(!m)return; var pre=m[1].toUpperCase();
+    inp.value=pre==="PMC"?"PMC-"+("000000"+m[2]).slice(-6):pre+"-"+m[2]});
+});
 })();
 // A filter applies the moment it is picked (Dada, 1 Oct 2026: "when the
 // drop down is picked it updates automatically"): a select or a checkbox in
@@ -1176,6 +1216,7 @@ ICONS = {
     "alert": "M12 3 2 20h20zM12 10v4M12 17h.01",
     "flag": "M5 21V4M5 4h13l-2 4 2 4H5",
     "x": "M6 6l12 12M18 6 6 18",
+    "trash": "M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6",
     "filter": "M3 5h18l-7 8v6l-4-2v-4z",
     "arrow": "M5 12h14M13 6l6 6-6 6",
     "keyboard": "M3 6h18v12H3zM7 10h.01M11 10h.01M15 10h.01M7 14h10",
@@ -1232,6 +1273,43 @@ def esc(value) -> str:
     """The one rule. Everything user- or data-derived passes through here before
     it reaches the page."""
     return html.escape("" if value is None else str(value), quote=True)
+
+# ------------------------------------------------------- naming a ticket
+#
+# Dada, 5 Oct 2026, about linking tickets to each other and to a project:
+# *"a dropdown for the tickets would be nice or a search function wherein the
+# ticket will be displayed on all ticket fields"*.
+#
+# Nine forms on this desk used to ask a person to type `PMC-000123` from
+# memory: link a related ticket, attach a child, make this a child of, merge
+# into, the board's two bulk fields, put a ticket on a project, and the two
+# ways of booking a visit. Typing a number from memory is how a ticket gets
+# linked to the wrong ticket, and there was nothing in the field to stop it.
+#
+# This is one control for all nine. It is a text input with a `datalist`, so
+# the browser draws its own dropdown with its own keyboard handling and nothing
+# here reimplements a listbox. The list is filled from `/search.json` as the
+# person types -- the same endpoint the command palette uses, which answers
+# only from the boards they are on and audits a restricted board's hits.
+#
+# **With scripting off it is the plain text input it always was**, so no form
+# that worked before stops working. That is also why the ticket number stays
+# the value: the form posts exactly what it posted before, and no view had to
+# learn a new shape.
+
+
+def ticket_pick(name: str, placeholder: str = "", *, required: bool = False, value: str = "",
+                exclude: str = "", style: str = "") -> str:
+    """One field that names a ticket. `exclude` is a ticket the list leaves out
+    (a ticket cannot be linked to itself, and offering it is a trap)."""
+    pid = "tp" + str(abs(hash((name, placeholder, exclude))) % 10_000_000)
+    return (f'<input name={name} list="{pid}" data-tickpick'
+            + (f' data-not="{esc(exclude)}"' if exclude else "")
+            + f' value="{esc(value)}" placeholder="{esc(placeholder or "Ticket number, or search")}"'
+              f' autocomplete=off spellcheck=false{" required" if required else ""}'
+            + (f' style="{style}"' if style else "") + f'><datalist id="{pid}"></datalist>')
+
+
 
 
 # ----------------------------------------------------------------- rich text

@@ -487,8 +487,8 @@ def _bulk_bar(ctx, boards, f) -> str:
         " Assign " + common.owner_select(ctx.conn, [b["board_id"] for b in work_boards], None, me=ctx.user.id,
                                          blank="(leave the owner)", attrs=" style='padding:4px 8px'") +
         f" Move to <select name=to_board>{move_opts}</select>"
-        " Attach to parent <input name=parent placeholder='PMC-000123' style='width:130px;padding:4px 8px'>"
-        " Merge into <input name=merge_into placeholder='PMC-000123' style='width:130px;padding:4px 8px'>"
+        " Attach to parent " + t.ticket_pick('parent', 'search or number', style='width:190px;padding:4px 8px') +
+        " Merge into " + t.ticket_pick('merge_into', 'search or number', style='width:190px;padding:4px 8px') +
         " <button type=submit>Apply</button></form>")
 
 

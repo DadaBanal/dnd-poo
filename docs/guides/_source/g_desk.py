@@ -132,6 +132,19 @@ def desk_body():
               "<b>Standard notes</b> are a board\u2019s canned replies. Each carries its flag, so a <i>we have your request</i> reply cannot land as internal by accident.",
               "Each board decides whether requesters and owners get emails, <b>and in what words for each status</b> (Setup \u203a the board \u203a Emails)."]),
           who=["Technicians"]),
+        S("d-name", "Tickets", "Naming another ticket",
+          LEAD("Every field that asks for another ticket \u2014 link, attach a child, make this a child of, merge into, the board\u2019s bulk fields, "
+               "a project, a visit \u2014 is a search box, not a number box."),
+          STEPS(["Start typing <b>anything about the ticket</b>: a word from its summary, the ward, the person who asked, the company, its status, "
+                 "its owner, the Type \u203a Subtype \u203a Item \u2014 or a word from one of its notes.",
+                 "Pick it from the dropdown your browser shows. Each line reads the summary, who it is for and its state.",
+                 "If the match was somewhere the line does not show, it says so \u2014 <b>in a note</b> \u2014 so a result that looks unrelated explains itself.",
+                 "You can still type the number if you know it. <code>pmc-1</code> tidies itself to <code>PMC-000001</code>."]),
+          NOTE("good", "<b>A ticket is never offered to itself.</b> A ticket cannot be its own child, its own duplicate or its own related ticket, and the "
+                       "list leaves it out rather than letting you pick it and be refused."),
+          NOTE("info", "The search only ever reaches the boards you are on, and reading a restricted board\u2019s tickets is recorded against your name as it "
+                       "is anywhere else on the desk."),
+          who=["Technicians"]),
         S("d-family", "Tickets", "Children, duplicates and templates",
           CHOOSER("The same problem came in several times. What do I do?", [
               ("child", "Several people report one outage", "<b>Attach them as children</b> of the first ticket. One person works the parent; every requester keeps their own ticket. When the parent closes, each child closes on its own board's closed status, and says so. One level only: a child has no children."),

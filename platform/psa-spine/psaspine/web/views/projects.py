@@ -103,6 +103,58 @@ def create(ctx):
     return _back(f"/project/{pid}", msg="Project created. Add its phases, then link its tickets.")
 
 
+def _edit_phase_card(ctx, p, pid, phs, editing) -> str:
+    """Edit one phase. It is a card rather than a field inside each row because
+    a phase has five things to change and a row has no space for them; Edit on
+    the row brings the phase here with `?phase=`, which also means the form
+    works with scripting off."""
+    if not editing.isdigit():
+        return ""
+    ph = next((x for x in phs if str(x["phase_id"]) == editing), None)
+    if ph is None:
+        return ""
+    others = "<option value=''>(top level)</option>" + "".join(
+        f"<option value={o['phase_id']}{' selected' if o['phase_id'] == ph['parent_id'] else ''}>"
+        f"{'— ' * o['depth']}{t.esc(o['name'])}</option>" for o in phs if o["phase_id"] != ph["phase_id"])
+    waits = "<option value=''>(add a predecessor)</option>" + "".join(
+        f"<option value={o['phase_id']}>{'— ' * o['depth']}{t.esc(o['name'])}</option>"
+        for o in phs if o["phase_id"] != ph["phase_id"] and o["phase_id"] not in ph["depends_on"])
+    return ("<div class=card id=edit-phase><h3>" + t.icon("edit") + f"Edit {t.esc(ph['name'])}</h3>"
+            f"<form method=post action='/project/{pid}/phase/update' class=grid2>"
+            f"<input type=hidden name=phase_id value={ph['phase_id']}>"
+            "<div style='grid-column:1/-1'><label>Name</label>"
+            f"<input name=name required maxlength=200 value='{t.esc(ph['name'])}'></div>"
+            f"<div><label>Inside</label><select name=parent_id>{others}</select></div>"
+            f"<div><label>Also waits on</label><select name=depends_on>{waits}</select></div>"
+            f"<div><label>Starts</label><input type=date name=starts_on value='{t.esc(ph['starts_on'] or '')}'></div>"
+            f"<div><label>Ends</label><input type=date name=ends_on value='{t.esc(ph['ends_on'] or '')}'></div>"
+            "<div><label>Budget hours</label>"
+            f"<input name=budget_hours value='{t.esc(ph['budget_hours'] if ph['budget_hours'] is not None else '')}'></div>"
+            "<div style='align-self:end'><button type=submit>Save phase</button> "
+            f"<a class='ghost' href='/project/{pid}'>Cancel</a></div></form></div>")
+
+
+def _remove_card(ctx, p, pid) -> str:
+    """Remove the project, when it carries nothing. A project with phases,
+    tickets or a BizBox record is **cancelled** instead, because its tickets
+    keep their hours and their history; the card says which of the two applies
+    and why, rather than offering a button that refuses."""
+    w = projects.project_work(ctx.conn, p["project_id"])
+    held = [f"{w[k]} {word}" for k, word in (("phases", "phase(s)"), ("tickets", "ticket(s)"),
+                                             ("finance", "BizBox record(s)")) if w[k]]
+    if held:
+        return ("<p class=why style='margin-top:12px'>This project carries " + t.esc(", ".join(held))
+                + ". A project with work on it is <b>cancelled</b>, not deleted, so its tickets keep their "
+                  "hours and their history \u2014 set its status to Cancelled above. Take the phases, "
+                  "tickets and records off it first if it really should be deleted.</p>")
+    return (f"<form method=post action='/project/{pid}/remove' style='margin-top:12px'"
+            " onsubmit=\"return confirm('Remove this project? It has no phases, tickets or records.')\">"
+            "<button class='ghost danger' type=submit>" + t.icon("trash")
+            + " Remove this project</button>"
+            "<p class=why style='margin:6px 0 0'>It carries no phase, ticket or record \u2014 nothing is lost. "
+            "For a project that got going, use Cancelled instead.</p></form>")
+
+
 def detail(ctx, project_id):
     from .. import Response
     common.require_module(ctx, "PROJECTS")
@@ -113,23 +165,55 @@ def detail(ctx, project_id):
     seen = common.board_ids_for(ctx)
     phs = projects.phases(ctx.conn, p["project_id"], boards=seen)
     names = {ph["phase_id"]: ph["name"] for ph in phs}
+    editing = q.get("phase", "")
     rows = []
     for ph in phs:
-        waits = ", ".join(t.esc(names.get(d, "?")) for d in ph["depends_on"])
+        ph_id = ph["phase_id"]
+        # "waits on X" is now "waits on X ×": until today a predecessor set the
+        # wrong way round could not be taken off, and set_phase_status refuses
+        # to finish a phase whose predecessor is open -- so one wrong click left
+        # two phases that could never both be done.
+        waits = " ".join(
+            f"<span class=chip>{t.esc(names.get(dep, '?'))}"
+            + (f" <form method=post action='/project/{pid}/phase/unwait' class=inline>"
+               f"<input type=hidden name=phase_id value={ph_id}><input type=hidden name=depends_on value={dep}>"
+               f"<button class='linky' type=submit title='Stop waiting on this'>&times;</button></form>" if can else "")
+            + "</span>" for dep in ph["depends_on"])
         act = ""
         if can:
-            act = (f"<form method=post action='/project/{pid}/phase/status' class=inline><input type=hidden name=phase_id value={ph['phase_id']}>"
-                   f"<button class='ghost small' type=submit>{'Reopen' if ph['status'] == 'DONE' else 'Done'}</button></form>")
-        rows.append(f"<tr{' style=opacity:.6' if ph['status'] == 'DONE' else ''}><td style='padding-left:{8 + ph['depth'] * 22}px'>"
+            work = projects.phase_work(ctx.conn, ph_id)
+            why = ("it has phases inside it" if work["children"] else
+                   f"{work['tickets']} ticket(s) are on it" if work["tickets"] else
+                   f"{work['hours']:g} hours are booked against it" if work["hours"] else "")
+            act = (f"<form method=post action='/project/{pid}/phase/status' class=inline><input type=hidden name=phase_id value={ph_id}>"
+                   f"<button class='ghost small' type=submit>{'Reopen' if ph['status'] == 'DONE' else 'Done'}</button></form>"
+                   f" <a class='ghost small' href='/project/{pid}?phase={ph_id}#edit-phase'>Edit</a>"
+                   f" <form method=post action='/project/{pid}/phase/move' class=inline><input type=hidden name=phase_id value={ph_id}>"
+                   "<button class='ghost small' name=dir value=-1 type=submit title='Move up'>&uarr;</button>"
+                   "<button class='ghost small' name=dir value=1 type=submit title='Move down'>&darr;</button></form>"
+                   + (f" <form method=post action='/project/{pid}/phase/remove' class=inline"
+                      " onsubmit=\"return confirm('Remove this phase? It carries no tickets and no hours.')\">"
+                      f"<input type=hidden name=phase_id value={ph_id}>"
+                      "<button class='ghost small danger' type=submit>Remove</button></form>" if not why
+                      else f" <span class=why title='{t.esc(why)}'>kept: {t.esc(why)}</span>"))
+        rows.append(f"<tr{' style=opacity:.6' if ph['status'] == 'DONE' else ''}"
+                    f"{' class=cur' if str(ph_id) == editing else ''}><td style='padding-left:{8 + ph['depth'] * 22}px'>"
                     f"{'└ ' if ph['depth'] else ''}<b>{t.esc(ph['name'])}</b></td>"
                     f"<td>{t.esc(ph['starts_on'] or '')} → {t.esc(ph['ends_on'] or '')}</td>"
                     f"<td>{_bar(ph['actual_hours'], ph['budget_hours'])}</td>"
                     f"<td>{('waits on ' + waits) if waits else ''}</td><td>{'Done' if ph['status'] == 'DONE' else 'Open'}</td><td>{act}</td></tr>")
     tks = [r for r in projects.tickets(ctx.conn, p["project_id"]) if r["board_id"] in seen]
     common.audit_restricted_reads(ctx, (r["board_id"] for r in tks), detail=f"project {p['project_id']} listed")
+    def _unlink(wid):
+        if not can:
+            return ""
+        return (f"<form method=post action='/project/{pid}/ticket/unlink' class=inline>"
+                f"<input type=hidden name=work_item_id value='{t.esc(wid)}'>"
+                "<button class='ghost small' type=submit title='Take this ticket off the project'>Unlink</button></form>")
     ticket_rows = "".join(
         f"<tr><td><a href='/ticket/{t.esc(r['work_item_id'])}'>{t.esc(r['work_item_id'])}</a></td><td>{t.esc(r['summary'])}</td>"
-        f"<td>{t.esc(r['phase_name'] or '')}</td><td>{t.esc(r['state'])}</td><td>{t.esc(r['owner'] or '')}</td></tr>" for r in tks)
+        f"<td>{t.esc(r['phase_name'] or '')}</td><td>{t.esc(r['state'])}</td><td>{t.esc(r['owner'] or '')}</td>"
+        f"<td>{_unlink(r['work_item_id'])}</td></tr>" for r in tks)
     phase_opts = "<option value=''>(no phase)</option>" + "".join(
         f"<option value={ph['phase_id']}>{'— ' * ph['depth']}{t.esc(ph['name'])}</option>" for ph in phs)
     forms = ""
@@ -146,21 +230,32 @@ def detail(ctx, project_id):
             "<div style='align-self:end'><button class=ghost type=submit>Add</button></div></form></div>"
             "<div class=card><h3>" + t.icon("note") + "Link a ticket</h3>"
             f"<form method=post action='/project/{pid}/ticket' class=grid2>"
-            "<div><label>Ticket</label><input name=work_item_id required placeholder='PMC-000123'></div>"
+            f"<div><label>Ticket</label>{t.ticket_pick('work_item_id', 'Search a ticket, or type its number', required=True)}</div>"
             f"<div><label>Phase</label><select name=phase_id>{phase_opts}</select></div>"
             "<div><button class=ghost type=submit>Link</button></div></form>"
-            f"<h3 style='margin-top:14px'>{t.icon('setup')}Status and dates</h3>"
+            f"<h3 style='margin-top:14px'>{t.icon('setup')}The project itself</h3>"
             f"<form method=post action='/project/{pid}/update' class=grid2>"
+            "<div style='grid-column:1/-1'><label>Name</label>"
+            f"<input name=name required maxlength=200 value='{t.esc(p['name'])}'></div>"
             f"<div><label>Status</label><select name=status>{status_opts}</select></div>"
             f"<div><label>Manager</label><input name=manager value='{t.esc(p['manager'] or '')}'></div>"
             f"<div><label>Starts</label><input type=date name=starts_on value='{t.esc(p['starts_on'] or '')}'></div>"
             f"<div><label>Ends</label><input type=date name=ends_on value='{t.esc(p['ends_on'] or '')}'></div>"
             f"<div><label>Budget hours</label><input name=budget_hours value='{t.esc(p['budget_hours'] if p['budget_hours'] is not None else '')}'></div>"
-            "<div style='align-self:end'><button class=ghost type=submit>Save</button></div></form></div></div>")
+            "<div style='align-self:end'><button class=ghost type=submit>Save</button></div>"
+            "<div style='grid-column:1/-1'><label>Description</label>"
+            f"<textarea name=description rows=4>{t.esc(p['description'] or '')}</textarea></div></form>"
+            + _remove_card(ctx, p, pid) + "</div></div>" + _edit_phase_card(ctx, p, pid, phs, editing))
     finance = ""
     if common.allows(ctx, "FINANCE"):
         fl = bizbox.links(ctx.conn, "PROJECT", p["project_id"])
-        items = "".join(f"<li>{t.esc(r['kind'].replace('_', ' '))} {finance_view._ref_link(r['kind'], r['ext_ref'])}</li>" for r in fl)
+        items = "".join(
+            f"<li>{t.esc(r['kind'].replace('_', ' '))} {finance_view._ref_link(r['kind'], r['ext_ref'])}"
+            + (f" <form method=post action='/project/{pid}/finance/unlink' class=inline>"
+               f"<input type=hidden name=kind value='{t.esc(r['kind'])}'>"
+               f"<input type=hidden name=ext_ref value='{t.esc(r['ext_ref'])}'>"
+               "<button class='linky' type=submit title='Unlink this record'>&times;</button></form>" if can else "")
+            + "</li>" for r in fl)
         link = (f"<form method=post action='/project/{pid}/finance' class=row style='margin-top:6px'>"
                 "<div style='flex:0 0 160px'><select name=kind>"
                 + "".join(f"<option value={k}>{finance_view.ONE[k]}</option>" for k, _ in finance_view._mirror_tabs(ctx)) + "</select></div>"
@@ -179,7 +274,7 @@ def detail(ctx, project_id):
               f"<th>Hours</th><th>Predecessors</th><th>State</th><th></th></tr></thead><tbody>"
             + ("".join(rows) or "<tr><td colspan=6 class=muted>No phases yet.</td></tr>") + "</tbody></table></div></div>"
             + "<div class=card><h3>" + t.icon("note") + "Tickets</h3><div class=tablewrap><table><thead><tr><th>Ticket</th><th>Summary</th>"
-              f"<th>Phase</th><th>State</th><th>Owner</th></tr></thead><tbody>{ticket_rows or '<tr><td colspan=5 class=muted>No tickets linked.</td></tr>'}"
+              f"<th>Phase</th><th>State</th><th>Owner</th><th></th></tr></thead><tbody>{ticket_rows or '<tr><td colspan=6 class=muted>No tickets linked.</td></tr>'}"
               "</tbody></table></div></div>" + finance + forms)
     return Response(body=t.page(p["name"], body, user=ctx.user, active="projects"))
 
@@ -238,12 +333,106 @@ def link_ticket(ctx, project_id):
     return _try(ctx, project_id, go, lambda r: f"{wid}: {r}")
 
 
+def unlink_ticket(ctx, project_id):
+    """Take one ticket off the project, from the project's own page. The engine
+    could already do it; only the ticket's page had a way to ask."""
+    wid = (ctx.request.form().get("work_item_id", "") or "").strip().upper()
+
+    def go():
+        tk = ctx.conn.execute("SELECT board_id FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()
+        if tk is None or not common.may_access_board(ctx, tk["board_id"], need="WORK"):
+            raise projects.Refused(f"No ticket {wid} that you work.")
+        return projects.link_ticket(ctx.conn, wid, None, at=ctx.now, actor=ctx.user.id)
+    return _try(ctx, project_id, go, lambda r: f"{wid}: {r}")
+
+
 def update(ctx, project_id):
     f = ctx.request.form()
+    fields = {"status": f.get("status"), "manager": f.get("manager"), "starts_on": f.get("starts_on"),
+              "ends_on": f.get("ends_on"), "budget_hours": f.get("budget_hours")}
+    # Name and description are only sent by the full form; the older form had
+    # neither, so a post without them must not blank them.
+    for k in ("name", "description"):
+        if k in f:
+            fields[k] = f.get(k)
     return _try(ctx, project_id, lambda: projects.update(
-        ctx.conn, project_id, at=ctx.now, actor=ctx.user.id, status=f.get("status"), manager=f.get("manager"),
-        starts_on=f.get("starts_on"), ends_on=f.get("ends_on"), budget_hours=f.get("budget_hours")),
-        lambda r: f"Project: {r}")
+        ctx.conn, project_id, at=ctx.now, actor=ctx.user.id, **fields), lambda r: f"Project: {r}")
+
+
+def _phase_of(ctx, project_id, raw: str) -> int:
+    """A phase id from the form, proven to be on *this* project before anything
+    is done with it: the project is what the viewer was allowed to see."""
+    if not str(raw or "").isdigit():
+        raise projects.Refused("No such phase.")
+    row = ctx.conn.execute("SELECT project_id FROM project_phase WHERE phase_id = ?", (int(raw),)).fetchone()
+    if row is None or row["project_id"] != project_id:
+        raise projects.Refused("No such phase on this project.")
+    return int(raw)
+
+
+def update_phase(ctx, project_id):
+    f = ctx.request.form()
+
+    def go():
+        ph = _phase_of(ctx, project_id, f.get("phase_id", ""))
+        words = projects.update_phase(
+            ctx.conn, ph, at=ctx.now, actor=ctx.user.id, name=f.get("name"),
+            parent_id=int(f["parent_id"]) if f.get("parent_id", "").isdigit() else None,
+            starts_on=f.get("starts_on"), ends_on=f.get("ends_on"), budget_hours=f.get("budget_hours"))
+        if f.get("depends_on", "").isdigit():
+            projects.add_dependency(ctx.conn, ph, _phase_of(ctx, project_id, f["depends_on"]),
+                                    at=ctx.now, actor=ctx.user.id)
+            words = (words + "; " if words != "nothing changed" else "") + "predecessor added"
+        return words
+    return _try(ctx, project_id, go, lambda r: f"Phase: {r}")
+
+
+def remove_phase(ctx, project_id):
+    f = ctx.request.form()
+    return _try(ctx, project_id,
+                lambda: projects.remove_phase(ctx.conn, _phase_of(ctx, project_id, f.get("phase_id", "")),
+                                              at=ctx.now, actor=ctx.user.id),
+                lambda r: r)
+
+
+def move_phase(ctx, project_id):
+    f = ctx.request.form()
+    return _try(ctx, project_id,
+                lambda: projects.move_phase(ctx.conn, _phase_of(ctx, project_id, f.get("phase_id", "")),
+                                            -1 if f.get("dir") == "-1" else 1, at=ctx.now, actor=ctx.user.id),
+                lambda r: r)
+
+
+def unwait_phase(ctx, project_id):
+    f = ctx.request.form()
+
+    def go():
+        return projects.remove_dependency(ctx.conn, _phase_of(ctx, project_id, f.get("phase_id", "")),
+                                          _phase_of(ctx, project_id, f.get("depends_on", "")),
+                                          at=ctx.now, actor=ctx.user.id)
+    return _try(ctx, project_id, go, lambda r: r)
+
+
+def remove(ctx, project_id):
+    """Delete a project that carries nothing. `_try` would send the person back
+    to a page that no longer exists, so this one answers for itself."""
+    common.require_module(ctx, "PROJECTS", "WRITE")
+    _load(ctx, project_id)
+    try:
+        words = projects.remove(ctx.conn, project_id, at=ctx.now, actor=ctx.user.id)
+        ctx.conn.commit()
+    except projects.Refused as exc:
+        ctx.conn.rollback()
+        return _back(f"/project/{project_id}", err=str(exc))
+    return _back("/projects", msg=words)
+
+
+def unlink_finance(ctx, project_id):
+    f = ctx.request.form()
+    common.require_module(ctx, "FINANCE")
+    return _try(ctx, project_id, lambda: bizbox.unlink(
+        ctx.conn, "PROJECT", project_id, f.get("kind", ""), f.get("ext_ref", ""),
+        at=ctx.now, actor=ctx.user.id), lambda r: "Unlinked" if r else "nothing changed")
 
 
 def link_finance(ctx, project_id):

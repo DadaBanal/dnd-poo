@@ -47,7 +47,9 @@ with sync_playwright() as pw:
                              ("Service_Desk", "d-fields", "Changing the ticket's fields"),
                              ("Service_Desk", "d-layout", "Making the page yours"),
                              ("Time", "t-stopwatch", "The stopwatch"),
-                             ("Setup", "a-prio", "Priorities")):
+                             ("Setup", "a-prio", "Priorities"),
+                             ("Service_Desk", "d-name", "Naming another ticket"),
+                             ("Projects", "p-fix", "Correcting the plan")):
         page.goto(F.as_uri() + f"#/{slug}", wait_until="load")
         page.wait_for_timeout(500)
         sec = page.locator(f"#{slug}--{sid}")
@@ -77,6 +79,11 @@ with sync_playwright() as pw:
     for phrase in ("tick on the member", "last system administrator cannot be taken off",
                    "its own words to any one of its statuses", "address they wrote to"):
         note(phrase in abody, f"Setup says {phrase!r}")
+
+    page.goto(F.as_uri() + "#/Projects", wait_until="load"); page.wait_for_timeout(500)
+    pbody = page.locator('.guide[data-guide="Projects"]').inner_text()
+    for phrase in ("kept: 2 ticket(s) are on it", "cancelled", "hours are the record of work"):
+        note(phrase in pbody, f"Projects says {phrase!r}")
 
     page.goto(F.as_uri() + "#/Time", wait_until="load"); page.wait_for_timeout(500)
     tbody = page.locator('.guide[data-guide="Time"]').inner_text()

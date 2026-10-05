@@ -4,8 +4,17 @@ The reference PSA's project, kept to what a hospital IT team runs: a project
 has phases (a work breakdown that may nest), phases may wait on others
 (predecessors), and tickets are the work. A ticket is linked to one project and
 optionally one phase; its time entries are the project's actual hours, so
-budget against actual needs nobody to type a number twice. Nothing is deleted:
-a project is cancelled or done, a phase is done.
+budget against actual needs nobody to type a number twice.
+
+**What may be unmade.** Dada, 5 Oct 2026: *"for projects they cant be deleted
+edited any elements for the project cant do that"*. Work that happened is
+history and is never deleted -- a project is cancelled or done, a phase is
+done, and a phase with tickets or hours against it keeps them. But a *mistake*
+is not history. A phase added with a typo, a predecessor pointing the wrong
+way, a ticket linked to the wrong project: those could not be undone at all,
+which made the plan a thing you got right first time or lived with. So
+everything here can now be edited, and anything carrying no work can be
+removed, each through an audited function that says what it refused and why.
 """
 from __future__ import annotations
 
@@ -124,6 +133,42 @@ def update(conn, project_id: str, *, at: datetime, actor: str, **fields) -> str:
     return words
 
 
+def project_work(conn, project_id: str) -> dict:
+    """What a project is carrying. The page shows these, and `remove` refuses on
+    them, so a button is never offered that cannot work."""
+    if get(conn, project_id) is None:
+        raise Refused("No such project.")
+    from . import bizbox
+    return {
+        "phases": conn.execute("SELECT COUNT(*) FROM project_phase WHERE project_id = ?",
+                               (project_id,)).fetchone()[0],
+        "tickets": conn.execute("SELECT COUNT(*) FROM project_ticket WHERE project_id = ?",
+                                (project_id,)).fetchone()[0],
+        "finance": len(bizbox.links(conn, "PROJECT", project_id)),
+    }
+
+
+def remove(conn, project_id: str, *, at: datetime, actor: str) -> str:
+    """Take a project off the list entirely. Only one that never got going:
+    no phases, no tickets, no BizBox record. A project with any of those is a
+    record of work and is **cancelled**, not deleted -- its tickets keep their
+    history and their hours. This exists for the project created by mistake,
+    or twice, which until now stayed on the list for ever."""
+    row = get(conn, project_id)
+    if row is None:
+        raise Refused("No such project.")
+    w = project_work(conn, project_id)
+    held = [f"{w[k]} {word}" for k, word in (("phases", "phase(s)"), ("tickets", "ticket(s)"),
+                                             ("finance", "BizBox record(s)")) if w[k]]
+    if held:
+        raise Refused(f"{row['name']} has {', '.join(held)}. A project with work on it is cancelled, "
+                      "not deleted, so its tickets keep their hours and their history: set its status to "
+                      "Cancelled instead. To delete it, take those off it first.")
+    conn.execute("DELETE FROM project WHERE project_id = ?", (project_id,))
+    _audit(conn, at, actor, project_id, f"project removed: {row['name']} (it carried no phase, ticket or record)")
+    return f"Project {row['name']} removed"
+
+
 def _board_clause(boards) -> tuple[str, list]:
     """Limit a project's ticket figures to the boards the viewer may see, so a
     restricted board's tickets do not show through a project's count or hours."""
@@ -193,6 +238,134 @@ def phases(conn, project_id: str, *, boards=None) -> list[dict]:
     return out
 
 
+def _phase(conn, phase_id: int):
+    return conn.execute("SELECT * FROM project_phase WHERE phase_id = ?", (phase_id,)).fetchone()
+
+
+def _descendants(conn, phase_id: int) -> set[int]:
+    """Every phase under this one, however deep. Used to refuse a move that
+    would put a phase inside itself, which would strand the whole subtree."""
+    out, todo = set(), [phase_id]
+    while todo:
+        cur = todo.pop()
+        for (kid,) in conn.execute("SELECT phase_id FROM project_phase WHERE parent_id = ?", (cur,)):
+            if kid not in out:
+                out.add(kid)
+                todo.append(kid)
+    return out
+
+
+def update_phase(conn, phase_id: int, *, at: datetime, actor: str, **fields) -> str:
+    """Edit a phase: its name, its dates, its budget, or where it sits in the
+    breakdown. Checks everything before it writes, so a refused edit leaves the
+    phase exactly as it was."""
+    row = _phase(conn, phase_id)
+    if row is None:
+        raise Refused("No such phase.")
+    new = {}
+    if "name" in fields:
+        new["name"] = " ".join((fields["name"] or "").split())[:200]
+        if not new["name"]:
+            raise Refused("A phase needs a name.")
+    if "starts_on" in fields:
+        new["starts_on"] = _day(fields["starts_on"], "Start")
+    if "ends_on" in fields:
+        new["ends_on"] = _day(fields["ends_on"], "End")
+    if "budget_hours" in fields:
+        new["budget_hours"] = _hours(fields["budget_hours"])
+    if "parent_id" in fields:
+        parent = fields["parent_id"]
+        if parent is not None:
+            parent = int(parent)
+            if parent == phase_id:
+                raise Refused("A phase cannot sit inside itself.")
+            up = _phase(conn, parent)
+            if up is None or up["project_id"] != row["project_id"]:
+                raise Refused("The parent phase is not on this project.")
+            if parent in _descendants(conn, phase_id):
+                raise Refused(f"{up['name']} is already inside {row['name']}; that would be a loop.")
+        new["parent_id"] = parent
+    s = new.get("starts_on", row["starts_on"])
+    e = new.get("ends_on", row["ends_on"])
+    if s and e and e < s:
+        raise Refused("A phase ends after it starts.")
+    changed = {k: v for k, v in new.items() if v != row[k]}
+    if not changed:
+        return "nothing changed"
+    conn.execute(f"UPDATE project_phase SET {', '.join(k + ' = ?' for k in changed)} WHERE phase_id = ?",
+                 [*changed.values(), phase_id])
+    words = "; ".join(f"{k} {row[k] if row[k] is not None else '-'} -> {v if v is not None else '-'}"
+                      for k, v in changed.items())
+    _audit(conn, at, actor, row["project_id"], f"phase {row['name']}: {words}")
+    return words
+
+
+def phase_work(conn, phase_id: int) -> dict:
+    """What a phase is carrying: child phases, tickets, booked hours, and the
+    phases waiting on it. `remove_phase` refuses on any of it, and the page
+    shows the same numbers so nobody presses a button that cannot work."""
+    row = _phase(conn, phase_id)
+    if row is None:
+        raise Refused("No such phase.")
+    kids = conn.execute("SELECT COUNT(*) FROM project_phase WHERE parent_id = ?", (phase_id,)).fetchone()[0]
+    tks = conn.execute("SELECT COUNT(*) FROM project_ticket WHERE phase_id = ?", (phase_id,)).fetchone()[0]
+    hours = conn.execute(
+        f"SELECT COALESCE(SUM({_entry_hours()}), 0) FROM time_entry te JOIN project_ticket pt"
+        "  ON pt.work_item_id = te.work_item_id WHERE pt.phase_id = ?", (phase_id,)).fetchone()[0]
+    blocks = [r[0] for r in conn.execute(
+        "SELECT p.name FROM phase_dependency d JOIN project_phase p ON p.phase_id = d.phase_id"
+        " WHERE d.depends_on = ?", (phase_id,))]
+    return {"children": kids, "tickets": tks, "hours": round(float(hours or 0), 2), "blocks": blocks}
+
+
+def remove_phase(conn, phase_id: int, *, at: datetime, actor: str) -> str:
+    """Take a phase off the plan. Only one carrying no work: a phase with
+    tickets or booked hours is a record of what was done, and deleting it would
+    silently take their phase off those tickets. Say so instead."""
+    row = _phase(conn, phase_id)
+    if row is None:
+        raise Refused("No such phase.")
+    w = phase_work(conn, phase_id)
+    if w["children"]:
+        raise Refused(f"{row['name']} has {w['children']} phase(s) inside it. Remove or move those first.")
+    if w["tickets"]:
+        raise Refused(f"{w['tickets']} ticket(s) are on {row['name']}. Move them to another phase "
+                      "(or to no phase) first; removing it would take their phase off them silently.")
+    if w["hours"]:
+        raise Refused(f"{w['hours']:g} hours are booked against {row['name']}. Hours are a record of work "
+                      "done and are not deleted; mark the phase done instead.")
+    # Its own predecessors go with it, and so do the pointers at it, which is
+    # the whole reason a wrong "waits on" was unfixable before.
+    conn.execute("DELETE FROM phase_dependency WHERE phase_id = ? OR depends_on = ?", (phase_id, phase_id))
+    conn.execute("DELETE FROM project_phase WHERE phase_id = ?", (phase_id,))
+    freed = (", and " + ", ".join(w["blocks"]) + " no longer waits on it") if w["blocks"] else ""
+    _audit(conn, at, actor, row["project_id"], f"phase removed: {row['name']}{freed}")
+    return f"Phase {row['name']} removed{freed}"
+
+
+def move_phase(conn, phase_id: int, direction: int, *, at: datetime, actor: str) -> str:
+    """Up or down among its own brothers and sisters. `sort_order` existed from
+    the start and nothing could change it, so the order phases were typed in was
+    the order they stayed in."""
+    row = _phase(conn, phase_id)
+    if row is None:
+        raise Refused("No such phase.")
+    where = "parent_id IS ?" if row["parent_id"] is None else "parent_id = ?"
+    sibs = conn.execute(f"SELECT phase_id, name FROM project_phase WHERE project_id = ? AND {where}"
+                        " ORDER BY sort_order, phase_id", (row["project_id"], row["parent_id"])).fetchall()
+    ids = [r["phase_id"] for r in sibs]
+    i = ids.index(phase_id)
+    j = i + (-1 if direction < 0 else 1)
+    if j < 0 or j >= len(ids):
+        return "nothing changed"
+    ids[i], ids[j] = ids[j], ids[i]
+    for order, pid in enumerate(ids, start=1):
+        conn.execute("UPDATE project_phase SET sort_order = ? WHERE phase_id = ?", (order * 10, pid))
+    _audit(conn, at, actor, row["project_id"],
+           f"phase {row['name']} moved {'up' if direction < 0 else 'down'}")
+    return f"{row['name']} moved {'up' if direction < 0 else 'down'}"
+
+
 def set_phase_status(conn, phase_id: int, done: bool, *, at: datetime, actor: str) -> None:
     row = conn.execute("SELECT project_id, name FROM project_phase WHERE phase_id = ?", (phase_id,)).fetchone()
     if row is None:
@@ -229,6 +402,23 @@ def add_dependency(conn, phase_id: int, depends_on: int, *, at: datetime, actor:
         return
     conn.execute("INSERT INTO phase_dependency (phase_id, depends_on) VALUES (?,?)", (phase_id, depends_on))
     _audit(conn, at, actor, a[0], f"{a['name']} waits on {b['name']}")
+
+
+def remove_dependency(conn, phase_id: int, depends_on: int, *, at: datetime, actor: str) -> str:
+    """Stop a phase waiting on another. This one mattered most: a predecessor
+    set the wrong way round could not be undone, and `set_phase_status` refuses
+    to mark a phase done while something it waits on is open -- so one wrong
+    click left two phases that could never be finished."""
+    a = _phase(conn, phase_id)
+    b = _phase(conn, depends_on)
+    if a is None or b is None:
+        raise Refused("No such phase.")
+    gone = conn.execute("DELETE FROM phase_dependency WHERE phase_id = ? AND depends_on = ?",
+                        (phase_id, depends_on)).rowcount
+    if not gone:
+        return "nothing changed"
+    _audit(conn, at, actor, a["project_id"], f"{a['name']} no longer waits on {b['name']}")
+    return f"{a['name']} no longer waits on {b['name']}"
 
 
 # ----------------------------------------------------------------- tickets

@@ -1125,7 +1125,7 @@ def _links_card(ctx, tk, *, can_work: bool) -> str:
                 ("RELATED", "Related to")]
         add = (f"<form method=post action='/ticket/{wid}/link' class=row style='margin-top:8px'>"
                f"<div><select name=relation>{_options(rels, 'CAUSED_BY')}</select></div>"
-               "<div><input name=linked_id placeholder='PMC-000123' required></div>"
+               f"<div>{t.ticket_pick('linked_id', 'Search a ticket, or type its number', required=True, exclude=wid)}</div>"
                "<div style='flex:0 0 auto'><button class=ghost type=submit>Link</button></div></form>")
     body = (f"<ul class=plain>{''.join(items)}</ul>" if items else "<div class=muted>No links.</div>")
     if hidden:
@@ -1176,18 +1176,18 @@ def _family_card(ctx, tk, *, can_work: bool) -> str:
         body += f"<p class=why>{hidden} more not listed here: on a restricted board, or one you are not on. Open them from that board.</p>"
     if can_work and not tk["closed_at"]:
         forms = (f"<form method=post action='/ticket/{wid}/child/add' class=row style='margin-top:8px'>"
-                 "<div><input name=child_id placeholder='Attach a child: PMC-000123' required></div>"
+                 f"<div>{t.ticket_pick('child_id', 'Attach a child: search or type a number', required=True, exclude=wid)}</div>"
                  "<div style='flex:0 0 auto'><button class=ghost type=submit>" + t.icon("plus")
                  + " Attach</button></div></form>")
         if not kids:
             forms += (f"<form method=post action='/ticket/{wid}/parent/set' class=row style='margin-top:6px'>"
-                      "<div><input name=parent_id placeholder='Make this a child of: PMC-000123' required></div>"
+                      f"<div>{t.ticket_pick('parent_id', 'Make this a child of: search or type a number', required=True, exclude=wid)}</div>"
                       "<div style='flex:0 0 auto'><button class=ghost type=submit>" + t.icon("arrow")
                       + " Attach</button></div></form>")
     if can_work and not tk["closed_at"] and not tk["merged_into"]:
         forms += (f"<form method=post action='/ticket/{wid}/merge' class=row style='margin-top:10px;"
                   "padding-top:10px;border-top:1px solid var(--line)'>"
-                  "<div><input name=into placeholder='Duplicate? Merge into: PMC-000123' required></div>"
+                  f"<div>{t.ticket_pick('into', 'Duplicate? Merge into: search or type a number', required=True, exclude=wid)}</div>"
                   "<div style='flex:0 0 auto'><button class=ghost type=submit>" + t.icon("layers")
                   + " Merge</button></div>"
                   "<p class=why style='flex-basis:100%;margin:0'>This ticket closes; its notes, files and "

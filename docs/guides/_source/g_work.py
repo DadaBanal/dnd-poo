@@ -125,6 +125,29 @@ def proj_body():
           STEPS(["<b>Projects › New</b>: name, manager, dates, budget hours, board.", "<b>Add phases</b>, with the phases each waits on.", "<b>Link tickets</b> to the project and a phase.", "<b>Close phases</b> as they finish; link BizBox records on the Finance card."]),
           FIG("projects", "Projects: each with its manager, dates and budget against actual."),
           who=["Projects: Write to change", "Read to look"]),
+        S("p-fix", "Projects", "Correcting the plan",
+          LEAD("A plan is written before the work, so it is written wrong sometimes. Everything on a project can be edited, and anything "
+               "carrying no work can be taken off."),
+          TABLE(["To", "Do this"],
+                [["Rename a phase, or change its dates or budget", "<b>Edit</b> on its row. The form opens under the table with that phase\u2019s values in it."],
+                 ["Move a phase inside another, or back to the top", "The same Edit form: <b>Inside</b>. A phase cannot be put inside itself or inside one of its own."],
+                 ["Change the order", "The <b>\u2191</b> and <b>\u2193</b> on its row, among its own brothers and sisters."],
+                 ["Stop a phase waiting on another", "The <b>\u00d7</b> on the <i>waits on</i> chip."],
+                 ["Take a phase off the plan", "<b>Remove</b> on its row \u2014 only if it carries nothing."],
+                 ["Take a ticket off the project", "<b>Unlink</b> on its row in the Tickets card."],
+                 ["Rename the project, or write its description", "The fields in <b>The project itself</b>."],
+                 ["Get rid of a project entirely", "<b>Remove this project</b>, if it never got going. Otherwise set its status to <b>Cancelled</b>."]]),
+          NOTE("warn", "<b>A predecessor set the wrong way round is worth fixing straight away.</b> A phase cannot be marked Done while something it "
+                       "waits on is still open, so if B waits on C by mistake, neither can be finished until you take the chip off."),
+          H("What will not be removed, and why"),
+          UL(["<b>A phase with child phases</b> \u2014 move or remove those first, or the whole branch under it would go with it.",
+              "<b>A phase with tickets on it</b> \u2014 removing it would quietly take their phase off them. Move them to another phase, or to no phase, first.",
+              "<b>A phase with hours booked against it</b> \u2014 hours are the record of work that was done, and are never deleted. Mark the phase <b>Done</b>.",
+              "<b>A project with any phase, ticket or BizBox record</b> \u2014 it is <b>cancelled</b>, not deleted, so its tickets keep their hours and their "
+              "history. The page says which of the three is holding it."]),
+          NOTE("info", "The row tells you before you click: a phase that cannot be removed shows <b>kept: 2 ticket(s) are on it</b> where the Remove button "
+                       "would be. And every edit and every removal is on the audit trail \u2014 taking something off is a line in the record, not a silence."),
+          who=["Project managers", "Technicians"]),
         S("p-quiz", "Reference", "Check yourself", QUIZ()),
     ])
 
