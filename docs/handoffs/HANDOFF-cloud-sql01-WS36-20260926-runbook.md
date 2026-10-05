@@ -2629,3 +2629,15 @@ Ran WS36's 5 Oct handoff (`HANDOFF-cloud-sql01-WS36-20261005-email-html.md`). Re
 3. **Nothing from §3's "must never appear" list appeared.** Nothing escalated.
 
 Per handoff §2, mail already imported was **not** re-rendered (that is Dada's separate call, not an operational step). The browser read of a live ward email rendering as the sender wrote it stays Dada's eyeball (behind the Windows sign-in).
+
+### Part 35: 2026-10-05, ~11:35 +08:00. **procurement@pmcne.ph is the Procurement board's intake, LIVE — tickets PMC-000274/275 prove it.** MEASURED, with one bridge still to remove.
+
+Dada, 5 Oct: "change the procurement department intake to procurement@pmcne.ph", then "grant the procurement members access … and convert to shared". The pieces, in the order they went in:
+
+1. **Desk claim (data, audited):** PROCUREMENT claims `procurement@pmcne.ph` via `intake.set_addresses` as `psa_desk`. Claims now: help@/helpdesk@→UNROUTED, support@→IT_HELP, procurement@→PROCUREMENT.
+2. **Exchange (Dada, interactive):** `Set-ManagementScope 'PSA desk mailboxes'` widened to the three addresses; shared mailbox **created** (`New-Mailbox -Shared` — the first grant loop proved it had not existed: every `Add-MailboxPermission` answered "object couldn't be found"); the 14 Procurement board members granted FullAccess + SendAs.
+3. **The 403 that would not clear, pinned with a control:** `Test-ServicePrincipalAuthorization` said InScope True for Mail.Read/Mail.Send, yet Graph answered **403 ErrorAccessDenied** on procurement@ while **helpdesk@ answered 200 on the same token in the same minute**; no ApplicationAccessPolicy exists; helpdesk/support kept passing under the replaced filter. So: Exchange's data plane lagging its own management plane for a brand-new mailbox — real, not misconfiguration, and not forceable from the host.
+4. **`Register-PsaMail.ps1` grew two switches** (committed): `-IncludeProcurement` (the task, mirroring support@: `-Mailbox procurement@pmcne.ph -BoardId PROCUREMENT`) and `-KeepOnForbidden` (a first pass whose only failure is 403 is KEPT, fails quietly each minute, and comes alive when the grant lands — off by default, so a genuinely broken task is still removed). Dada registered with both: task in place, waiting.
+5. **The bridge (Dada's call, after the trade-offs were laid out):** `Set-Mailbox procurement@ -DeliverToMailboxAndForward $true -ForwardingAddress helpdesk@` — routing is per-message by the To: header against the claims, so bridged mail lands on PROCUREMENT and helpdesk's own routing is untouched. **Within minutes: PMC-000274 (thobie.delacruz) and PMC-000275 (pmo-vc02) on PROCUREMENT** — the two test emails, requesters correct. Procurement intake is live.
+
+**Open:** when the direct grant lands (the kept task's result flips to 0), Dada removes the bridge: `Set-Mailbox procurement@ -ForwardingAddress $null -DeliverToMailboxAndForward $false`. Message-ID keying makes the overlap safe. Also still open from earlier: whether Procurement replies should send **from** procurement@ (PSA-Notify change), and WS36's `-Since` default.
