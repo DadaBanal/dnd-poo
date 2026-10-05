@@ -2641,3 +2641,14 @@ Dada, 5 Oct: "change the procurement department intake to procurement@pmcne.ph",
 5. **The bridge (Dada's call, after the trade-offs were laid out):** `Set-Mailbox procurement@ -DeliverToMailboxAndForward $true -ForwardingAddress helpdesk@` — routing is per-message by the To: header against the claims, so bridged mail lands on PROCUREMENT and helpdesk's own routing is untouched. **Within minutes: PMC-000274 (thobie.delacruz) and PMC-000275 (pmo-vc02) on PROCUREMENT** — the two test emails, requesters correct. Procurement intake is live.
 
 **Open:** when the direct grant lands (the kept task's result flips to 0), Dada removes the bridge: `Set-Mailbox procurement@ -ForwardingAddress $null -DeliverToMailboxAndForward $false`. Message-ID keying makes the overlap safe. Also still open from earlier: whether Procurement replies should send **from** procurement@ (PSA-Notify change), and WS36's `-Since` default.
+
+### Part 36: 2026-10-05, ~15:40 +08:00. **721fed3 live; PSA-Desk restarted (pickers + editable projects). Restart only, no schema. §3 query cost baselined.** MEASURED.
+
+Ran WS36's second 5 Oct handoff (`HANDOFF-cloud-sql01-WS36-20261005-pickers-and-projects.md`): the nine ticket-number fields are now search-box pickers off `/search.json`, and a project's plan is editable. Code only; drift gate green; no backup taken (none needed — no DDL, no row rewrite).
+
+1. **Restarted onto 721fed3** (WS36's handoff commit on b16f7e5 = f0f5860 merged onto my 11d6496): `:8085` **401 → down → 401 in 2s**, PSA-Desk Running.
+2. **§3's query cost, baselined on the host** (the one thing WS36 said only the host can measure). The note-search clause `LOWER(ticket_event.detail) LIKE ?` has no index it can use. At the current scale — **146 tickets, 1,691 `ticket_event` rows** — the worst case (a term matching nothing, so every row is scanned) is **~37 ms**, and a normal match ~17–29 ms, all well under the picker's 140 ms debounce. So no full-text index is warranted yet; this is the number to watch as the desk grows.
+
+**Not checkable here:** §4's picker behaviour (the `datalist` filling as you type) is behind the desk's Windows sign-in — Dada's eyeball. If a picker's dropdown stays empty on two or more characters, that's the one thing to report (the fetch isn't reaching `/search.json`; the field falls back to a plain number box, so nothing breaks).
+
+**Carried open** (WS36 §6, unchanged): the full-text index (waits on the measurement above climbing), inline images from email (`content_id` column — a schema step), and re-rendering already-imported mail as HTML.
