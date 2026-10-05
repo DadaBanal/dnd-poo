@@ -14,6 +14,10 @@
       PSA-Mail-Support   the same for support@pmcne.ph. Registered ONLY with -IncludeSupport, which is for after
                          PCSD has stopped reading support@ (Dada, 1 Oct: "yes will stop pcsd"); before that, every
                          message to support@ would become two tickets, one in each system.
+      PSA-Mail-Procurement  the same for procurement@pmcne.ph -> the Procurement board. Registered ONLY with
+                         -IncludeProcurement, which is for after procurement@ exists as a shared mailbox and the
+                         app's "PSA desk mailboxes" scope has been widened to include it (Dada, 5 Oct 2026). Its
+                         first run 404s until that Exchange grant has propagated, so register it after it does.
       PSA-Calendar       Sync-PsaCalendars.ps1 -Apply (one pass): visits and tasks onto members' Outlook calendars,
                          their busy times back. Registered ONLY with -IncludeCalendar, which is for after Dada has
                          given the app Application Calendars.ReadWrite on the desk members' scope.
@@ -37,10 +41,11 @@
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Register-PsaMail.ps1
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Register-PsaMail.ps1 -Apply
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Register-PsaMail.ps1 -IncludeSupport -Apply
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Register-PsaMail.ps1 -IncludeProcurement -Apply
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Register-PsaMail.ps1 -Undo -Apply
 #>
 [CmdletBinding()]
-param([switch]$Apply, [switch]$Undo, [switch]$IncludeSupport, [switch]$IncludeCalendar,
+param([switch]$Apply, [switch]$Undo, [switch]$IncludeSupport, [switch]$IncludeCalendar, [switch]$IncludeProcurement,
       # The mail domains whose members have an Outlook calendar to sync. Named
       # once, here, so PSA-Calendar's own command carries them (Dada, 2 Oct
       # 2026: a member's mailbox on premieremedicalcenter.net). A mailbox on no
@@ -58,7 +63,7 @@ $CertFile = 'D:\psa\mail-cert.txt'
 $Logs     = 'D:\psa\logs'
 $LogFile  = $Logs + '\Register-PsaMail.log'
 $Db       = 'Driver={ODBC Driver 17 for SQL Server};Server=DND-SQL01\PMC_SS;Database=PMC_PSA;Trusted_Connection=yes;Encrypt=yes;TrustServerCertificate=yes'
-$AllTasks = @('PSA-Mail-Helpdesk', 'PSA-Mail-Support', 'PSA-Notify', 'PSA-Calendar')
+$AllTasks = @('PSA-Mail-Helpdesk', 'PSA-Mail-Support', 'PSA-Mail-Procurement', 'PSA-Notify', 'PSA-Calendar')
 
 function Write-Step([string]$Text) {
     $line = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '  ' + $Text
@@ -74,7 +79,8 @@ if (-not ([Security.Principal.WindowsPrincipal]$me).IsInRole([Security.Principal
 }
 if (-not (Test-Path $Logs)) { New-Item -ItemType Directory -Path $Logs | Out-Null }
 Write-Step ('start as ' + $me.Name + $(if ($Undo) { ' (-Undo)' } else { '' }) +
-    $(if ($IncludeSupport) { ' (-IncludeSupport)' } else { '' }) + $(if ($Apply) { ' (-Apply)' } else { ' (preview: nothing is changed)' }))
+    $(if ($IncludeSupport) { ' (-IncludeSupport)' } else { '' }) + $(if ($IncludeProcurement) { ' (-IncludeProcurement)' } else { '' }) +
+    $(if ($Apply) { ' (-Apply)' } else { ' (preview: nothing is changed)' }))
 
 if ($Undo) {
     foreach ($t in $AllTasks) {
@@ -103,6 +109,7 @@ if ($thumb -and -not (Test-Path ('Cert:\LocalMachine\My\' + $thumb))) { $fail +=
 # A task already registered is left exactly as it is, so -IncludeSupport later adds support@ alone.
 $want = @()
 foreach ($t in @('PSA-Mail-Helpdesk', 'PSA-Notify') + $(if ($IncludeSupport) { @('PSA-Mail-Support') } else { @() }) +
+                $(if ($IncludeProcurement) { @('PSA-Mail-Procurement') } else { @() }) +
                 $(if ($IncludeCalendar) { @('PSA-Calendar') } else { @() })) {
     if (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue) { Write-Step ('  ' + $t + ' is already registered: left as it is') }
     else { $want += $t }
@@ -126,6 +133,8 @@ $jobs = @{
                              Pass = 'new message\(s\)'; What = 'mail to helpdesk@ (and help@) becomes tickets on PMO Helpdesk' }
     'PSA-Mail-Support'  = @{ Script = $Pickup; Args = " -Mailbox 'support@pmcne.ph' -BoardId 'IT_HELP' -DropDir 'D:\psa\mail-drop'"
                              Pass = 'new message\(s\)'; What = 'mail to support@ becomes tickets on PMO Helpdesk' }
+    'PSA-Mail-Procurement' = @{ Script = $Pickup; Args = " -Mailbox 'procurement@pmcne.ph' -BoardId 'PROCUREMENT' -DropDir 'D:\psa\mail-drop'"
+                             Pass = 'new message\(s\)'; What = 'mail to procurement@ becomes tickets on Procurement' }
     'PSA-Calendar'      = @{ Script = $Calendar; Args = " -DeskUrl 'https://desk.pmcne.ph' -AllowedDomain " + (($CalendarDomain | ForEach-Object { "'" + $_ + "'" }) -join ',')
                              Pass = 'write\(s\) due: \d+ written'; What = "the desk's visits and tasks on members' Outlook calendars, and their busy times back" }
     'PSA-Notify'        = @{ Script = $Notifier; Args = " -Mailbox 'helpdesk@pmcne.ph' -SendAs 'support@pmcne.ph' -PortalUrl 'https://help.pmcne.ph' -AllowedDomain '*'"
