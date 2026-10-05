@@ -15,7 +15,8 @@ ROLES = {"Staff": "R T M A", "PMC_Requests": "R", "Service_Desk": "T M", "Dispat
          "Time": "T M", "Knowledge": "T M", "Companies_Configurations": "T M", "Projects": "M T", "Reports": "M", "Finance": "M",
          "Sales": "M", "Setup": "A"}
 import os
-OUT = pathlib.Path(os.environ.get("GUIDE_OUT", "/home/user/dnd-poo/docs/guides/PMC_Dada_PSA_Guides_20260930.html"))
+HERE = pathlib.Path("/home/user/dnd-poo/docs/guides")
+OUT = pathlib.Path(os.environ.get("GUIDE_OUT", str(HERE / f"PMC_Dada_PSA_Guides_{C.DATE}.html")))
 IMGDIR, IMGEXT, IMGMIME = os.environ.get("GUIDE_IMGDIR", "img"), os.environ.get("GUIDE_IMGEXT", "jpg"), os.environ.get("GUIDE_IMGMIME", "jpeg")
 
 shell = (S / "shell.html").read_text()
@@ -34,14 +35,31 @@ idx = pathlib.Path("/home/user/dnd-poo/apps/imaging-portal/src/index.html").read
 LOGO_FULL = re.search(r'<img class="full" src="(data:image/png;base64,[^"]+)"', idx).group(1)
 LOGO_MARK = re.search(r'<img class="mark" src="(data:image/png;base64,[^"]+)"', idx).group(1)
 
+# Where each tour's numbered hotspot sits on its screenshot, as a percentage of
+# the image. `spots.out.json` is the committed answer and is what builds here.
+#
+# It used to be computed from `boxes*.out.json` -- pixel boxes measured in the
+# scratchpad of the session that first built this -- and those files were never
+# committed, so for five days this directory could not build at all: the words
+# were in the repository and the inputs were not. The percentages are now the
+# source, extracted out of the 30 Sep build. The extraction was proven rather
+# than asserted: before any of this edition's words were written, this script
+# rebuilt that file from the extracted screenshots and percentages and the
+# result was byte for byte the same. It will not reproduce it now -- the words
+# have moved on -- so repeating that check means checking out the commit that
+# made the extraction. The pixel road is kept for the case where a screen is re-shot and its spots
+# must be measured again.
 H = {"board": 780, "ticket": 900, "portal": 780, "fin-procurement": 780, "fin-invoice": 900, "fin-agreement": 900, "dispatch": 900,
      "rule": 900, "time-approve": 780, "sales-quote": 1100, "project": 900}
-boxes = {}
-for f in ("boxes.out.json", "boxes2.out.json"):
-    boxes.update(json.loads((S / f).read_text()))
-boxes["dispatch"][2] = {"n": 3, "x": 860, "y": 236, "w": 170, "h": 36}
-SPOTS = {k: [{"n": b["n"], "x": round(100 * max(16, b["x"] + (0 if b["w"] < 200 else 14)) / 1280, 2),
-              "y": round(100 * max(16, b["y"]) / H[k], 2)} for b in v] for k, v in boxes.items()}
+if (S / "boxes.out.json").exists():
+    boxes = {}
+    for f in ("boxes.out.json", "boxes2.out.json"):
+        boxes.update(json.loads((S / f).read_text()))
+    boxes["dispatch"][2] = {"n": 3, "x": 860, "y": 236, "w": 170, "h": 36}
+    SPOTS = {k: [{"n": b["n"], "x": round(100 * max(16, b["x"] + (0 if b["w"] < 200 else 14)) / 1280, 2),
+                  "y": round(100 * max(16, b["y"]) / H[k], 2)} for b in v] for k, v in boxes.items()}
+else:
+    SPOTS = json.loads((S / "spots.out.json").read_text())
 TOURS = {}
 for g in C.GUIDES:
     TOURS.update(g.get("tours", {}))
@@ -54,8 +72,8 @@ for g in C.GUIDES:
     images |= C.USED | C.PICKS
     body = re.sub(r'src="%%(?:IMG|PICK):([a-z0-9-]+)%%"', r'data-img="\1"', body)
     body = re.sub(r'<section class="s" id="([\w-]+)"', lambda m: f'<section class="s" id="{g["slug"]}--{m.group(1)}"', body)
-    body = re.sub(r'href="PMC_Dada_PSA_(' + slugs + r')_Guide_20260930\.html#library"', 'href="#/"', body)
-    body = re.sub(r'href="PMC_Dada_PSA_(' + slugs + r')_Guide_20260930\.html"', r'href="#/\1"', body)
+    body = re.sub(r'href="PMC_Dada_PSA_(' + slugs + r')_Guide_' + C.DATE + r'\.html#library"', 'href="#/"', body)
+    body = re.sub(r'href="PMC_Dada_PSA_(' + slugs + r')_Guide_' + C.DATE + r'\.html"', r'href="#/\1"', body)
     if g["slug"] == "Staff":
         body = re.sub(r'<section class="s" id="Staff--library".*?</section>', "", body, flags=re.S)
         body = re.sub(r'<div class="pick"[\s\S]*?rules, email, audit\.</span></button></div>', "", body)
@@ -78,6 +96,15 @@ for name, members in GROUPS:
                   f'<span>{C.E(g["blurb"])}</span><em>For {C.E(g["for"])} · <span class="gcount"></span></em>'
                   f'<div class="bar gprog" style="height:6px;margin-top:8px"><i style="width:0"></i></div></a>')
     cards += "</div></div>"
+# This edition does not replace the one before it: the dated file stays where it
+# is, and the new one says so on its own front page. (The repository's rule:
+# never overwrite a dated document; supersede it and say so in the header.)
+SUPERSEDES = ('<div class="note info" style="margin-top:20px"><svg><use href="#i-info"/></svg><p>'
+              '<b>This is the 5 October 2026 edition.</b> It supersedes the 30 September 2026 edition, which is kept beside it and still '
+              'describes the desk as it was. What is different is listed under <b>What changed since 30 September</b> in the Staff guide \u2014 '
+              'read that first if you were trained on the earlier one. The screenshots here are still the 30 September set; where a picture and '
+              'the words disagree, the words are right.</p></div>')
+
 front = ('<div id="front"><div id="fronthome">'
          + C.HERO("Dada PSA, the PMC service desk", "Everything about the desk in one place. Start with the Staff guide, then open the guide for your work. "
                   "Every guide has tours of real screens, try-it tools that follow the desk's own rules, and a short check at the end.",
@@ -88,6 +115,7 @@ front = ('<div id="front"><div id="fronthome">'
            'What Dada PSA is, how to ask for help, how the desk works, and where everything is. About 20 minutes.</span>'
            '<em style="font-style:normal;font-size:12.5px;color:var(--text-3)"><span class="gcount"></span></em><div class="bar gprog" style="height:6px;margin-top:8px"><i style="width:0"></i></div></a>'
          + '<p style="margin:22px 0 0;color:var(--text-2)">Pick who you are in the bar at the top to show just your guides.</p>'
+         + (SUPERSEDES if C.DATE != C.PREV else "")
          + cards + '</div><div id="results"></div></div>')
 
 chips = ('<div class="roles" role="group" aria-label="Show guides for"><span>Show for</span>'
@@ -96,8 +124,11 @@ chips = ('<div class="roles" role="group" aria-label="Show guides for"><span>Sho
          '<button class="chip" data-role="A" aria-pressed="false">Administrators</button></div>')
 data = {"spots": SPOTS, "tours": TOURS, "quiz": quiz, "images": {n: f"data:image/{IMGMIME};base64," + base64.b64encode((S / IMGDIR / f"{n}.{IMGEXT}").read_bytes()).decode() for n in sorted(images)},
         "guides": [{"slug": g["slug"], "title": g["title"].replace(" (start here)", "")} for g in C.GUIDES]}
-foot = ("Dada PSA guides · Premiere Medical Center Nueva Ecija · Dada IT · 30 September 2026. Screens are from a demonstration desk with made-up staff, "
-        "tickets and supplier records; your boards, names and numbers will differ. SLA targets are set per board by its service manager.")
+FOOT_DATE = {"20260930": "30 September 2026", "20261005": "5 October 2026"}[C.DATE]
+foot = (f"Dada PSA guides · Premiere Medical Center Nueva Ecija · Dada IT · {FOOT_DATE}. Screens are from a demonstration desk with made-up staff, "
+        "tickets and supplier records; your boards, names and numbers will differ. SLA targets are set per board by its service manager."
+        + (" The screenshots are the 30 September set: the words are current to this edition's date, and \u2018What changed\u2019 in the "
+           "Staff guide lists the five screens that now look different from their picture." if C.DATE != "20260930" else ""))
 page = (shell.replace("%%TITLE%%", "Dada PSA guides").replace('data-guide="%%SLUG%%"', "")
         .replace("<b>%%RAIL_TITLE%%</b><span>%%RAIL_SUB%%</span>", '<b id="railTitle">Dada PSA guides</b><span id="railSub"></span>')
         .replace("%%TOC_TOP%%", "").replace("%%SEARCH_HINT%%", "Search every guide").replace("%%CHIPS%%", chips)

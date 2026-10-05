@@ -6,7 +6,8 @@ E = _h.escape
 USED = set()          # images referenced by the guide being built
 PICKS = set()         # images an image-picker needs in DATA.images
 
-DATE = "20260930"
+DATE = "20261005"      # the edition being built; see _source/README.md
+PREV = "20260930"      # the edition it supersedes
 GUIDES = []           # filled by the g_*.py modules: dicts with slug, file, title, ...
 
 

@@ -139,6 +139,12 @@ def setup_body():
           WIDGET("Try it: write the Opened email", '<div class="w-row" style="flex-direction:column;align-items:stretch"><label>Subject<input class="subj" type="text" value="{board} has your request"></label>'
                  '<label>Body<textarea class="body">Thank you. {board} has your request {ticket} and will update you on the portal. {summary}</textarea></label></div><div class="w-out out"></div>', "tpl"),
           P("Only <code>{ticket}</code>, <code>{board}</code>, <code>{actor}</code> and <code>{when}</code>. Remove <code>{summary}</code> above to see it save: a subject and a body leave the building."),
+          H("A different email per status"),
+          UL(["As well as the six standing emails, a board can give <b>its own words to any one of its statuses</b>: what the requester reads when a ticket "
+              "moves to <i>Waiting on Vendor</i> need not be what they read when it moves to <i>Scheduled</i>.",
+              "A status with no words of its own falls back to the board\u2019s standing <i>Updated</i> email, so there is never a status that says nothing.",
+              "<b>The reply-from address is the address they wrote to.</b> A board that claims both <code>helpdesk@</code> and <code>biomed@</code> answers each "
+              "requester from the one they used, so a reply threads where they expect it."]),
           who=["Board admins"]),
         S("a-assign", "Boards", "Auto-assign", WIDGET("Try it: who gets the next ticket?", assign, "assign"),
           UL(["A rule per Subtype › Item names the member; with no rule the mode decides.", "A ticket that arrives with an owner keeps it.", "A member who left the board, reads only, or was deactivated is never assigned.", "The owner is emailed when the board emails owners."]),
@@ -147,12 +153,27 @@ def setup_body():
           FIG("catalogue", "Setup › Catalogue: Type, Subtype and Item, which boards each pair belongs to, and approval."),
           UL(["<b>Load the Dada PSA template</b> adds the starter catalogue; it never overwrites.", "A pair can carry a priority floor and require approval.", "Retire rather than delete; tickets keep what they had."]),
           who=["System administrators"]),
+        S("a-prio", "Boards", "Priorities",
+          LEAD("Setup \u203a Priorities holds the four priorities: the name a badge shows, its colour, the order they sort in, and which one is the default."),
+          UL(["<b>The codes P1 to P4 are fixed</b> and cannot be renamed away, because every SLA target and every catalogue floor names them.",
+              "<b>The words and the colours are the hospital\u2019s.</b> Change <i>P1</i> to read <i>Critical</i> and every badge on every page follows.",
+              "Nobody types a priority when a ticket is raised \u2014 the two questions work it out. A technician may still set one by hand afterwards; the ticket "
+              "then records that it was overridden, with a reason if one was given. Setting it back to <i>from the two questions</i> hands it to the matrix again."]),
+          NOTE("info", "A desk that has not yet taken the priorities table reads the four defaults, so every page still opens; the page says so rather than "
+                       "looking empty."),
+          who=["System administrators"]),
         S("a-roles", "People", "Members and security roles",
           FIG("member", "A member's page: boards and access, role, capacity, and deactivate."),
           WIDGET("Try it: what each starter role opens", '<div class="w-row"><label>Role' + sel("x", [(k, k) for k in ROLES["roles"]]) + '</label></div><div class="out"></div>', "roles", ROLES),
           FIG("roles", "Setup › Security roles: each module at None, Read, Write or Admin; one default role."),
           NOTE("info", "A role never widens a board. Tickets are still governed by board membership, and a restricted board stays members-only."),
           UL(["<b>Deactivate</b> someone who has left: it takes them off every board and future rota slot, and says what it did.", "Each person's hours a week sets their utilisation."]),
+          H("Who is a system administrator"),
+          UL(["<b>It is a tick on the member\u2019s own page</b>, not a separate list kept somewhere else. One person, one record: the same page that holds "
+              "their boards, their role and their hours says whether they administer the desk.",
+              "It works the same whether they sign in with Windows or with a desk account \u2014 the answer comes from the member record either way.",
+              "<b>The last system administrator cannot be taken off.</b> Make somebody else one first; otherwise the desk could be left with nobody who can "
+              "undo it."]),
           who=["System administrators"]),
         S("a-dept", "People", "Departments",
           FIG("departments", "Setup › Departments: which boards each department may raise to, and its approver."),
@@ -173,7 +194,7 @@ def setup_body():
           who=["Board admins"]),
         S("a-int", "Connections", "Integrations, email, audit and tokens",
           IMGPICK([("integrations", "Integrations", "Links out (remote control) and Teams channels."),
-                   ("mail", "Email connector", "Board addresses, exclusions, the last week's mail."),
+                   ("mail", "Email connector", "The addresses each board claims (a board may claim several, and an address belongs to exactly one board), excluded senders and domains, the last week's mail and whether it became tickets."),
                    ("audit", "Audit", "Every change: who, when, what, where from. Filter and export."),
                    ("tokens", "API tokens", "One board and one scope each; shown once."),
                    ("config-types", "Configuration types", "Types and statuses, and each type's questions."),

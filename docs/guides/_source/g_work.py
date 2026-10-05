@@ -16,11 +16,29 @@ def sched_body():
           who=["Technicians"]),
         S("sc-week", "The week", "Schedule",
           FIG("schedule", "Schedule: each person's week, with visits, time off and meetings; the word under a name comes from In / out."),
-          UL(["<b>Book a visit</b> from the ticket's Schedule card or the form under the week.", "<b>Time off, a meeting or an activity</b> goes in the same week so nobody books you then.",
+          UL(["<b>Book a visit</b> from the ticket's Schedule card, by clicking the hour in the week, or from the form under the week.",
+              "<b>Time off, a meeting or an activity</b> goes in the same week so nobody books you then.",
               "<b>Only me</b> shows your own row; the board filter narrows the people.", "Every visit change is a ticket event; every block is audited."]),
+          H("Clicking and dragging the week"),
+          UL(["<b>Click an empty hour</b> and choose what to put there: a visit on a ticket, time off or a block, or a brand-new ticket booked at that hour "
+              "in one go.",
+              "<b>Drag a visit</b> to another hour, another person or another day and it keeps its length. A clash is refused with its reason, exactly as the "
+              "form refuses it \u2014 dragging is a shortcut to the same rules, never a way round them.",
+              "The <b>Calendar</b> and the <b>Dispatch</b> day drag the same way.",
+              "<b>Time off is never overridden</b>, with or without <i>Allow a double booking</i>.",
+              "The week does not need reloading: a visit a colleague books while you are looking at it appears on its own."]),
+          NOTE("info", "<b>When you book a visit for yourself on a ticket nobody owns, the ticket becomes yours.</b> The desk takes booking yourself to work on "
+                       "something as taking it on."),
           who=["Technicians", "Dispatchers"]),
         S("sc-cal", "The week", "Your calendar, and on your phone",
           FIG("calendar-month", "Calendar by month: visits, time off, meetings and on-call shifts."),
+          H("What an appointment says in Outlook"),
+          TABLE(["Part of the appointment", "What it carries"],
+                [["Subject", "The ticket number, the company and the summary \u2014 <i>PMC-000123 \u2013 Ward 3 \u2013 Teams phone not ringing</i>."],
+                 ["Body", "The summary, the status, where the visit is, and a link to the ticket on the desk."],
+                 ["Never", "A note from the ticket. Notes stay on the desk."]]),
+          NOTE("good", "<b>A visit on a restricted board, or one whose summary the patient-details check flags, goes to Outlook by its ticket number and board "
+                       "alone.</b> A calendar syncs to phones and watches, so nothing about a patient is allowed to travel with it."),
           STEPS(["Open <b>My profile</b> from your name.", "Press <b>Make a feed address</b> and copy it.", "Add it to your phone's calendar as a subscribed calendar. It names tickets and places, never what a ticket says. A new address stops the old one."]),
           who=["Everyone on the desk"]),
         S("sc-inout", "The week", "In / out",
@@ -46,6 +64,21 @@ def time_body():
     return "".join([
         HERO("Time and timesheets", "Recording time on tickets as the reference PSA does, submitting your week, approving others', and utilisation.",
              ["For everyone who records time, and approvers", "Timesheets module", "About 10 minutes"], "green"),
+        S("t-stopwatch", "Recording time", "The stopwatch",
+          LEAD("If you would rather not watch the clock yourself, the ticket will. The Time card has Start, Pause, Resume and Stop."),
+          STEPS(["Press <b>Start</b> on the ticket you are about to work on. The card shows a clock counting up, and keeps counting if you close the tab.",
+                 "<b>Pause</b> when you are pulled away; <b>Resume</b> when you are back. Only the time it was actually running counts.",
+                 "Press <b>Stop</b>. The Add time form opens with the Start and End already filled in from what the stopwatch measured.",
+                 "Check it, add the work role, work type and bill option, and save it as any other entry. <b>The stopwatch is evidence; the entry is the claim</b> "
+                 "\u2014 you can correct every field before saving."]),
+          UL(["The measured time is rounded <b>up</b> to the quarter hour, so a run of sixteen minutes costs the quarter hour it ran into.",
+              "A timer belongs to the person who started it. Nobody else can pause, stop or see the inside of yours.",
+              "<b>One timer per person per ticket</b> \u2014 two would double-count the same hour. Nothing stops you running timers on three different tickets "
+              "at once, which is what carrying three jobs looks like.",
+              "<b>Discard</b> throws the run away and records nothing."]),
+          NOTE("warn", "<b>The stopwatch is not the SLA clock.</b> The clocks across the top of the ticket measure how long the <i>requester</i> has been waiting, "
+                       "and they run whether or not anybody has a stopwatch going. Starting or stopping a stopwatch never touches them."),
+          who=["Everyone who records time"]),
         S("t-entry", "Recording time", "A time entry",
           LEAD("Time goes on the ticket it was spent on, from the ticket's Time card: a start and an end, or the actual hours, less any deduction."),
           WIDGET("Try it: what the desk records", '<div class="w-row"><label>Start<input class="start" type="time" value="09:10"></label><label>End<input class="end" type="time" value="11:25"></label>'

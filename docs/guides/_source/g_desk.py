@@ -36,6 +36,15 @@ def desk_body():
         S("d-board", "Boards", "The Service Board",
           LEAD("Every open ticket on your boards, worst clock first."),
           TOUR("board"),
+          H("Who owns it, and who is on it"),
+          UL(["<b>A ticket starts with nobody owning it.</b> Someone takes it, or a dispatcher gives it out \u2014 it is never quietly assigned to whoever "
+              "happened to look at it.",
+              "The <b>owner</b> is the one person answerable for it. Take it with the owner dropdown on the ticket (you are first in the list), with "
+              "<b>Assign me</b>, or with the board's bulk owner for a batch of rows.",
+              "The <b>resources</b> are everyone with a visit booked on it, shown beside the owner on the ticket and on the board. "
+              "<b>Schedule me</b> books you a visit \u2014 and if nobody owns the ticket yet, it becomes yours at the same time.",
+              "<b>The summary can be edited</b>: the pencil beside it. It is checked for patient details like a new ticket, written to the history, and any "
+              "Outlook appointment already made for the ticket is rewritten to match."]),
           H("Everyday moves"),
           UL(["<b>Filter</b> by board, status, owner, priority, type, source and words; <b>save the view</b> under a name for tomorrow.",
               "<b>Tick rows</b> to change status, owner or board together, or attach them to a parent ticket.",
@@ -55,13 +64,15 @@ def desk_body():
           NOTE("info", "The starter targets are placeholders: P1 respond 15 minutes, plan 1 hour, resolve 4 hours; P4 respond 8 hours, plan 1 day, resolve 3 days. Each board's service manager sets its own on the SLA tab."),
           who=["Technicians", "Service managers"]),
         S("d-ticket", "Tickets", "The ticket page",
-          LEAD("One page: the clocks across the top, the activity on the left, and cards on the right you can reorder, fold, and move between columns."),
+          LEAD("One page: the clocks across the top, the activity on the left, and cards on the right you can reorder, fold, resize and move between columns."),
           TOUR("ticket"),
           FIG("ticket-full", "The whole ticket page, with every card."),
+          NOTE("info", "The page is wider than this picture shows, and the Ticket card now says <b>Ticket type</b> where it used to say Type. "
+                       "See <b>What changed</b> in the Staff guide."),
           H("The cards"),
           TABLE(["Card", "What you do there"],
-                [["Ticket", "Board, status, owner, company, contact, type and Subtype › Item, and the two priority questions."],
-                 ["Time", "Record time: start and end or hours, a deduction, the work role and type, the bill option and the charge method."],
+                [["Ticket", "Board, status, owner, company, contact, <b>Ticket type</b>, the Type › Subtype › Item pickers, and the two priority questions."],
+                 ["Time", "Record time: start and end or hours, a deduction, the work role and type, the bill option and the charge method. The <b>stopwatch</b> lives here too."],
                  ["Tasks", "A checklist; ticking records who and when. A template can add tasks."],
                  ["Schedule", "Book a visit for yourself or a colleague: status, where, lead, done, acknowledged."],
                  ["Family", "Attach child tickets, or merge a duplicate into this one."],
@@ -71,11 +82,55 @@ def desk_body():
                  ["Finance", "BizBox records the ticket concerns."],
                  ["Approvals", "Ask a person to approve before the work is done."]]),
           who=["Technicians"]),
+        S("d-fields", "Tickets", "Changing the ticket's fields",
+          LEAD("Everything on the Ticket card is one form with one Save, and the desk tells you when there is something unsaved."),
+          H("Ticket type, and Type \u203a Subtype \u203a Item"),
+          P("Two different things used to both be called <b>Type</b>, which is why the first is now labelled <b>Ticket type</b>:"),
+          TABLE(["Field", "What it is", "What it decides"],
+                [["<b>Ticket type</b>", "Incident, Request, Problem or Event \u2014 what kind of record this is.",
+                  "Which boards will take it, and whether it behaves as a break-fix or as a request."],
+                 ["<b>Type \u203a Subtype \u203a Item</b>", "Where in the service catalogue the work sits, e.g. Clinical apps \u203a HIS \u203a Not working.",
+                  "Reporting, the knowledge articles offered, and any priority floor the item carries."]]),
+          P("The catalogue is now <b>three dropdowns that narrow each other</b>. Pick a Type and Subtype fills with that family only; pick a Subtype and Item "
+            "narrows again. You can still go straight to Item and leave the two above it alone \u2014 picking an Item on its own works exactly as it did, and the "
+            "two above it fill themselves in to match."),
+          NOTE("good", "A browser with no scripting shows the single grouped Item list instead, so the ticket is never unusable."),
+          H("One Save, always reachable"),
+          UL(["Change anything on the card and a bar appears at the foot of the window: <b>\u201c2 changes not saved\u201d</b>, with <b>Save</b> and <b>Discard</b>.",
+              "It follows the page, so Save is reachable from the top of a long ticket \u2014 you no longer scroll to the bottom of the card to find it.",
+              "It counts only what you actually changed. Put a dropdown back to where it was and the count goes down again.",
+              "<b>Discard</b> puts every field back to what is stored. Nothing is saved until you press Save."]),
+          NOTE("info", "The <b>priority</b> can also be set by hand, with a reason if you want to give one. The ticket then says the priority was overridden "
+                       "rather than worked out; set it back to <i>From the two questions</i> and the matrix takes over again."),
+          who=["Technicians"]),
+        S("d-layout", "Tickets", "Making the page yours",
+          LEAD("The cards sit still until you say otherwise. Your arrangement is remembered in your browser, per person."),
+          STEPS(["Press <b>Edit layout</b> (the grip button beside the gear). Each card outlines and its controls appear; a bar sits at the foot of the page.",
+                 "<b>Fold</b> a card you rarely use, or <b>Size</b> it: Full, Medium, Half or Small, in a cycle. Two Half cards sit side by side.",
+                 "<b>Move</b> it with the arrows, or drag it \u2014 including into the other column. Make an activity card <b>taller</b> or shorter.",
+                 "Press <b>Done</b> or <kbd>Esc</kbd>. The cards sit still again and the words in them select and copy normally.",
+                 "<b>Reset layout</b> puts order, column, size, height and folds back to the desk's own arrangement."]),
+          UL(["<b>Aa</b> beside the light and dark buttons gives Small, Normal or Large text, also remembered.",
+              "On a narrow screen every card is full width whatever you chose.",
+              "A note, a description and a card's explanatory text never run past about 80 characters a line, whatever width the card is."]),
+          NOTE("good", "Editing a card leaves the page exactly where you were reading, and a dropdown you had open stays open. "
+                       "If you fold a card halfway down a long ticket, the page does not jump to the top."),
+          who=["Technicians"]),
         S("d-notes", "Tickets", "Notes and emails",
           NOTE_CHOOSER,
-          UL(["<b>Standard notes</b> are a board's canned replies. Each carries its flag, so a <i>we have your request</i> reply cannot land as internal by accident.",
-              "<b>Emails never carry the summary or a note.</b> They say something changed and link to PMC Requests.",
-              "Each board decides whether requesters and owners get emails, and in what words (Setup › the board › Emails)."]),
+          H("The note box is an editor"),
+          P("Write a note the way you write a Teams message: <b>bold</b>, <i>italic</i>, underline, strikethrough, a bulleted or numbered list, a quote, "
+            "inline code and a link. <kbd>Ctrl</kbd>+<kbd>B</kbd>, <kbd>Ctrl</kbd>+<kbd>I</kbd> and <kbd>Ctrl</kbd>+<kbd>U</kbd> work where your hands already are."),
+          UL(["<b>Paste out of Outlook or Word and it keeps the words and the marks and brings none of the mess.</b> Word\u2019s thousand lines of hidden "
+              "styling never arrive at all \u2014 the paste is rebuilt out of plain elements as it lands.",
+              "<b>Plain</b> beside <b>Rich</b> writes the same note as plain text, for anyone who would rather.",
+              "The requester\u2019s email carries the note\u2019s own formatting, and the plain words as well, so any mail client can read it.",
+              "A note the patient-details check holds back carries no formatting either, because it carries no words: it says there is an update and "
+              "links to PMC Requests."]),
+          H("Emails the desk sends"),
+          UL(["<b>Emails never carry the summary or a note that the check flagged.</b> They say something changed and link to PMC Requests.",
+              "<b>Standard notes</b> are a board\u2019s canned replies. Each carries its flag, so a <i>we have your request</i> reply cannot land as internal by accident.",
+              "Each board decides whether requesters and owners get emails, <b>and in what words for each status</b> (Setup \u203a the board \u203a Emails)."]),
           who=["Technicians"]),
         S("d-family", "Tickets", "Children, duplicates and templates",
           CHOOSER("The same problem came in several times. What do I do?", [
@@ -91,11 +146,28 @@ def desk_body():
           who=["Technicians"]),
         S("d-mail", "Tickets", "Tickets by email",
           CHOOSER("Mail arrives. What happens?", [
-              ("new", "A new email to a board's address", "It opens a ticket on the board that claims that address, from the sender, with the subject as the summary and the body as the first note."),
+              ("new", "A new email to a board's address", "It opens a ticket on the board that claims that address, from the sender, with the subject as the summary and the body as the first note. A board can claim <b>several</b> addresses, and the one it was sent to decides the board."),
               ("reply", "A reply that keeps [PMC-000123] in the subject", "It is added to that ticket as a note from the sender. No new ticket."),
+              ("nosub", "An email with no subject at all", "Still a ticket. The summary comes from the sender's own first line, or from the file they attached; only a mail that said nothing at all is set aside."),
               ("closed", "A reply to a closed ticket", "On most boards the ticket reopens; a board can instead open a new ticket that mentions the old one (Setup › the board › mail policy)."),
               ("auto", "An out-of-office or a delivery failure", "Recorded, and opens nothing: the desk's own loop guards stop a mail war with an auto-reply."),
               ("excl", "From an excluded sender or domain", "Recorded, and opens nothing; the Email connector page says why.")]),
+          H("The ticket shows the email as the sender wrote it"),
+          P("An Outlook message really carries two bodies: the one the sender composed, and a plain-text copy Outlook makes from it. The ticket used to show "
+            "the copy, which is why notes sometimes read like this:"),
+          '<pre style="margin:0 0 14px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--paper-2);'
+          'font-size:13px;line-height:1.6;overflow-x:auto">[Speaker phone with solid fill]\nThe Teams phone on Ward 3 is not ringing...\n'
+          '[cid:image004.jpg@01DD5349.6A321CD0]\nPortal &lt;https://pmcrequests/x&gt; Portal\nhttps://pmcrequests/x</pre>',
+          P("None of that was typed by anybody. An icon turned into its own description, a pasted picture turned into its internal file name, and every link "
+            "got written twice. <b>The ticket now shows the message the sender actually composed</b> \u2014 their bold, their lists, their table, one link per link."),
+          UL(["<b>No picture from an email is ever shown inside the note.</b> A photo or screenshot they attached is on the <b>Files</b> card as usual, where it "
+              "goes through the patient-details check first. A picture shown in the note would also quietly tell the sender the moment a clinician opened the "
+              "ticket, which is not something a hospital desk should do.",
+              "Nothing in an email can run, click or fetch anything: the message is rebuilt out of plain formatting as it arrives, so there is no such thing "
+              "as a mail that does something to the desk when you read it.",
+              "Mail sent as plain text reads exactly as it always did, and so does every ticket that was already in the desk."]),
+          NOTE("warn", "If you ever see a visible tag read out as words, a <code>[cid:\u2026]</code> reference, a picture loading inside a note, or a link printed "
+                       "twice, that is worth reporting \u2014 none of the four should be possible."),
           who=["Technicians"]),
         S("d-new", "Tickets", "Logging a ticket for someone",
           FIG("new-ticket", "New ticket: the same two questions a requester answers, plus the board, the contact, the company and the Subtype › Item."),
@@ -140,6 +212,19 @@ def dispatch_body():
         S("x-dispatch", "Dispatch", "The Dispatch page",
           LEAD("Dispatch answers three questions at a glance: what has landed with nobody owning it, who is out on visits today, and who answers each board."),
           TOUR("dispatch"),
+          NOTE("info", "Dispatch now draws the day as a grid \u2014 people down the side, 06:00 to 20:00 across \u2014 rather than the list in this picture. "
+                       "See <b>What changed</b> in the Staff guide."),
+          H("The day as a grid"),
+          UL(["Each visit, each block and each Outlook busy time is a strip across the hours it covers; two things at once go on separate lanes.",
+              "<b>To schedule</b> lists the open tickets with no visit that day. Drag one onto somebody\u2019s hour and it books a visit there.",
+              "Drag a visit to another hour, another person or another day and it keeps its length. A clash is refused, with the reason, exactly as the forms refuse it.",
+              "Click an empty hour to book by hand. <b>\u2713</b> marks a visit done and <b>\U0001f441</b> acknowledges it.",
+              "Someone with Read on the board sees the whole day and drags nothing."]),
+          H("Whose rows you see"),
+          UL(["<b>People</b> on the day bar lists everyone on the boards you can see, plus anyone with a visit that day. Tick whose rows you want.",
+              "<b>Show</b> applies it now and travels in the link, so you can send somebody the same view. <b>Save as my view</b> keeps it for whenever you open "
+              "Dispatch; <b>Clear my view</b> goes back to everybody. <b>Only me</b> still wins over both.",
+              "The button says how many of how many are showing, and \u201csaved\u201d when what you see is your saved view."]),
           H("Routing a ticket from the unrouted queue"),
           STEPS(["<b>Read the row:</b> its age and its clocks tell you how long it has waited. The queue ages in plain sight, coloured like the board.",
                  "<b>Choose the board</b> that should own it under Route to.", "<b>Type an owner</b> if you already know who, or leave it for the board's queue or auto-assign.",
