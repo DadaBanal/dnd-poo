@@ -1326,8 +1326,11 @@ def note_html(detail, body_format=None, *, email: bool = False) -> str:
     thing read out of a database is a thing from outside. Anything else is the
     plain text it always was, and reads exactly as it did."""
     if (body_format or "").upper() == "HTML":
-        from ..richtext import clean
-        return clean(detail)
+        from .. import richtext
+        # EMAIL_MAX, not MAX: a note written at the desk is short, but a note
+        # that came in as an email carries a quoted thread, and re-reading it
+        # under the shorter bound would cut the page off mid-sentence.
+        return richtext.clean(detail, limit=richtext.EMAIL_MAX)
     return rich(detail, email=email)
 
 

@@ -172,13 +172,19 @@ def merge(conn: sqlite3.Connection, dup_id: str, into_id: str, *, actor: str,
                       == conn.execute("SELECT LOWER(COALESCE(requested_by, '')) FROM ticket WHERE work_item_id = ?",
                                       (into_id,)).fetchone()[0])
     notes = conn.execute(
-        "SELECT occurred_at, actor, detail, note_flag, is_resolution FROM ticket_event"
+        "SELECT occurred_at, actor, detail, note_flag, is_resolution, body_format FROM ticket_event"
         " WHERE work_item_id = ? AND note_flag IS NOT NULL ORDER BY ticket_event_id", (dup_id,)).fetchall()
     for n in notes:
         flag = n["note_flag"] if (n["note_flag"] == "INTERNAL" or same_requester) else "INTERNAL"
-        conn.execute("INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail, note_flag)"
-                     " VALUES (?,?,'MERGED_NOTE',?,?,?)",
-                     (into_id, n["occurred_at"], n["actor"], f"(from {dup_id}) {n['detail']}", flag))
+        # A rich note stays rich when it moves (064): carried as plain text it
+        # would read as its own markup on the ticket it was merged into, and the
+        # provenance line has to be a paragraph rather than a prefix to match.
+        rich = (n["body_format"] or "").upper() == "HTML"
+        said = (f"<p>(from {dup_id})</p>{n['detail']}" if rich else f"(from {dup_id}) {n['detail']}")
+        conn.execute("INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail, note_flag,"
+                     " body_format) VALUES (?,?,'MERGED_NOTE',?,?,?,?)",
+                     (into_id, n["occurred_at"], n["actor"], said, flag,
+                      "HTML" if rich else None))
     files = conn.execute("UPDATE attachment SET work_item_id = ? WHERE work_item_id = ?", (into_id, dup_id)).rowcount
     for l in conn.execute("SELECT * FROM ticket_link WHERE work_item_id = ? OR linked_id = ?", (dup_id, dup_id)).fetchall():
         a = into_id if l["work_item_id"] == dup_id else l["work_item_id"]

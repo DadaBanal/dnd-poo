@@ -69,7 +69,13 @@ SELECT = (
     "       (SELECT CASE e2.note_flag WHEN 'INTERNAL' THEN 'Internal: ' ELSE '' END"
     "               || e2.detail FROM ticket_event e2"
     "         WHERE e2.work_item_id = t.work_item_id AND e2.note_flag IS NOT NULL"
-    "         ORDER BY e2.ticket_event_id DESC LIMIT 1) AS last_note")
+    "         ORDER BY e2.ticket_event_id DESC LIMIT 1) AS last_note,"
+    # The preview is 90 escaped characters of the last note. A note written in
+    # the desk's editor, or arrived as an email's HTML (064), would spend all 90
+    # of them on its own opening tags, so the row needs to know which it is.
+    "       (SELECT e2.body_format FROM ticket_event e2"
+    "         WHERE e2.work_item_id = t.work_item_id AND e2.note_flag IS NOT NULL"
+    "         ORDER BY e2.ticket_event_id DESC LIMIT 1) AS last_note_format")
 FROM = (
     "  FROM ticket t"
     "  JOIN work_item w ON w.work_item_id = t.work_item_id"
@@ -405,6 +411,7 @@ def _table(ctx, boards, shown, f, total: int) -> str:
             if r["member"].lower() not in {m.lower() for m in lst}:
                 lst.append(r["member"])
     lines = []
+    from ... import richtext
     for x in shown:
         r = x["r"]
         wid = r["work_item_id"]
@@ -412,6 +419,8 @@ def _table(ctx, boards, shown, f, total: int) -> str:
         sla = t.sla_chips(x["states"]) or (
             f"<span class=pill>{t.esc(common.no_clock_reason(ctx.conn, r['board_id'], r['source_ref']))}</span>")
         last = r["last_note"] or ""
+        if (r["last_note_format"] or "").upper() == "HTML":
+            last = " ".join(richtext.text(last).split())
         last = (last[:90] + "…") if len(last) > 90 else last
         lines.append(
             f"<tr class='{cls}'>"

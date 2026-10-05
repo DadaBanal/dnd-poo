@@ -60,17 +60,29 @@ def build(db_path: Path) -> str:
                  " VALUES ('IT_HELP', 'tech', 'ADMIN')")
     wid = tickets.open_ticket(conn, board_id="IT_HELP", summary="Printer in Ward 3 will not print",
                               impact="I2", urgency="U2", requested_by=None, at=at)
+    # A ticket that arrived as an Outlook email, so a browser can be asked
+    # whether the page shows the sender's formatting or the markup of it
+    # (5 Oct 2026). Only the HTML door writes body_format='HTML' here; the
+    # gate still rebuilds it, so the script and the pixel never get stored.
+    mail = tickets.open_ticket(
+        conn, board_id="IT_HELP", summary="Teams phone not ringing on Ward 3",
+        impact="I3", urgency="U3", requested_by="reyes@pmcne.ph", at=at, source="EMAIL",
+        description='<p>The Teams phone on <b>Ward 3</b> is not ringing.</p>'
+                    '<p><a href="https://portal.pmcne.ph/x">Portal</a></p>'
+                    '<script>window.BROKE_IN = 1</script>'
+                    '<p><img src="https://tracker.example.net/pixel.gif"></p>',
+        description_format="HTML")
     auth.create_local_account(conn, "tech", PASSWORD, at=at, is_sysadmin=True)
     conn.commit()
     conn.close()
-    return wid
+    return wid, mail
 
 
 def main() -> int:
     from playwright.sync_api import sync_playwright
     tmp = tempfile.TemporaryDirectory()
     db_path = Path(tmp.name) / "desk.db"
-    ref = build(db_path)
+    ref, mailref = build(db_path)
     port = free_port()
     env = dict(os.environ, PSA_ATTACHMENT_DIR=str(Path(tmp.name) / "files"))
     proc = subprocess.Popen([sys.executable, "-m", "psaspine", "serve", str(db_path),
@@ -268,6 +280,27 @@ def main() -> int:
                 n1 = page.locator("select.cat-item option").count()
                 note(0 < n1 < n_all, "the dropdowns still narrow after editing the pods",
                      f"all {n_all} -> {n1}")
+
+            # --- an email on the ticket reads as the sender wrote it -------
+            # Dada, 3 Oct 2026: "can we make html from emails or render the
+            # full emails on the tickets". A unit test proves the HTML; only a
+            # browser proves the page shows bold rather than the word "<b>".
+            page.goto(f"{base}/ticket/{mailref}", wait_until="domcontentloaded")
+            page.wait_for_timeout(400)
+            stream = page.locator(".rtx").first
+            note(page.locator(".rtx b").count() >= 1,
+                 "an email's formatting is formatting on the page, not markup",
+                 (stream.inner_text()[:80] if stream.count() else "no .rtx on the page"))
+            said = stream.inner_text() if stream.count() else ""
+            note("<b>" not in said and "[cid:" not in said,
+                 "and no tag or cid: reference is read out as words", said[:80])
+            note(page.locator(".rtx a[href^='https://portal.pmcne.ph']").count() == 1,
+                 "the sender's link is a link, written once")
+            note(page.locator(".rtx img").count() == 0,
+                 "no image is fetched from the page, so nothing phones the sender home",
+                 f"{page.locator('.rtx img').count()} img element(s)")
+            note(page.evaluate("() => !window.BROKE_IN"),
+                 "a script in the email never ran")
 
             note(not errors, "no console errors anywhere above",
                  " | ".join(errors[:5]) if errors else "")

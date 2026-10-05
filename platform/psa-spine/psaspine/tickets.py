@@ -499,6 +499,7 @@ def open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
                 entity_id: str | None = None, owner: str | None = None,
                 record_type: str | None = None, change_type: str | None = None,
                 event_kind: str = "INTAKE",
+                description_format: str | None = None,
                 min_priority: str | None = None, source: str = "DESK",
                 catalogue_item_id: str | None = None) -> str:
     """Open one ticket, the same way whichever door it came in by.
@@ -515,6 +516,12 @@ def open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
     The commercial path is derived from it and the basis, never passed in: a
     caller-supplied path is how a variation item came to be opened as an
     INCIDENT and have effort booked against it unrefused.
+
+    `description_format` is 'HTML' when the requester's words arrived as rich
+    text -- an email's own HTML part, rebuilt by `richtext.clean` at the door
+    (064). Nothing is stored until the gate has rebuilt it here as well, for the
+    same reason `board.add_note` does it: this function is a door, and a door
+    does not trust what is handed to it.
 
     Does not commit: the caller owns the transaction, so a PHI flag or a dedup
     row written alongside lands or rolls back with the ticket.
@@ -562,11 +569,18 @@ def open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
         (ticket_id, board_id, catalogue_item_id, path, impact, urgency, priority,
          priority_source, requested_by, stamp, owner, stamp, source, record_type, change_type))
     numbering.bind(conn, ticket_id)
+    if description and (description_format or "").upper() == "HTML":
+        from . import richtext
+        description = richtext.clean(description, limit=richtext.EMAIL_MAX)
+        description_format = "HTML" if richtext.text(description).strip() else None
+    else:
+        description_format = None
     if description:
         conn.execute(
             "INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail,"
-            " note_flag) VALUES (?,?,?,?,?,'DISCUSSION')",
-            (ticket_id, stamp, event_kind, actor or requested_by, description))
+            " note_flag, body_format) VALUES (?,?,?,?,?,'DISCUSSION',?)",
+            (ticket_id, stamp, event_kind, actor or requested_by, description,
+             description_format))
     board.admit(conn, ticket_id, at=at)
     from . import workflow
     workflow.fire(conn, ticket_id, "ON_CREATE", at=at)

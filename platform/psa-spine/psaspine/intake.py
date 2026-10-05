@@ -126,23 +126,79 @@ def thread_parents(message) -> list[str]:
     return list(dict.fromkeys(parents))
 
 
+def _part_text(part) -> str:
+    try:
+        return (part.get_content() or "").strip()
+    except Exception:                                      # noqa: BLE001
+        return ""
+
+
 def body_of(message) -> str:
     """The plain-text body, best effort. HTML-only mail yields its text part if
-    there is one and an empty string otherwise; the raw HTML is not ticket text."""
+    there is one and an empty string otherwise.
+
+    This is what the PHI scan reads and what a plain-text reply quotes, so it
+    stays words. `rich_body_of` is what the ticket shows.
+    """
     if message.is_multipart():
         for part in message.walk():
             if part.get_content_type() == "text/plain" and not _is_file(part):
-                try:
-                    return part.get_content().strip()
-                except Exception:                          # noqa: BLE001
-                    continue
+                got = _part_text(part)
+                if got:
+                    return got
+        # HTML-only mail: the words of the HTML, so nothing arrives empty
+        for part in message.walk():
+            if part.get_content_type() == "text/html" and not _is_file(part):
+                from . import richtext
+                got = richtext.text(_part_text(part))
+                if got:
+                    return got
         return ""
     if message.get_content_type() == "text/plain":
-        try:
-            return message.get_content().strip()
-        except Exception:                                  # noqa: BLE001
-            return ""
+        return _part_text(message)
+    if message.get_content_type() == "text/html":
+        from . import richtext
+        return richtext.text(_part_text(message))
     return ""
+
+
+def rich_body_of(message) -> str:
+    """The email as the sender wrote it, rebuilt by the one gate, or "".
+
+    Dada, 3 Oct 2026, with a ticket open: *"can we make html from emails or
+    render the full emails on the tickets"*. Until today intake kept only the
+    text/plain part, and what a ward sees on the ticket is Outlook's fallback
+    for the HTML it actually sent -- an icon's alt text as
+    `[Speaker phone with solid fill]`, an inline image as
+    `[cid:image004.jpg@01DD5349.6A321CD0]`, every link written twice. None of
+    that is in the message the sender composed; it is the shape of the fallback.
+
+    So the HTML part is kept and rebuilt by `richtext.clean`, the same gate a
+    technician's own note goes through (064): a new document made only of the
+    tags on its lists. Nothing that can act is carried, and `<img>` is not on
+    them, so neither a tracking pixel nor a remote image nor an unresolved
+    `cid:` ever reaches the page -- which is the PHI answer as well as the
+    security one, because a remote image fetch tells the sender a clinician
+    opened the ticket and when.
+
+    Returns "" when there is no HTML part or when it rebuilds to nothing; the
+    ticket then carries plain text exactly as it did before today, which is
+    also what a mail sent as plain text has always carried.
+    """
+    from . import richtext
+    html = ""
+    if message.is_multipart():
+        for part in message.walk():
+            if part.get_content_type() == "text/html" and not _is_file(part):
+                html = _part_text(part)
+                if html:
+                    break
+    elif message.get_content_type() == "text/html":
+        html = _part_text(message)
+    if not html:
+        return ""
+    clean = richtext.clean(html, limit=richtext.EMAIL_MAX)
+    return clean if richtext.text(clean).strip() else ""
 
 
 # ---------------------------------------------------------- attachments
@@ -544,12 +600,27 @@ def _import_one(conn: sqlite3.Connection, path: Path, *, run_id: str, channel: s
     when = received_at(message, fallback=at)
     stamp = when.isoformat(sep=" ", timespec="minutes")
     body = body_of(message)
+    # The sender's own HTML, rebuilt by the gate, or "" if they wrote plain
+    # text. `body` stays the words: the summary and the dedup read that, never
+    # the markup, so a ticket's summary is never a tag.
+    body_html = rich_body_of(message)
     board_id, to_address = route(conn, message, fallback=run_board)
     if to_address:
         counts["routed_by_address"] = counts.get("routed_by_address", 0) + 1
 
+    # The scan reads every word that can reach the page, which since the HTML
+    # part is kept means the words of that too: a patient's name can sit in a
+    # link the plain-text fallback wrote differently, and `scan` gives at most
+    # one finding per rule per field, so one field is one row however often a
+    # name is repeated across the two parts.
+    scanned = body
+    if body_html:
+        from . import richtext
+        rich_words = richtext.text(body_html)
+        if rich_words and rich_words != body:
+            scanned = f"{body}\n{rich_words}" if body else rich_words
     for code, severity, detail in phi.scan_fields(
-            {"subject": subject, "body": body}):
+            {"subject": subject, "body": scanned}):
         conn.execute(
             "INSERT INTO data_quality (run_id, subject_kind, subject_id, code,"
             " detail, severity) VALUES (?,?,?,?,?,?)",
@@ -585,7 +656,8 @@ def _import_one(conn: sqlite3.Connection, path: Path, *, run_id: str, channel: s
             # point back at the ticket it answered.
             ticket_id = _open_ticket(conn, board_id=board_id or _board_of(conn, parent_ticket),
                                      summary=summary_from(subject, body, message) or f"Reply to {parent_ticket}",
-                                     requester=sender, body=body, at=when)
+                                     requester=sender, body=body, body_html=body_html,
+                                     at=when)
             from . import itil
             itil.link(conn, ticket_id, parent_ticket, "RELATED", actor="intake", at=when)
             _keep_files(conn, message, ticket_id, sender=sender, at=when, run_id=run_id,
@@ -596,7 +668,7 @@ def _import_one(conn: sqlite3.Connection, path: Path, *, run_id: str, channel: s
             counts["new"] += 1
             counts["reply_to_closed"] += 1
             return
-        _append_note(conn, parent_ticket, body or subject, sender, stamp)
+        _append_note(conn, parent_ticket, body or subject, sender, stamp, body_html=body_html)
         _keep_files(conn, message, parent_ticket, sender=sender, at=when, run_id=run_id,
                     counts=counts)
         cc.add_from_message(conn, parent_ticket, message, sender=sender, own_addresses=own_addresses, at=when)
@@ -615,7 +687,7 @@ def _import_one(conn: sqlite3.Connection, path: Path, *, run_id: str, channel: s
         recent = _recent_same_subject(conn, sender, subject, when)
         if recent:
             _append_note(conn, recent["work_item_id"], body or subject,
-                         sender, stamp)
+                         sender, stamp, body_html=body_html)
             _keep_files(conn, message, recent["work_item_id"], sender=sender, at=when,
                         run_id=run_id, counts=counts)
             _record(conn, mid, stamp, sender, subject, channel, "DUPLICATE",
@@ -643,7 +715,7 @@ def _import_one(conn: sqlite3.Connection, path: Path, *, run_id: str, channel: s
         return
 
     ticket_id = _open_ticket(conn, board_id=board_id, summary=summary,
-                             requester=sender, body=body, at=when)
+                             requester=sender, body=body, body_html=body_html, at=when)
     _keep_files(conn, message, ticket_id, sender=sender, at=when, run_id=run_id,
                 counts=counts)
     cc.add_from_message(conn, ticket_id, message, sender=sender, own_addresses=own_addresses, at=when)
@@ -655,7 +727,8 @@ def _import_one(conn: sqlite3.Connection, path: Path, *, run_id: str, channel: s
 
 
 def _open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
-                 requester: str, body: str, at: datetime) -> str:
+                 requester: str, body: str, at: datetime,
+                 body_html: str | None = None) -> str:
     """One ticket, numbered from the one sequence (D4), admitted to its board.
 
     An email says nothing about who is affected or whether a patient is
@@ -665,7 +738,9 @@ def _open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
     from . import tickets
     return tickets.open_ticket(conn, board_id=board_id, summary=summary,
                                impact="I3", urgency="U3", requested_by=requester,
-                               description=body or None, at=at, source="EMAIL")
+                               description=body_html or body or None,
+                               description_format="HTML" if body_html else None,
+                               at=at, source="EMAIL")
 
 
 def _board_of(conn: sqlite3.Connection, work_item_id: str) -> str:
@@ -674,11 +749,14 @@ def _board_of(conn: sqlite3.Connection, work_item_id: str) -> str:
 
 
 def _append_note(conn: sqlite3.Connection, work_item_id: str, body: str,
-                 actor: str, stamp: str) -> None:
+                 actor: str, stamp: str, body_html: str | None = None) -> None:
+    """The reply on the ticket it answers. `body_html` is the sender's own HTML
+    once `rich_body_of` has rebuilt it; `body` is the words, and is what is
+    stored when they wrote plain text."""
     conn.execute(
         "INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail,"
-        " note_flag) VALUES (?,?,'INTAKE_REPLY',?,?,'DISCUSSION')",
-        (work_item_id, stamp, actor, body))
+        " note_flag, body_format) VALUES (?,?,'INTAKE_REPLY',?,?,'DISCUSSION',?)",
+        (work_item_id, stamp, actor, body_html or body, "HTML" if body_html else None))
     conn.execute("UPDATE ticket SET updated_at = ?, customer_updated = 1"
                  " WHERE work_item_id = ?", (stamp, work_item_id))
 
@@ -720,15 +798,20 @@ def _record(conn: sqlite3.Connection, message_id: str, stamp: str, sender: str,
          disposition, work_item_id, duplicate_of, run_id, to_address))
 
 
-def health(conn: sqlite3.Connection, *, days: int = 2) -> dict:
+def health(conn: sqlite3.Connection, *, days: int = 2, at: datetime | None = None) -> dict:
     """Is mail becoming tickets at all (Dada, 2 Oct 2026: "the tickets aren't
     syncing again from the mailbox")? The one question the host cannot answer
     from a log: the desk's own side of it. When a message last arrived, what
     came of the messages since, and which addresses a board claims.
 
     A silent desk and a busy mailbox is the pickup's fault; a desk taking
-    messages and setting them aside is intake's, and `why` names which."""
-    since = (datetime.now() - timedelta(days=max(1, days))).isoformat(sep=" ", timespec="minutes")
+    messages and setting them aside is intake's, and `why` names which.
+
+    `at` is the moment the window is measured back from; it defaults to now,
+    which is what the host wants and what a test must never rely on -- a test
+    that pinned its mail to a date and left the window to the clock passed in
+    the week it was written and failed two days later."""
+    since = ((at or datetime.now()) - timedelta(days=max(1, days))).isoformat(sep=" ", timespec="minutes")
     last = conn.execute("SELECT received_at, from_address, to_address, disposition, work_item_id"
                         "  FROM intake_message ORDER BY received_at DESC, message_id LIMIT 1").fetchone()
     by = {r["disposition"]: r["n"] for r in conn.execute(

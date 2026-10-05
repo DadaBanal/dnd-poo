@@ -23,7 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
 from psaspine import (board, clocks, db, intake, numbering, phi,  # noqa: E402
-                      register, reports, rules, setup, tickets, walkthrough)
+                      register, reports, richtext, rules, setup, tickets, walkthrough)
+from psaspine.web import templates  # noqa: E402
 import sqlite_to_tsql  # noqa: E402
 from sqlite_ddl import Unsupported  # noqa: E402
 
@@ -3818,6 +3819,218 @@ class EmailIntakeTest(unittest.TestCase):
         self.assertEqual(counts["new"], 1)
         for row in self.conn.execute("SELECT detail FROM data_quality"):
             self.assertNotIn("345678901", row["detail"] or "")
+
+
+class RichEmailTest(unittest.TestCase):
+    """The email as the sender wrote it, on the ticket.
+
+    Dada, 3 Oct 2026, with a live ticket open: *"can we make html from emails or
+    render the full emails on the tickets"*. The screenshot showed the ticket
+    carrying Outlook's text/plain fallback -- an icon as
+    `[Speaker phone with solid fill]`, an inline image as
+    `[cid:image004.jpg@01DD5349.6A321CD0]`, every link written twice. That is
+    not what the sender composed; it is the shape of the fallback, and what
+    these assert is that the ticket now shows the HTML part instead and that
+    going through the 064 gate to do it costs nothing in safety.
+    """
+
+    # One message in the shape Outlook actually sends: multipart/related around
+    # multipart/alternative, a plain part full of fallback artefacts, an HTML
+    # part with a <style> block, inline images by Content-ID, a layout table,
+    # a script and a remote tracking pixel.
+    HTML_PART = (
+        '<html><head><style>p { color: red }</style></head><body>\r\n'
+        '<p><img src="cid:icon001@x" alt="Speaker phone with solid fill" width=16>\r\n'
+        'The Teams phone on <b>Ward 3</b> is not ringing. Please check.</p>\r\n'
+        '<p><img src="cid:image004.jpg@01DD5349.6A321CD0"></p>\r\n'
+        '<p><a href="https://portal.example.com/x">Portal</a></p>\r\n'
+        '<table><tr><td>Sister Reyes</td><td>Ward 3</td><td>ext 4412</td></tr></table>\r\n'
+        '<script>alert(1)</script>\r\n'
+        '<p><img src="https://tracker.example.net/pixel.gif" width=1 height=1></p>\r\n'
+        '</body></html>'
+    )
+    TEXT_PART = (
+        "[Speaker phone with solid fill]\r\n\r\n"
+        "The Teams phone on Ward 3 is not ringing. Please check.\r\n\r\n"
+        "[cid:image004.jpg@01DD5349.6A321CD0]\r\n\r\n"
+        "Portal <https://portal.example.com/x> Portal\r\n"
+        "https://portal.example.com/x\r\n"
+    )
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = _fresh(self.tmp)
+        self.drop = Path(self.tmp.name) / "drop"
+        self.drop.mkdir()
+        self.at = datetime(2026, 10, 5, 9, 0)
+        self.n = 0
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _drop(self, *, subject, text=None, html=None, in_reply_to=None,
+              sender="reyes@pmcne.ph"):
+        """One .eml in the drop. Both parts given -> multipart/alternative
+        inside multipart/related, which is what Outlook sends; html alone ->
+        an HTML-only message; text alone -> plain, as before today."""
+        self.n += 1
+        mid = f"<r{self.n}@pmcne.ph>"
+        head = [f"From: {sender}", "To: helpdesk@pmcne.ph", f"Subject: {subject}",
+                "Date: Mon, 05 Oct 2026 09:00:00 +0800", f"Message-ID: {mid}",
+                "MIME-Version: 1.0"]
+        if in_reply_to:
+            head.append(f"In-Reply-To: {in_reply_to}")
+        if text is not None and html is not None:
+            body = ('Content-Type: multipart/related; boundary="REL"\r\n\r\n'
+                    '--REL\r\n'
+                    'Content-Type: multipart/alternative; boundary="ALT"\r\n\r\n'
+                    '--ALT\r\n'
+                    'Content-Type: text/plain; charset="utf-8"\r\n\r\n' + text + '\r\n'
+                    '--ALT\r\n'
+                    'Content-Type: text/html; charset="utf-8"\r\n\r\n' + html + '\r\n'
+                    '--ALT--\r\n'
+                    '--REL--\r\n')
+        elif html is not None:
+            body = 'Content-Type: text/html; charset="utf-8"\r\n\r\n' + html + '\r\n'
+        else:
+            body = 'Content-Type: text/plain; charset="utf-8"\r\n\r\n' + (text or "") + '\r\n'
+        (self.drop / f"{self.n:03d}.eml").write_bytes(
+            ("\r\n".join(head) + "\r\n" + body).encode("utf-8"))
+        return mid
+
+    def _run(self, run_id="r1"):
+        return intake.import_drop(self.conn, self.drop, run_id=run_id, at=self.at)
+
+    def _event(self, kind="INTAKE"):
+        return self.conn.execute(
+            "SELECT work_item_id, detail, body_format FROM ticket_event WHERE kind = ?"
+            " ORDER BY ticket_event_id DESC", (kind,)).fetchone()
+
+    # ------------------------------------------------- the ask, measured
+
+    def test_the_ticket_shows_the_html_the_sender_wrote_not_outlooks_fallback(self):
+        self._drop(subject="Teams phone not ringing on Ward 3",
+                   text=self.TEXT_PART, html=self.HTML_PART)
+        self.assertEqual(self._run()["new"], 1)
+        row = self._event()
+        self.assertEqual(row["body_format"], "HTML")
+        self.assertIn("<b>Ward 3</b>", row["detail"])
+        # The three artefacts from the screenshot, each gone.
+        self.assertNotIn("[Speaker phone with solid fill]", row["detail"])
+        self.assertNotIn("[cid:", row["detail"])
+        self.assertEqual(row["detail"].count("https://portal.example.com/x"), 1)
+
+    def test_a_reply_carries_its_html_onto_the_ticket_it_answers(self):
+        parent = self._drop(subject="Teams phone not ringing on Ward 3",
+                            text="First report.")
+        self._run()
+        self._drop(subject="RE: Teams phone not ringing on Ward 3",
+                   text=self.TEXT_PART, html=self.HTML_PART, in_reply_to=parent)
+        self.assertEqual(self._run(run_id="r2")["appended"], 1)
+        row = self._event("INTAKE_REPLY")
+        self.assertEqual(row["body_format"], "HTML")
+        self.assertIn("<b>Ward 3</b>", row["detail"])
+
+    def test_plain_text_mail_is_stored_exactly_as_it_was_before_today(self):
+        self._drop(subject="Printer offline", text="It flashes a red light.")
+        self._run()
+        row = self._event()
+        self.assertIsNone(row["body_format"])
+        self.assertEqual(row["detail"], "It flashes a red light.")
+
+    def test_html_only_mail_opens_a_ticket_with_a_summary_made_of_words(self):
+        """No plain part at all: the summary and the dedup read words, so they
+        must read the HTML's words rather than its first tag."""
+        self._drop(subject="", html="<p>The <b>ultrasound</b> probe is cracked.</p>")
+        self.assertEqual(self._run()["new"], 1)
+        name = self.conn.execute("SELECT name FROM work_item").fetchone()["name"]
+        self.assertNotIn("<", name)
+        self.assertIn("ultrasound", name)
+        self.assertEqual(self._event()["body_format"], "HTML")
+
+    # --------------------------------------------- what the gate refuses
+
+    def test_nothing_that_can_act_or_phone_home_reaches_the_page(self):
+        self._drop(subject="Teams phone not ringing on Ward 3",
+                   text=self.TEXT_PART, html=self.HTML_PART)
+        self._run()
+        detail = self._event()["detail"]
+        for forbidden in ("<script", "alert(1)", "<style", "color: red",
+                          "<img", "tracker.example.net", "pixel.gif"):
+            self.assertNotIn(forbidden, detail, f"{forbidden} reached the page")
+
+    def test_a_link_the_sender_wrote_as_javascript_is_not_a_link(self):
+        self._drop(subject="Ward 3 phone",
+                   html='<p><a href="javascript:alert(1)">click</a> and '
+                        '<a href="https://portal.example.com/y">portal</a></p>')
+        self._run()
+        detail = self._event()["detail"]
+        self.assertNotIn("javascript:", detail)
+        self.assertIn("click", detail)                 # the words are kept
+        self.assertIn('href="https://portal.example.com/y"', detail)
+
+    def test_a_layout_table_keeps_its_words_apart(self):
+        """A signature or a layout table is unwrapped, and unwrapping it without
+        a trace used to run every cell together into one word."""
+        self._drop(subject="Ward 3 phone",
+                   html=self.HTML_PART)
+        self._run()
+        words = richtext.text(self._event()["detail"])
+        self.assertIn("Sister Reyes Ward 3 ext 4412", words)
+
+    def test_the_phi_scan_reads_the_words_of_the_html_as_well(self):
+        """A patient reference that is in the HTML and not in the fallback is
+        still a patient reference. It is what reaches the page, so it is read."""
+        self._drop(subject="Charge date",
+                   text="Please see the attached.",
+                   html="<p>Case No: 44812 for the <b>PhilHealth</b> claim.</p>")
+        counts = self._run()
+        self.assertEqual(counts["new"], 1)
+        codes = {r["code"] for r in self.conn.execute("SELECT code FROM data_quality")}
+        self.assertIn("PHI_CASE_NUMBER", codes)
+        self.assertIn("PHI_PHILHEALTH_MENTION", codes)
+        for row in self.conn.execute("SELECT detail FROM data_quality"):
+            self.assertNotIn("44812", row["detail"] or "")
+
+    def test_one_finding_per_rule_however_many_parts_repeat_it(self):
+        self._drop(subject="Charge date",
+                   text="Case No: 44812",
+                   html="<p>Case No: 44812</p>")
+        self._run()
+        n = self.conn.execute(
+            "SELECT COUNT(*) c FROM data_quality WHERE code = 'PHI_CASE_NUMBER'").fetchone()["c"]
+        self.assertEqual(n, 1)
+
+    # ----------------------------------------------- reading it back out
+
+    def test_the_ticket_page_renders_it_and_the_board_row_previews_its_words(self):
+        self._drop(subject="Teams phone not ringing on Ward 3",
+                   text=self.TEXT_PART, html=self.HTML_PART)
+        self._run()
+        wid = self._event()["work_item_id"]
+        detail = self._event()["detail"]
+        page = templates.note_html(detail, "HTML")
+        self.assertIn("<b>Ward 3</b>", page)
+        self.assertNotIn("<script", page)
+        # The board row shows 90 characters of the last note. They must be
+        # words: spent on markup the row would read "<p><b>Ward 3</b>…".
+        preview = " ".join(richtext.text(detail).split())[:90]
+        self.assertFalse(preview.startswith("<"))
+        self.assertIn("Teams phone", preview)
+        self.assertTrue(wid.startswith("PMC-"))
+
+    def test_a_long_email_is_not_cut_off_when_it_is_read_back(self):
+        """A note typed at the desk is capped at MAX; a ward's reply carries the
+        whole quoted thread and is capped at EMAIL_MAX. Re-reading the stored
+        note under the shorter bound would truncate the page mid-sentence."""
+        long_html = "<p>" + ("The phone is still down. " * 4000) + "</p><p>LAST LINE</p>"
+        self.assertGreater(len(long_html), richtext.MAX)
+        self._drop(subject="Still down", html=long_html)
+        self._run()
+        detail = self._event()["detail"]
+        self.assertIn("LAST LINE", detail)
+        self.assertIn("LAST LINE", templates.note_html(detail, "HTML"))
 
 
 class PortalTest(unittest.TestCase):
@@ -13057,7 +13270,7 @@ class MailCutoverTest(unittest.TestCase):
         import io
         from psaspine import intake
         from psaspine.__main__ import main
-        h = intake.health(self.conn, days=2)
+        h = intake.health(self.conn, days=2, at=self.at)
         self.assertIsNone(h["last"])
         self.assertEqual((h["total"], h["errors"]), (0, 0))
         out = io.StringIO()
@@ -13070,14 +13283,19 @@ class MailCutoverTest(unittest.TestCase):
         self._msg(subject="printer", to="helpdesk@pmcne.ph")
         intake.import_drop(self.conn, self.drop, run_id="h1", board_id="IT_HELP", at=self.at)
         self.conn.commit()
-        h = intake.health(self.conn, days=2)
+        h = intake.health(self.conn, days=2, at=self.at)
         self.assertEqual(h["last"]["disposition"], "NEW_TICKET")
         self.assertTrue(h["last"]["work_item_id"])
         self.assertEqual(h["by_disposition"].get("NEW_TICKET"), 1)
         self.assertEqual(h["claims"], {"helpdesk@pmcne.ph": "IT_HELP"})
         out = io.StringIO()
+        # The CLI reads the real clock, and this fixture's mail is dated. The
+        # window has to be wide enough to reach it, or the assertion below
+        # passes in the week it is written and fails a few days later.
+        reach = str(max(2, (datetime.now() - self.at).days + 2))
         with contextlib.redirect_stdout(out):
-            main(["mail-health", TEST_DB or str(Path(self.tmp.name) / "spine.db")])
+            main(["mail-health", TEST_DB or str(Path(self.tmp.name) / "spine.db"),
+                  "--days", reach])
         said = out.getvalue()
         self.assertIn("last message the desk took:", said)
         self.assertIn("NEW_TICKET", said)

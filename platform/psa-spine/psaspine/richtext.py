@@ -33,12 +33,25 @@ ALLOWED = set(BLOCK) | set(INLINE)
 # nothing we keep, so it is dropped and its words are kept.
 UNWRAP = ("span", "font", "o:p", "body", "html", "head", "section", "article",
           "table", "tbody", "thead", "tr", "td", "th", "center", "small", "big")
+# A table is unwrapped, not kept -- but a table laid out words in a grid, and
+# dropping the grid without a trace runs "Ward 3" into "Sister Reyes" into the
+# phone number. Email is written in tables (Outlook signatures, every layout a
+# mail client has), so the end of a cell is worth a space and the end of a row
+# a line. Nothing is kept that could act; only the spacing survives.
+GAP = {"td": " ", "th": " "}
+NEWLINE = ("tr",)
 SAME = {"strong": "b", "em": "i", "strike": "s", "del": "s", "div": "p", "h1": "h3",
         "h2": "h3", "h5": "h4", "h6": "h4"}
 VOID = {"br"}
 # Only an address a browser may follow to somewhere a person can read.
 LINK = re.compile(r"^(https?://|mailto:)", re.I)
 MAX = 60_000                     # a note, not a document
+# An email is a document. A ward's reply carries the whole quoted thread, a
+# signature and Outlook's own markup, and 60 KB cuts it mid-sentence; what the
+# gate caps is parse cost, not editorial length, so the door that takes email
+# says so. Render-time re-cleaning uses this bound too, because by then the
+# stored note may have come in by either door (064, both of them).
+EMAIL_MAX = 400_000
 
 
 class _Clean(HTMLParser):
@@ -85,7 +98,15 @@ class _Clean(HTMLParser):
         if tag in ("script", "style", "title"):
             self.skip = max(0, self.skip - 1)
             return
-        if self.skip or tag in VOID or tag not in self.open:
+        if self.skip or tag in VOID:
+            return
+        if tag in GAP:
+            self.out.append(GAP[tag])
+            return
+        if tag in NEWLINE:
+            self.out.append("<br>")
+            return
+        if tag not in self.open:
             return
         # Close back to it, so the document this writes is always well formed
         # however badly nested the one it read was.
@@ -110,12 +131,15 @@ def looks_rich(value) -> bool:
     return bool(re.search(r"<(%s)\b" % "|".join(ALLOWED | set(UNWRAP)), str(value or ""), re.I))
 
 
-def clean(value) -> str:
+def clean(value, *, limit: int = MAX) -> str:
     """The one gate. Returns a document made only of what the lists allow,
     emptied of anything that could act, and tidied of the empty wrappers a
-    paste out of Word leaves behind."""
+    paste out of Word leaves behind.
+
+    `limit` is how much input is read: MAX for a note somebody typed,
+    EMAIL_MAX for an email and for reading a stored note back."""
     p = _Clean()
-    p.feed(str(value or "")[:MAX])
+    p.feed(str(value or "")[:limit])
     p.close()
     out = p.result()
     # A paste leaves runs of empty paragraphs; one is a blank line, five are a
@@ -123,6 +147,10 @@ def clean(value) -> str:
     out = re.sub(r"(?:<p>(?:\s|<br>|&nbsp;)*</p>\s*){2,}", "<p><br></p>", out)
     out = re.sub(r"^(?:<p>(?:\s|<br>|&nbsp;)*</p>\s*)+", "", out)
     out = re.sub(r"(?:<p>(?:\s|<br>|&nbsp;)*</p>\s*)+$", "", out)
+    # Three blank lines in a row is a mail client's layout showing through.
+    out = re.sub(r"(?:<br>\s*){3,}", "<br><br>", out)
+    out = re.sub(r"^(?:<br>\s*)+", "", out)
+    out = re.sub(r"(?:<br>\s*)+$", "", out)
     return out.strip()
 
 

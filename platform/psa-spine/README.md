@@ -1326,10 +1326,9 @@ author. The desk's ticket page now has the same:
   note, standard notes, files with the viewer, tasks, configurations,
   schedule, the audit trail under History.
 
-Not built, said once: rich text and inline images inside a note (the
-reference's 2019 note features) and issue tags. A note here is plain text
-with files beside it, by the PHI fence (an image is reviewed before anyone
-else sees it).
+Not built, said once: issue tags. Rich text in a note was built on 2 Oct
+2026 (064) and the email it arrives in on 5 Oct; inline images are still not
+shown inside a note, and a file is reviewed beside it, by the PHI fence.
 
 ## Pod sizes, and whose rows the Dispatch board shows (063, 1 Oct 2026)
 
@@ -1379,10 +1378,10 @@ reads, what the plain part of an email carries and what a search matches, so
 a patient's name cannot hide inside an attribute.
 
 `ticket_event.body_format` (064) says which a note is. Every note written
-before today, and every note that arrives by email, is plain text and reads
-exactly as it always did. A note read back out of the database is cleaned
-again before it is shown, because a thing out of a database is a thing from
-outside.
+before today is plain text and reads exactly as it always did. A note read
+back out of the database is cleaned again before it is shown, because a thing
+out of a database is a thing from outside. Mail arrived as plain text until
+5 Oct 2026; it now comes through the same gate (see below).
 
 **The requester's email carries it as written.** `notification.body_html`
 (064) holds the same email with the note's own formatting in it, built when
@@ -1509,6 +1508,70 @@ A timer belongs to the person who started it; one may run per person per ticket
 (two would double-count the same hour), and nothing stops one person running
 timers on three tickets at once, which is what carrying three jobs looks like.
 **Discard** throws it away and records nothing.
+
+## The ticket shows the email, not Outlook's fallback (5 Oct 2026)
+
+Dada, with a live ticket open: *"can we make html from emails or render the
+full emails on the tickets"*, and a screenshot of why. The ticket read:
+
+```
+[Speaker phone with solid fill]
+The Teams phone on Ward 3 is not ringing...
+[cid:image004.jpg@01DD5349.6A321CD0]
+Portal <https://portal.pmcne.ph/x> Portal
+https://portal.pmcne.ph/x
+```
+
+None of that is what the sender typed. An Outlook message carries two bodies —
+`text/html`, which is what they composed, and `text/plain`, which Outlook
+generates from it — and intake kept only the second. The fallback is where an
+icon becomes its own alt text, an inline image becomes its `cid:` reference,
+and every link is written twice (once as a label, once as the address).
+
+**Intake now keeps the HTML part and the ticket shows it.** It goes through
+`richtext.clean` — the one 064 gate, the same one a technician's own note goes
+through — so the page is a new document made only of the tags on its lists.
+`ticket_event.body_format` is `'HTML'` on the INTAKE and INTAKE\_REPLY events
+that came in that way. A mail sent as plain text is stored and read exactly as
+it was before, and so is every note already in the database. **No schema
+change**: 064's `body_format` column is already there, so this is code only.
+
+What the gate refuses, which is why this is safe to put on a clinical desk:
+
+- **A script, a style block, an event handler, an iframe, a `javascript:`
+  link** — never written, because the gate writes a new document rather than
+  editing the one it read.
+- **Every image, inline or remote.** `<img>` is not on the allow-list, so a
+  tracking pixel cannot phone home and a remote image cannot tell the sender
+  that a clinician opened the ticket and when. A file the mail attached is
+  still kept on the ticket, through the PHI review it always went through;
+  what is *not yet* built is showing it inside the note.
+- **Word's and Outlook's own markup** — `mso` styles, `<o:p>`, conditional
+  comments: unwrapped or dropped, words kept.
+
+Two things that come with it:
+
+- **A layout table keeps its words apart.** A table is unwrapped, not kept, and
+  unwrapping one without a trace used to run every cell into the next
+  (`Sister ReyesWard 3ext 4412`). The end of a cell is now a space and the end
+  of a row a line. Email is written in tables, so this is most of a signature.
+- **The window is the email's, not a note's.** `richtext.MAX` (60 KB) is the
+  right bound for something a person typed; a ward's reply carries the whole
+  quoted thread, so the email door and every read-back use `EMAIL_MAX`
+  (400 KB). Reading a stored note under the shorter bound would have cut the
+  page off mid-sentence.
+
+**The PHI scan reads the words of both parts.** A patient reference can sit in
+the HTML and not in the fallback — a link's own text, a cell of a table — and
+what reaches the page is what must be scanned. `phi.scan` gives at most one
+finding per rule per field, so one name repeated across both parts is still one
+row on Setup › Data quality, not two.
+
+**Two places that were already wrong, and are now right.** They were wrong for
+desk-written rich notes since 064 and this change would have made them common:
+a board row's 90-character preview of the last note spent all 90 on its opening
+tags, and merging a duplicate ticket carried a rich note across as plain text,
+so it read as its own markup on the ticket it was merged into.
 
 ## One Save, always reachable (3 Oct 2026)
 
