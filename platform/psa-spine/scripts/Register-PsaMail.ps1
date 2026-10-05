@@ -46,6 +46,16 @@
 #>
 [CmdletBinding()]
 param([switch]$Apply, [switch]$Undo, [switch]$IncludeSupport, [switch]$IncludeCalendar, [switch]$IncludeProcurement,
+      # A task whose first pass fails is normally removed again, so a broken task
+      # never stays behind silently. The ONE exception this switch names: a first
+      # pass whose only failure is 403 Forbidden, which is what a freshly granted
+      # mailbox answers until Exchange's data plane catches up with its own
+      # management plane (MEASURED 5 Oct 2026: procurement@ InScope True on
+      # Test-ServicePrincipalAuthorization, 403 ErrorAccessDenied from Graph on
+      # the same minute, helpdesk@ 200 on the same token). With this switch that
+      # task is KEPT: it fails quietly each minute and comes alive by itself the
+      # moment the grant lands. Explicit and off by default, so the safety stays.
+      [switch]$KeepOnForbidden,
       # The mail domains whose members have an Outlook calendar to sync. Named
       # once, here, so PSA-Calendar's own command carries them (Dada, 2 Oct
       # 2026: a member's mailbox on premieremedicalcenter.net). A mailbox on no
@@ -140,7 +150,7 @@ $jobs = @{
     'PSA-Notify'        = @{ Script = $Notifier; Args = " -Mailbox 'helpdesk@pmcne.ph' -SendAs 'support@pmcne.ph' -PortalUrl 'https://help.pmcne.ph' -AllowedDomain '*'"
                              Pass = '\d+ due: \d+ sent, \d+ failed'; What = 'the requester emails go out' }
 }
-$passed = @(); $failed = @()
+$passed = @(); $failed = @(); $kept = @()
 foreach ($t in $want) {
     $j = $jobs[$t]
     $log = $Logs + '\' + $t + '.log'
@@ -172,9 +182,17 @@ foreach ($t in $want) {
     if (Test-Path $log) { $lines = @(Get-Content $log | Where-Object { $_.Trim() }) }
     foreach ($l in $lines) { Write-Step ('  | ' + $l) }
     if ($info.LastTaskResult -ne 0 -or -not ($lines -match $j.Pass) -or ($lines -match 'Pass failed')) {
-        Write-Step ('  FAIL: ' + $t + "'s first run did not pass (task result " + $info.LastTaskResult + ', state ' + $state + '); removed again')
-        Unregister-ScheduledTask -TaskName $t -Confirm:$false
-        $failed += $t
+        if ($KeepOnForbidden -and ($lines -match '\(403\) Forbidden')) {
+            Write-Step ('  KEPT: ' + $t + "'s first pass answered 403 Forbidden - the Exchange grant has not reached" +
+                        ' the data plane yet. The task stays (-KeepOnForbidden), fails quietly each minute, and comes' +
+                        ' alive by itself the moment the grant lands; the import is keyed by Message-ID, so nothing' +
+                        ' arrives twice.')
+            $kept += $t
+        } else {
+            Write-Step ('  FAIL: ' + $t + "'s first run did not pass (task result " + $info.LastTaskResult + ', state ' + $state + '); removed again')
+            Unregister-ScheduledTask -TaskName $t -Confirm:$false
+            $failed += $t
+        }
     } else {
         $passed += $t
     }
@@ -183,5 +201,11 @@ $pw = $null
 if ($failed.Count) {
     Write-Step ('RESULT: FAILED for ' + ($failed -join ', ') + '; running: ' + $(if ($passed.Count) { $passed -join ', ' } else { 'none' }) + '. Tell WS36 the lines above.')
     exit 2
+}
+if ($kept.Count) {
+    Write-Step ('RESULT: PASS, with ' + ($kept -join ', ') + ' registered and WAITING on the Exchange grant (403 for now).' +
+                ' It needs nothing further: it starts importing by itself when the grant lands.' +
+                $(if ($passed.Count) { ' Running now: ' + ($passed -join ', ') + '.' } else { '' }))
+    exit 0
 }
 Write-Step ('RESULT: PASS. Running every minute, LIVE: ' + ($passed -join ', ') + '. Tell SQL01 "mail tasks done".')
