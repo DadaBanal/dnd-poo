@@ -2617,3 +2617,15 @@ Ran WS36's 3 Oct handoff (065 + restart, same shape as 064). The "Ticket type" l
 **Not run here:** `tests/browsercheck.py` (Playwright/Chromium, 25 checks) — WS36 ran it, all passing; it needs `pip install playwright` + a Chromium download and drives a throwaway desk, not production. Available to run before a release if wanted.
 
 **The browser "Pass" checklist is behind the desk's Windows sign-in, so it's Dada's eyeball** (timer Start/Pause/Stop → Add time prefilled; "1 change not saved" bar; Edit-layout fold/resize/move stays put; pick a status + save → `?msg=Saved`, no 500).
+
+### Part 34: 2026-10-05, ~09:10 +08:00. **6dba960 live; PSA-Desk restarted (email-HTML). Restart only, no schema. The sanitiser gate is MEASURED in the path — nothing from §3 appeared.**
+
+Ran WS36's 5 Oct handoff (`HANDOFF-cloud-sql01-WS36-20261005-email-html.md`). Restart-only; 064's `body_format` already live (Part 31), drift gate clean, no DDL. A COPY_ONLY backup was not taken — the handoff said none is needed (no DDL, no row rewrite) and nothing here writes to the DB.
+
+1. **Restarted onto 6dba960** (the handoff commit on WS36's merge b388977 of 17cae9f onto my 784e016): `:8085` **401 → down (-1) → 401 in 2s**, PSA-Desk Running.
+2. **Gate verified two ways on the host, because §3 said a forbidden artifact is the one thing to escalate:**
+   - **Live `richtext.clean` on the exact nasty Outlook shape** from the handoff (a `<style>` block, a remote 1×1 pixel, a `cid:` inline image, an `mso`/`<o:p>` comment, a doubled Portal link, an `onclick`, a `javascript:` link, a `<script>`): output kept the words and the bold, the Portal link **once**, and contained **no** `<script>`, `<style>`, `<img>`, `cid:`, `javascript:`, event handler, `mso`/`<o:p>`, or external `src`. 11/11 checks pass.
+   - **Scanned all 95 stored `ticket_event` rows with `body_format='HTML'`** (desk-written notes + any HTML intake): a literal Python scan found **0** rows containing `<script`, `<img`, `cid:`, `[cid:`, `javascript:`, `<style`, `<iframe`, `onerror=`/`onclick=`, or an external `http(s)` `src`. (A first pass with T-SQL `LIKE '%[cid:%'` showed 1 "hit" — a false positive, since `[...]` is a character-class wildcard in `LIKE`; the literal is absent.)
+3. **Nothing from §3's "must never appear" list appeared.** Nothing escalated.
+
+Per handoff §2, mail already imported was **not** re-rendered (that is Dada's separate call, not an operational step). The browser read of a live ward email rendering as the sender wrote it stays Dada's eyeball (behind the Windows sign-in).
