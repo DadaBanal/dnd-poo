@@ -1087,6 +1087,7 @@
     "time_timer.started_at": "TIMESTAMP_TEXT",
     "time_timer.stopped_at": "TIMESTAMP_TEXT",
     "time_timer.paused_at": "TIMESTAMP_TEXT",
-    "time_timer.note": "FREE"
+    "time_timer.note": "FREE",
+    "attachment.content_id": "REF"
   }
 }

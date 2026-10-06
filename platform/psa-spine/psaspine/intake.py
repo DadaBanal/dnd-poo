@@ -197,8 +197,10 @@ def rich_body_of(message) -> str:
         html = _part_text(message)
     if not html:
         return ""
-    clean = richtext.clean(html, limit=richtext.EMAIL_MAX)
-    return clean if richtext.text(clean).strip() else ""
+    # The email profile (6 Oct 2026): tables, a filtered handful of inline CSS
+    # and Content-ID pictures kept, because the result is only ever drawn in a
+    # sandboxed frame; and the messages it quotes folded away under its reply.
+    return richtext.fold(html, profile="email", limit=richtext.EMAIL_MAX)
 
 
 # ---------------------------------------------------------- attachments
@@ -218,7 +220,8 @@ def _is_file(part) -> bool:
 
 
 def files_of(message):
-    """(filename, bytes, is_inline_logo) for every file a message carries."""
+    """(filename, bytes, is_inline_logo) for every file a message carries.
+    `content_ids` gives the Content-ID of each, in the same order."""
     import mimetypes
     for part in message.walk():
         if part.is_multipart():
@@ -239,18 +242,36 @@ def files_of(message):
         yield name, data, logo
 
 
+def content_ids(message) -> list[str | None]:
+    """The Content-ID of each file `files_of` yields, in step with it: the
+    name the message's HTML uses for a picture it shows inline (066)."""
+    out = []
+    for part in message.walk():
+        if part.is_multipart():
+            continue
+        kind = part.get_content_type()
+        if kind == "message/rfc822":
+            out.append(None)
+            continue
+        if kind in ("text/plain", "text/html") and not _is_file(part):
+            continue
+        raw = str(part.get("Content-ID") or "").strip()
+        out.append(raw.strip("<>").strip() or None)
+    return out
+
+
 def _keep_files(conn: sqlite3.Connection, message, work_item_id: str, *, sender: str,
                 at: datetime, run_id: str, counts: dict) -> None:
     from . import attachments
     from .board import _event
     logos = 0
-    for name, data, logo in files_of(message):
+    for (name, data, logo), cid in zip(files_of(message), content_ids(message)):
         if logo:
             logos += 1
             continue
         try:
             attachments.add(conn, work_item_id, data, name, actor=sender or "intake", at=at,
-                            source="EMAIL")
+                            source="EMAIL", content_id=cid)
             counts["files_kept"] += 1
         except attachments.Refused as exc:
             counts["files_refused"] += 1
@@ -739,7 +760,7 @@ def _open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
     return tickets.open_ticket(conn, board_id=board_id, summary=summary,
                                impact="I3", urgency="U3", requested_by=requester,
                                description=body_html or body or None,
-                               description_format="HTML" if body_html else None,
+                               description_format="EMAIL" if body_html else None,
                                at=at, source="EMAIL")
 
 
@@ -756,7 +777,7 @@ def _append_note(conn: sqlite3.Connection, work_item_id: str, body: str,
     conn.execute(
         "INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail,"
         " note_flag, body_format) VALUES (?,?,'INTAKE_REPLY',?,?,'DISCUSSION',?)",
-        (work_item_id, stamp, actor, body_html or body, "HTML" if body_html else None))
+        (work_item_id, stamp, actor, body_html or body, "EMAIL" if body_html else None))
     conn.execute("UPDATE ticket SET updated_at = ?, customer_updated = 1"
                  " WHERE work_item_id = ?", (stamp, work_item_id))
 

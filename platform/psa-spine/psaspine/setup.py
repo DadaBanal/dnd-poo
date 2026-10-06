@@ -480,3 +480,85 @@ def catalogue_choices(conn: sqlite3.Connection, board_id: str | None = None) -> 
     out = [dict(r) | {"label": f"{r['type']} › {r['subtype']} › {r['item']}",
                       "on_board": r["default_board_id"] == board_id} for r in rows]
     return sorted(out, key=lambda x: (not x["on_board"], x["label"])) if board_id else out
+
+
+# ------------------------------------------------------- two boards, side by side
+#
+# Dada, 6 Oct 2026: "the procurement board does not look like the pmo helpdesk
+# board". The board page is one piece of code for every board, so when two
+# boards look different it is because they are set up differently -- or because
+# the person looking is not seeing a board at all (a member the desk does not
+# recognise is drawn the requester's shell, whose home is My requests). This
+# answers the first question from the database, so it is MEASURED rather than
+# guessed at, and says nothing it was not asked. It reads; it never writes.
+
+# What a board's own row says, and how a person would name it. Names and free
+# text are left out: they are meant to differ.
+BOARD_SETTINGS = (("kind", "kind"), ("restricted", "restricted"), ("is_live", "live"),
+                  ("is_unrouted", "the unrouted queue"), ("calendar_id", "calendar"),
+                  ("owner", "owner"), ("deputy", "deputy"), ("notify_requester", "emails the requester"),
+                  ("notify_owner", "emails the owner"), ("closed_reply_policy", "a reply to a closed ticket"),
+                  ("reopen_within_days", "reopens within (days)"), ("auto_assign", "auto-assign"),
+                  ("survey_enabled", "survey"), ("closed_loop_required", "closed loop"),
+                  ("default_work_role_id", "default work role"), ("default_work_type_id", "default work type"))
+
+# What hangs off a board, counted. The first group is its set-up; the second is
+# what it holds, which differs for good reasons and is shown for context only.
+BOARD_PARTS = (("board_status", "statuses", "COALESCE(inactive, 0) = 0"),
+               ("sla_target", "SLA targets", None), ("board_record_type", "ticket types it takes", None),
+               ("board_member", "members", None), ("board_role", "board roles named", None),
+               ("board_team", "teams", None), ("board_intake_address", "email addresses it claims", None),
+               ("status_mail", "per-status emails", None), ("mail_template", "email wordings", None),
+               ("standard_note", "standard notes", None), ("ticket_template", "templates", None),
+               ("workflow", "workflow rules", None), ("board_auto_assign", "auto-assign rules", None),
+               ("department_board", "departments that raise to it", None), ("oncall_slot", "on-call shifts", None))
+BOARD_HOLDS = (("ticket", "tickets", None), ("project", "projects", None), ("recurrence", "recurring tickets", None))
+
+
+def board_compare(conn: sqlite3.Connection, a: str, b: str) -> dict:
+    """How board `b` is set up differently from board `a`. Returns the two
+    rows' settings that differ, the parts each has a different count of, the
+    statuses one has that the other does not, the catalogue each offers, and
+    what each holds. Raises ValueError for a board that does not exist.
+
+    Plain SELECTs only, so it reads the same on the SQL Server store it will
+    actually be run against (no PRAGMA, no catalogue views)."""
+    rows = {}
+    for bid in (a, b):
+        r = conn.execute("SELECT * FROM board WHERE board_id = ?", (bid,)).fetchone()
+        if r is None:
+            raise ValueError(f"no board {bid!r}")
+        rows[bid] = dict(r)
+    settings = [(label, rows[a].get(col), rows[b].get(col)) for col, label in BOARD_SETTINGS
+                if rows[a].get(col) != rows[b].get(col)]
+
+    def count(table, where, bid):
+        # Every table named above carries board_id (they were read off the
+        # schema); a store that has not taken the migration that made one is
+        # answered with None rather than an error.
+        try:
+            return conn.execute(f"SELECT COUNT(*) FROM {table} WHERE board_id = ?"
+                                + (f" AND {where}" if where else ""), (bid,)).fetchone()[0]
+        except Exception:                                   # noqa: BLE001
+            return None
+
+    parts, holds = [], []
+    for table, label, where in BOARD_PARTS:
+        x, y = count(table, where, a), count(table, where, b)
+        if x is not None and x != y:
+            parts.append((label, x, y))
+    for table, label, where in BOARD_HOLDS:
+        x, y = count(table, where, a), count(table, where, b)
+        if x is not None:
+            holds.append((label, x, y))
+
+    def names(bid):
+        return {r[0] for r in conn.execute(
+            "SELECT name FROM board_status WHERE board_id = ? AND COALESCE(inactive, 0) = 0", (bid,))}
+    sa, sb = names(a), names(b)
+    picker = {bid: catalogue_choices(conn, bid) for bid in (a, b)}
+    return {"a": a, "b": b, "names": (rows[a]["display_name"], rows[b]["display_name"]),
+            "settings": settings, "parts": parts, "holds": holds,
+            "statuses_only_a": sorted(sa - sb), "statuses_only_b": sorted(sb - sa),
+            "own_pairs": (sum(1 for c in picker[a] if c["on_board"]),
+                          sum(1 for c in picker[b] if c["on_board"]))}

@@ -179,12 +179,13 @@ def merge(conn: sqlite3.Connection, dup_id: str, into_id: str, *, actor: str,
         # A rich note stays rich when it moves (064): carried as plain text it
         # would read as its own markup on the ticket it was merged into, and the
         # provenance line has to be a paragraph rather than a prefix to match.
-        rich = (n["body_format"] or "").upper() == "HTML"
+        from . import richtext
+        rich = richtext.is_rich(n["body_format"])
         said = (f"<p>(from {dup_id})</p>{n['detail']}" if rich else f"(from {dup_id}) {n['detail']}")
         conn.execute("INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail, note_flag,"
                      " body_format) VALUES (?,?,'MERGED_NOTE',?,?,?,?)",
                      (into_id, n["occurred_at"], n["actor"], said, flag,
-                      "HTML" if rich else None))
+                      n["body_format"].upper() if rich else None))
     files = conn.execute("UPDATE attachment SET work_item_id = ? WHERE work_item_id = ?", (into_id, dup_id)).rowcount
     for l in conn.execute("SELECT * FROM ticket_link WHERE work_item_id = ? OR linked_id = ?", (dup_id, dup_id)).fetchall():
         a = into_id if l["work_item_id"] == dup_id else l["work_item_id"]

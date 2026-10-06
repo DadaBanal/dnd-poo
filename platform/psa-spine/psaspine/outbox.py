@@ -30,6 +30,7 @@ import re
 import sqlite3
 from datetime import datetime
 
+from . import richtext
 from .contacts import email_of
 
 STATUSES = ("SENT", "FAILED")
@@ -286,7 +287,8 @@ def conversation(conn: sqlite3.Connection, work_item_id: str, *, limit: int = TH
     event. Each entry is `who`, `when`, `raw` (as written) and `text` (as it
     may go into an email: the PHI gate applies to every entry on its own)."""
     rows = conn.execute(
-        "SELECT e.occurred_at, e.kind, e.actor, e.detail, e.note_flag, e.is_resolution, b.display_name AS board"
+        "SELECT e.occurred_at, e.kind, e.actor, e.detail, e.note_flag, e.is_resolution, e.body_format,"
+        "       b.display_name AS board"
         "  FROM ticket_event e JOIN ticket t ON t.work_item_id = e.work_item_id"
         "  JOIN board b ON b.board_id = t.board_id"
         "  WHERE e.work_item_id = ?"
@@ -304,8 +306,29 @@ def conversation(conn: sqlite3.Connection, work_item_id: str, *, limit: int = TH
             if e["note_flag"] == "RESOLUTION" or e["is_resolution"]:
                 who += " (resolution)"
         raw = str(e["detail"]).strip()
+        # A rich note goes out as itself (6 Oct 2026). Until today every entry
+        # was read as plain text, so a note written in the editor or an email's
+        # own HTML arrived in the requester's mailbox as its markup -- "<p>",
+        # "<br></p>", a whole <a href=...> spelled out (Dada's screenshot of
+        # PMC-000165). The PHI gate reads the words, as it does everywhere; the
+        # HTML part carries the reply alone, because the thread around it
+        # already lists the earlier messages its fold would repeat.
+        html = None
+        if richtext.is_rich(e["body_format"]):
+            from .web.templates import is_email_note
+            prof = "email" if is_email_note(e["body_format"], e["kind"]) else "note"
+            cleaned = richtext.clean(raw, limit=richtext.READ_MAX, profile=prof)
+            if prof == "email" and "<details>" not in cleaned:
+                cleaned = richtext.fold(cleaned, profile="email", limit=richtext.READ_MAX) or cleaned
+            reply = richtext.unfolded(cleaned)
+            words = richtext.text(reply)
+            text = note_for_email(words)[:1200]
+            if text != PORTAL_WORDS:
+                html = richtext.email_inline(reply)
+        else:
+            text = note_for_email(raw)[:1200]
         out.append({"who": who, "when": (e["occurred_at"] or "")[:16], "raw": raw,
-                    "text": note_for_email(raw)[:1200]})
+                    "text": text, "html": html})
     return out
 
 
@@ -352,7 +375,10 @@ def queue_requester(conn: sqlite3.Connection, work_item_id: str, reason: str, *,
         from .web.templates import rich as _rich
         marked = dict(values, note=NOTE_SLOT)
         _, shell = words(conn, row["board_id"], reason, **marked)
-        said_html = _rich(shell, email=True).replace(NOTE_SLOT, note_html)
+        # The note's own HTML, with the spacing the desk shows written inline:
+        # Outlook gives a bare <p> most of a line of margin, which double-spaced
+        # every note written one line per paragraph in the editor.
+        said_html = _rich(shell, email=True).replace(NOTE_SLOT, richtext.email_inline(note_html))
     sender = reply_from(conn, work_item_id)
     stamp = at.isoformat(sep=" ", timespec="minutes")
     pending = conn.execute("SELECT notification_id FROM notification WHERE work_item_id = ? AND"
@@ -794,7 +820,8 @@ def html_email(text: str, *, ticket: str, link: str | None, board: str, hospital
             f'<div style="border-left:3px solid #d5dae6;padding:6px 12px;margin:0 0 10px">'
             f'<div style="font-size:12px;font-weight:600;color:#3b4454">{_h.escape(i["who"])}'
             f'<span style="font-weight:400;color:#6b7785"> &middot; {_h.escape(i["when"])}</span></div>'
-            f'<div style="font-size:14px;line-height:1.5;color:#1f2430">{_rich(i["text"], email=True)}</div></div>'
+            f'<div style="font-size:14px;line-height:1.5;color:#1f2430">'
+            f'{i.get("html") or _rich(i["text"], email=True)}</div></div>'
             for i in thread)
         body_html += (f'<div style="margin:18px 0 4px;font-size:12px;letter-spacing:.3px;text-transform:uppercase;color:#6b7785">'
                       f'{_h.escape(THREAD_TITLE)}</div>{entries}')

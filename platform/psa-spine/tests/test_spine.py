@@ -3914,7 +3914,7 @@ class RichEmailTest(unittest.TestCase):
                    text=self.TEXT_PART, html=self.HTML_PART)
         self.assertEqual(self._run()["new"], 1)
         row = self._event()
-        self.assertEqual(row["body_format"], "HTML")
+        self.assertEqual(row["body_format"], "EMAIL")
         self.assertIn("<b>Ward 3</b>", row["detail"])
         # The three artefacts from the screenshot, each gone.
         self.assertNotIn("[Speaker phone with solid fill]", row["detail"])
@@ -3929,7 +3929,7 @@ class RichEmailTest(unittest.TestCase):
                    text=self.TEXT_PART, html=self.HTML_PART, in_reply_to=parent)
         self.assertEqual(self._run(run_id="r2")["appended"], 1)
         row = self._event("INTAKE_REPLY")
-        self.assertEqual(row["body_format"], "HTML")
+        self.assertEqual(row["body_format"], "EMAIL")
         self.assertIn("<b>Ward 3</b>", row["detail"])
 
     def test_plain_text_mail_is_stored_exactly_as_it_was_before_today(self):
@@ -3947,7 +3947,7 @@ class RichEmailTest(unittest.TestCase):
         name = self.conn.execute("SELECT name FROM work_item").fetchone()["name"]
         self.assertNotIn("<", name)
         self.assertIn("ultrasound", name)
-        self.assertEqual(self._event()["body_format"], "HTML")
+        self.assertEqual(self._event()["body_format"], "EMAIL")
 
     # --------------------------------------------- what the gate refuses
 
@@ -3957,8 +3957,13 @@ class RichEmailTest(unittest.TestCase):
         self._run()
         detail = self._event()["detail"]
         for forbidden in ("<script", "alert(1)", "<style", "color: red",
-                          "<img", "tracker.example.net", "pixel.gif"):
+                          "tracker.example.net", "pixel.gif"):
             self.assertNotIn(forbidden, detail, f"{forbidden} reached the page")
+        # 6 Oct 2026 (066): a picture the message itself carries is kept, by
+        # its Content-ID, so the note can show it. Only ever by Content-ID:
+        # every <img> stored has a cid: source, and none has an address.
+        self.assertEqual(re.findall(r'<img src="(?!cid:)', detail), [])
+        self.assertIn('<img src="cid:image004.jpg@01DD5349.6A321CD0"', detail)
 
     def test_a_link_the_sender_wrote_as_javascript_is_not_a_link(self):
         self._drop(subject="Ward 3 phone",
@@ -4031,6 +4036,269 @@ class RichEmailTest(unittest.TestCase):
         detail = self._event()["detail"]
         self.assertIn("LAST LINE", detail)
         self.assertIn("LAST LINE", templates.note_html(detail, "HTML"))
+
+
+class TicketOrderTest(unittest.TestCase):
+    """Dada, 6 Oct 2026: "add a way to sort messages by earliest first then to
+    the newest on tickets"."""
+
+    setUp = WebWSGITest.setUp
+    tearDown = WebWSGITest.tearDown
+    _call = WebWSGITest._call
+    _environ = WebWSGITest._environ
+    _cookie_for = WebWSGITest._cookie_for
+
+    def test_the_activity_reads_oldest_first_until_asked_and_remembers_the_choice(self):
+        from psaspine import board
+        conn = db.connect(self.db_path)
+        at = datetime(2026, 10, 6, 9)
+        board.add_note(conn, "ITO-1", body="FIRST-NOTE", flag="INTERNAL", actor="alice", at=at)
+        board.add_note(conn, "ITO-1", body="SECOND-NOTE", flag="INTERNAL", actor="alice",
+                       at=datetime(2026, 10, 6, 10))
+        conn.commit()
+        conn.close()
+        alice = self._cookie_for("alice")
+
+        _, headers, page = self._call("GET", "/ticket/ITO-1", cookie=alice)
+        self.assertLess(page.index("FIRST-NOTE"), page.index("SECOND-NOTE"), "oldest first, as always")
+        self.assertIn("<span>Oldest first</span>", page)
+        self.assertIn("order=new", page, "the toggle offers the other way")
+        self.assertFalse(any(k == "Set-Cookie" and v.startswith("psa_order") for k, v in headers),
+                         "nothing is remembered until somebody chooses")
+
+        _, headers, page = self._call("GET", "/ticket/ITO-1", cookie=alice, query="order=new")
+        self.assertLess(page.index("SECOND-NOTE"), page.index("FIRST-NOTE"), "newest first")
+        self.assertIn("<span>Newest first</span>", page)
+        remembered = next(v for k, v in headers if k == "Set-Cookie" and v.startswith("psa_order="))
+        self.assertIn("psa_order=new", remembered)
+        self.assertIn("Path=/ticket", remembered)
+
+        # The choice holds on the next ticket opened, and on a tab change,
+        # with nothing in the URL.
+        both = alice + "; psa_order=new"
+        _, _, page = self._call("GET", "/ticket/ITO-1", cookie=both, query="tab=INTERNAL")
+        self.assertLess(page.index("SECOND-NOTE"), page.index("FIRST-NOTE"))
+        # The tab counts do not depend on the order.
+        self.assertIn("Internal 2", page)
+        # Anything but the two words is ignored.
+        _, _, page = self._call("GET", "/ticket/ITO-1", cookie=alice + "; psa_order=sideways")
+        self.assertLess(page.index("FIRST-NOTE"), page.index("SECOND-NOTE"))
+
+
+class EmailOnTheTicketTest(unittest.TestCase):
+    """Dada, 6 Oct 2026, two screenshots and a question.
+
+    1. An email on a ticket whose Outlook signature put a blank line between
+       every line of it, its confidentiality footer and the whole quoted
+       thread under a two-word reply.
+    2. The requester's own email from the desk, whose "earlier in this
+       request" thread showed every rich note as its markup: "<p>", "<br></p>",
+       an <a href=...> spelled out.
+    3. *"images are not rendering on the ticket"*.
+
+    And: *"can we search on github whats the best renderer for html"*. The
+    answer (VERIFIED 6 Oct 2026; see richtext's email profile) is three layers:
+    a sanitizer, a sandboxed srcdoc frame, a policy that fetches nothing. These
+    hold all three to account."""
+
+    FIXTURE = Path(__file__).resolve().parent / "fixtures" / "outlook_reply_signature.html"
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = _fresh(self.tmp)
+        self.drop = Path(self.tmp.name) / "drop"
+        self.drop.mkdir()
+        self.at = datetime(2026, 10, 6, 9, 0)
+        self.n = 0
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _related(self, *, html, images=(), subject="Ward 3 phone", in_reply_to=None):
+        """An Outlook-shaped message: multipart/related around an alternative,
+        then each inline picture as its own part with a Content-ID."""
+        self.n += 1
+        head = ["From: rosa.mendoza@pmcne.ph", "To: helpdesk@pmcne.ph", f"Subject: {subject}",
+                "Date: Tue, 06 Oct 2026 09:00:00 +0800", f"Message-ID: <e{self.n}@pmcne.ph>",
+                "MIME-Version: 1.0", 'Content-Type: multipart/related; boundary="REL"']
+        if in_reply_to:
+            head.append(f"In-Reply-To: {in_reply_to}")
+        body = ("--REL\r\nContent-Type: multipart/alternative; boundary=\"ALT\"\r\n\r\n"
+                "--ALT\r\nContent-Type: text/plain; charset=\"utf-8\"\r\n\r\nThank you po\r\n"
+                "--ALT\r\nContent-Type: text/html; charset=\"utf-8\"\r\n\r\n" + html + "\r\n--ALT--\r\n")
+        for cid, name, data in images:
+            body += ("--REL\r\nContent-Type: image/png\r\nContent-Transfer-Encoding: base64\r\n"
+                     f"Content-ID: <{cid}>\r\nContent-Disposition: inline; filename=\"{name}\"\r\n\r\n"
+                     + _b64.encodebytes(data).decode() + "\r\n")
+        body += "--REL--\r\n"
+        (self.drop / f"{self.n:03d}.eml").write_bytes(("\r\n".join(head) + "\r\n\r\n" + body).encode())
+        return f"<e{self.n}@pmcne.ph>"
+
+    def _import(self):
+        return intake.import_drop(self.conn, self.drop, run_id=f"r{self.n}", at=self.at)
+
+    def _intake_event(self):
+        return self.conn.execute("SELECT work_item_id, kind, detail, body_format FROM ticket_event"
+                                 " WHERE kind IN ('INTAKE','INTAKE_REPLY') ORDER BY ticket_event_id DESC").fetchone()
+
+    # ------------------------------------------------- 1. the layout itself
+
+    def test_an_outlook_reply_keeps_its_layout_and_folds_what_it_quotes(self):
+        self._related(html=self.FIXTURE.read_text())
+        self.assertEqual(self._import()["new"], 1)
+        e = self._intake_event()
+        self.assertEqual(e["body_format"], "EMAIL")
+        d = e["detail"]
+        self.assertIn("<table", d, "the signature is still a table, so it lays out side by side")
+        self.assertIn("font-size:10.0pt", d, "and keeps its own type sizes")
+        reply, quoted = d.split("<details>", 1)
+        self.assertIn("Thank you po", reply)
+        self.assertNotIn("From:", reply, "the quoted header is not part of the reply")
+        self.assertIn(f"<summary>{richtext.FOLD_TITLE}</summary>", d)
+        self.assertIn("<b>From:</b> PMC IT Helpdesk", quoted, "it is folded, not thrown away")
+        for gone in ("color:", "url(", "behavior", "background", "class=", "mso", "o:p", "onclick",
+                     "<script", "alert(", "tracker.example.net"):
+            self.assertNotIn(gone, d, gone)
+
+    def test_a_desk_note_is_still_held_to_the_stricter_profile(self):
+        """The email profile is for an email drawn in its sandbox. A note typed
+        or pasted at the desk is drawn in the page, and keeps yesterday's rules."""
+        paste = '<table><tr><td style="font-weight:bold">a</td><td>b</td></tr></table><img src="cid:x@y">'
+        self.assertEqual(richtext.clean(paste), "a b", "unwrapped, cells apart, the picture dropped")
+        self.assertIn("<table>", richtext.clean(paste, profile="email"))
+
+    # ---------------------------------------------- the sandbox it is drawn in
+
+    def test_the_email_is_drawn_in_a_sandbox_that_runs_nothing_and_fetches_nothing(self):
+        self._related(html=self.FIXTURE.read_text())
+        self._import()
+        e = self._intake_event()
+        page = templates.note_html(e["detail"], e["body_format"], kind=e["kind"])
+        self.assertTrue(page.startswith("<iframe class=mail "), page[:60])
+        self.assertIn('sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin"', page)
+        self.assertNotIn("allow-scripts", page, "with same-origin, scripts would undo the sandbox")
+        doc = html.unescape(re.search(r'srcdoc="([^"]*)"', page).group(1))
+        self.assertIn("default-src 'none'", doc)
+        self.assertIn("img-src 'self'", doc, "pictures from this desk only: no tracker, no remote image")
+        self.assertIn("<base target=_blank>", doc, "a link opens a tab, never navigates the frame")
+        self.assertIn("p,div{margin:0}", doc,
+                      "the frame does not space every line: that was the blank line between each line of the signature")
+
+    def test_a_note_stored_before_today_is_framed_and_folded_too(self):
+        """The 5 Oct intake stored an email under the desk profile, as 'HTML'.
+        Its ids were dropped, but Outlook's bold From:/Sent: header survived,
+        and that is enough to fold it now -- nothing has to be re-imported."""
+        stored = ("<p>Good day,</p><p>Kindly see the attached file.</p><p>Thank you</p>"
+                  "<p><b>From:</b> PMC IT Helpdesk &lt;helpdesk@pmcne.ph&gt;<br><b>Sent:</b> Tuesday, "
+                  "October 6, 2026 8:01 AM<br><b>Subject:</b> [PMC-000165] We need something from you</p>"
+                  "<p>Hello Gladys</p>")
+        page = templates.note_html(stored, "HTML", kind="INTAKE_REPLY")
+        doc = html.unescape(re.search(r'srcdoc="([^"]*)"', page).group(1))
+        self.assertIn("<details><summary>", doc)
+        self.assertLess(doc.index("Kindly see"), doc.index("<details>"))
+        self.assertGreater(doc.index("From:"), doc.index("<details>"))
+        # A rich note written at the desk is not an email and is not framed.
+        self.assertNotIn("iframe", templates.note_html("<p>a</p>", "HTML", kind="NOTE"))
+
+    # ------------------------------------------------- 3. the pictures
+
+    def test_an_inline_picture_is_kept_and_shown_where_the_sender_put_it(self):
+        shot = _png(120, 120)                                   # a screenshot, over INLINE_LOGO_BYTES
+        self.assertGreater(len(shot), intake.INLINE_LOGO_BYTES)
+        self._related(html='<p>The printer shows this:</p><p><img src="cid:shot1@pmcne.ph" width="120"></p>',
+                      images=[("shot1@pmcne.ph", "image001.png", shot)])
+        self._import()
+        e = self._intake_event()
+        wid = e["work_item_id"]
+        row = self.conn.execute("SELECT attachment_id, content_id, review_status FROM attachment"
+                                " WHERE work_item_id = ?", (wid,)).fetchone()
+        self.assertEqual(row["content_id"], "shot1@pmcne.ph", "066: the name the HTML calls it by")
+        self.assertIn('<img src="cid:shot1@pmcne.ph"', e["detail"], "stored by name, never by address")
+
+        def framed(resolver):
+            page = templates.note_html(e["detail"], e["body_format"], kind=e["kind"], images=resolver)
+            return html.unescape(re.search(r'srcdoc="([^"]*)"', page).group(1))
+        url = f"/ticket/{wid}/file/{row['attachment_id']}"
+        self.assertIn(f'<img src="{url}"', framed(templates.desk_images(self.conn, wid)),
+                      "the desk sees a Pending picture, as it does on the Files card")
+        self.conn.execute("UPDATE attachment SET review_status = 'WITHHELD', reviewed_by = 'reviewer',"
+                          " reviewed_at = '2026-10-06 10:00' WHERE attachment_id = ?", (row["attachment_id"],))
+        doc = framed(templates.desk_images(self.conn, wid))
+        self.assertNotIn(url, doc)
+        self.assertIn("withheld for patient information", doc)
+
+    def test_a_signature_logo_is_still_not_kept_and_leaves_no_broken_picture(self):
+        logo = _png(8, 8)
+        self.assertLess(len(logo), intake.INLINE_LOGO_BYTES)
+        self._related(html='<p>Thanks</p><p><img src="cid:logo@pmcne.ph"></p>',
+                      images=[("logo@pmcne.ph", "image002.png", logo)])
+        self._import()
+        e = self._intake_event()
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM attachment").fetchone()[0], 0)
+        page = templates.note_html(e["detail"], e["body_format"], kind=e["kind"],
+                                   images=templates.desk_images(self.conn, e["work_item_id"]))
+        doc = html.unescape(re.search(r'srcdoc="([^"]*)"', page).group(1))
+        self.assertNotIn("<img", doc)
+        self.assertNotIn('<span class="imgph">', doc, "a logo nobody kept is not worth a line saying so")
+
+    # ------------------------------------------- 2. the email the requester gets
+
+    def test_the_requesters_email_carries_each_note_as_written_never_its_markup(self):
+        """PMC-000165, 6 Oct 2026: the thread under the desk's email read
+        "<p><p>Good day,</p>..." and spelled out an <a href>."""
+        from psaspine import board, outbox
+        parent = self._related(html="<p>Please give Ma'am Gladys MMS access.</p>")
+        self._import()
+        wid = self._intake_event()["work_item_id"]
+        board.add_note(self.conn, wid, body="<p><p>Good day,</p><p>The attached file has been received.</p></p>",
+                       flag="DISCUSSION", actor="kyline", at=self.at, body_format="HTML", notify_requester=False)
+        # The real signature says "Junior Philhealth Associate", and the PHI
+        # rule for a PhilHealth mention holds that reply back from the email
+        # altogether (MEASURED here; see the next test). A neutral title, so
+        # this test is about the markup.
+        self._related(html=self.FIXTURE.read_text().replace("Junior Philhealth Associate", "Billing Associate"),
+                      subject="RE: Ward 3 phone", in_reply_to=parent)
+        self._import()
+        thread = outbox.conversation(self.conn, wid)
+        for item in thread:
+            self.assertNotIn("<p>", item["text"], item["who"])
+            self.assertNotIn("&lt;", item["text"], item["who"])
+        reply = next(i for i in thread if "Thank you po" in i["text"])
+        self.assertNotIn("From:", reply["text"], "the quote is not carried back: the thread already lists it")
+        self.assertIn("<table", reply["html"])
+        mail = outbox.html_email("Hello.", ticket=wid, link=None, board="PMO Helpdesk",
+                                 hospital="PMC", thread=thread)
+        self.assertNotIn("&lt;p&gt;", mail)
+        self.assertNotIn("&lt;a href", mail)
+        self.assertIn('<p style="margin:0">', mail, "Outlook gives a bare <p> a line of margin; the email says 0")
+
+    def test_a_flagged_reply_is_held_back_from_the_email_markup_and_all(self):
+        """Whatever the gate holds back carries no formatting either: the PHI
+        scan reads the words, and a flagged reply goes out as the portal line."""
+        from psaspine import outbox
+        parent = self._related(html="<p>Hello</p>")
+        self._import()
+        wid = self._intake_event()["work_item_id"]
+        self._related(html=self.FIXTURE.read_text(), subject="RE: Ward 3 phone", in_reply_to=parent)
+        self._import()
+        held = [i for i in outbox.conversation(self.conn, wid) if i["text"] == outbox.PORTAL_WORDS]
+        self.assertEqual(len(held), 1, "the reply whose signature names PhilHealth")
+        self.assertIsNone(held[0]["html"])
+
+    # ------------------------------------------------------ the two boards
+
+    def test_board_compare_says_what_is_set_up_differently(self):
+        from psaspine import setup as _setup
+        _setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        self.conn.execute("INSERT INTO board (board_id, display_name, phase, fulfiller_group, kind)"
+                          " VALUES ('PROCUREMENT','Procurement','2','PROC','SERVICE')")
+        c = _setup.board_compare(self.conn, "IT_HELP", "PROCUREMENT")
+        parts = {label: (x, y) for label, x, y in c["parts"]}
+        self.assertEqual(parts["SLA targets"][1], 0, "the grey pill in place of every SLA clock")
+        self.assertIn("calendar", [label for label, _, _ in c["settings"]])
+        with self.assertRaises(ValueError):
+            _setup.board_compare(self.conn, "IT_HELP", "NOPE")
 
 
 class PortalTest(unittest.TestCase):
@@ -9872,11 +10140,47 @@ class EntraSignInTest(unittest.TestCase):
         conn = db.connect(self.db_path)
         row = conn.execute("SELECT actor, subject_id, detail FROM audit_event WHERE action = 'ENTRA_LOGIN'").fetchone()
         conn.close()
-        self.assertEqual(tuple(row), ("oid-alice", "alice@pmcne.ph", "Alice Cruz"))
+        # The actor is the desk's name for her, as the Windows door would give
+        # it; the object id is kept in the detail, so the trail still links the
+        # two (6 Oct 2026: it used to be the actor, and matched nothing).
+        self.assertEqual(tuple(row), ("alice", "alice@pmcne.ph", "Alice Cruz; entra object oid-alice"))
         # the session works: the portal answers for this person
         session = next(c for c in cookies if c.startswith("psa_session=")).split(";", 1)[0]
         status, _, body = self._call("GET", "/my", cookie=session)
         self.assertTrue(status.startswith("200"), status)
+
+    def test_a_member_who_signs_in_with_microsoft_is_on_her_boards_not_a_requester(self):
+        """Dada, 6 Oct 2026: Ethel, a Procurement member, saw "the old menu" and
+        a board that "does not look like the PMO helpdesk board". The Microsoft
+        door named her by her Entra object id, which no board membership is
+        kept under, so she was on no board and was drawn the requester's
+        three-link shell, whose home page is My requests. The Windows door has
+        always called the same person by her account name."""
+        conn = db.connect(self.db_path)
+        conn.execute("INSERT OR REPLACE INTO board_member (board_id, member, access) VALUES ('IT_HELP', 'alice', 'WORK')")
+        conn.commit()
+        conn.close()
+        _, cookie = self._start("/")
+        _, headers, _ = self._call("GET", "/entra/callback", query=f"code=abc&state={self.flight['state']}",
+                                   cookie=cookie, headers={"host": "desk.test:8443"})
+        session = next(v for k, v in headers if k == "Set-Cookie" and v.startswith("psa_session=")).split(";", 1)[0]
+        status, _, page = self._call("GET", "/", cookie=session)
+        self.assertTrue(status.startswith("200"), status)
+        self.assertNotIn("<body data-requester", page, "a board member gets the desk, not the requester shell")
+        self.assertIn("nav class=mega", page)
+        self.assertIn("Service Desk", page, "the mega menu's modules")
+        self.assertIn("/ticket/new", page, "and the New ticket button a requester never sees")
+
+        # A person on no board who signs in the same way is still a requester:
+        # mapping the name widens nothing.
+        conn = db.connect(self.db_path)
+        conn.execute("DELETE FROM board_member WHERE member = 'alice'")
+        conn.commit()
+        conn.close()
+        status, headers, _ = self._call("GET", "/", cookie=session)
+        self.assertEqual(dict(headers).get("Location"), "/my", "a requester's home is My requests")
+        _, _, page = self._call("GET", "/my", cookie=session)
+        self.assertIn("data-requester", page)
 
     def test_a_wrong_state_a_stale_flight_and_a_foreign_nonce_are_each_refused(self):
         _, cookie = self._start()

@@ -569,10 +569,12 @@ def open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
         (ticket_id, board_id, catalogue_item_id, path, impact, urgency, priority,
          priority_source, requested_by, stamp, owner, stamp, source, record_type, change_type))
     numbering.bind(conn, ticket_id)
-    if description and (description_format or "").upper() == "HTML":
+    if description and (description_format or "").upper() in ("HTML", "EMAIL"):
         from . import richtext
-        description = richtext.clean(description, limit=richtext.EMAIL_MAX)
-        description_format = "HTML" if richtext.text(description).strip() else None
+        description_format = description_format.upper()
+        description = richtext.clean(description, limit=richtext.READ_MAX,
+                                     profile="email" if description_format == "EMAIL" else "note")
+        description_format = description_format if richtext.text(description).strip() else None
     else:
         description_format = None
     if description:

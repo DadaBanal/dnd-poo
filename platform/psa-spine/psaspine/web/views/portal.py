@@ -241,6 +241,27 @@ def _visible_files(ctx, work_item_id: str):
         [work_item_id] + ids).fetchall()
 
 
+def _portal_pictures(ctx, work_item_id: str, shared):
+    """What a requester may see of an email's pictures: exactly the files the
+    portal already shows them (`_visible_files`, cleared by review), and a
+    short line where any other one sits -- never the file. The same gate as
+    the Files card, read rather than restated."""
+    from ... import attachments
+    known = attachments.by_content_id(ctx.conn, work_item_id)
+    visible = {str(f["attachment_id"]) for f in shared}
+
+    def resolve(cid):
+        r = known.get(str(cid).lower())
+        if r is None:
+            return None, None
+        if str(r["attachment_id"]) in visible and str(r["media_type"] or "").startswith("image/"):
+            return f"/my/{work_item_id}/file/{r['attachment_id']}", None
+        if r["review_status"] == "WITHHELD" or r["purged_at"]:
+            return None, "a picture that is not shown here"
+        return None, "a picture, shown here once it has been checked"
+    return resolve
+
+
 def file_download(ctx, work_item_id, attachment_id):
     from .. import HttpError
     from . import files
@@ -311,11 +332,12 @@ def detail(ctx, work_item_id):
             return "You"
         return (f"{t.esc(team)} — resolution" if e["note_flag"] == "RESOLUTION" or e["is_resolution"]
                 else t.esc(team))
+    shared = _visible_files(ctx, work_item_id)
+    pictures = _portal_pictures(ctx, work_item_id, shared)
     stream = "".join(
-        f"<li><div class=rtx>{t.note_html(e['detail'], e['body_format'])}</div>"
+        f"<li><div class=rtx>{t.note_html(e['detail'], e['body_format'], kind=e['kind'], images=pictures, label='Your email' if who(e) == 'You' else 'Email')}</div>"
         f"<div class='meta'>{who(e)} &middot; {t.esc(e['occurred_at'])}</div></li>"
         for e in events) or "<li class='muted'>Nothing yet.</li>"
-    shared = _visible_files(ctx, work_item_id)
     files_card = ""
     if shared:
         from . import files as _files

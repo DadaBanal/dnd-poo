@@ -189,9 +189,17 @@ def callback(conn, request, config, now, *, clock: float | None = None):
     if not hmac.compare_digest(str(claims.get("nonce", "")), flight["nonce"]):
         return refused("The ID token was not issued for this sign-in.")
 
+    # The Microsoft door names the person the way the Windows door does
+    # (members.for_sign_in). The token proved who they are; the object id is
+    # only how Entra spells it, and it matched no board, owner or flag on the
+    # desk, so a member who signed in this way was drawn as a requester.
+    from .. import members
+    oid = user.id
+    user.id = members.for_sign_in(conn, user.email) or oid
+    user.is_sysadmin = user.is_sysadmin or members.is_sysadmin(conn, user.id)
     stamp = now.isoformat(sep=" ", timespec="minutes")
     db.audit(conn, at=stamp, actor=user.id, action="ENTRA_LOGIN", subject_kind="entra_user",
-             subject_id=user.email, detail=user.name)
+             subject_id=user.email, detail=f"{user.name}; entra object {oid}")
     conn.commit()
     session = auth.open_session(user, config.session_secret, now=clock)
     secure = config.secure_cookie(request)

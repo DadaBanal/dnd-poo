@@ -87,17 +87,38 @@ def build(db_path: Path) -> str:
     ph_c = projects.add_phase(conn, prj, name="Handover", at=at, actor="tech")
     projects.add_dependency(conn, ph_b, ph_c, at=at, actor="tech")                # the wrong way round
     projects.link_ticket(conn, wid, prj, ph_a, at=at, actor="tech")
+    # An Outlook reply as it really arrives (6 Oct 2026): a signature laid out
+    # in a table, a confidentiality footer, a screenshot pasted inline by
+    # Content-ID, the whole quoted thread underneath -- and a script and a
+    # tracking pixel, which must come to nothing.
+    from psaspine import attachments, richtext
+    sys.path.insert(0, str(ROOT / "tests"))
+    from test_spine import _png
+    fixture = (ROOT / "tests" / "fixtures" / "outlook_reply_signature.html").read_text()
+    fixture = fixture.replace('<p class=MsoNormal>Thank you po<o:p></o:p></p>',
+                              '<p class=MsoNormal>Thank you po, the screen shows this:<o:p></o:p></p>'
+                              '<p class=MsoNormal><img width=120 height=120 src="cid:shot1@pmcne.ph"></p>')
+    fixture = fixture.replace("</div></body>", "<script>window.parent.BROKE_OUT=1</script></div></body>")
+    emailed = tickets.open_ticket(conn, board_id="IT_HELP", summary="Teams phone on Ward 3",
+                                  impact="I3", urgency="U3", requested_by="rosa.mendoza@pmcne.ph", at=at,
+                                  source="EMAIL", description=richtext.fold(fixture, profile="email"),
+                                  description_format="EMAIL")
+    attachments.add(conn, emailed, _png(120, 120), "image001.png", actor="rosa.mendoza@pmcne.ph", at=at,
+                    source="EMAIL", content_id="shot1@pmcne.ph")
+    board.add_note(conn, emailed, body="LATER-NOTE: checked the handset", flag="INTERNAL", actor="tech",
+                   at=datetime(2026, 10, 3, 10, 0))
     auth.create_local_account(conn, "tech", PASSWORD, at=at, is_sysadmin=True)
     conn.commit()
     conn.close()
-    return wid, mail, noted, prj, ph_b
+    return wid, mail, noted, prj, ph_b, emailed
 
 
 def main() -> int:
     from playwright.sync_api import sync_playwright
     tmp = tempfile.TemporaryDirectory()
     db_path = Path(tmp.name) / "desk.db"
-    ref, mailref, noted, prj, ph_b = build(db_path)
+    os.environ["PSA_ATTACHMENT_DIR"] = str(Path(tmp.name) / "files")    # build() keeps a file too
+    ref, mailref, noted, prj, ph_b, emailed = build(db_path)
     port = free_port()
     env = dict(os.environ, PSA_ATTACHMENT_DIR=str(Path(tmp.name) / "files"))
     proc = subprocess.Popen([sys.executable, "-m", "psaspine", "serve", str(db_path),
@@ -117,6 +138,9 @@ def main() -> int:
             errors: list[str] = []
             page.on("console", lambda m: errors.append(f"{m.type}: {m.text}") if m.type == "error" else None)
             page.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
+            outside: list[str] = []
+            page.on("request", lambda r: outside.append(r.url)
+                    if not r.url.startswith((base, "data:", "about:")) else None)
 
             page.goto(f"{base}/login", wait_until="domcontentloaded")
             page.fill("input[name=username]", "tech")
@@ -300,20 +324,23 @@ def main() -> int:
             # Dada, 3 Oct 2026: "can we make html from emails or render the
             # full emails on the tickets". A unit test proves the HTML; only a
             # browser proves the page shows bold rather than the word "<b>".
-            page.goto(f"{base}/ticket/{mailref}", wait_until="domcontentloaded")
-            page.wait_for_timeout(400)
-            stream = page.locator(".rtx").first
-            note(page.locator(".rtx b").count() >= 1,
-                 "an email's formatting is formatting on the page, not markup",
-                 (stream.inner_text()[:80] if stream.count() else "no .rtx on the page"))
-            said = stream.inner_text() if stream.count() else ""
-            note("<b>" not in said and "[cid:" not in said,
-                 "and no tag or cid: reference is read out as words", said[:80])
-            note(page.locator(".rtx a[href^='https://portal.pmcne.ph']").count() == 1,
-                 "the sender's link is a link, written once")
-            note(page.locator(".rtx img").count() == 0,
+            # Since 6 Oct 2026 an email is drawn in its own frame (below), so
+            # these look inside it.
+            page.goto(f"{base}/ticket/{mailref}", wait_until="load")
+            page.wait_for_timeout(600)
+            seen = page.evaluate("""() => { const f = document.querySelector('iframe.mail');
+                const d = f ? f.contentDocument : document;
+                return {b: d.querySelectorAll('b').length, said: d.body.innerText,
+                        links: d.querySelectorAll("a[href^='https://portal.pmcne.ph']").length,
+                        imgs: d.querySelectorAll('img').length} }""")
+            note(seen["b"] >= 1, "an email's formatting is formatting on the page, not markup",
+                 seen["said"][:80])
+            note("<b>" not in seen["said"] and "[cid:" not in seen["said"],
+                 "and no tag or cid: reference is read out as words", seen["said"][:80])
+            note(seen["links"] == 1, "the sender's link is a link, written once")
+            note(seen["imgs"] == 0,
                  "no image is fetched from the page, so nothing phones the sender home",
-                 f"{page.locator('.rtx img').count()} img element(s)")
+                 f"{seen['imgs']} img element(s)")
             note(page.evaluate("() => !window.BROKE_IN"),
                  "a script in the email never ran")
 
@@ -372,6 +399,98 @@ def main() -> int:
                 page.wait_for_timeout(700)
                 note("no longer waits on" in page.locator("body").inner_text(),
                      "the wrong predecessor comes off, so both phases can finish", page.url)
+
+            # --- an email as its sender laid it out (6 Oct 2026) -------------
+            # Dada: "HTML is or emails are not rendering properly on the ticket
+            # viewer", "images are not rendering on the ticket", and "search on
+            # github whats the best renderer". Sanitizer, sandboxed srcdoc frame,
+            # a policy that fetches nothing: only a browser can prove the last
+            # two, and the frame's height.
+            page.goto(f"{base}/ticket/{emailed}", wait_until="load")
+            page.wait_for_timeout(1200)
+            frame_el = page.locator("iframe.mail").first
+            note(frame_el.count() == 1, "the email is drawn in its own sandboxed frame")
+            if frame_el.count():
+                sb = frame_el.get_attribute("sandbox") or ""
+                note("allow-scripts" not in sb and "allow-same-origin" in sb,
+                     "the sandbox never allows scripts", sb)
+                # The email is read the way the desk itself reads it: through
+                # the page, which shares the frame's origin. Playwright's own
+                # frame calls (click, bounding_box, element evaluate) leave a
+                # helper in the frame that the sandbox then refuses, logging
+                # errors that are the harness's, not the desk's (MEASURED,
+                # 6 Oct 2026); none of them is used here.
+                def inmail(js: str):
+                    return page.evaluate("() => { const d = document.querySelector('iframe.mail')"
+                                         ".contentDocument; return (" + js + ")(d) }")
+                h_el = frame_el.evaluate("f => f.getBoundingClientRect().height")
+                h_doc = inmail("d => d.documentElement.scrollHeight")
+                note(abs(h_el - h_doc) <= 4 and h_el > 80,
+                     "the frame is exactly as tall as the email: no inner scrollbar, no gap",
+                     f"frame {h_el:.0f}px, email {h_doc}px")
+                note(page.evaluate("() => !window.BROKE_OUT"), "a script in the email never ran")
+                # a line holding a picture is as tall as the picture, so only
+                # the lines of words are measured
+                tops = inmail("""d => [...d.querySelectorAll('p')].slice(0,8)
+                                  .map(p => [Math.round(p.getBoundingClientRect().top),
+                                             !!p.querySelector('img')])""")
+                gaps = [b[0] - a[0] for a, b in zip(tops, tops[1:]) if b[0] > a[0] and not a[1]]
+                note(bool(gaps) and max(gaps) <= 40,
+                     "the lines sit as Outlook shows them, not a blank line apart", f"gaps {gaps}")
+                cells = inmail("d => d.querySelectorAll('table td').length")
+                note(cells >= 2, "the signature is laid out as its table", f"{cells} cells")
+                pic = inmail("""d => { const i = d.querySelector('img');
+                                 return i ? [i.complete && i.naturalWidth > 0, i.getAttribute('src')] : null }""")
+                note(bool(pic and pic[0]), "the picture pasted into the email shows where the sender put it",
+                     pic[1] if pic else "no <img>")
+                note(inmail("d => d.querySelectorAll('details').length === 1 && !d.querySelector('details').open"),
+                     "the quoted earlier messages are folded away")
+                before = h_el
+                # clicked as a person clicks: a mouse at a point on the page
+                xy = page.evaluate("""() => { const f = document.querySelector('iframe.mail'),
+                    r = f.getBoundingClientRect(),
+                    s = f.contentDocument.querySelector('summary').getBoundingClientRect();
+                    return [r.left + f.clientLeft + s.left + 8, r.top + f.clientTop + s.top + s.height / 2] }""")
+                page.mouse.click(*xy)
+                page.wait_for_timeout(500)
+                after = frame_el.evaluate("f => f.getBoundingClientRect().height")
+                note(after > before + 40, "opening the fold grows the frame to fit",
+                     f"{before:.0f}px -> {after:.0f}px")
+                page.evaluate("() => { document.documentElement.dataset.theme = 'dark' }")
+                page.wait_for_timeout(300)
+                ink = inmail("d => getComputedStyle(d.body).color")
+                note(ink.replace(" ", "") in ("rgb(228,231,238)",),
+                     "the dark theme reaches inside the frame", ink)
+                page.evaluate("() => { document.documentElement.dataset.theme = 'light' }")
+            note(not [u for u in outside if "tracker" in u or "example.net" in u],
+                 "nothing in the email fetched anything from outside the desk",
+                 " | ".join(outside[:3]))
+
+            # --- oldest first or newest first -----------------------------
+            # Dada, 6 Oct 2026: "add a way to sort messages by earliest first".
+            page.goto(f"{base}/ticket/{emailed}", wait_until="domcontentloaded")
+            order_link = page.locator(".tabs a.order")
+            note(order_link.count() == 1 and "Oldest first" in order_link.inner_text(),
+                 "the Activity card says which way it reads")
+            # the email sits in a frame, so its words are not in the page's
+            # text; compare where the frame and the later note are drawn
+            order_js = """() => {
+              const f = document.querySelector('[data-pod=stream] iframe.mail');
+              const n = [...document.querySelectorAll('[data-pod=stream] *')]
+                .find(e => e.children.length === 0 && e.textContent.includes('LATER-NOTE'));
+              return f && n ? [Math.round(f.getBoundingClientRect().top),
+                               Math.round(n.getBoundingClientRect().top)] : null }"""
+            where = page.evaluate(order_js)
+            note(bool(where) and where[0] < where[1], "oldest first to begin with", str(where))
+            order_link.click()
+            page.wait_for_load_state("domcontentloaded")
+            where = page.evaluate(order_js)
+            note(bool(where) and where[1] < where[0], "one click turns it newest first", str(where))
+            page.goto(f"{base}/ticket/{emailed}", wait_until="domcontentloaded")
+            note("Newest first" in page.locator(".tabs a.order").inner_text(),
+                 "and the browser remembers it on the next visit")
+            page.locator(".tabs a.order").click()                  # leave it as it was found
+            page.wait_for_load_state("domcontentloaded")
 
             note(not errors, "no console errors anywhere above",
                  " | ".join(errors[:5]) if errors else "")

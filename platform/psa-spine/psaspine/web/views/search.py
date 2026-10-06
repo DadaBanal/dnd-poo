@@ -47,7 +47,7 @@ def _note_words(ctx, work_item_id: str, needle: str) -> bool:
             " AND note_flag IS NOT NULL", (work_item_id,)):
         if not detail:
             continue
-        words = richtext.text(detail) if (fmt or "").upper() == "HTML" else detail
+        words = richtext.text(detail) if richtext.is_rich(fmt) else detail
         if needle in words.lower():
             return True
     return False

@@ -66,6 +66,45 @@ def exists(conn: sqlite3.Connection, member: str) -> bool:
     return bool(m) and m in {x.lower() for x in identifiers(conn)}
 
 
+def for_sign_in(conn: sqlite3.Connection, address: str | None) -> str | None:
+    """The desk identifier for a person who signed in with an address -- a
+    Microsoft (Entra) account's UPN or email -- or None when there is no address.
+
+    Dada, 6 Oct 2026: Ethel, on the Procurement board, saw *"the old menu"* and
+    a board that *"does not look like the PMO helpdesk board"*. The Windows
+    door has always turned `PMCNE\\ethel.luciano` or `ethel.luciano@pmcne.ph`
+    into `ethel.luciano`, the identifier her board membership, her owner
+    column and her sysadmin flag are kept under. The Microsoft door did not: it
+    used the account's object GUID, which matches no row anywhere, so a member
+    signing in that way was on no board -- and a person on no board is drawn
+    the three-link requester shell, whose `/` is My requests. One person, two
+    identities, depending on the button they pressed.
+
+    So both doors now arrive at the same name, in this order:
+
+    1. a member record whose email is this address -- exact, and the only way a
+       mailbox on a second domain finds its member;
+    2. an identifier the desk already knows (a member, a board membership, a
+       role, a break-glass account) equal to the address's local part, which is
+       exactly the rule the Windows door applies;
+    3. otherwise the local part itself, lower case, so a requester who signs in
+       either way is still one person.
+    """
+    addr = (address or "").strip().lower()
+    if not addr:
+        return None
+    row = conn.execute("SELECT member FROM member WHERE LOWER(email) = ?", (addr,)).fetchone()
+    if row:
+        return row["member"]
+    local = addr.split("@", 1)[0]
+    if "\\" in local:
+        local = local.split("\\", 1)[1]
+    for known in identifiers(conn):
+        if known.lower() == local:
+            return known
+    return local or None
+
+
 def _contact(conn, member: str):
     from .web import auth
     return auth.contact_for_account(conn, (member or "").lower())

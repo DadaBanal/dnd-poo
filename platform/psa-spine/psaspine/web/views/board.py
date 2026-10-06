@@ -419,7 +419,7 @@ def _table(ctx, boards, shown, f, total: int) -> str:
         sla = t.sla_chips(x["states"]) or (
             f"<span class=pill>{t.esc(common.no_clock_reason(ctx.conn, r['board_id'], r['source_ref']))}</span>")
         last = r["last_note"] or ""
-        if (r["last_note_format"] or "").upper() == "HTML":
+        if richtext.is_rich(r["last_note_format"]):
             last = " ".join(richtext.text(last).split())
         last = (last[:90] + "…") if len(last) > 90 else last
         lines.append(

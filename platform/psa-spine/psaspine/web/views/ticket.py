@@ -277,6 +277,9 @@ def _quick_bar(wid: str, person, can_work: bool) -> str:
         f"<a href='{t.esc(href)}'>{t.icon(ic)}<span>{label}</span></a>" for href, ic, label in items) + "</nav>"
 
 
+ORDER_COOKIE = "psa_order"
+
+
 def detail(ctx, work_item_id):
     from .. import Response
     tk = _load(ctx, work_item_id)
@@ -284,6 +287,15 @@ def detail(ctx, work_item_id):
     msg = ctx.request.query.get("msg", "")
     err = ctx.request.query.get("err", "")
     tab = ctx.request.query.get("tab", "ALL")
+    # Oldest first or newest first (Dada, 6 Oct 2026: "add a way to sort
+    # messages by earliest first then to the newest on tickets"). The URL says
+    # which when someone just chose; otherwise the choice this browser made
+    # last time, kept in a cookie for a year; otherwise oldest first, the way
+    # the desk has always read and the way a conversation is told.
+    chosen = ctx.request.query.get("order", "")
+    remembered = ctx.request.cookies.get(ORDER_COOKIE)
+    order = (chosen if chosen in ("old", "new") else
+             remembered.value if remembered is not None and remembered.value in ("old", "new") else "old")
 
     # ------------------------------------------------------------ header
     why = ""
@@ -408,14 +420,22 @@ def detail(ctx, work_item_id):
         f"{label} {counts[key]}</a>"
         for key, label in (("ALL", "All"), ("DISCUSSION", "Discussion"), ("INTERNAL", "Internal"),
                            ("RESOLUTION", "Resolution"), ("SYSTEM", "System")))
+    flip = "new" if order == "old" else "old"
+    tabs += (f"<a class=order href='/ticket/{wid}?tab={t.esc(tab)}&amp;order={flip}' data-order='{order}'"
+             f" title='{'Oldest first: click for newest first' if order == 'old' else 'Newest first: click for oldest first'}'"
+             f" aria-label='Sort the activity {'newest' if order == 'old' else 'oldest'} first'>"
+             + t.icon("up" if order == "new" else "down")
+             + f"<span>{'Oldest first' if order == 'old' else 'Newest first'}</span></a>")
     def _fmt(row):
         try:
             return row["body_format"]
         except (KeyError, IndexError):
             return None                      # a store that has not taken 064 yet
 
+    # An email's inline pictures, by Content-ID, as this desk may see them (066).
+    pictures = t.desk_images(ctx.conn, work_item_id)
     items = []
-    for e in events:
+    for e in (reversed(events) if order == "new" else events):
         flag = e["note_flag"]
         if tab == "SYSTEM" and flag:
             continue
@@ -432,7 +452,7 @@ def detail(ctx, work_item_id):
                 f"{t.esc(e['occurred_at'])} · {t.esc(e['kind'].replace('_', ' ').lower())}"
                 "<button type=button class='iconbtn copy' data-copy title='Copy this note' aria-label='Copy this note'>"
                 + t.icon("copy") + "</button></div>"
-                f"<div class=rtx>{t.note_html(e['detail'], _fmt(e))}</div></div>")
+                f"<div class=rtx>{t.note_html(e['detail'], _fmt(e), kind=e['kind'], images=pictures, label='Email from ' + (e['actor'] or 'the requester'))}</div></div>")
         else:
             items.append(f"<div class=sys>{t.esc(e['occurred_at'])} · {t.esc(e['actor'] or 'system')} · "
                          f"{t.esc(_system_line(ctx.conn, e))}</div>")
@@ -703,7 +723,14 @@ def detail(ctx, work_item_id):
         f"<div class=rail>{left}<div class=pods data-col=right data-order='ticket,change,approval,family,"
                              f"schedule,tasks,files,links,configurations,project,knowledge,finance,time,commercial,details'>{fields}{configs}{time_card}"
                              f"{commercial}{details}</div></div>")
-    return Response(body=t.page(work_item_id, body, user=ctx.user, active="board", quick=_quick_bar(wid, person, can_work), live=f"ticket:{work_item_id}"))
+    headers = []
+    if chosen in ("old", "new"):
+        # Remembered in this browser, like the layout and the text size; a
+        # different browser on another ward PC keeps its own.
+        headers.append(("Set-Cookie", f"{ORDER_COOKIE}={chosen}; Path=/ticket; Max-Age=31536000; SameSite=Lax"
+                        + ("; Secure" if ctx.config.secure_cookie(ctx.request) else "")))
+    return Response(body=t.page(work_item_id, body, user=ctx.user, active="board", quick=_quick_bar(wid, person, can_work), live=f"ticket:{work_item_id}"),
+                    headers=headers)
 
 
 def _back(work_item_id, **q):

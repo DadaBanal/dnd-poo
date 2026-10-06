@@ -1,0 +1,16 @@
+-- 066: an email's inline images, shown where the sender put them (Dada, 6 Oct
+-- 2026: "images are not rendering on the ticket").
+--
+-- A picture pasted into an Outlook message is not a link. It travels inside
+-- the message as a part of its own, and the HTML points at it with
+-- `<img src="cid:image004.jpg@01DD5349.6A321CD0">`, the Content-ID of that
+-- part. Intake has always kept the part itself, as an attachment through the
+-- patient-details review; what it threw away was the name the HTML calls it
+-- by, so the note could never find its own picture again.
+--
+-- This is that name, as the sending client wrote it, without the angle
+-- brackets. It is read only when a note is drawn: the stored HTML keeps
+-- `cid:...`, never a URL, and the page decides what the person looking may
+-- see -- the desk any file not withheld, the requester's portal only a
+-- file that has been cleared. NULL for every file that came any other way.
+ALTER TABLE attachment ADD COLUMN content_id TEXT;

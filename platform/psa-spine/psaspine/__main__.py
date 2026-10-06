@@ -72,6 +72,12 @@ def main(argv: list[str] | None = None) -> int:
                                " fills them if they are thin. Reads only; writes nothing")
     pcat.add_argument("database", help=DB_HELP)
     pcat.add_argument("--board", help="one board_id, instead of every board")
+    pcmp = sub.add_parser("board-compare",
+                          help="how one board is set up differently from another: settings, statuses, SLA targets,"
+                               " members, addresses, emails, catalogue. Reads only; writes nothing")
+    pcmp.add_argument("database", help=DB_HELP)
+    pcmp.add_argument("board_a", help="the board that looks right, e.g. IT_HELP")
+    pcmp.add_argument("board_b", help="the board that does not, e.g. PROCUREMENT")
     pretry = sub.add_parser("mail-retry", help="forget a message intake set aside (UNCLASSIFIED) so a fresh pickup"
                                                " sync imports it again, once the cause is put right")
     pretry.add_argument("database", help=DB_HELP)
@@ -443,6 +449,34 @@ def _run(conn, a) -> int:
         if not h["total"]:
             print(r"NOTHING arrived in that window: the fault is before the desk. Check the pickup task and its log"
                   r" (D:\psa\mail-state\mail-pickup-<mailbox>.log), or run Repair-PsaMailPickup.ps1.")
+        return 0
+
+    if a.cmd == "board-compare":
+        from . import setup as _setup
+        try:
+            c = _setup.board_compare(conn, a.board_a, a.board_b)
+        except ValueError as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 2
+        na, nb = c["names"]
+        print(f"{c['a']} ({na})  against  {c['b']} ({nb})")
+        print("\nsettings that differ:" if c["settings"] else "\nsettings: the same")
+        for label, x, y in c["settings"]:
+            print(f"  {label:<30} {str(x if x is not None else '-'):<18} {y if y is not None else '-'}")
+        print("\nset-up that differs, by count:" if c["parts"] else "\nset-up counts: the same")
+        for label, x, y in c["parts"]:
+            flag = "   <- none on " + c["b"] if not y and x else ("   <- none on " + c["a"] if not x and y else "")
+            print(f"  {label:<30} {x:<18} {y}{flag}")
+        if c["statuses_only_a"]:
+            print(f"\nstatuses only {c['a']} has: " + ", ".join(c["statuses_only_a"]))
+        if c["statuses_only_b"]:
+            print(f"statuses only {c['b']} has: " + ", ".join(c["statuses_only_b"]))
+        print(f"\ncatalogue pairs of its own: {c['a']} {c['own_pairs'][0]}, {c['b']} {c['own_pairs'][1]}")
+        print("what each holds (differs for good reasons; context only): "
+              + "; ".join(f"{label} {x} / {y}" for label, x, y in c["holds"]))
+        print("\nThe board page is one piece of code for every board: a difference you can see is one of the"
+              " lines above, or the person is not being recognised as a member at all (they then see the"
+              " requester's page, My requests, with three links across the top).")
         return 0
 
     if a.cmd == "catalogue-health":

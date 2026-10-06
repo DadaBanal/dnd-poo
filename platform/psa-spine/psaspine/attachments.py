@@ -257,8 +257,11 @@ def safe_name(filename: str) -> str:
 
 
 def add(conn: sqlite3.Connection, work_item_id: str, data: bytes, filename: str, *,
-        actor: str, at: datetime, source: str = "DESK") -> dict:
-    """Keep a file on a ticket. Returns the row's fields. Raises Refused."""
+        actor: str, at: datetime, source: str = "DESK", content_id: str | None = None) -> dict:
+    """Keep a file on a ticket. Returns the row's fields. Raises Refused.
+
+    `content_id` is the name an email's HTML calls this file by (066), so the
+    note can show the picture where the sender put it."""
     from .board import _event, touch
     if not data:
         raise Refused("the file is empty")
@@ -277,12 +280,13 @@ def add(conn: sqlite3.Connection, work_item_id: str, data: bytes, filename: str,
         os.replace(tmp, path)
     stamp = at.isoformat(sep=" ", timespec="minutes")
     name = safe_name(filename)
+    cid = (content_id or "").strip().strip("<>").strip()[:400] or None
     cur = conn.execute(
         "INSERT INTO attachment (work_item_id, filename, media_type, size_received, size_stored,"
-        " sha256, encoding, treatment, source, uploaded_by, uploaded_at, review_status)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?,'PENDING')",
+        " sha256, encoding, treatment, source, uploaded_by, uploaded_at, review_status, content_id)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,'PENDING',?)",
         (work_item_id, name, media_type, len(data), len(stored), sha, encoding, how, source,
-         actor, stamp))
+         actor, stamp, cid))
     _event(conn, work_item_id, stamp, "ATTACHMENT", actor,
            f"file attached: {name} ({_kb(len(data))} received, {_kb(len(stored))} stored); "
            "awaiting review for patient information")
@@ -531,3 +535,13 @@ def purge(conn: sqlite3.Connection, *, at: datetime, withheld_days: int, closed_
                 break
     plan["applied"] = True
     return plan
+
+
+def by_content_id(conn: sqlite3.Connection, work_item_id: str) -> dict:
+    """The ticket's files an email's HTML can name, by Content-ID, lower case:
+    each with its id, name, review state and whether it was purged. A picture
+    the note names that is not here was a signature logo intake did not keep
+    (INLINE_LOGO_BYTES), or came on a ticket stored before 066."""
+    return {str(r["content_id"]).lower(): dict(r) for r in conn.execute(
+        "SELECT attachment_id, filename, media_type, review_status, purged_at, content_id FROM attachment"
+        " WHERE work_item_id = ? AND content_id IS NOT NULL", (work_item_id,))}

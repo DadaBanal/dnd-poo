@@ -181,6 +181,7 @@ dialog#pal::backdrop{background:rgb(10 12 18/.35);-webkit-backdrop-filter:blur(3
 .rtx .rq{margin:0 0 10px;padding:2px 0 2px 10px;border-left:3px solid var(--line-2);color:var(--ink-2)}
 .rtx code{font-family:var(--mono);font-size:.92em;background:var(--surface-3);border-radius:4px;padding:1px 4px}
 .rtx a{word-break:break-word}
+iframe.mail{display:block;width:100%;border:0;margin:0;background:transparent;color-scheme:light dark;overflow:hidden}
 :root[data-text=s]{--note-size:13px} :root[data-text=l]{--note-size:16.5px}
 /* The editor's own toolbar, and the preview beside it. */
 /* Dada, 3 Oct 2026: "it should also have one save button for all". The fields
@@ -482,6 +483,8 @@ h1.sumline .sumform{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margi
   transition:color var(--fast) var(--ease),background var(--fast) var(--ease)}
 .tabs a:hover{color:var(--ink);background:var(--surface-2);text-decoration:none}
 .tabs a.on{color:var(--ink);border-color:var(--accent);font-weight:600}
+.tabs{flex-wrap:wrap}.tabs a.order{margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:12.5px;white-space:nowrap}
+.tabs a.order .ic{width:14px;height:14px}
 .stabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
 .stabs a{padding:6px 14px;border-radius:999px;background:var(--surface);border:1px solid var(--line);color:var(--ink-2);font-weight:600;
   transition:background var(--fast) var(--ease),color var(--fast) var(--ease),border-color var(--fast) var(--ease)}
@@ -1087,6 +1090,38 @@ $$("input[data-tickpick]").forEach(function(inp){
     if(!m)return; var pre=m[1].toUpperCase();
     inp.value=pre==="PMC"?"PMC-"+("000000"+m[2]).slice(-6):pre+"-"+m[2]});
 });
+
+/* ---- an email in its sandbox (templates.mail_frame) -----------------------
+   The frame is same-origin (never allow-scripts), so the page can read how tall
+   the email is and give the frame exactly that: no inner scrollbar, no gap.
+   It is measured when it loads, when a picture in it loads, when its fold is
+   opened or shut, and when its width changes (a card resized or unfolded).
+   The theme and the text size follow the page's own, because the email's
+   document has no stylesheet of ours to read them from. */
+function mailDoc(f){try{return f.contentDocument}catch(e){return null}}
+function mailFit(f){var md=mailDoc(f);if(!md||!md.documentElement||!md.body)return;
+  var h=Math.max(md.documentElement.scrollHeight,md.body.scrollHeight);
+  if(h>0)f.style.height=(h+2)+"px"}
+function mailTheme(f){var md=mailDoc(f);if(!md||!md.documentElement)return;var r=md.documentElement;
+  if(root.dataset.theme)r.dataset.theme=root.dataset.theme;else r.removeAttribute("data-theme");
+  var sz=getComputedStyle(root).getPropertyValue("--note-size").trim();
+  if(sz)r.style.setProperty("--size",sz);else r.style.removeProperty("--size");mailFit(f)}
+function mailWire(f){if(f.dataset.wired)return;f.dataset.wired="1";
+  /* Nothing is listened for inside the email: a sandbox without scripts
+     runs no listener there, ours included. Its body is watched for size
+     from out here, which covers the fold and a picture arriving alike. */
+  function ready(){var md=mailDoc(f);if(!md||!md.body)return;mailTheme(f);
+    if(window.ResizeObserver){var ro=new ResizeObserver(function(){mailFit(f)});ro.observe(md.body);ro.observe(f)}
+    else[300,1000,3000].forEach(function(t){setTimeout(function(){mailFit(f)},t)})}
+  f.addEventListener("load",ready);
+  var md=mailDoc(f);if(md&&md.readyState==="complete"&&md.body&&md.body.firstChild)ready()}
+function mailAll(){$$("iframe.mail").forEach(mailWire)}
+mailAll();
+if(window.MutationObserver){
+  new MutationObserver(function(){$$("iframe.mail").forEach(mailTheme)})
+    .observe(root,{attributes:true,attributeFilter:["data-theme","data-text"]});
+  new MutationObserver(function(ms){for(var i=0;i<ms.length;i++)if(ms[i].addedNodes.length){mailAll();break}})
+    .observe(d.body,{childList:true,subtree:true})}
 })();
 // A filter applies the moment it is picked (Dada, 1 Oct 2026: "when the
 // drop down is picked it updates automatically"): a select or a checkbox in
@@ -1396,20 +1431,90 @@ def blocks(text) -> list:
     return out
 
 
-def note_html(detail, body_format=None, *, email: bool = False) -> str:
+INTAKE_KINDS = ("INTAKE", "INTAKE_REPLY")
+
+
+def is_email_note(body_format, kind=None) -> bool:
+    """Whether a note is an email's own HTML: 'EMAIL' from 6 Oct 2026, and the
+    'HTML' intake stored for the day before that, which is the same thing
+    cleaned under the stricter profile."""
+    f = (body_format or "").upper()
+    return f == "EMAIL" or (f == "HTML" and kind in INTAKE_KINDS)
+
+
+def note_html(detail, body_format=None, *, email: bool = False, kind=None, images=None,
+              label: str = "") -> str:
     """A note as it should be read, whichever way it was written (064).
 
     'HTML' means it was written in the desk's editor and was rebuilt by
     `richtext.clean` before it was stored; it is cleaned again here, because a
-    thing read out of a database is a thing from outside. Anything else is the
-    plain text it always was, and reads exactly as it did."""
-    if (body_format or "").upper() == "HTML":
-        from .. import richtext
-        # EMAIL_MAX, not MAX: a note written at the desk is short, but a note
-        # that came in as an email carries a quoted thread, and re-reading it
-        # under the shorter bound would cut the page off mid-sentence.
-        return richtext.clean(detail, limit=richtext.EMAIL_MAX)
-    return rich(detail, email=email)
+    thing read out of a database is a thing from outside. An email's own HTML
+    is drawn in its sandbox (`mail_frame`). Anything else is the plain text it
+    always was, and reads exactly as it did.
+
+    `email=True` is for a note going out *in* an email: no frame, no stylesheet,
+    the spacing written inline (`richtext.email_inline`)."""
+    from .. import richtext
+    if email:
+        if richtext.is_rich(body_format):
+            prof = "email" if is_email_note(body_format, kind) else "note"
+            return richtext.email_inline(richtext.clean(detail, limit=richtext.READ_MAX, profile=prof))
+        return rich(detail, email=True)
+    if is_email_note(body_format, kind):
+        return mail_frame(detail, images=images, label=label)
+    if richtext.is_rich(body_format):
+        # READ_MAX, not MAX: re-reading a stored note under a typed note's
+        # bound would cut a long one off mid-sentence.
+        return richtext.clean(detail, limit=richtext.READ_MAX)
+    return rich(detail)
+
+
+def mail_frame(detail, *, images=None, label: str = "") -> str:
+    """An email as its sender laid it out, in a sandbox (6 Oct 2026).
+
+    The three layers the research names (see richtext's email profile): the
+    gate rebuilt it; this frame keeps its layout and the desk's stylesheet out
+    of each other's way -- the desk's paragraph spacing is what put a blank
+    line between every line of an Outlook signature; and the frame's own policy
+    lets it load nothing but pictures from this desk. The sandbox never gets
+    `allow-scripts`. The page sizes the frame to its content (SCRIPT); without
+    scripting it is a frame of a sensible height that scrolls."""
+    from .. import richtext
+    html = richtext.clean(detail, limit=richtext.READ_MAX, profile="email")
+    if "<details>" not in html:
+        # Stored before today: the gate had dropped the ids and classes the
+        # quote markers use, but the bold From:/Sent: header Outlook writes is
+        # still there, and is enough to fold the quoted thread now.
+        html = richtext.fold(html, profile="email", limit=richtext.READ_MAX) or html
+    html = richtext.resolve_images(html, images)
+    head = html.split("<details>", 1)[0]
+    rows = len(re.findall(r"<(?:p|div|br|li|tr|h3|h4|hr)\b", head)) + (1 if "<details>" in html else 0)
+    height = max(28, min(1200, 22 * max(1, rows) + 100 * head.count("<img")))
+    return ('<iframe class=mail sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin"'
+            f' referrerpolicy=no-referrer title="{esc(label or "The email as it was sent")}"'
+            f' style="height:{height}px" srcdoc="{esc(richtext.mail_document(html))}"></iframe>')
+
+
+def desk_images(conn, work_item_id: str):
+    """What the desk may see of an email's pictures: any file on the ticket the
+    email named, unless it was withheld for patient information or purged.
+    A Pending file shows, as it does on the Files card; reviewing it is the
+    desk's job."""
+    from .. import attachments
+    known = attachments.by_content_id(conn, work_item_id)
+
+    def resolve(cid):
+        r = known.get(str(cid).lower())
+        if r is None:
+            return None, None                     # a signature logo intake did not keep
+        if r["purged_at"]:
+            return None, f"picture {r['filename']}: removed under the retention rule"
+        if r["review_status"] == "WITHHELD":
+            return None, f"picture {r['filename']}: withheld for patient information"
+        if not str(r["media_type"] or "").startswith("image/"):
+            return None, f"{r['filename']}: on the Files card"
+        return f"/ticket/{work_item_id}/file/{r['attachment_id']}", None
+    return resolve
 
 
 def rich(text, *, email: bool = False) -> str:
