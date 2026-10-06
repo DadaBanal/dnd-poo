@@ -825,6 +825,62 @@ main button.ghost,main .btn.ghost,.backbtn{
 /* notes inside a card sit one step up from it */
 .note{box-shadow:inset 0 1px 0 var(--hi),0 6px 16px -10px rgb(0 0 0/.5)!important}
 
+/* ---- light, with depth (Dada, 6 Oct 2026: "the light theme is still too flat").
+   Light reads flat when the page and its cards are nearly the same pale. So: a
+   deeper, coloured canvas; white cards that stand off it on a three-step
+   shadow; a crisp edge; a header band on tables; fields with a defined well;
+   colour carried by the glows and accents rather than by grey. */
+:root[data-theme=light]{
+  --l1:linear-gradient(180deg,#ffffff,#f7f9fe);
+  --l1-edge:linear-gradient(180deg,#ffffff,rgb(60 80 150/.20) 40%,rgb(60 80 150/.30));
+  --l1-shadow:inset 0 1px 0 #fff,0 1px 1px rgb(20 30 70/.06),0 4px 10px -3px rgb(20 30 70/.10),0 26px 50px -22px rgb(30 40 110/.42);
+  --l1-hover:inset 0 1px 0 #fff,0 1px 1px rgb(20 30 70/.06),0 6px 14px -4px rgb(20 30 70/.12),0 32px 60px -22px rgb(50 60 170/.48),0 0 0 1px rgb(80 110 240/.22);
+  --l2-bg:rgb(255 255 255/.86);
+  --l2-shadow:inset 0 1px 0 #fff,0 0 0 1px rgb(60 80 150/.18),0 34px 80px -24px rgb(30 40 110/.5),0 10px 24px -10px rgb(30 40 110/.22);
+  --well:#f3f6fc;--well-shadow:inset 0 1px 2px rgb(20 30 70/.10),inset 0 0 0 1px rgb(60 80 150/.20)}
+:root[data-theme=light] body{background:
+  radial-gradient(1100px 650px at 6% -12%,rgb(99 102 241/.34),transparent 60%),
+  radial-gradient(1000px 600px at 104% -6%,rgb(34 211 238/.30),transparent 60%),
+  radial-gradient(1100px 760px at 60% 125%,rgb(168 85 247/.22),transparent 60%),
+  linear-gradient(180deg,#d6ddee,#cdd6ea 60%,#d3d9ec);background-attachment:fixed}
+:root[data-theme=light] header.top{box-shadow:var(--l2-shadow)!important}
+:root[data-theme=light] header.top::after{opacity:1}
+:root[data-theme=light] main h1:not(.sumline){background:linear-gradient(92deg,#0f1630 20%,#0891b2 62%,#7c3aed);
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+/* tables: a band for the header, lines that can be seen, a row that answers the pointer */
+:root[data-theme=light] table.grid thead th{background:linear-gradient(180deg,#eef2fb,#e6ebf7)!important;color:#4a5578;
+  box-shadow:inset 0 -1px 0 rgb(60 80 150/.22)}
+:root[data-theme=light] table.grid tbody td{border-color:rgb(60 80 150/.13)!important}
+:root[data-theme=light] table.grid tbody tr:hover{background:linear-gradient(90deg,rgb(34 211 238/.12),rgb(124 58 237/.06) 60%,transparent)!important}
+/* tiles carry their colour further */
+:root[data-theme=light] .tile.bad{background:linear-gradient(160deg,rgb(244 63 94/.18),transparent 65%) padding-box,var(--l1) padding-box,
+  linear-gradient(180deg,rgb(244 63 94/.55),rgb(244 63 94/.15)) border-box!important}
+:root[data-theme=light] .tile.warn{background:linear-gradient(160deg,rgb(245 158 11/.20),transparent 65%) padding-box,var(--l1) padding-box,
+  linear-gradient(180deg,rgb(245 158 11/.6),rgb(245 158 11/.15)) border-box!important}
+:root[data-theme=light] .tile.on{background:linear-gradient(160deg,rgb(34 211 238/.18),rgb(124 58 237/.08) 60%,transparent) padding-box,var(--l1) padding-box,
+  var(--neon) border-box!important}
+:root[data-theme=light] .tile .ic{background:rgb(8 145 178/.12);color:#0891b2;box-shadow:0 6px 16px -6px rgb(8 145 178/.6)}
+:root[data-theme=light] .tile.bad .ic{background:rgb(244 63 94/.12);color:#e11d48;box-shadow:0 6px 16px -6px rgb(244 63 94/.6)}
+:root[data-theme=light] .tile.warn .ic{background:rgb(245 158 11/.14);color:#d97706;box-shadow:0 6px 16px -6px rgb(245 158 11/.6)}
+:root[data-theme=light] .tile .n{background:linear-gradient(180deg,#0f1630,#3b4a7a);-webkit-background-clip:text;background-clip:text;color:transparent}
+/* card titles get a hairline under them, so a card has a head and a body */
+:root[data-theme=light] .card>h2:first-child,:root[data-theme=light] .card>.cardhead:first-child{
+  padding-bottom:10px;margin-bottom:12px;box-shadow:0 1px 0 rgb(60 80 150/.14)}
+/* fields and quiet buttons with an edge you can see */
+:root[data-theme=light] input:not([type=checkbox]):not([type=radio]):not([type=range]),:root[data-theme=light] select,
+:root[data-theme=light] textarea,:root[data-theme=light] .multipick{border-color:transparent!important}
+:root[data-theme=light] input:focus,:root[data-theme=light] select:focus,:root[data-theme=light] textarea:focus{
+  background-color:#fff!important;box-shadow:0 0 0 1px #06b6d4,0 0 0 4px rgb(6 182 212/.18)!important}
+:root[data-theme=light] main button.ghost,:root[data-theme=light] main .btn.ghost,:root[data-theme=light] .backbtn{
+  border:1px solid rgb(60 80 150/.22)!important;box-shadow:inset 0 1px 0 #fff,0 1px 2px rgb(20 30 70/.10),0 4px 10px -6px rgb(20 30 70/.25)}
+/* notes: the two voices read as coloured paper on white */
+:root[data-theme=light] .note{box-shadow:inset 0 1px 0 rgb(255 255 255/.8),0 1px 2px rgb(20 30 70/.06),0 10px 22px -14px rgb(30 40 110/.35)!important}
+:root[data-theme=light] footer{color:#56607e}
+/* pale on pale shows through even under blur: floating layers in light are near solid */
+:root[data-theme=light] header.top nav .panel,:root[data-theme=light] .edbar .pop>.menu,:root[data-theme=light] details.tip>.tipbody,
+:root[data-theme=light] .banner.toast,:root[data-theme=light] [popover]#keys,:root[data-theme=light] .pal-box,:root[data-theme=light] dialog.tedlg{
+  background:#fff!important}
+
 /* ---- motion that does not lag (Dada, 6 Oct 2026: "animations are welcome
    and transitions as long as they dont lag it"). transform and opacity only,
    so the GPU does it; each runs once; none on a list that can be long. */

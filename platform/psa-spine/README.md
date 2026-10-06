@@ -2005,6 +2005,15 @@ Dada, on a screenshot of the Service Desk menu over the Projects page: *"opacity
   mean (red breached, amber due, cyan selected). Buttons have a lit top and a shaded foot.
   Blur is only on those small floating areas, never on the page.
 
+### Light, with depth (6 Oct 2026)
+
+Dada: *"the light theme is still too flat"*. Light read flat because the page and its cards
+were nearly the same pale. Now the canvas is a deeper blue-grey with indigo, cyan and violet
+glows; cards are white and stand off it on a three-step shadow with a crisp edge; tables have
+a header band and visible row lines; fields have a defined well and a cyan focus ring; tiles
+carry their colour further; quiet buttons have an edge. Menus and windows in light are solid
+white, because pale on pale shows through even under blur.
+
 ## One Save, always reachable (3 Oct 2026)
 
 The ticket's own fields were already one form with one **Save changes** — but it
