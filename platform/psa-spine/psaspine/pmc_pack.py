@@ -30,6 +30,7 @@ HELPDESK_EXTRA = (
     ("Waiting on Parts", "NO_ESCALATION", 0, 1, 1, "We are waiting for a part to arrive"),
     ("Waiting on BizBox", "NO_ESCALATION", 0, 1, 1, "Raised with the BizBox support team; we will tell you when they answer"),
     ("Awaiting approval", "NO_ESCALATION", 0, 1, 1, "Waiting for an approval"),
+    ("On Hold", "NO_ESCALATION", 0, 1, 1, "On hold; we will tell you when it moves"),
 )
 PROCUREMENT = (
     ("New", "NOT_RESPONDED", 0, 1, 1, "Received - waiting for Procurement to pick it up"),

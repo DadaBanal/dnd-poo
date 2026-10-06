@@ -79,6 +79,19 @@ Without the table, both would fail.
 - Moving those tickets closes them. That is a change the requesters can see on the portal, so it is Dada's call.
 - Your board-compare shows Procurement does not email the requester, so no emails would go out (INFERRED from that row; it is not a fact about the command).
 
+## 3b. On Hold on PMO Helpdesk (Dada, later on 6 Oct: "can u add a onhold status")
+
+On Hold is an open status. Like the Waiting statuses, it holds the SLA clocks (NO_ESCALATION).
+- **New boards** get it from the starter set.
+- **PROCUREMENT** already has one.
+- **PMO Helpdesk** gets it from the PMC pack. It adds only what is missing, and it is a preview unless you pass `--apply`:
+
+      .\Invoke-PsaSpine.ps1 -Spine "setup-pmc --actor dada.banal"
+
+  Expect the preview to show one line: `status IT_HELP: On Hold`.
+  - **If that is the only line**, run it again with `--apply` added. Nothing else should be listed. Adding a status changes no existing ticket.
+  - **If anything else is listed**, stop and paste it back.
+
 ## 4. Reads 2–3: Ethel, again
 
 Your Part 37 MEASURED the following:

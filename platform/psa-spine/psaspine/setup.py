@@ -56,6 +56,9 @@ STARTER_STATUSES = (
     ("Waiting on Requester", "NO_ESCALATION", 0, 0, 1, 1, "We need something from you"),
     ("Waiting on Vendor", "NO_ESCALATION", 0, 0, 1, 1, "Waiting on a supplier"),
     ("Awaiting approval", "NO_ESCALATION", 0, 0, 1, 1, "Waiting for an approval"),
+    # Dada, 6 Oct 2026: "can u add a onhold status". Open, and like the
+    # Waiting statuses it holds the SLA clocks (NO_ESCALATION).
+    ("On Hold", "NO_ESCALATION", 0, 0, 1, 1, "On hold; we will tell you when it moves"),
     ("Resolved", "RESOLVED", 0, 0, 1, 1, "We think this is fixed — reply if it is not"),
     (">Cancelled", "RESOLVED", 0, 1, 0, 0, CANCELLED_WORDS),
     (">Closed", "RESOLVED", 0, 1, 0, 0, "Closed"),

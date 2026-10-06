@@ -7056,7 +7056,7 @@ class BoardSetupTest(unittest.TestCase):
 
     def test_the_starter_makes_a_board_ready(self):
         r = setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
-        self.assertEqual((r["statuses"], r["targets"]), (10, 12))                                 # 049 Awaiting approval; 6 Oct >Cancelled
+        self.assertEqual((r["statuses"], r["targets"]), (11, 12))                                 # 049 Awaiting approval; 6 Oct >Cancelled, On Hold
         self.assertEqual(setup.readiness(self.conn, "IT_HELP"), [])
         # Every starter target is measured, never promised.
         self.assertEqual(self.conn.execute(
@@ -7224,7 +7224,7 @@ class ManyBoardsTest(unittest.TestCase):
         bid = setup.create_board(self.conn, display_name="Biomedical", fulfiller_group="Biomed",
                                  creator="dada", at=self.at, copy_from="IT_HELP")
         self.assertEqual(self.conn.execute(
-            "SELECT COUNT(*) FROM board_status WHERE board_id = ?", (bid,)).fetchone()[0], 10)     # 049 Awaiting approval; 6 Oct >Cancelled
+            "SELECT COUNT(*) FROM board_status WHERE board_id = ?", (bid,)).fetchone()[0], 11)     # 049 Awaiting approval; 6 Oct >Cancelled, On Hold
         self.assertEqual(self.conn.execute(
             "SELECT target_minutes FROM sla_target WHERE board_id = ? AND priority='P1'"
             " AND clock='RESPOND'", (bid,)).fetchone()[0], 5)
