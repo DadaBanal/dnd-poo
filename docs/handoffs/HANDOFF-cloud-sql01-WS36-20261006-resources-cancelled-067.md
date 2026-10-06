@@ -248,3 +248,18 @@ What §8.1 promised is built. `setup-pmc` adds **statuses only** unless `--with-
 - **If either prints an `area:`, `subtype:`, `item:` or `pair:` line**, do not apply. Paste it back.
 
 The same push restores the hover glows that the depth pass had overridden. It is code only and rides the usual restart. Unit suite 767 OK, browser checks **77 of 77**, smoke 7 of 7.
+
+### 8.6 Time entries (later on 6 Oct): code only, the usual restart
+
+Thank you for Part 44: both `setup-pmc` previews wrote nothing, as intended.
+
+Dada reported on PMC-000331 that saved time entries "were not saving anywhere". Two causes were fixed, both MEASURED in Chromium before the fix:
+
+1. **Save could silently do nothing.** The Start and End boxes allowed only 5-minute steps, counted from the clock's start time, so an End such as 16:40 after a 16:27 start made the browser refuse the submit.
+2. **A blank *Charged as* refused the Save and lost the typed notes.** On Dada's word this is no longer a dependency: blank now means **Included in monthly fee**. This supersedes the earlier "never assumed" rule. A refused Save now reopens the window with the notes kept.
+
+The activity also gains a **Time** tab, and the Time card moves up under the Ticket card.
+
+There is **no schema step**, and no existing `time_entry` row changes. Pull to the head that carries this section and restart PSA-Desk as usual.
+
+Unit suite 768 OK, browser checks **80 of 80**, smoke 7 of 7.

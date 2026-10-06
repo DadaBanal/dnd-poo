@@ -2033,6 +2033,31 @@ white, because pale on pale shows through even under blur.
   neon and quiet buttons, menu entries, fields and tabs. Four browser checks hold this: a tile,
   a card, a row and the Filter button each change under the pointer.
 
+### Time entries that save, and stay visible (6 Oct 2026)
+
+Dada, on PMC-000331: *"time entries when the time entry has been saved isnt saving anywhere"*; then
+*"also remove the charge as dependency"*. Two causes, both reproduced in Chromium before they were
+fixed:
+
+- **Save could do nothing at all.** Start and End carried `step=300`. The browser counts those
+  5-minute steps from the value the box arrived with, so a clock started at 16:27 made an End of
+  16:40 "invalid". Save was then refused by the browser, with only a small bubble beside a box.
+  Any minute is valid now (`step=60`); the desk keeps the entry to the quarter hour itself.
+- **A refused Save lost the notes.** *Charged as* started blank and the desk refused a blank one,
+  but only after the notes were typed, and the page came back empty. On Dada's word it is no
+  longer a dependency: blank means **Included in monthly fee** (in-house time), and the box
+  starts there. A technician may still pick another. This replaces the earlier rule that a
+  charge was never assumed. And if the desk refuses a Save for any other reason, the window now
+  reopens with the note and every choice still in it. The draft is kept in the browser tab only,
+  and it comes back through the editor's own `rebuild()`, the same allow-list as a paste.
+- **Where to find them.** The Activity card has a **Time** tab, and each booking reads as
+  *Time entry*, not as a grey system line. The Time card now sits under the Ticket card by default
+  (Reset layout brings a saved layout to the new default).
+
+Browser checks hold all of it: Charged as starts on Included and is not required; an End 13
+minutes after the clock's start is valid; a refused Save reopens the window with the note and its
+colour kept.
+
 ## One Save, always reachable (3 Oct 2026)
 
 The ticket's own fields were already one form with one **Save changes** — but it
