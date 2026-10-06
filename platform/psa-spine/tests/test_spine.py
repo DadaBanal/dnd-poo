@@ -9081,7 +9081,7 @@ class DeskLookTest(unittest.TestCase):
         self.assertTrue(set(pods) <= set(order), set(pods) - set(order))
         self.assertIn("ticket", pods)
         self.assertIn("stream", pods)                       # the activity stream is a pod too
-        self.assertIn("composer", pods)
+        self.assertNotIn("composer", pods)                  # 6 Oct 2026: the note is a window now
         self.assertIn("psa-pods", templates.SCRIPT)
         self.assertIn("Reset layout", templates.SCRIPT)
         self.assertIn("Move to the other column", templates.SCRIPT)
@@ -9121,7 +9121,7 @@ class DeskLookTest(unittest.TestCase):
         conn.commit()
         conn.close()
         _, _, ticket = self._call("GET", "/ticket/ITO-1", cookie=alice)
-        self.assertIn("<div class=card data-pod=composer id=composer>", ticket)
+        self.assertIn("<dialog id=composer class='card tedlg notedlg'>", ticket)
         self.assertIn("<div class='card fields' data-pod=ticket id=ticketcard>", ticket)
         quick = re.search(r"<nav class=quick aria-label='Quick actions'>(.*?)</nav>", ticket).group(1)
         self.assertEqual(re.findall(r"href='([^']+)'", quick), ["/", "/ticket/ITO-1#composer", "/ticket/ITO-1#ticketcard", "tel:+0281234567301".replace("+", "")])
@@ -9137,7 +9137,7 @@ class DeskLookTest(unittest.TestCase):
         Teams composer -- grouped buttons, one frame, a box that grows."""
         from psaspine.web import templates
         _, _, ticket = self._call("GET", "/ticket/ITO-1", cookie=self._cookie_for("alice"))
-        i = ticket.index("<div class=composer>", ticket.index("data-pod=composer"))   # the note card's own
+        i = ticket.index("<div class=composer>", ticket.index("id=composer"))   # the note window's own
         frame = ticket[i:ticket.index("</textarea>", i)]
         self.assertLess(frame.index("class=edbar"), frame.index("class=editor"))   # toolbar above the box
         self.assertEqual(frame.count("<span class=g>"), 4)                         # style, marks, lists, links

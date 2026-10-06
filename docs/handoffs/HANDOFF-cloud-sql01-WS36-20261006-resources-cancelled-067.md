@@ -184,3 +184,17 @@ If PowerShell mangles the doubled quotes, there are two alternatives:
 | Unit suite | **766 OK**, 1 skipped. New: `AddStatusTest` (one status, nothing else, once; the pack's statuses alone), and Cancel discards the clock. |
 | Browser checks | **71 of 71**. New: the window moves by its title bar (150,85 → 50,17); the square makes it larger (980 → 1256 px); its corner resizes it. |
 | Drift gate / smoke | In step / 7 of 7. |
+
+## 7. One more code-only push (Cloud Build, 6 Oct 2026, last)
+
+Dada asked for a darker, less white desk, no separate "add note" pod, and animation that does not lag. **Code only**: no schema step, no new setting, nothing fetched from outside the desk. It rides the same `PSA-Desk` restart as §6.
+
+- The desk now opens **dark** unless the person has picked light. Light is tinted, not white.
+- The note box is a **window** opened by **New note** in the ticket header, like the time entry.
+- Hover lifts, bars sweeping in, counting tiles, windows popping open: `transform` and `opacity` only, and off under reduced motion.
+
+| | |
+|---|---|
+| Unit suite | **766 OK**, 1 skipped. |
+| Browser checks | **71 of 71**. The four pod-editing checks had been skipping themselves silently on a shorter page; they now fail instead of skipping. |
+| Smoke | 7 of 7. |

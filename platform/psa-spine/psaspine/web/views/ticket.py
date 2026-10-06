@@ -351,6 +351,9 @@ def detail(ctx, work_item_id):
     # to arrange). Which cards show, in what order, at what size and height
     # is this person's own and lives in their browser; the dialog's lists are
     # built from the cards on the page.
+    if can_work:
+        buttons += (" <button type=button class='btn ghost' data-open=composer title='A note with no time: a reply,"
+                    " an update, a question'>" + t.icon("note") + " New note</button>")
     buttons += "%%TEBUTTON%%"
     buttons += (" <button type=button class='iconbtn' data-layedit aria-pressed=false"
                 " title='Edit layout: move the cards about' aria-label='Edit layout'>" + t.icon("grip") + "</button>"
@@ -511,8 +514,19 @@ def detail(ctx, work_item_id):
                           f"<option value='{n['note_id']}' data-flag='{n['flag']}' data-body='{t.esc(n['body'])}'>"
                           f"{t.esc(n['name'])}</option>" for n in std) + "</select></div></div>")
         composer = (
-            "<div class=card data-pod=composer id=composer><h3><svg class=ic aria-hidden=true><use href=#i-note></use></svg>Add a note</h3>"
-            f"<form method=post action='/ticket/{wid}/note' class=noting enctype='multipart/form-data'>" + picker
+            # A window, not a card on the page (Dada, 6 Oct 2026: "add note is
+            # still there that is redundant"): the reference PSA's New Note,
+            # beside its New Time Entry, moved and resized the same way. A note
+            # with no time still needs a home -- a reply to a ward -- so it
+            # opens from the header instead of sitting under the activity.
+            "<dialog id=composer class='card tedlg notedlg'>"
+            f"<form method=post action='/ticket/{wid}/note' class='noting teform' enctype='multipart/form-data'>"
+            "<div class=tehead data-drag title='Drag to move'><div><h3 style='margin:0'>" + t.icon("note") + " New note</h3>"
+            f"<div class=muted style='font-size:12.5px'>{wid} · {t.esc(tk['summary'])}</div></div>"
+            "<span class=tewin><button type=button class=iconbtn data-close=composer aria-label='Close' title='Close; what you typed stays'>"
+            "<b style='font-size:16px;line-height:1'>&#8211;</b></button>"
+            "<button type=button class=iconbtn data-max=composer aria-label='Make the window larger' title='Larger / smaller'>"
+            "<b style='font-size:14px;line-height:1'>&#9634;</b></button></span></div>" + picker
             # A note is written the way a Teams reply is (064; fonts, colours,
             # pictures and GIFs 6 Oct 2026): one editor component, shared with
             # the time entry window. Nothing is stored until richtext.clean has
@@ -532,16 +546,16 @@ def detail(ctx, work_item_id):
             "</div>" + time_block +
             "<p class=why style='margin:8px 0 0'>Discussion notes, and the resolution when it "
             "is a Discussion note, are shown to the requester on their portal. Internal notes never "
-            "leave the desk, even when they are the resolution.</p></form></div>")
+            "leave the desk, even when they are the resolution.</p></form></dialog>")
 
     # Every card on the ticket is a pod, in one of two columns. The activity
     # stream and the note composer ship on the left, the rest on the right;
     # each user drags any card to either column, reorders, folds, and the
     # browser remembers. data-order on each column is the shipped layout that
     # "Reset layout" restores.
-    left = (f"<div class=pods data-col=left data-order='stream,composer'>"
+    left = (f"<div class=pods data-col=left data-order='stream'>"
             f"<div class=card data-pod=stream><h3><svg class=ic aria-hidden=true><use href=#i-rows></use></svg>Activity</h3>"
-            f"<div class=tabs>{tabs}</div>{stream}</div>{composer}</div>")
+            f"<div class=tabs>{tabs}</div>{stream}</div></div>")
 
     # ---------------------------------------------------------- right rail
     boards = ctx.conn.execute(
@@ -685,7 +699,7 @@ def detail(ctx, work_item_id):
                 + finance_views.ticket_card(ctx, tk, can_work=can_work))
     header = header.replace("%%TEBUTTON%%", (" " + te_button) if te_button else "")
     from . import paging as paging_view
-    body = te_dialog + header + strip + paging_view.banner(ctx, tk, can_work=can_work) + pod_dialog + (
+    body = te_dialog + composer + header + strip + paging_view.banner(ctx, tk, can_work=can_work) + pod_dialog + (
         f"<div class=rail>{left}<div class=pods data-col=right data-order='ticket,change,approval,family,"
                              f"schedule,tasks,files,links,configurations,project,knowledge,finance,time,commercial,details'>{fields}{configs}{time_card}"
                              f"{commercial}{details}</div></div>")

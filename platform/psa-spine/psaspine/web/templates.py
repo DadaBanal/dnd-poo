@@ -38,8 +38,8 @@ STYLE = """
 .ticks .tick{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:var(--r-sm);font-weight:500} .ticks .tick:hover{background:var(--surface-3)}
 .ticks .tick input{width:auto;margin:0}
 :root{color-scheme:light dark;
-  --canvas:#f4f5f8; --surface:#ffffff; --surface-2:#f6f7fa; --surface-3:#eceef3;
-  --ink:#15181e; --ink-2:#4a5260; --ink-3:#7a8290; --line:#e3e6ec; --line-2:#cbd1db;
+  --canvas:#dfe5f1; --surface:#f3f6fc; --surface-2:#eaeff8; --surface-3:#dde4f1;
+  --ink:#121726; --ink-2:#465068; --ink-3:#6e7891; --line:#cfd7e6; --line-2:#b9c3d8;
   --accent:#3d63dd; --accent-2:#2f52c4; --on-accent:#ffffff;
   --ok:#1a7f37; --warn:#9a6700; --bad:#c62828; --chip:#eceef3;
   --shadow:0 14px 40px -16px rgb(20 24 34/.35); --glass:rgb(255 255 255/.78);
@@ -628,9 +628,7 @@ dialog.tedlg::backdrop{backdrop-filter:none;background:rgba(10,14,24,.55)}
    numbers that glow. Still only colour, opacity and transform; the grid is a
    fixed layer, so scrolling does not repaint it. */
 :root{--r-sm:8px;--r:11px;--r-lg:16px;--teal:#14b8a6;--violet:#8b5cf6}
-body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
-  background-image:radial-gradient(color-mix(in srgb,var(--ink) 9%,transparent) 1px,transparent 1.4px);background-size:22px 22px;
-  -webkit-mask-image:linear-gradient(to bottom,#000,transparent 70%);mask-image:linear-gradient(to bottom,#000,transparent 70%)}
+
 header.top{background:color-mix(in srgb,var(--surface) 72%,transparent)}
 header.top .brand i{background:conic-gradient(from 210deg,var(--accent),var(--teal),var(--violet),var(--accent));
   box-shadow:0 0 16px -2px var(--glow),inset 0 0 0 1px rgb(255 255 255/.3)}
@@ -681,6 +679,91 @@ table.grid tbody tr:hover td:nth-child(2) a{text-shadow:0 0 12px var(--glow)}
   header.top .brand i{animation:hue 12s linear infinite}
 }
 @keyframes hue{to{filter:hue-rotate(360deg)}}
+
+/* ---- the control-room look (Dada, 6 Oct 2026, third pass: "still so much
+   white and there are dots ... load a better gui") --------------------------
+   Dark by default; deep navy under two coloured glows; panels of tinted glass
+   with a lit top edge; neon cyan-to-violet for what can be pressed; the top bar
+   floats; system lines become a timeline. The light theme is a cool frost,
+   never plain white. Colour, opacity and transform only. */
+:root{--neon1:#22d3ee;--neon2:#8b5cf6;--neon:linear-gradient(135deg,var(--neon1),var(--neon2))}
+:root[data-theme=dark]{--glass-bg:rgb(17 23 41/.66);--glass-line:rgb(148 163 255/.14);--hi:rgb(255 255 255/.06);--accent:#8ea2ff;
+  --glow:rgb(110 140 255/.45)}
+:root[data-theme=light]{--glass-bg:rgb(246 249 255/.78);--glass-line:rgb(70 90 160/.16);--hi:rgb(255 255 255/.7);--glow:rgb(80 110 240/.32)}
+:root[data-theme=dark] body{background:
+  radial-gradient(1000px 600px at 8% -10%,rgb(99 102 241/.30),transparent 60%),
+  radial-gradient(900px 560px at 100% 0%,rgb(34 211 238/.18),transparent 62%),
+  radial-gradient(900px 700px at 60% 120%,rgb(139 92 246/.22),transparent 60%),
+  linear-gradient(180deg,#070a14,#0a1022 60%,#080b16);background-attachment:fixed}
+:root[data-theme=light] body{background:
+  radial-gradient(1000px 600px at 8% -10%,rgb(99 102 241/.20),transparent 60%),
+  radial-gradient(900px 560px at 100% 0%,rgb(34 211 238/.16),transparent 62%),
+  linear-gradient(180deg,#e4e9f5,#dbe2f0);background-attachment:fixed}
+/* the bar floats */
+header.top{margin:10px 14px 0;border-radius:18px;top:10px;background:var(--glass-bg)!important;
+  box-shadow:0 10px 40px -18px rgb(0 0 0/.55),inset 0 1px 0 var(--hi),0 0 0 1px var(--glass-line)!important}
+header.top::after{left:18px;right:18px;bottom:0;border-radius:2px}
+/* glass panels */
+.card,.tile,.slabox,.note:not(.INTERNAL):not(.by-req),dialog.tedlg,header.top nav .panel{
+  background:var(--glass-bg)!important;border:1px solid var(--glass-line)!important;
+  box-shadow:inset 0 1px 0 var(--hi),0 18px 50px -30px rgb(0 0 0/.6)!important}
+.card:hover{box-shadow:inset 0 1px 0 var(--hi),0 22px 60px -28px var(--glow)!important}
+/* a window sits over the page: solid, so nothing behind it reads through */
+dialog.tedlg{background:var(--surface)!important;box-shadow:inset 0 1px 0 var(--hi),0 30px 80px -20px rgb(0 0 0/.7),0 0 0 1px var(--glass-line)!important}
+.tiles a.tile:hover{box-shadow:inset 0 1px 0 var(--hi),0 18px 46px -20px var(--glow)!important}
+.note.by-req{border:1px solid color-mix(in srgb,var(--req) 35%,transparent)!important}
+/* neon for what is pressed */
+main button[type=submit]:not(.ghost):not(.iconbtn):not(.tab):not(.small):not(.danger),main .btn:not(.ghost):not(.top),.btn.clockbtn.on{
+  background:var(--neon)!important;color:#fff!important;border:0!important;box-shadow:0 8px 24px -10px var(--glow)}
+main button.ghost,main .btn.ghost{background:transparent;border:1px solid var(--glass-line);color:var(--ink)}
+main button.ghost:hover,main .btn.ghost:hover{border-color:var(--neon1);box-shadow:0 0 0 3px rgb(34 211 238/.12)}
+header.top nav button.top.on,header.top nav a.top.on{color:#fff;background:var(--neon)!important;box-shadow:0 6px 20px -8px var(--glow)}
+:root[data-theme=light] header.top nav button.top.on,:root[data-theme=light] header.top nav a.top.on{color:#fff}
+header.top nav button.top.on .ic{opacity:1}
+/* fields of glass */
+input,select,textarea{background-color:color-mix(in srgb,var(--glass-bg) 60%,transparent)!important;border-color:var(--glass-line)}
+input:focus,select:focus,textarea:focus{border-color:var(--neon1)!important;box-shadow:0 0 0 3px rgb(34 211 238/.18),0 0 24px -8px rgb(34 211 238/.6)!important}
+/* titles */
+main h1:not(.sumline),main .hdr h1 .sumtext{background:linear-gradient(92deg,var(--ink) 15%,var(--neon1) 60%,var(--neon2));
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+h1.sumline>:first-child{color:var(--neon1)}
+.tile .n{background:linear-gradient(180deg,var(--ink),color-mix(in srgb,var(--ink) 65%,var(--neon1)));-webkit-background-clip:text;background-clip:text;color:transparent}
+.tile .ic{color:var(--neon1);background:rgb(34 211 238/.12);box-shadow:0 0 22px -6px rgb(34 211 238/.7)}
+/* SLA, neon */
+.slabox:not(.done):not(.bad):not(.warn) .bar i{background:linear-gradient(90deg,#10b981,var(--neon1))!important;box-shadow:0 0 14px rgb(34 211 238/.6)}
+.slabox.bad .bar i{background:linear-gradient(90deg,#f43f5e,#fb7185)!important;box-shadow:0 0 14px rgb(244 63 94/.6)}
+.slabox.warn .bar i{background:linear-gradient(90deg,#f59e0b,#fcd34d)!important;box-shadow:0 0 14px rgb(245 158 11/.55)}
+.slabox::before{width:3px!important}
+/* activity: system lines as a timeline */
+.sys{position:relative;padding:4px 0 8px 40px!important;margin:0}
+.sys::before{content:"";position:absolute;left:19px;top:0;bottom:0;width:2px;background:linear-gradient(var(--glass-line),var(--glass-line))}
+.sys::after{content:"";position:absolute;left:15px;top:9px;width:10px;height:10px;border-radius:50%;background:var(--canvas);
+  border:2px solid var(--neon1);box-shadow:0 0 10px rgb(34 211 238/.6)}
+/* the board's rows */
+table.grid thead th{background:transparent!important;color:var(--ink-3)}
+table.grid tbody tr:hover{background:linear-gradient(90deg,rgb(34 211 238/.10),rgb(139 92 246/.06) 60%,transparent)!important;box-shadow:inset 3px 0 0 var(--neon1)!important}
+/* chips glow softly */
+.who.staff{background:rgb(99 102 241/.18)} .who.req{background:rgb(20 184 166/.18)}
+.backbtn{background:var(--glass-bg);border-color:var(--glass-line)!important;box-shadow:inset 0 1px 0 var(--hi)}
+footer{opacity:.75}
+
+/* ---- motion that does not lag (Dada, 6 Oct 2026: "animations are welcome
+   and transitions as long as they dont lag it"). transform and opacity only,
+   so the GPU does it; each runs once; none on a list that can be long. */
+@media (prefers-reduced-motion:no-preference){
+  main button,main .btn,.tile,.backbtn{transition:transform .16s var(--ease),box-shadow .2s var(--ease),filter .16s var(--ease)}
+  main button:hover:not([disabled]),main .btn:hover,.backbtn:hover{transform:translateY(-1px)}
+  main button:active:not([disabled]),main .btn:active{transform:translateY(0) scale(.98)}
+  .bar i{transform-origin:left;animation:barin .7s var(--ease) both}
+  dialog[open]{animation:pop .2s var(--ease) both}
+  dialog[open]::backdrop{animation:fadein .2s ease both}
+  header.top{animation:drop .32s var(--ease) both}
+  .sys::after{animation:pulse 2.4s ease-in-out 1}
+  .tabs a{transition:color .15s var(--ease)}
+}
+@keyframes barin{from{transform:scaleX(0)}}
+@keyframes drop{from{opacity:0;transform:translateY(-8px)}}
+@keyframes pulse{50%{transform:scale(1.35)}}
 
 /* ---- motion: page transitions, and none of it for those who ask ------- */
 @media (prefers-reduced-motion:no-preference){
@@ -1063,6 +1146,16 @@ setInterval(function(){n++;paint()},1000);paint()})();
 /* The time entry window: Close keeps the clock running; a window asked for
    by Start opens by itself; End empty means "now" on Save. */
 $$("[data-close]").forEach(function(b){var dl=d.getElementById(b.dataset.close);if(dl)b.addEventListener("click",function(){dl.close()})});
+/* The board's numbers count up once on arrival; skipped for reduced motion. */
+(function(){if(!window.matchMedia||matchMedia("(prefers-reduced-motion: reduce)").matches||!window.requestAnimationFrame)return;
+  $$(".tile .n").forEach(function(el){var to=parseInt(el.textContent,10);if(!(to>1)||to>9999||String(to)!==el.textContent.trim())return;
+    var t0=null;function step(t){if(t0===null)t0=t;var k=Math.min(1,(t-t0)/500),e=1-Math.pow(1-k,3);el.textContent=String(Math.round(to*e));
+      if(k<1)requestAnimationFrame(step)}el.textContent="0";requestAnimationFrame(step)})})();
+/* A link to a window (the phone's quick bar "Note" is #composer) opens it. */
+d.addEventListener("click",function(e){var a=e.target.closest&&e.target.closest("a[href*='#']");if(!a)return;
+  var id=a.getAttribute("href").split("#")[1],dl=id&&d.getElementById(id);
+  if(dl&&dl.tagName==="DIALOG"&&dl.showModal&&a.pathname===location.pathname){e.preventDefault();dl.showModal()}});
+(function(){var id=location.hash.slice(1),dl=id&&d.getElementById(id);if(dl&&dl.tagName==="DIALOG"&&dl.showModal)dl.showModal()})();
 /* Move the window by its title bar; the corner resizes it (CSS resize);
    the square makes it fill the screen and back. */
 (function(){$$("dialog.tedlg").forEach(function(dl){var bar=dl.querySelector("[data-drag]");if(!bar)return;
@@ -1567,8 +1660,11 @@ FAVICON = ("data:image/svg+xml," + "%3Csvg xmlns='http://www.w3.org/2000/svg' vi
            "%3Crect width='32' height='32' rx='9' fill='url(%23g)'/%3E"
            "%3Cpath d='M9 11h14M9 16h14M9 21h8' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E")
 
-THEME_BOOT = ("<script>try{var t=localStorage.getItem('psa-theme');if(t)document.documentElement"
-              ".dataset.theme=t}catch(e){}</script>")
+# Dark unless this browser chose light (Dada, 6 Oct 2026: "there are still so
+# much white ... this doesnt look futuristic and modern at all"). The toggle
+# still flips it, and the choice is remembered per browser.
+THEME_BOOT = ("<script>try{var t=localStorage.getItem('psa-theme')||'dark';document.documentElement"
+              ".dataset.theme=t}catch(e){document.documentElement.dataset.theme='dark'}</script>")
 
 
 

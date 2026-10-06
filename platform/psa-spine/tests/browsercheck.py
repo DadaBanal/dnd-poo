@@ -261,7 +261,7 @@ def main() -> int:
             # --- the time entry window (065; 6 Oct 2026) --------------------
             # Dada: "time entry clock like connectwise clicking it launches the
             # time entry or discussion window ... it logs the current time".
-            ph = page.evaluate("""() => { const e = document.querySelector('[data-pod=composer] .editor');
+            ph = page.evaluate("""() => { const e = document.querySelector('#composer .editor');
                 const b = getComputedStyle(e, '::before'); return [b.content, b.backgroundImage, b.width] }""")
             note("Type a note" in ph[0] and ph[1] == "none",
                  "an empty note box shows its words, not the empty-state inbox", str(ph))
@@ -329,13 +329,21 @@ def main() -> int:
             for what, btn in (("size", ".podctl .size"), ("fold", ".podctl .fold"),
                               ("taller", ".podctl .hmore"),
                               ("move up", ".podctl .mv[data-dir='-1']")):
-                page.evaluate("window.scrollTo({top:700,behavior:'instant'})")
-                page.wait_for_timeout(250)
+                # scroll down to a pod rather than to a fixed offset: the page's
+                # height changes with the layout, and a pod that is not in view
+                # must fail the check, never skip it
                 idx = page.evaluate("""() => {
                   const cs=[...document.querySelectorAll('.pods .card[data-pod]')];
-                  return cs.findIndex(c => { const r=c.getBoundingClientRect();
-                    return r.top > 80 && r.top < innerHeight-40 }) }""")
-                if idx < 0:
+                  // not the Ticket card: folding it would hide the cascade checked below
+                  const i = cs.findIndex((c, n) => n > 0 && !c.querySelector('select.cat-type'));
+                  if (i < 0) return -1;
+                  scrollTo({top: Math.max(0, cs[i].getBoundingClientRect().top + scrollY - 200),
+                            behavior:'instant'});
+                  return i }""")
+                page.wait_for_timeout(250)
+                if idx < 0 or page.evaluate("window.scrollY") < 50:
+                    note(False, f"{what}: the page stays where the reader left it",
+                         "no pod below the fold to test with")
                     continue
                 y0 = page.evaluate("window.scrollY")
                 page.locator(".pods .card[data-pod]").nth(idx).locator(btn).click()

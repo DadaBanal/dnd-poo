@@ -1965,6 +1965,29 @@ Chrome and Edge 126+ and Safari 18.2+, and Firefox simply loads the page.
   Notes do not rise in like the cards do, because the pod editor keeps the page still by
   measuring them (the browser check caught a 52 px jump).
 
+### Last on 6 Oct: the control-room look, dark by default, the note as a window
+
+Dada, on a screenshot of the second pass: *"there are still so much white and there are dots
+on the back … this doesnt look futuristic and modern at all"*, *"add note is still there that
+is redundant"*, and *"animations are welcome and transitions as long as they dont lag it"*.
+
+- **Dark is the default.** A browser that never chose a theme opens dark; the sun button still
+  switches to light, and the choice is remembered as before. The dot grid is gone.
+- **Light is no longer white.** Canvas, panels and lines are a cool tinted grey-blue, so a page
+  has depth instead of glare.
+- **The control-room look:** a floating glass header with a cyan-to-violet edge; glass panels;
+  neon primary buttons and menu pills; inputs that glow cyan on focus; gradient titles; neon SLA
+  bars; the activity timeline as a lit line with glowing dots. Windows (time entry, new note)
+  are solid, so nothing behind them reads through.
+- **The note box left the pods.** It was the "add note" pod Dada called redundant. **New note**
+  in the ticket's header opens it as a window, like the time entry: it moves by its title bar,
+  grows with **▢**, resizes from its corner, and **–** closes it with the draft kept.
+- **Motion, kept cheap.** Buttons and tiles lift on hover, SLA bars sweep in, tile numbers count
+  up, windows pop open, the header drops in. Only `transform` and `opacity` move, nothing is
+  blurred, and all of it is off under *reduce motion*.
+- The browser check's pod-editing checks scrolled to a fixed offset and skipped themselves
+  silently once the page got shorter (71 → 67). They now scroll to a pod, and a missing pod fails.
+
 ## One Save, always reachable (3 Oct 2026)
 
 The ticket's own fields were already one form with one **Save changes** — but it
