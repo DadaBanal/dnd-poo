@@ -576,6 +576,7 @@ def move(conn: sqlite3.Connection, work_item_id: str, to_board_id: str, *,
 NOTE_FLAGS = ("DISCUSSION", "INTERNAL", "RESOLUTION")
 CHARGE_METHODS = ("INCLUDED_IN_MONTHLY_FEE", "CAPACITY_UPLIFT", "SEPARATE_CHARGE",
                   "PASS_THROUGH", "NON_CHARGEABLE")
+DEFAULT_CHARGE = "INCLUDED_IN_MONTHLY_FEE"     # what a blank Charged as means (6 Oct 2026)
 # The bands effort is recorded in (003_delivery: time_entry.band_hours). Since
 # 033 a band is DERIVED from the actual hours Dada PSA-style time entry
 # records: the smallest band the hours fit in. §5.2's arithmetic stays in bands.
@@ -711,12 +712,17 @@ def prepare_time(conn: sqlite3.Connection, work_item_id: str, *, charge_method,
                  work_role_id=None, work_type_id=None, billable_option=None,
                  **hours_kw) -> dict:
     """Everything a time entry needs, checked before a byte is written: the
-    hours (Dada PSA's rule), the charge method (never assumed), a real work
+    hours (Dada PSA's rule), the charge method (blank means included, 6 Oct 2026), a real work
     role and type, a bill option, and the two effort gates. Returns the values
     to store; raises EffortRefused in a sentence."""
     values = resolve_hours(**hours_kw)
+    # Dada, 6 Oct 2026: "remove the charge as dependency". Left blank, time is
+    # in-house work, included in the monthly fee; a technician may still pick
+    # another. This replaces the earlier rule that it was never assumed. A value
+    # that is not a charge method is still refused.
+    charge_method = charge_method or DEFAULT_CHARGE
     if charge_method not in CHARGE_METHODS:
-        raise EffortRefused("say how the time is charged; it is never assumed")
+        raise EffortRefused(f"{charge_method!r} is not a charge method")
     ensure_time_vocabulary(conn)
     # The reference PSA fills the work role and type from the member's own defaults;
     # the desk's default is the first of each in Setup › Time. A named one must

@@ -956,6 +956,13 @@ main button.ghost,main .btn.ghost,.backbtn{
   :root[data-theme] .tiles a.tile:hover{transform:translateY(-2px)}
 }
 
+/* a time entry in the activity reads as a booking, not a grey system line */
+.sys.time{color:var(--ink)!important}
+.sys.time .ic{width:14px;height:14px;vertical-align:-2px;margin-right:6px;color:var(--neon1)}
+.sys.time b{color:var(--neon1)}
+.sys.time::after{border-color:var(--neon2)!important;box-shadow:0 0 10px rgb(139 92 246/.7)!important}
+label b.req{color:var(--bad,#e5484d)}
+
 /* ---- motion that does not lag (Dada, 6 Oct 2026: "animations are welcome
    and transitions as long as they dont lag it"). transform and opacity only,
    so the GPU does it; each runs once; none on a list that can be long. */
@@ -1435,6 +1442,11 @@ function rebuild(node,into){
     var tag=SAME[n.tagName]||n.tagName;
     if(tag==="SCRIPT"||tag==="STYLE"||tag==="TITLE")continue;
     if(tag==="BR"){into.appendChild(d.createElement("br"));continue}
+    /* the desk's own marks survive (a kept draft, or a paste from another note): only the classes
+       the server's NOTE_SPAN / NOTE_MARK allow, never a style */
+    if(tag==="SPAN"||tag==="MARK"){var ok=(n.className||"").split(/\s+/).filter(function(c){return tag==="MARK"?
+        /^hl-(yellow|green|blue|pink)$/.test(c):/^(tc-(red|orange|green|blue|purple|grey)|fs-(s|l|xl))$/.test(c)});
+      if(ok.length){var mk=d.createElement(tag.toLowerCase());mk.className=ok.join(" ");rebuild(n,mk);into.appendChild(mk);continue}}
     if(!KEEP[tag]){rebuild(n,into);continue}
     var el=d.createElement(tag.toLowerCase());
     if(tag==="A"){var h=n.getAttribute("href")||"";if(!/^(https?:\/\/|mailto:)/i.test(h)){rebuild(n,into);continue}
@@ -1553,7 +1565,30 @@ d.addEventListener("click",function(e){var t=e.target.closest&&e.target.closest(
   $$(".edbar [data-do]",f).forEach(function(x){x.disabled=plain});
   if(plain){ta.value=ed.textContent;ta.style.display="";ta.setAttribute("required","required");ed.style.display="none";ta.focus()}
   else{ta.style.display="none";ta.removeAttribute("required");ed.style.display="";ed.focus()}
-  sync(ed)})})();
+  sync(ed)});
+/* a window's draft outlives a refused Save (Dada, 6 Oct 2026: "time entries when saved isnt saving anywhere").
+   On submit the window's fields and its note are kept in this tab; if the desk sends the page back with an
+   error, the same window reopens with them in place. Anything else that comes back clears it. Nothing leaves
+   the browser, and it is gone when the tab closes. */
+(function(){var key="psa-draft:"+location.pathname,q=location.search,ss;try{ss=sessionStorage}catch(e){return}
+  $$("dialog.tedlg form").forEach(function(f){f.addEventListener("submit",function(e){
+    var s=e.submitter;if(s&&s.getAttribute("formaction"))return;   /* Cancel and discard keep nothing */
+    var dl=f.closest("dialog"),ed=$(".editor",f),v={};
+    $$("input,select,textarea",f).forEach(function(x){if(!x.name||x.type==="hidden"||x.type==="file")return;
+      if(x.type==="radio"||x.type==="checkbox"){if(x.checked)v[x.name+"="+x.value]=1}else v[x.name]=x.value});
+    try{ss.setItem(key,JSON.stringify({dlg:dl.id,html:ed?tidy(ed):"",v:v}))}catch(_){}})});
+  var raw;try{raw=ss.getItem(key)}catch(e){}if(!raw)return;
+  if(!/[?&]err=/.test(q)){try{ss.removeItem(key)}catch(e){}return}
+  var dr;try{dr=JSON.parse(raw)}catch(e){return}var dl=d.getElementById(dr.dlg);if(!dl)return;var f=$("form",dl);
+  $$("input,select,textarea",f).forEach(function(x){if(!x.name||x.type==="hidden"||x.type==="file")return;
+    if(x.type==="radio"||x.type==="checkbox")x.checked=!!dr.v[x.name+"="+x.value];
+    else if(dr.v[x.name]!==undefined&&dr.v[x.name]!=="")x.value=dr.v[x.name]});
+  /* the note comes back through rebuild, as a paste does: only the editor's own tags and classes */
+  var ed=$(".editor",f);if(ed&&dr.html){var parsed=new DOMParser().parseFromString(dr.html,"text/html");
+    ed.textContent="";ed.appendChild(rebuild(parsed.body,d.createDocumentFragment()));sync(ed)}
+  if(!dl.open&&dl.showModal)dl.showModal();
+  var bad=$("select:invalid,input:invalid",f);if(bad)bad.focus()})();
+})();
 
 /* Copy on a note: the ward's own words, as written, for a reply or a search. */
 d.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest("button.copy[data-copy]");if(!b)return;

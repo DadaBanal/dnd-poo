@@ -226,17 +226,25 @@ def _time_fields(ctx, tk, *, prefix: str = "", compact: bool = False,
     role_opts = _options([(r["work_role_id"], r["name"]) for r in roles], defaults["work_role_id"] or "")
     type_opts = _options([(w["work_type_id"], w["name"]) for w in types], defaults["work_type_id"] or "")
     bill_opts = _options(list(BILL_LABEL.items()), "NO_DEFAULT")
-    charge_opts = _options([("", "— choose —")] + list(CHARGE_LABEL.items()), "")
+    charge_opts = _options(list(CHARGE_LABEL.items()), engine.DEFAULT_CHARGE)
     return (
         f"<div class='timefields{' compact' if compact else ''}'>"
         f"<div><label>Date</label><input type=date name={prefix}worked_on value='{t.esc(worked_on)}'></div>"
-        f"<div><label>Start</label><input type=time name={prefix}start step=300 value='{t.esc(at_start)}'></div>"
-        f"<div><label>End</label><input type=time name={prefix}end step=300 value='{t.esc(at_end)}'></div>"
+        # Any minute is a valid time. A 5-minute step counted from the value the
+        # box arrived with (a clock started at 16:27) made 16:40 "invalid", and
+        # the browser then refused Save without a word on the page (Dada, 6 Oct
+        # 2026: "time entries when saved isnt saving anywhere"). The desk keeps
+        # the entry to the quarter hour itself.
+        f"<div><label>Start</label><input type=time name={prefix}start step=60 value='{t.esc(at_start)}'></div>"
+        f"<div><label>End</label><input type=time name={prefix}end step=60 value='{t.esc(at_end)}'></div>"
         f"<div><label>Actual hours</label><input name={prefix}hours inputmode=decimal placeholder='or 1.5'></div>"
         f"<div><label>Deduct</label><input name={prefix}deduct inputmode=decimal placeholder='0'></div>"
         f"<div><label>Work role</label><select name={prefix}work_role>{role_opts}</select></div>"
         f"<div><label>Work type</label><select name={prefix}work_type>{type_opts}</select></div>"
         f"<div><label>Bill</label><select name={prefix}bill>{bill_opts}</select></div>"
+        # Charged as starts on Included in monthly fee and holds nothing up
+        # (Dada, 6 Oct 2026: "remove the charge as dependency"; a blank one had
+        # refused the Save after the notes were typed).
         f"<div><label>Charged as</label><select name={prefix}charge>{charge_opts}</select></div>"
         "</div>")
 
@@ -413,7 +421,7 @@ def detail(ctx, work_item_id):
 
     # --------------------------------------------------------- the notes
     events = ctx.conn.execute(
-        "SELECT occurred_at, kind, actor, detail, note_flag, is_resolution, body_format FROM ticket_event"
+        "SELECT ticket_event_id, occurred_at, kind, actor, detail, note_flag, is_resolution, body_format FROM ticket_event"
         " WHERE work_item_id = ? ORDER BY ticket_event_id", (work_item_id,)).fetchall()
 
     def is_res(e):
@@ -427,11 +435,16 @@ def detail(ctx, work_item_id):
     for flag in ("DISCUSSION", "INTERNAL"):
         counts[flag] = sum(1 for e in events if e["note_flag"] == flag)
     counts["RESOLUTION"] = sum(1 for e in events if is_res(e))
+    # Time entries have a tab of their own (6 Oct 2026): the booking line, and
+    # the note an entry was written with.
+    timed = {r["ticket_event_id"] for r in time_rows if r["ticket_event_id"]}
+    is_time = lambda e: e["kind"] == "TIME" or e["ticket_event_id"] in timed  # noqa: E731
+    counts["TIME"] = sum(1 for e in events if e["kind"] == "TIME")
     tabs = "".join(
         f"<a class='{'on' if tab == key else ''}' href='/ticket/{wid}?tab={key}'>"
         f"{label} {counts[key]}</a>"
         for key, label in (("ALL", "All"), ("DISCUSSION", "Discussion"), ("INTERNAL", "Internal"),
-                           ("RESOLUTION", "Resolution"), ("SYSTEM", "System")))
+                           ("RESOLUTION", "Resolution"), ("TIME", "Time"), ("SYSTEM", "System")))
     tabs += ("<span class=wholegend aria-hidden=true><i class=staff></i>PMO staff<i class=req></i>Requester</span>")
     flip = "new" if order == "old" else "old"
     tabs += (f"<a class=order href='/ticket/{wid}?tab={t.esc(tab)}&amp;order={flip}' data-order='{order}'"
@@ -457,6 +470,8 @@ def detail(ctx, work_item_id):
             continue
         if tab in ("DISCUSSION", "INTERNAL") and flag != tab:
             continue
+        if tab == "TIME" and not is_time(e):
+            continue
         if flag:
             extra = ("<span class='flag RESOLUTION'>Resolution</span>"
                      if e["is_resolution"] and flag != "RESOLUTION" else "")
@@ -478,6 +493,10 @@ def detail(ctx, work_item_id):
                 "<button type=button class='iconbtn copy' data-copy title='Copy this note' aria-label='Copy this note'>"
                 + t.icon("copy") + "</button></div>"
                 f"<div class=rtx>{t.note_html(e['detail'], _fmt(e), kind=e['kind'], images=pictures, label='Email from ' + (e['actor'] or 'the requester'))}</div></div>")
+        elif e["kind"] == "TIME":
+            # A booking reads as one, not as a grey system line among the emails.
+            items.append(f"<div class='sys time'>{t.icon('clock')}<b>Time entry</b> · {t.esc(e['occurred_at'])} · "
+                         f"{t.esc(e['actor'] or 'system')} · {t.esc(_system_line(ctx.conn, e))}</div>")
         else:
             items.append(f"<div class=sys>{t.esc(e['occurred_at'])} · {t.esc(e['actor'] or 'system')} · "
                          f"{t.esc(_system_line(ctx.conn, e))}</div>")
@@ -700,8 +719,8 @@ def detail(ctx, work_item_id):
     header = header.replace("%%TEBUTTON%%", (" " + te_button) if te_button else "")
     from . import paging as paging_view
     body = te_dialog + composer + header + strip + paging_view.banner(ctx, tk, can_work=can_work) + pod_dialog + (
-        f"<div class=rail>{left}<div class=pods data-col=right data-order='ticket,change,approval,family,"
-                             f"schedule,tasks,files,links,configurations,project,knowledge,finance,time,commercial,details'>{fields}{configs}{time_card}"
+        f"<div class=rail>{left}<div class=pods data-col=right data-order='ticket,time,change,approval,family,"
+                             f"schedule,tasks,files,links,configurations,project,knowledge,finance,commercial,details'>{fields}{time_card}{configs}"
                              f"{commercial}{details}</div></div>")
     headers = []
     if chosen in ("old", "new"):

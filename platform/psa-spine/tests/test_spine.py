@@ -2141,9 +2141,13 @@ class TimeEntryTest(unittest.TestCase):
                                charge_method="INCLUDED_IN_MONTHLY_FEE", **kw)
             self.assertIn(words, str(c.exception), kw)
         with self.assertRaises(board.EffortRefused) as c:
-            board.add_time(self.conn, self.wid, at=self.at, actor="alice", charge_method=None, actual_hours="1")
-        self.assertIn("never assumed", str(c.exception))
+            board.add_time(self.conn, self.wid, at=self.at, actor="alice", charge_method="MAYBE", actual_hours="1")
+        self.assertIn("not a charge method", str(c.exception))
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM time_entry").fetchone()[0], 0)
+        # Dada, 6 Oct 2026: "remove the charge as dependency": blank is in-house time
+        board.add_time(self.conn, self.wid, at=self.at, actor="alice", charge_method=None, actual_hours="1")
+        self.assertEqual(self.conn.execute("SELECT charge_method FROM time_entry").fetchone()[0],
+                         "INCLUDED_IN_MONTHLY_FEE")
 
     def test_a_retired_role_stays_on_old_entries_and_is_refused_on_new_ones(self):
         board.add_time(self.conn, self.wid, at=self.at, actor="alice", charge_method="INCLUDED_IN_MONTHLY_FEE",
@@ -2637,16 +2641,18 @@ class WebWSGITest(unittest.TestCase):
         _, _, setup_page = self._call("GET", "/admin", cookie=root)
         self.assertIn("/admin/time", setup_page)
 
-    def test_time_with_no_charge_method_is_refused_and_nothing_is_written(self):
-        """The charge method is never assumed (the numerator of an uplift claim)."""
+    def test_time_with_no_charge_method_is_booked_as_included(self):
+        """Dada, 6 Oct 2026: "remove the charge as dependency". It was never
+        assumed; a blank one now means in-house time, included in the monthly
+        fee, and the note and its time are both kept."""
         status, headers, _ = self._call("POST", "/ticket/ITO-1/note",
                                         cookie=self._cookie_for("alice"),
                                         form={"body": "x", "flag": "DISCUSSION", "hours": "2"})
-        self.assertIn("err=", dict(headers)["Location"])
+        self.assertNotIn("err=", dict(headers)["Location"])
         conn = self._db()
-        self.assertEqual(conn.execute("SELECT COUNT(*) FROM time_entry").fetchone()[0], 0)
-        self.assertIsNone(conn.execute(
-            "SELECT 1 FROM ticket_event WHERE detail = 'x'").fetchone())
+        self.assertEqual([r[0] for r in conn.execute("SELECT charge_method FROM time_entry")],
+                         ["INCLUDED_IN_MONTHLY_FEE"])
+        self.assertIsNotNone(conn.execute("SELECT 1 FROM ticket_event WHERE detail = 'x'").fetchone())
         conn.close()
 
     def test_a_read_only_member_cannot_add_a_note(self):
@@ -4537,7 +4543,7 @@ class NoteEditorAndTimeWindowTest(unittest.TestCase):
         tid, started = conn.execute("SELECT timer_id, started_at FROM time_timer WHERE work_item_id='ITO-1'").fetchone()
         conn.close()
         self.assertIn(f"name=timer_id value='{tid}'", page)
-        self.assertIn(f"name=start step=300 value='{started[11:16]}'", page, "the start is the moment the clock began")
+        self.assertIn(f"name=start step=60 value='{started[11:16]}'", page, "the start is the moment the clock began")
         status, headers = self._multipart("/ticket/ITO-1/time", alice, {
             "timer_id": str(tid), "worked_on": started[:10], "start": started[11:16], "end": "", "hours": "",
             "deduct": "", "work_role": "", "work_type": "", "bill": "NO_DEFAULT",
@@ -4552,6 +4558,50 @@ class NoteEditorAndTimeWindowTest(unittest.TestCase):
         conn.close()
         _, _, page = self._call("GET", "/ticket/ITO-1", cookie=alice)
         self.assertIn("New time entry", page, "the clock is free for the next one")
+
+    def test_a_time_entry_is_never_lost_to_the_form(self):
+        """Dada, 6 Oct 2026: "time entries when saved isnt saving anywhere".
+        A 5-minute step on Start and End made an end like 16:40 invalid after a
+        clock started at 16:27, and the browser refused Save without a word on
+        the page; and a blank Charged as was refused only after the notes were
+        typed. Any minute is valid now, Charged as is required in the window,
+        and a booking has its own tab in the activity."""
+        wid, cookie = "ITO-1", self._cookie_for("alice")
+        page = self._call("GET", f"/ticket/{wid}", cookie=cookie)[2]
+        self.assertNotIn("step=300", page)
+        dlg = page[page.index("<dialog id=tedlg"):]
+        dlg = dlg[:dlg.index("</dialog>")]
+        self.assertNotIn("required", dlg[dlg.index("name=charge"):dlg.index("name=charge") + 40],
+                         "Charged as holds nothing up")
+        self.assertIn("<option value='INCLUDED_IN_MONTHLY_FEE' selected>", dlg)
+        self.assertIn("step=60", dlg)
+        self._call("POST", f"/ticket/{wid}/time", cookie=cookie,
+                   form={"worked_on": "2026-10-06", "start": "16:27", "end": "16:40",
+                         "body": "Checked the modality list"})
+        page = self._call("GET", f"/ticket/{wid}", query="tab=TIME", cookie=cookie)[2]
+        self.assertIn("Time 1</a>", page)
+        self.assertIn("class='sys time'", page)
+        self.assertIn("Checked the modality list", page)
+        # a draft kept through a refused Save comes back through the editor's
+        # rebuild, whose class list must be the server's own
+        import re as _re
+        from psaspine import richtext
+        from psaspine.web import templates
+        span = _re.search(r"/\^\(tc-\(([a-z|]+)\)\|fs-\(([a-z|]+)\)\)\$/", templates.SCRIPT)
+        mark = _re.search(r"/\^hl-\(([a-z|]+)\)\$/", templates.SCRIPT)
+        self.assertEqual({"tc-" + c for c in span[1].split("|")} | {"fs-" + c for c in span[2].split("|")},
+                         richtext.NOTE_SPAN)
+        self.assertEqual({"hl-" + c for c in mark[1].split("|")}, richtext.NOTE_MARK)
+        # a draft kept through a refused Save comes back through the editor's
+        # rebuild, whose class list must be the server's own
+        import re as _re
+        from psaspine import richtext
+        from psaspine.web import templates
+        span = _re.search(r"/\^\(tc-\(([a-z|]+)\)\|fs-\(([a-z|]+)\)\)\$/", templates.SCRIPT)
+        mark = _re.search(r"/\^hl-\(([a-z|]+)\)\$/", templates.SCRIPT)
+        self.assertEqual({"tc-" + c for c in span[1].split("|")} | {"fs-" + c for c in span[2].split("|")},
+                         richtext.NOTE_SPAN)
+        self.assertEqual({"hl-" + c for c in mark[1].split("|")}, richtext.NOTE_MARK)
 
     def test_cancel_throws_the_clock_away(self):
         alice = self._cookie_for("alice")

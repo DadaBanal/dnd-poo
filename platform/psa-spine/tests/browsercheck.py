@@ -344,7 +344,34 @@ def main() -> int:
                 sent = page.evaluate("() => document.querySelector('#tedlg textarea[name=body]').value")
                 note('class="tc-red"' in sent and "color" not in sent.replace("tc-red", ""),
                      "a colour picked in the toolbar goes up as the desk's own class", sent[:120])
-                page.locator("#tedlg select[name=charge]").select_option(index=1)
+                # Dada, 6 Oct 2026: "time entries when saved isnt saving anywhere".
+                # (1) Charged as starts on Included and holds nothing up ("remove the charge as dependency")
+                save = page.locator("#tedlg .tefoot button[type=submit]:not([formaction])")
+                ch = page.evaluate("() => { const c=document.querySelector('#tedlg select[name=charge]');"
+                                   " return [c.value, c.required] }")
+                note(ch == ["INCLUDED_IN_MONTHLY_FEE", False],
+                     "Charged as starts on Included in monthly fee and is not required", str(ch))
+                # (2) any minute is a time: a clock started at :27 may end at :40
+                start0 = page.locator("#tedlg input[name=start]").input_value()
+                hh, mm = (int(x) for x in start0.split(":"))
+                odd = f"{(hh + (mm + 13) // 60) % 24:02d}:{(mm + 13) % 60:02d}"
+                page.locator("#tedlg input[name=end]").fill(odd)
+                note(page.evaluate("() => document.querySelector('#tedlg input[name=end]').validity.valid"),
+                     "an end 13 minutes after the clock's start is a valid time", f"{start0} -> {odd}")
+                # (3) a Save the desk refuses brings the window back with the note in it
+                page.locator("#tedlg input[name=start]").fill("10:00")
+                page.locator("#tedlg input[name=end]").fill("09:00")
+                save.click()
+                page.wait_for_load_state("domcontentloaded")
+                page.wait_for_timeout(700)
+                back = page.evaluate("() => [document.getElementById('tedlg').open,"
+                                     " document.querySelector('#tedlg .editor').innerText,"
+                                     " document.querySelector('#tedlg select[name=charge]').value]")
+                note("Time not saved" in page.locator("body").inner_text() and back[0]
+                     and "Swapped the toner" in back[1] and bool(back[2]),
+                     "a Save the desk refuses reopens the window with the note and choices kept", str(back)[:120])
+                page.locator("#tedlg input[name=start]").fill(start0)
+                page.locator("#tedlg input[name=end]").fill("")
                 page.locator("#tedlg .tefoot button[type=submit]:not([formaction])").click()
                 page.wait_for_load_state("domcontentloaded")
                 page.wait_for_timeout(500)
