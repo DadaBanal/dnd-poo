@@ -2686,3 +2686,15 @@ Dada, after reading the Part 38 preview including the four closures: *"run add c
 **Ethel, from a screenshot Dada sent of her own screen:** her menu reads **Service Desk · Companies · Projects · Time · Finance · Reports · Setup · My requests**, with *Ethel Niña Luciano · sign out*. That is the **full staff menu on the desk's own address**, not the requester's three-link shell. So the symptom WS36 was chasing is not present now. Consistent with Part 38's measurement that she takes the default TECHNICIAN role (no Calendar or Sales grant exists for it, which is why those two are absent for everyone on that role, not something done to her).
 
 **Still not applied:** `setup-pmc` (Part 38 §4) — On Hold for IT_HELP still needs a route that does not drag the retired catalogue umbrella back with it.
+
+### Part 40: 2026-10-06, ~15:30 +08:00. **5cb6601 live; On Hold added to PMO Helpdesk by `add-status`, catalogue untouched; PSA-Desk restarted.** MEASURED.
+
+WS36 withdrew §3b and built `add-status` — one status on one board and nothing else — which is the route Part 38 asked for. Ran §6.
+
+1. **Preview was exactly the one line promised**, and nothing more: `would: IT_HELP: add status 'On Hold' (NO_ESCALATION) as IT_HELP.ON_HOLD`, then `PREVIEW: nothing written`.
+2. **Applied.** `done: IT_HELP: add status 'On Hold' (NO_ESCALATION) as IT_HELP.ON_HOLD`.
+3. **The catalogue is untouched, measured either side of both runs:** `COUNT(*) FROM catalogue_item` = **272 before, 272 after**. This is the whole point of the new command against `setup-pmc`, which wanted to add 80 rows and rebuild the umbrella retired on 2 Oct.
+4. **Placement verified** from `board_status` in sort order: **On Hold at sort 65, `NO_ESCALATION`, `is_closed=0`**, sitting between Waiting on Vendor (60) and Resolved (70) — "just above Resolved", as the command intends. The rest of IT_HELP's set is unchanged, `>Cancelled` still at 115 from Part 39.
+5. **PSA-Desk restarted** for the code in the same push (time-entry Cancel that actually cancels, the movable/resizable window, the second design pass): `:8085` **401 → down → 401 in 2s**.
+
+Nothing else was run; `setup-pmc` remains unapplied and is now unnecessary for this.
