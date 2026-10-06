@@ -127,6 +127,9 @@ def desk_body():
               "The requester\u2019s email carries the note\u2019s own formatting, and the plain words as well, so any mail client can read it.",
               "A note the patient-details check holds back carries no formatting either, because it carries no words: it says there is an update and "
               "links to PMC Requests."]),
+          H("Oldest first, or newest first"),
+          P("The Activity card reads oldest at the top, like a conversation. <b>Newest first</b>, at the right of its tabs, turns it round so the latest "
+            "reply is the first thing you see; <b>Oldest first</b> turns it back. Your browser remembers the choice for every ticket you open on it."),
           H("Emails the desk sends"),
           UL(["<b>Emails never carry the summary or a note that the check flagged.</b> They say something changed and link to PMC Requests.",
               "<b>Standard notes</b> are a board\u2019s canned replies. Each carries its flag, so a <i>we have your request</i> reply cannot land as internal by accident.",
@@ -165,7 +168,7 @@ def desk_body():
               ("closed", "A reply to a closed ticket", "On most boards the ticket reopens; a board can instead open a new ticket that mentions the old one (Setup › the board › mail policy)."),
               ("auto", "An out-of-office or a delivery failure", "Recorded, and opens nothing: the desk's own loop guards stop a mail war with an auto-reply."),
               ("excl", "From an excluded sender or domain", "Recorded, and opens nothing; the Email connector page says why.")]),
-          H("The ticket shows the email as the sender wrote it"),
+          H("The ticket shows the email as the sender laid it out"),
           P("An Outlook message really carries two bodies: the one the sender composed, and a plain-text copy Outlook makes from it. The ticket used to show "
             "the copy, which is why notes sometimes read like this:"),
           '<pre style="margin:0 0 14px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--paper-2);'
@@ -173,14 +176,23 @@ def desk_body():
           '[cid:image004.jpg@01DD5349.6A321CD0]\nPortal &lt;https://pmcrequests/x&gt; Portal\nhttps://pmcrequests/x</pre>',
           P("None of that was typed by anybody. An icon turned into its own description, a pasted picture turned into its internal file name, and every link "
             "got written twice. <b>The ticket now shows the message the sender actually composed</b> \u2014 their bold, their lists, their table, one link per link."),
-          UL(["<b>No picture from an email is ever shown inside the note.</b> A photo or screenshot they attached is on the <b>Files</b> card as usual, where it "
-              "goes through the patient-details check first. A picture shown in the note would also quietly tell the sender the moment a clinician opened the "
-              "ticket, which is not something a hospital desk should do.",
-              "Nothing in an email can run, click or fetch anything: the message is rebuilt out of plain formatting as it arrives, so there is no such thing "
-              "as a mail that does something to the desk when you read it.",
-              "Mail sent as plain text reads exactly as it always did, and so does every ticket that was already in the desk."]),
-          NOTE("warn", "If you ever see a visible tag read out as words, a <code>[cid:\u2026]</code> reference, a picture loading inside a note, or a link printed "
-                       "twice, that is worth reporting \u2014 none of the four should be possible."),
+          P("Since 6 October it also looks the way it did in Outlook. Each line sits a line apart, not a paragraph apart; a signature laid out "
+            "in a table stays a table; and <b>a screenshot the sender pasted into the email shows where they put it</b>. The email is drawn in a "
+            "frame of its own, exactly as tall as the message, and it follows light and dark and your text size."),
+          UL(["<b>The messages it quotes fold away.</b> A reply usually carries the whole thread under it. That part is folded under "
+              "<b>Earlier messages in this email</b>; click it to open it, and again to close it.",
+              "<b>Only a picture the sender pasted into the email is shown, and only from the desk itself.</b> It is the same file as on the <b>Files</b> "
+              "card. If that file was <b>withheld</b> for patient details, the note shows a dashed box saying so instead. On PMC Requests a "
+              "requester sees a pasted picture once the file has been cleared, or straight away if they sent it themselves.",
+              "<b>A picture the email would fetch from the internet is never shown.</b> That kind of picture tells the sender the moment a clinician "
+              "opens the ticket, which is not something a hospital desk should do.",
+              "Nothing in an email can run, click or fetch anything. The message is rebuilt out of plain formatting, then drawn in a sealed frame "
+              "where scripts cannot run. Opening it cannot do anything to the desk.",
+              "Small signature logos are not kept, so they do not appear. Pictures in emails that arrived <b>before 6 October</b> stay on the Files "
+              "card only, because the desk did not yet record where in the email each one belonged.",
+              "Mail sent as plain text reads exactly as it always did."]),
+          NOTE("warn", "Report any of these: a tag read out as words, a <code>[cid:\u2026]</code> reference, a link printed twice, "
+                       "lines a whole blank line apart, or a picture that is not from this ticket's own files. None of them should be possible."),
           who=["Technicians"]),
         S("d-new", "Tickets", "Logging a ticket for someone",
           FIG("new-ticket", "New ticket: the same two questions a requester answers, plus the board, the contact, the company and the Subtype › Item."),

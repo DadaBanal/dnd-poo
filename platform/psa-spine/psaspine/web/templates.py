@@ -1099,9 +1099,14 @@ $$("input[data-tickpick]").forEach(function(inp){
    The theme and the text size follow the page's own, because the email's
    document has no stylesheet of ours to read them from. */
 function mailDoc(f){try{return f.contentDocument}catch(e){return null}}
+/* The email's own height, not the frame's: the root's scrollHeight is never
+   less than the frame it sits in, so fitting to it only ever grows -- and,
+   with the frame watched for size, grew without end (6 Oct 2026). The root's
+   box is as tall as what is in it; the body's scrollHeight catches a float
+   that hangs out of it. Within a pixel is left alone, so a fit settles. */
 function mailFit(f){var md=mailDoc(f);if(!md||!md.documentElement||!md.body)return;
-  var h=Math.max(md.documentElement.scrollHeight,md.body.scrollHeight);
-  if(h>0)f.style.height=(h+2)+"px"}
+  var h=Math.ceil(Math.max(md.documentElement.getBoundingClientRect().height,md.body.scrollHeight));
+  if(h>0&&Math.abs(f.getBoundingClientRect().height-h)>1)f.style.height=h+"px"}
 function mailTheme(f){var md=mailDoc(f);if(!md||!md.documentElement)return;var r=md.documentElement;
   if(root.dataset.theme)r.dataset.theme=root.dataset.theme;else r.removeAttribute("data-theme");
   var sz=getComputedStyle(root).getPropertyValue("--note-size").trim();
@@ -1487,9 +1492,18 @@ def mail_frame(detail, *, images=None, label: str = "") -> str:
         # still there, and is enough to fold the quoted thread now.
         html = richtext.fold(html, profile="email", limit=richtext.READ_MAX) or html
     html = richtext.resolve_images(html, images)
+    # A first guess at the height, so the page does not jump when the script
+    # fits it: a line per paragraph, list item, heading, rule or break (not a
+    # wrapping div or a table row, whose lines are already counted, and not a
+    # paragraph the gate emptied), each picture at its own stated height, and
+    # the fold's pill. Measured on an Outlook reply: 310 guessed, 295 drawn.
     head = html.split("<details>", 1)[0]
-    rows = len(re.findall(r"<(?:p|div|br|li|tr|h3|h4|hr)\b", head)) + (1 if "<details>" in html else 0)
-    height = max(28, min(1200, 22 * max(1, rows) + 100 * head.count("<img")))
+    lines = len(re.findall(r"<(?:p|br|li|h3|h4|hr)\b", head)) - head.count("<p></p>")
+    pics = 0
+    for tag in re.findall(r"<img\b[^>]*>", head):
+        h = re.search(r'\bheight="(\d{1,4})"', tag)
+        pics += min(400, int(h.group(1))) if h else 100
+    height = max(28, min(1200, 22 * max(1, lines) + pics + (36 if "<details>" in html else 0)))
     return ('<iframe class=mail sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin"'
             f' referrerpolicy=no-referrer title="{esc(label or "The email as it was sent")}"'
             f' style="height:{height}px" srcdoc="{esc(richtext.mail_document(html))}"></iframe>')

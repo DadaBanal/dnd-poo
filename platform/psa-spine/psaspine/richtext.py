@@ -454,6 +454,12 @@ MAIL_STYLE = (
     ":root[data-theme=dark]{--ink:#e4e7ee;--ink2:#a3acba;--line:#3b4352;--link:#93b2ff}"
     "@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--ink:#e4e7ee;--ink2:#a3acba;"
     "--line:#3b4352;--link:#93b2ff}}"
+    # A border keeps the sender's colour in light, where it was chosen; in dark
+    # Outlook's pale-grey rule over a quoted header reads as a white bar, so
+    # every border takes the theme's own line colour instead.
+    ":root[data-theme=dark] [style*=border]{border-color:var(--line)!important}"
+    "@media (prefers-color-scheme:dark){:root:not([data-theme=light]) [style*=border]"
+    "{border-color:var(--line)!important}}"
     "html,body{margin:0;padding:0;background:transparent}"
     "body{font:var(--size,14.5px)/1.5 Aptos,'Segoe UI',system-ui,-apple-system,sans-serif;color:var(--ink);"
     "overflow-wrap:anywhere;padding:1px 0}"

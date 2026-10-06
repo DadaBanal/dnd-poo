@@ -1621,7 +1621,9 @@ What the gate refuses, which is why this is safe to put on a clinical desk:
   tracking pixel cannot phone home and a remote image cannot tell the sender
   that a clinician opened the ticket and when. A file the mail attached is
   still kept on the ticket, through the PHI review it always went through;
-  what is *not yet* built is showing it inside the note.
+  what is *not yet* built is showing it inside the note. *(Built 6 Oct 2026
+  for pictures the sender pasted in, by Content-ID only, and still never a
+  remote image: see the 066 section below.)*
 - **Word's and Outlook's own markup** — `mso` styles, `<o:p>`, conditional
   comments: unwrapped or dropped, words kept.
 
@@ -1648,6 +1650,202 @@ desk-written rich notes since 064 and this change would have made them common:
 a board row's 90-character preview of the last note spent all 90 on its opening
 tags, and merging a duplicate ticket carried a rich note across as plain text,
 so it read as its own markup on the ticket it was merged into.
+
+## The email as it was sent: a sealed frame, its pictures, its fold (066, 6 Oct 2026)
+
+Dada, with two screenshots of live tickets: *"ticket replies look like these
+and HTML is or emails are not rendering properly on the ticket viewer and images
+are not rendering on the ticket"*, and *"can we search on github whats the best
+renderer for html so we can beautify the pages more"*. Then: *"lets also add a
+way to sort messages by earliest first then to the newest on tickets"*.
+
+What the screenshots showed (MEASURED from them, and reproduced in a test from
+a real Outlook reply's shape): every Outlook line a paragraph apart, because
+Outlook writes each line as its own `<p class=MsoNormal>` with its margin set
+to zero in a `<style>` block the gate rightly drops, and the desk's own `p`
+margin then applied to every line; the signature's table run flat; the pasted
+screenshot missing; and the whole quoted thread below the reply at full length.
+
+### What "the best renderer" is
+
+The research (VERIFIED 6 Oct 2026) agrees on one answer, and it is not one
+library. Products that show untrusted email inside their own page use **three
+layers, each assuming the one before it failed**:
+
+1. **An allow-list sanitizer** that rebuilds the document from the tags it
+   knows. [DOMPurify](https://github.com/cure53/DOMPurify) in the browser;
+   [nh3](https://pypi.org/project/nh3/) (Python bindings to Rust's
+   [ammonia](https://github.com/rust-ammonia/ammonia)) on a server, since
+   [bleach was deprecated in January 2023](https://github.com/mozilla/bleach/issues/698).
+2. **A sandboxed `srcdoc` iframe** without `allow-scripts`, so whatever the
+   sanitizer missed has no script and no access to the desk's page.
+   [Close](https://making.close.com/posts/rendering-untrusted-html-email-safely)
+   and [AgentMail](https://engineering.agentmail.to/blog/rendering-email-safely-preventing-phishing-attacks)
+   describe exactly this.
+3. **A Content-Security-Policy** inside the frame that fetches nothing from
+   outside, so a tracking pixel or a remote stylesheet cannot report that a
+   clinician opened the ticket.
+
+For the quoted thread, the libraries
+([talon](https://github.com/mailgun/talon),
+[quotequail](https://pypi.org/project/quotequail/)) find the point where the
+reply ends and the quote begins by the markers mail clients leave.
+
+**No new dependency.** Layer 1 was already here: `richtext.clean` is a
+tokenizer-rebuild allow-list, the same design as nh3, and it has carried the
+064 notes and the 5 Oct email door. What was missing was layers 2 and 3, and an
+email profile for layer 1, because email is written in tables and inline styles
+that a note's profile rightly refuses. The desk installs nothing it did not
+already have, and the portal artifact rule (no CDN, no external request) still
+holds by construction.
+
+### The three layers, as built
+
+- **The gate's email profile** (`richtext.clean(..., profile="email")`): adds
+  `table`/`tr`/`td`/`th` and their sections, `div` (kept as a `div`, so
+  Outlook's `WordSection1` no longer becomes one tall paragraph), `span`, `hr`,
+  `sup`/`sub`, `details`/`summary`, and `img` **only** with a `cid:` source.
+  `style` survives only as an allow-list of properties (`CSS_PROPS`: weight,
+  size, alignment, margins, padding, borders, widths) with a value pattern of
+  letters, digits and `#%., -` up to 80 characters, so no `url(`, no
+  `expression(`, no escapes. **No colour and no background**: an email chooses
+  neither the text colour nor the page under it, so dark mode stays readable
+  and white-on-white cannot hide a line.
+- **The frame** (`templates.mail_frame`): `<iframe class=mail
+  sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin"
+  referrerpolicy=no-referrer srcdoc=...>`. Never `allow-scripts`. Same-origin
+  is there only so the page can measure the email's height and pass the theme
+  and text size in; with no scripts in the frame it grants the email nothing.
+  Links open in a new tab (`<base target=_blank>`). In dark mode every border
+  takes the theme's line colour, so Outlook's pale rule over a quoted header
+  does not read as a white bar.
+- **The policy** (`richtext.MAIL_CSP`): `default-src 'none'; img-src 'self';
+  style-src 'unsafe-inline'; font-src 'none'; base-uri 'none'; form-action
+  'none'`. A picture can come from the desk and from nowhere else.
+
+The frame is exactly as tall as the email: the server sets a first guess (a
+line per paragraph, each picture at its stated height; 310 px guessed for an
+Outlook reply drawn at 295) and the page then watches the email's body for size
+from outside. Opening the fold, a picture arriving and a card being resized all
+re-fit it. It fits to the email's own box, never to the frame's
+`scrollHeight`, which is never less than the frame itself: fitting to that grew
+the frame by 2 px a refit, about 120 px a second, without end. The browser
+check that should have caught it compared against the same number; it now
+compares against the content and checks the height 1.5 s later too
+(MEASURED, 6 Oct 2026, fixed before it shipped). Nothing is listened for *inside* the email, because a sandbox
+without scripts runs no listener there, the desk's included. The light/dark
+theme and the reader's text size follow the desk's.
+
+### The quoted thread folds
+
+`richtext.split_quote` finds where the reply ends: Outlook on the web's
+`appendonsend`/`divRplyFwdMsg`, Gmail's `gmail_quote`, Yahoo's, Thunderbird's
+`moz-cite-prefix`, Apple Mail's `blockquote type=cite`, `-----Original
+Message-----`, and desktop Outlook's bold **From:** followed by **Sent:** or
+**Date:**. Everything from there down sits in a closed `<details>` titled
+*Earlier messages in this email*. One click opens it, inside the frame, with
+no script.
+
+**Notes already stored get this too.** The fold and the frame are applied when
+a note is drawn, not only at intake, so the tickets in the screenshots read
+properly on the next page load, with no re-import and no data change. New mail
+is stored as `body_format = 'EMAIL'` (the 5 Oct door stored `'HTML'`; an
+INTAKE or INTAKE\_REPLY note in `'HTML'` is recognised as an email and drawn
+the same way). A note a technician writes in the desk's editor is still `'HTML'`
+under the note profile, and is not framed.
+
+### Pictures pasted into an email (schema 066)
+
+A pasted picture is not a link: it travels inside the message as its own part,
+and the HTML points at it by that part's Content-ID (`cid:image004.jpg@01DD…`).
+Intake already kept the part as an attachment, through the patient-details
+review; it threw away the name the HTML uses for it. **066 adds
+`attachment.content_id`** and intake now records it. When a note is drawn, each
+`cid:` is resolved there and then:
+
+- **On the desk**, any image file of the ticket that is not WITHHELD and not
+  purged (a file still awaiting review is shown, as it is on the Files card).
+  A withheld one reads *picture image001.png: withheld for patient
+  information*, a purged one *removed under the retention rule*, in a dashed
+  box where the picture was.
+- **On the requester's portal**, only a file the portal already shows
+  (`_visible_files`). Anything else reads *a picture, shown here once it has
+  been checked*, or *a picture that is not shown here* when it was withheld
+  or purged.
+- **A signature logo** under `INLINE_LOGO_BYTES` (20 KB) is still not kept at
+  intake, as before, so its place is left out rather than drawn broken.
+
+The stored HTML keeps `cid:…`, never a URL. **Mail imported before 066 cannot
+show its pictures**: the file is there, but the name that ties it to its place
+in the email was not recorded, so the picture is left out of the note and is
+still on the Files card.
+
+### What goes out to the requester
+
+The outbound thread (`outbox.conversation`) read `ticket_event.detail` as plain
+text, so a rich note went out as its own markup. It now cleans a rich note
+under its own profile, sends only the reply above the fold (never the quoted
+thread a second time), and runs the PHI gate on the words before anything is
+sent. A note the gate flags is still replaced by the portal wording, as before.
+
+**A finding for Dada, not changed (MEASURED in a test, 6 Oct 2026).** A
+signature reading *"Junior Philhealth Associate"* trips
+`PHI_PHILHEALTH_MENTION`, so every reply quoting that signature goes out as the
+portal wording rather than its text. The rule is doing what it was written to
+do. Whether a job title should count is a decision for the record, not for
+this code; the SQL01 handoff of 6 Oct carries it.
+
+### Ethel and "the old menu"
+
+A member who signs in with Microsoft got the requester's layout. The Entra
+callback put the token's object id (a GUID) in `user.id`, which matches no
+`board_member` row, so the desk saw someone on no board: the requester shell,
+and `/` sent to `/my`. That is the "old menu" (INFERRED from the code path and
+reproduced in a test; the handoff asks SQL01 to confirm from the audit which
+door Ethel uses). **The Entra sign-in now maps to the member** the way the
+Windows door does: by the member's email, then by the sign-in name's local
+part. The object id stays in the audit detail.
+
+### Procurement and PMO Helpdesk side by side
+
+`python -m psaspine board-compare <database> <board_a> <board_b>` prints what
+differs between two boards: settings (kind, calendar, owner, live, requester
+emails, survey, closed loop, default work role and type, …), the count of each
+part of its set-up (statuses, SLA targets, ticket types it takes, members,
+teams, email addresses it claims, per-status emails, standard notes,
+templates, workflow and auto-assign rules, departments, on-call shifts),
+statuses on only one side, and what each holds (tickets, projects, recurring
+tickets) for context. Plain SELECTs on both stores, read-only. On a bare test board it shows
+the gaps a board set up by hand usually has (calendar `-`, SLA targets 10 vs 0,
+ticket types 4 vs 0). What Procurement actually lacks is for SQL01 to MEASURE;
+the handoff has the command.
+
+### Oldest first, or newest first
+
+The Activity card's tabs carry **Oldest first** / **Newest first**. One click
+reverses it on the server (so the reading order and keyboard focus are right,
+not just the picture), and the browser keeps the choice in a `psa_order`
+cookie (Path `/ticket`, a year, `SameSite=Lax`, `Secure` when the desk is
+behind HTTPS). `?order=old|new` sets it for a link.
+
+### What a browser proves here
+
+`tests/browsercheck.py` now opens an Outlook reply carrying a table signature,
+a pasted screenshot, a script and a tracking pixel, and checks: the frame
+exists and its sandbox has no `allow-scripts`; the frame is as tall as the
+email and stays that tall; the script never ran; lines are a line apart (21–22 px), not a
+paragraph; the table has cells; the picture loads from the desk; the fold
+starts closed, opening it grows the frame and closing it gives the room back;
+dark mode reaches inside; nothing was fetched from outside; and the sort toggle
+reverses and is remembered. 60 checks, 0 failures (MEASURED, 6 Oct 2026).
+
+One trap for whoever extends it: Playwright's own `click()`,
+`bounding_box()` and element-level `evaluate()` inside a script-less sandboxed
+frame leave a helper there that the sandbox refuses, and Chromium logs
+*"Blocked script execution in 'about:srcdoc'"* six times. Those errors are the
+harness's, not the desk's: a bare page with the same frame and a plain mouse
+click logs none (MEASURED). The checks read the email through the page, as the
+desk itself does, and click with the mouse.
 
 ## One Save, always reachable (3 Oct 2026)
 

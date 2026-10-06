@@ -423,11 +423,21 @@ def main() -> int:
                 def inmail(js: str):
                     return page.evaluate("() => { const d = document.querySelector('iframe.mail')"
                                          ".contentDocument; return (" + js + ")(d) }")
-                h_el = frame_el.evaluate("f => f.getBoundingClientRect().height")
-                h_doc = inmail("d => d.documentElement.scrollHeight")
-                note(abs(h_el - h_doc) <= 4 and h_el > 80,
+                # The email's own height is its root's box, not its scrollHeight:
+                # that is never less than the frame, so comparing against it
+                # passed while the frame grew 120 px a second (6 Oct 2026).
+                fit = """() => { const f = document.querySelector('iframe.mail'), d = f.contentDocument;
+                    return [f.getBoundingClientRect().height,
+                            Math.ceil(Math.max(d.documentElement.getBoundingClientRect().height,
+                                               d.body.scrollHeight))] }"""
+                h_el, h_doc = page.evaluate(fit)
+                note(abs(h_el - h_doc) <= 2 and h_el > 80,
                      "the frame is exactly as tall as the email: no inner scrollbar, no gap",
                      f"frame {h_el:.0f}px, email {h_doc}px")
+                page.wait_for_timeout(1500)
+                h_later = page.evaluate(fit)[0]
+                note(abs(h_later - h_el) <= 1, "and it stays that tall: the fit settles, it does not creep",
+                     f"{h_el:.0f}px, then {h_later:.0f}px 1.5 s later")
                 note(page.evaluate("() => !window.BROKE_OUT"), "a script in the email never ran")
                 # a line holding a picture is as tall as the picture, so only
                 # the lines of words are measured
@@ -453,9 +463,15 @@ def main() -> int:
                     return [r.left + f.clientLeft + s.left + 8, r.top + f.clientTop + s.top + s.height / 2] }""")
                 page.mouse.click(*xy)
                 page.wait_for_timeout(500)
-                after = frame_el.evaluate("f => f.getBoundingClientRect().height")
-                note(after > before + 40, "opening the fold grows the frame to fit",
-                     f"{before:.0f}px -> {after:.0f}px")
+                after, after_doc = page.evaluate(fit)
+                note(after > before + 40 and abs(after - after_doc) <= 2, "opening the fold grows the frame to fit",
+                     f"{before:.0f}px -> {after:.0f}px (email {after_doc}px)")
+                page.mouse.click(*xy)
+                page.wait_for_timeout(500)
+                shut = page.evaluate(fit)[0]
+                note(abs(shut - before) <= 2, "and closing it gives the room back", f"{after:.0f}px -> {shut:.0f}px")
+                page.mouse.click(*xy)                              # open again for the dark check below
+                page.wait_for_timeout(300)
                 page.evaluate("() => { document.documentElement.dataset.theme = 'dark' }")
                 page.wait_for_timeout(300)
                 ink = inmail("d => getComputedStyle(d.body).color")

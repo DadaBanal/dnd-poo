@@ -1,10 +1,14 @@
 # The guide's source
 
-`PMC_Dada_PSA_Guides_20261005.html` one level up is generated: one file with a
+`PMC_Dada_PSA_Guides_20261006.html` one level up is generated: one file with a
 front page and all fourteen guides inside it. **Edit these files, not the HTML.**
 
-It supersedes `PMC_Dada_PSA_Guides_20260930.html`, which is kept beside it and
-still describes the desk as it was on 30 September. A dated document is never
+It supersedes `PMC_Dada_PSA_Guides_20261005.html`, which supersedes
+`PMC_Dada_PSA_Guides_20260930.html`; both are kept beside it and still describe
+the desk as it was on their dates. The 6 October edition changes the Service
+Desk guide's *Tickets by email* and *Notes and emails* (the email in its own
+frame, pictures pasted into it, the folded thread, oldest or newest first) and
+the Staff guide's *What changed since 30 September*. A dated document is never
 overwritten here; the new edition says on its own front page what it replaces.
 
 - `g_*.py` hold each guide's words and try-it tools; `g_common.py` the helpers
@@ -27,8 +31,8 @@ Both files are self-contained: no CDN, no web font, no external request.
 ```
 python3 _source/build_one.py                       # the full edition
 python3 _source/build_compact.py                   # the compact one
-python3 _source/check_guide.py PMC_Dada_PSA_Guides_20261005.html
-python3 _source/check_guide.py PMC_Dada_PSA_Guides_Compact_20261005.html
+python3 _source/check_guide.py PMC_Dada_PSA_Guides_20261006.html
+python3 _source/check_guide.py PMC_Dada_PSA_Guides_Compact_20261006.html
 ```
 
 `build_one.py` takes `GUIDE_OUT` to write somewhere else, and `GUIDE_IMGDIR` /
@@ -53,7 +57,8 @@ are still gone. `build_one.py` prefers them when they exist and falls back to
 
 ## The compact edition
 
-`PMC_Dada_PSA_Guides_Compact_20261005.html` is the same guide at **924 KB**,
+`PMC_Dada_PSA_Guides_Compact_20261006.html` is the same guide (924 KB in the
+5 October edition),
 for places that take files under 1 MB. Its screenshots are 800 px WebP, and the
 whole page is gzipped inside the file and unpacked by the browser when opened
 (Edge, Chrome, Firefox or Safari 16.4+; an older browser is told to download the
@@ -76,7 +81,7 @@ Playwright). Expect the file to grow; re-shoot from PNG if the budget matters.
 
 ## The screenshots are the 30 September set
 
-The words are current to 5 October. The pictures are not, and the guide says so
+The words are current to 6 October. The pictures are not, and the guide says so
 in three places rather than pretending otherwise: the front-page notice, the
 footer, and `What changed since 30 September` in the Staff guide, which names
 the five screens that now look different from their picture — the ticket page,

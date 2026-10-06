@@ -99,8 +99,9 @@ for name, members in GROUPS:
 # This edition does not replace the one before it: the dated file stays where it
 # is, and the new one says so on its own front page. (The repository's rule:
 # never overwrite a dated document; supersede it and say so in the header.)
+LONG_DATE = {"20260930": "30 September 2026", "20261005": "5 October 2026", "20261006": "6 October 2026"}
 SUPERSEDES = ('<div class="note info" style="margin-top:20px"><svg><use href="#i-info"/></svg><p>'
-              '<b>This is the 5 October 2026 edition.</b> It supersedes the 30 September 2026 edition, which is kept beside it and still '
+              f'<b>This is the {LONG_DATE[C.DATE]} edition.</b> It supersedes the {LONG_DATE[C.PREV]} edition, which is kept beside it and still '
               'describes the desk as it was. What is different is listed under <b>What changed since 30 September</b> in the Staff guide \u2014 '
               'read that first if you were trained on the earlier one. The screenshots here are still the 30 September set; where a picture and '
               'the words disagree, the words are right.</p></div>')
@@ -124,7 +125,7 @@ chips = ('<div class="roles" role="group" aria-label="Show guides for"><span>Sho
          '<button class="chip" data-role="A" aria-pressed="false">Administrators</button></div>')
 data = {"spots": SPOTS, "tours": TOURS, "quiz": quiz, "images": {n: f"data:image/{IMGMIME};base64," + base64.b64encode((S / IMGDIR / f"{n}.{IMGEXT}").read_bytes()).decode() for n in sorted(images)},
         "guides": [{"slug": g["slug"], "title": g["title"].replace(" (start here)", "")} for g in C.GUIDES]}
-FOOT_DATE = {"20260930": "30 September 2026", "20261005": "5 October 2026"}[C.DATE]
+FOOT_DATE = LONG_DATE[C.DATE]
 foot = (f"Dada PSA guides · Premiere Medical Center Nueva Ecija · Dada IT · {FOOT_DATE}. Screens are from a demonstration desk with made-up staff, "
         "tickets and supplier records; your boards, names and numbers will differ. SLA targets are set per board by its service manager."
         + (" The screenshots are the 30 September set: the words are current to this edition's date, and \u2018What changed\u2019 in the "

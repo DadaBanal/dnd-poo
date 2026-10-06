@@ -45,7 +45,11 @@ def staff_body():
                  ["A ticket could not be renamed",
                   "<b>The summary is editable</b> \u2014 the pencil beside it. Any Outlook appointment already made for the ticket is rewritten to match."],
                  ["An email from a ward read like <code>[cid:image004.jpg\u2026]</code> and every link twice",
-                  "<b>The ticket shows the message the sender actually composed</b>, with their formatting. Pictures from the email are on the Files card, never inside the note."],
+                  "<b>The ticket shows the message the sender actually composed</b>, laid out as they sent it: their lines, their signature, and a "
+                  "screenshot they pasted in, where they put it. The messages it quotes fold away under <b>Earlier messages in this email</b>. "
+                  "(6 October; this works on emails already in the desk too.)"],
+                 ["The Activity card always read oldest at the top",
+                  "<b>Oldest first</b> / <b>Newest first</b> beside the Activity tabs turns it round. Your browser remembers which you chose. (6 October)"],
                  ["Type <code>PMC-000123</code> from memory to link, merge or attach a ticket",
                   "<b>Every one of those fields is a search box.</b> Type a word from the summary, the ward, the person, the company, the status \u2014 or a word from one of its notes \u2014 and pick it from the dropdown. It never offers the ticket you are on."]]),
           H("Around the desk"),
@@ -56,7 +60,9 @@ def staff_body():
               "<b>Pages refresh themselves.</b> The board, a ticket and the week pick up what colleagues do without you reloading.",
               "<b>Files open in place</b> \u2014 a picture, a PDF or a text file opens in a viewer on the page, with Download beside it.",
               "<b>Aa</b> beside light and dark sets the text size.",
-              "The menu across the top is a <b>mega menu</b> of the desk\u2019s modules, so nothing is cut off any more."]),
+              "The menu across the top is a <b>mega menu</b> of the desk\u2019s modules, so nothing is cut off any more.",
+              "<b>Signing in with Microsoft lands you on your own boards</b>, exactly as signing in with Windows does. Until 6 October it could "
+              "show a member the requester\u2019s layout and the older menu."]),
           H("On a project"),
           P("A plan used to be a thing you got right first time or lived with: a phase could be added and marked done, and nothing else. "
             "<b>Now every part of a project can be edited</b>, and anything carrying no work can be taken off \u2014 a phase renamed, moved, reordered or "
@@ -72,7 +78,7 @@ def staff_body():
               "BizBox MMS, PhilHealth, Premiere One), and four pairs of duplicate Types were merged. <b>Tickets kept their classification</b> \u2014 nothing was recreated."]),
           NOTE("info", "<b>About the pictures in this guide.</b> They are the 30 September set. Five screens now look different from their picture: the ticket page "
                        "(wider, with the save bar, the three catalogue dropdowns and the stopwatch), the board, Dispatch, the Schedule week and New ticket. The "
-                       "words in every guide are current to 5 October; where a picture and the words disagree, the words are right."),
+                       "words in every guide are current to 6 October; where a picture and the words disagree, the words are right."),
           who=["Everyone"], roles="R T M A"),
         S("start", "Start here", "What Dada PSA is",
           LEAD("Dada PSA is where every IT request at PMC lives. It has two doors: PMC Requests for the people who ask, and the desk for Dada IT."),

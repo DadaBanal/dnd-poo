@@ -1,7 +1,7 @@
 """Open a built guide in a real Chromium and check what a reader would see.
 
-    python3 _source/check_guide.py PMC_Dada_PSA_Guides_20261005.html
-    python3 _source/check_guide.py PMC_Dada_PSA_Guides_Compact_20261005.html
+    python3 _source/check_guide.py PMC_Dada_PSA_Guides_20261006.html
+    python3 _source/check_guide.py PMC_Dada_PSA_Guides_Compact_20261006.html
 
 The build script counts sections and tools, which proves nothing about
 whether the page opens: the guide is one self-contained HTML file with its
@@ -37,7 +37,7 @@ with sync_playwright() as pw:
     page.wait_for_timeout(1200)
 
     note("Dada PSA" in page.title(), "the page opens", page.title())
-    note(page.locator("#front .note.info b", has_text="5 October 2026 edition").count() == 1,
+    note(page.locator("#front .note.info b", has_text="6 October 2026 edition").count() == 1,
          "the front page says which edition it is and what it supersedes")
     note(page.locator(".library .gcard").count() == 14, "all 14 guide cards are on the front page",
          f"{page.locator('.library .gcard').count()} cards")
@@ -61,8 +61,16 @@ with sync_playwright() as pw:
     page.goto(F.as_uri() + "#/Service_Desk", wait_until="load"); page.wait_for_timeout(500)
     body = page.locator('.guide[data-guide="Service_Desk"]').inner_text()
     for phrase in ("Ticket type", "changes not saved", "Edit layout", "cid:image004.jpg",
-                   "the message the sender actually composed", "resources"):
+                   "the message the sender actually composed", "resources",
+                   # 6 Oct 2026: the email in its frame, its pictures, its fold, the order
+                   "Earlier messages in this email", "pasted into the email shows where they put it",
+                   "never shown", "Newest first", "remembers the choice"):
         note(phrase in body, f"Service Desk says {phrase!r}")
+
+    page.goto(F.as_uri() + "#/Staff", wait_until="load"); page.wait_for_timeout(500)
+    wbody = page.locator('.guide[data-guide="Staff"]').inner_text()
+    for phrase in ("Signing in with Microsoft lands you on your own boards", "Oldest first", "current to 6 October"):
+        note(phrase in wbody, f"Staff says {phrase!r}")
 
     page.goto(F.as_uri() + "#/Dispatch_OnCall", wait_until="load"); page.wait_for_timeout(500)
     dbody = page.locator('.guide[data-guide="Dispatch_OnCall"]').inner_text()
