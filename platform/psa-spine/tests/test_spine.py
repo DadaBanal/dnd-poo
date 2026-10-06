@@ -4253,12 +4253,9 @@ class EmailOnTheTicketTest(unittest.TestCase):
         wid = self._intake_event()["work_item_id"]
         board.add_note(self.conn, wid, body="<p><p>Good day,</p><p>The attached file has been received.</p></p>",
                        flag="DISCUSSION", actor="kyline", at=self.at, body_format="HTML", notify_requester=False)
-        # The real signature says "Junior Philhealth Associate", and the PHI
-        # rule for a PhilHealth mention holds that reply back from the email
-        # altogether (MEASURED here; see the next test). A neutral title, so
-        # this test is about the markup.
-        self._related(html=self.FIXTURE.read_text().replace("Junior Philhealth Associate", "Billing Associate"),
-                      subject="RE: Ward 3 phone", in_reply_to=parent)
+        # The signature as it really reads, "Junior Philhealth Associate": a
+        # job title, which since 6 Oct 2026 no longer holds the reply back.
+        self._related(html=self.FIXTURE.read_text(), subject="RE: Ward 3 phone", in_reply_to=parent)
         self._import()
         thread = outbox.conversation(self.conn, wid)
         for item in thread:
@@ -4280,11 +4277,28 @@ class EmailOnTheTicketTest(unittest.TestCase):
         parent = self._related(html="<p>Hello</p>")
         self._import()
         wid = self._intake_event()["work_item_id"]
-        self._related(html=self.FIXTURE.read_text(), subject="RE: Ward 3 phone", in_reply_to=parent)
+        flagged = self.FIXTURE.read_text().replace(
+            "Thank you po", "Thank you po, his PhilHealth claim is attached")
+        self._related(html=flagged, subject="RE: Ward 3 phone", in_reply_to=parent)
         self._import()
         held = [i for i in outbox.conversation(self.conn, wid) if i["text"] == outbox.PORTAL_WORDS]
-        self.assertEqual(len(held), 1, "the reply whose signature names PhilHealth")
+        self.assertEqual(len(held), 1, "the reply that names a patient's PhilHealth claim")
         self.assertIsNone(held[0]["html"])
+
+    def test_a_philhealth_job_title_is_not_a_patient_reference(self):
+        """Dada, 6 Oct 2026: a signature reading "Junior Philhealth Associate"
+        held back every email quoting that person. A job title or an office is
+        not a patient; the scheme named any other way still is, and a
+        PhilHealth-shaped number always is."""
+        from psaspine import phi
+        def codes(t):
+            return {c for c, _, _ in phi.scan(t, field="note")}
+        for title in ("Junior Philhealth Associate", "PhilHealth Section, local 222",
+                      "Phil Health Officer", "PhilHealth in-charge", "PHILHEALTH DEPARTMENT"):
+            self.assertNotIn("PHI_PHILHEALTH_MENTION", codes(title), title)
+        for mention in ("patient PhilHealth claim", "check his Philhealth", "PhilHealth: pending"):
+            self.assertIn("PHI_PHILHEALTH_MENTION", codes(mention), mention)
+        self.assertIn("PHI_PHILHEALTH_NUMBER", codes("PhilHealth Associate 12-345678901-2"))
 
     # ------------------------------------------------------ the two boards
 

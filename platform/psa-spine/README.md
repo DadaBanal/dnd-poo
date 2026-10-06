@@ -1788,12 +1788,15 @@ under its own profile, sends only the reply above the fold (never the quoted
 thread a second time), and runs the PHI gate on the words before anything is
 sent. A note the gate flags is still replaced by the portal wording, as before.
 
-**A finding for Dada, not changed (MEASURED in a test, 6 Oct 2026).** A
-signature reading *"Junior Philhealth Associate"* trips
-`PHI_PHILHEALTH_MENTION`, so every reply quoting that signature goes out as the
-portal wording rather than its text. The rule is doing what it was written to
-do. Whether a job title should count is a decision for the record, not for
-this code; the SQL01 handoff of 6 Oct carries it.
+**A job title is not a patient (Dada's decision, 6 Oct 2026).** A signature
+reading *"Junior Philhealth Associate"* tripped `PHI_PHILHEALTH_MENTION`, so
+every reply quoting that signature went out as the portal wording rather than
+its text. Dada: fix it. The rule now skips *PhilHealth* when the next word names
+a job or an office (Associate, Officer, Clerk, Staff, Section, Department, Unit,
+Office, Coordinator, Supervisor, Head, Team, Specialist, Assistant, Personnel,
+Desk, In-charge). Any other mention is still flagged (*"his PhilHealth claim"*),
+and a PhilHealth-shaped number is flagged beside any word at all
+(`test_a_philhealth_job_title_is_not_a_patient_reference`).
 
 ### Ethel and "the old menu"
 

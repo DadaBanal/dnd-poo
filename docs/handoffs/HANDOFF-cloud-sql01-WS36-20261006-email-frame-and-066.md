@@ -130,13 +130,19 @@ tests. Paste its output back. **Do not fix anything it shows**: what Procurement
 (its own SLA numbers, its calendar, which ticket types it takes) is Dada's to say, and the
 owner/deputy gap you recorded on 1 Oct may be part of the answer.
 
-## 6. One decision for Dada, carried here, not acted on
+## 6. Dada decided: a PhilHealth job title is not a patient reference
 
-A signature reading *"Junior Philhealth Associate"* trips `PHI_PHILHEALTH_MENTION`, so every
-requester email that quotes that person's reply goes out as the portal wording instead of
-its text (MEASURED in a test built on the shape of the reply in Dada's screenshot). The rule
-is doing what it was written to do. Whether a job title should count is the record's call,
-not this code's. Nothing changed; it is listed so it is not mistaken for a fault.
+A signature reading *"Junior Philhealth Associate"* tripped `PHI_PHILHEALTH_MENTION`, so every
+requester email quoting that person's reply went out as the portal wording. Dada, 6 Oct:
+fix it. **Done, code only, no schema step**: the rule now skips *PhilHealth* when the next
+word is a job or an office (Associate, Officer, Clerk, Staff, Section, Department, Unit,
+Office, Coordinator, Supervisor, Head, Team, Specialist, Assistant, Personnel, Desk,
+In-charge). Every other mention is still flagged, and a PhilHealth-shaped number still is
+whatever word sits beside it. It rides the same restart as §2.
+
+**Existing `data_quality` rows are not touched.** Rows already raised for such signatures
+stay as they are — they are a record of what the rule said then. Do **not** delete them.
+If Dada wants them cleared, tell me and I will add a proper way; not by hand in SQL.
 
 ## 7. Evidence on this head
 

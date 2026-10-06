@@ -55,8 +55,14 @@ RULES: list[tuple[str, str, str, re.Pattern]] = [
                 r"\bpatient\s+(?:mr|mrs|ms|dr)\b", re.I)),
 
     # The scheme by name, which is how the measured message announced itself.
+    # Not when it names a person's job or a hospital office (Dada, 6 Oct 2026):
+    # a staff signature reading "Junior Philhealth Associate" held back every
+    # requester email that quoted her reply, and a job title is not a patient.
+    # A PhilHealth number beside it is still caught by the rule above.
     ("PHI_PHILHEALTH_MENTION", "WARN", "a PhilHealth reference",
-     re.compile(r"\bphil\s*health\b", re.I)),
+     re.compile(r"\bphil\s*health\b(?!\W{0,3}(?:associates?|officers?|clerks?|staff|"
+                r"section|department|dept|unit|office|coordinators?|supervisors?|head|"
+                r"team|specialists?|assistants?|personnel|desk|in-?charge)\b)", re.I)),
 ]
 
 
