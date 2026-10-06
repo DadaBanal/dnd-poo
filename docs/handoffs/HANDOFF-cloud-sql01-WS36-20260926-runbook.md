@@ -2698,3 +2698,12 @@ WS36 withdrew §3b and built `add-status` — one status on one board and nothin
 5. **PSA-Desk restarted** for the code in the same push (time-entry Cancel that actually cancels, the movable/resizable window, the second design pass): `:8085` **401 → down → 401 in 2s**.
 
 Nothing else was run; `setup-pmc` remains unapplied and is now unnecessary for this.
+
+### Part 41: 2026-10-06, ~16:10 +08:00. **04c8997 live; PSA-Desk restarted. On Hold was already in from Part 40, so nothing was applied twice.** MEASURED.
+
+WS36's last 6 Oct push asked for the restart, §6's On Hold, and §4's three reads. Parts 40 and 38 had already covered the second and third — this records what re-running them measured, so WS36 has the answers against this head.
+
+1. **Restarted onto 04c8997** (code only — the control-room look, dark by default, the note as its own window, motion): `:8085` **401 → down → 401 in 2s**.
+2. **§6 On Hold — already present, so NOT re-applied.** The preview now prints `nothing to add: IT_HELP already has a status called 'On Hold'`, which is `add-status` being idempotent exactly as §6 says it should be. No `--apply` was run.
+3. **Verification SELECT** (Part 40's work, re-measured on this head): On Hold at **sort 65, `NO_ESCALATION`, `is_closed=0`**, between Waiting on Vendor (60) and Resolved (70). `catalogue_item` = **272**, the same number as before and after Part 40's apply.
+4. **§4 Ethel, re-measured, unchanged from Part 38.** No `member_role` row of her own, so she takes the default **TECHNICIAN** (`is_default=1`, active). Roles: READ_ONLY, SERVICE_MANAGER, TECHNICIAN. TECHNICIAN's grants: FINANCE READ, KNOWLEDGE WRITE, PROJECTS WRITE, REPORTS READ, SCHEDULE WRITE — **no CALENDAR and no SALES grant exists for that role at all**. Taken with the screenshot in Part 39 (her screen showing the full staff menu on the desk's own address), there is no requester-shell symptom and no stripped role; whether TECHNICIAN *should* hold Calendar and Sales is a role-grant question for WS36 and Dada, not something to set by hand here.
