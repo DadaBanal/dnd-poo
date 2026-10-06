@@ -1988,6 +1988,23 @@ is redundant"*, and *"animations are welcome and transitions as long as they don
 - The browser check's pod-editing checks scrolled to a fixed offset and skipped themselves
   silently once the page got shorter (71 → 67). They now scroll to a pod, and a missing pod fails.
 
+### After that: menus that hold, and depth (6 Oct 2026)
+
+Dada, on a screenshot of the Service Desk menu over the Projects page: *"opacity issues"*; then
+*"dont you think the design is too flat"*.
+
+- **Menus were see-through, and at some widths cut off.** They used the translucent panel
+  colour, and the menu bar's fade-out edge is a CSS mask, which clips everything inside the bar,
+  the open menu included. The mask now lifts while a menu is open. Menus, tips, toasts, the
+  command palette and the windows are frosted hard (86% plus a 20 px blur), or solid where the
+  browser has no blur. Two browser checks hold both: the menu is drawn whole, and the page does
+  not read through it.
+- **Depth, in three heights.** The canvas has deeper glows and a vignette. Cards and tiles sit
+  above it with a lit top edge, a light-to-dark fill and a real shadow. Menus, windows and the
+  bar float highest, frosted. Fields are recessed into their card. Tiles are tinted by what they
+  mean (red breached, amber due, cyan selected). Buttons have a lit top and a shaded foot.
+  Blur is only on those small floating areas, never on the page.
+
 ## One Save, always reachable (3 Oct 2026)
 
 The ticket's own fields were already one form with one **Save changes** — but it

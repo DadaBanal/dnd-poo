@@ -709,6 +709,15 @@ header.top::after{left:18px;right:18px;bottom:0;border-radius:2px}
   box-shadow:inset 0 1px 0 var(--hi),0 18px 50px -30px rgb(0 0 0/.6)!important}
 .card:hover{box-shadow:inset 0 1px 0 var(--hi),0 22px 60px -28px var(--glow)!important}
 /* a window sits over the page: solid, so nothing behind it reads through */
+/* so does everything else that floats over the page: menus, tips, toasts, the palette.
+   The sticky header is nearly solid too, since the page scrolls beneath it and there is no blur */
+header.top nav .panel,.edbar .pop>.menu,details.tip>.tipbody,.banner.toast,[popover]#keys,.pal-box{
+  background:var(--surface)!important;box-shadow:0 24px 60px -18px rgb(0 0 0/.65),0 0 0 1px var(--glass-line)!important}
+header.top{background:color-mix(in srgb,var(--surface) 96%,transparent)!important}
+/* the menu bar's fade-out edge is a mask, and a mask clips everything inside it: lift it
+   while a menu is open, or the menu is cut off at the bar's edge */
+header.top nav:has(.grp:hover),header.top nav:has(.grp.open),header.top nav:has(.grp:focus-within){
+  -webkit-mask-image:none!important;mask-image:none!important}
 dialog.tedlg{background:var(--surface)!important;box-shadow:inset 0 1px 0 var(--hi),0 30px 80px -20px rgb(0 0 0/.7),0 0 0 1px var(--glass-line)!important}
 .tiles a.tile:hover{box-shadow:inset 0 1px 0 var(--hi),0 18px 46px -20px var(--glow)!important}
 .note.by-req{border:1px solid color-mix(in srgb,var(--req) 35%,transparent)!important}
@@ -746,6 +755,75 @@ table.grid tbody tr:hover{background:linear-gradient(90deg,rgb(34 211 238/.10),r
 .who.staff{background:rgb(99 102 241/.18)} .who.req{background:rgb(20 184 166/.18)}
 .backbtn{background:var(--glass-bg);border-color:var(--glass-line)!important;box-shadow:inset 0 1px 0 var(--hi)}
 footer{opacity:.75}
+
+/* ---- depth (Dada, 6 Oct 2026: "dont you think the design is too flat").
+   Three heights, each lit from above: the canvas; cards, with a lit top edge,
+   a soft fall-off and a real shadow; and what floats (menus, windows, the bar),
+   frosted and highest. Fields sit recessed into the card. Blur only on those
+   small floating areas, never on the page. Gradients and shadows only. */
+:root[data-theme=dark]{
+  --l1:linear-gradient(180deg,rgb(30 38 66/.94),rgb(16 21 38/.94));
+  --l1-edge:linear-gradient(180deg,rgb(170 185 255/.30),rgb(170 185 255/.07) 40%,rgb(170 185 255/.04));
+  --l1-shadow:inset 0 1px 0 rgb(255 255 255/.07),0 1px 2px rgb(0 0 0/.45),0 22px 44px -18px rgb(0 0 0/.75);
+  --l1-hover:inset 0 1px 0 rgb(255 255 255/.09),0 1px 2px rgb(0 0 0/.45),0 26px 56px -18px rgb(0 0 0/.8),0 0 0 1px rgb(120 140 255/.18);
+  --l2-bg:rgb(20 26 46/.86);
+  --l2-shadow:inset 0 1px 0 rgb(255 255 255/.10),0 0 0 1px rgb(170 185 255/.16),0 30px 70px -20px rgb(0 0 0/.85),0 10px 24px -12px rgb(0 0 0/.6);
+  --well:rgb(6 9 20/.55);--well-shadow:inset 0 1px 2px rgb(0 0 0/.5),inset 0 0 0 1px rgb(150 165 255/.10)}
+:root[data-theme=light]{
+  --l1:linear-gradient(180deg,#fdfdff,#eff3fb);
+  --l1-edge:linear-gradient(180deg,rgb(255 255 255/1),rgb(70 90 160/.16) 45%,rgb(70 90 160/.22));
+  --l1-shadow:inset 0 1px 0 #fff,0 1px 2px rgb(30 40 90/.08),0 18px 36px -18px rgb(30 40 90/.32);
+  --l1-hover:inset 0 1px 0 #fff,0 1px 2px rgb(30 40 90/.08),0 24px 48px -18px rgb(30 40 90/.38),0 0 0 1px rgb(80 110 240/.18);
+  --l2-bg:rgb(250 251 255/.88);
+  --l2-shadow:inset 0 1px 0 #fff,0 0 0 1px rgb(70 90 160/.16),0 30px 70px -22px rgb(30 40 90/.45),0 8px 20px -10px rgb(30 40 90/.2);
+  --well:rgb(255 255 255/.75);--well-shadow:inset 0 1px 2px rgb(30 40 90/.10),inset 0 0 0 1px rgb(70 90 160/.14)}
+/* the canvas: deeper glows, and a vignette so the middle reads brightest */
+:root[data-theme=dark] body{background:
+  radial-gradient(1200px 700px at 10% -15%,rgb(99 102 241/.38),transparent 60%),
+  radial-gradient(1000px 600px at 105% -5%,rgb(34 211 238/.22),transparent 62%),
+  radial-gradient(1100px 800px at 55% 125%,rgb(139 92 246/.30),transparent 60%),
+  radial-gradient(140% 100% at 50% 40%,transparent 55%,rgb(0 0 0/.45)),
+  linear-gradient(180deg,#060912,#0a1022 55%,#070a15);background-attachment:fixed}
+/* level 1: cards and tiles */
+.card,.tile,.slabox{
+  background:var(--l1) padding-box,var(--l1-edge) border-box!important;border:1px solid transparent!important;
+  box-shadow:var(--l1-shadow)!important}
+.card:hover{box-shadow:var(--l1-hover)!important}
+.tiles a.tile:hover{box-shadow:var(--l1-hover),0 16px 40px -18px var(--glow)!important}
+/* tiles say what they mean before they are read */
+.tile.bad{background:linear-gradient(180deg,rgb(244 63 94/.20),transparent 70%) padding-box,var(--l1) padding-box,
+  linear-gradient(180deg,rgb(251 113 133/.55),rgb(244 63 94/.08)) border-box!important}
+.tile.warn{background:linear-gradient(180deg,rgb(245 158 11/.18),transparent 70%) padding-box,var(--l1) padding-box,
+  linear-gradient(180deg,rgb(252 211 77/.5),rgb(245 158 11/.08)) border-box!important}
+.tile.on{background:linear-gradient(180deg,rgb(34 211 238/.16),transparent 70%) padding-box,var(--l1) padding-box,
+  var(--neon) border-box!important}
+.tile.bad .ic{color:#fb7185;background:rgb(244 63 94/.14);box-shadow:0 0 22px -6px rgb(244 63 94/.8)}
+.tile.warn .ic{color:#fcd34d;background:rgb(245 158 11/.14);box-shadow:0 0 22px -6px rgb(245 158 11/.8)}
+.tile .n{font-size:30px;letter-spacing:-.02em}
+/* level 2: what floats, frosted */
+header.top,header.top nav .panel,.edbar .pop>.menu,details.tip>.tipbody,.banner.toast,[popover]#keys,.pal-box,dialog.tedlg{
+  background:var(--l2-bg)!important;box-shadow:var(--l2-shadow)!important}
+@supports ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+  header.top,header.top nav .panel,.edbar .pop>.menu,details.tip>.tipbody,.banner.toast,[popover]#keys,.pal-box,dialog.tedlg{
+    -webkit-backdrop-filter:blur(20px) saturate(1.5);backdrop-filter:blur(20px) saturate(1.5)}}
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+  header.top nav .panel,.edbar .pop>.menu,details.tip>.tipbody,.banner.toast,[popover]#keys,.pal-box,dialog.tedlg{background:var(--surface)!important}}
+dialog.tedlg .tehead{background:linear-gradient(180deg,rgb(255 255 255/.05),transparent)}
+/* fields sit into the card */
+input:not([type=checkbox]):not([type=radio]):not([type=range]),select,textarea,.multipick,.editor{
+  background-color:var(--well)!important;box-shadow:var(--well-shadow)}
+/* buttons that can be pressed look it */
+main button[type=submit]:not(.ghost):not(.iconbtn):not(.tab):not(.small):not(.danger),main .btn:not(.ghost):not(.top),.btn.clockbtn.on{
+  box-shadow:inset 0 1px 0 rgb(255 255 255/.35),inset 0 -2px 0 rgb(0 0 0/.18),0 10px 26px -10px var(--glow)!important}
+main button.ghost,main .btn.ghost,.backbtn{
+  background:linear-gradient(180deg,rgb(255 255 255/.07),rgb(255 255 255/.01))!important;
+  box-shadow:inset 0 1px 0 var(--hi),0 1px 2px rgb(0 0 0/.25)}
+:root[data-theme=light] main button.ghost,:root[data-theme=light] main .btn.ghost,:root[data-theme=light] .backbtn{
+  background:linear-gradient(180deg,#fff,#eef2fa)!important;box-shadow:inset 0 1px 0 #fff,0 1px 2px rgb(30 40 90/.12)}
+/* the active tab is lit */
+.tabs a.on,.tabs a[aria-current]{text-shadow:0 0 18px var(--glow)}
+/* notes inside a card sit one step up from it */
+.note{box-shadow:inset 0 1px 0 var(--hi),0 6px 16px -10px rgb(0 0 0/.5)!important}
 
 /* ---- motion that does not lag (Dada, 6 Oct 2026: "animations are welcome
    and transitions as long as they dont lag it"). transform and opacity only,

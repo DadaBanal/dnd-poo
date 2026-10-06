@@ -149,6 +149,22 @@ def main() -> int:
             page.wait_for_load_state("domcontentloaded")
             note("login" not in page.url, "sign in", page.url)
 
+            # --- a menu over the page is solid and not clipped (Dada, 6 Oct 2026:
+            # the Service Desk menu read through to the page beneath it) ------
+            page.locator("header.top nav .grp:not(.all)").first.hover()
+            page.wait_for_timeout(400)
+            menu = page.evaluate("""() => { const p=document.querySelector('header.top nav .grp:hover .panel');
+                if (!p) return null; const r=p.getBoundingClientRect();
+                const top=document.elementFromPoint(r.left + r.width/2, r.top + r.height - 12);
+                const cs=getComputedStyle(p), m=cs.backgroundColor.match(/[\d.]+/g).map(Number);
+                const blur=parseFloat(((cs.backdropFilter||cs.webkitBackdropFilter||'').match(/blur\(([\d.]+)px/)||[0,0])[1]);
+                return [cs.backgroundColor, !!top && p.contains(top), m.length < 4 ? 1 : m[3], blur] }""")
+            note(bool(menu) and menu[1], "an open menu is drawn whole, not cut off by the bar", str(menu))
+            # solid, or frosted hard enough that nothing beneath can be read
+            note(bool(menu) and (menu[2] >= 0.99 or (menu[2] >= 0.8 and menu[3] >= 12)),
+                 "and the page does not read through it", str(menu))
+            page.mouse.move(5, 600)
+
             page.goto(f"{base}/ticket/{ref}", wait_until="domcontentloaded")
             page.wait_for_timeout(400)
             note(page.locator("select.cat-item").count() == 1, "the ticket page has the Item select")

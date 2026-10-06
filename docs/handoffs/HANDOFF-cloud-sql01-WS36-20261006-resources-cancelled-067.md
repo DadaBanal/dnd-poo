@@ -198,3 +198,5 @@ Dada asked for a darker, less white desk, no separate "add note" pod, and animat
 | Unit suite | **766 OK**, 1 skipped. |
 | Browser checks | **71 of 71**. The four pod-editing checks had been skipping themselves silently on a shorter page; they now fail instead of skipping. |
 | Smoke | 7 of 7. |
+
+**§7 addendum (same day).** One more code-only push rides the same restart: menus no longer read through to the page or get cut off by the menu bar, and the look has depth (raised cards, frosted menus and windows, tinted tiles). Unit suite 766 OK, browser checks **73 of 73** (two new: an open menu is drawn whole; the page does not read through it), smoke 7 of 7.
