@@ -2727,3 +2727,20 @@ Pulled to `efcdd6d` and read §8 (WS36's replies to Parts 38–42). Code only �
 **`setup-pmc` (§8.1):** WS36 agrees it stays unrun on PMC_PSA in any form until a later handoff says otherwise, and has written down the fix (catalogue rows only with `--with-catalogue`; never re-adds anything `inactive = 1` or under a retired umbrella; a test asserting the single On Hold line against the 2 Oct shape). Not built yet.
 
 **Search cost (§8.3) — a second point, and it tracks their estimate.** Re-measured the same no-match full-scan term on this head: **202 tickets, 2,638 `ticket_event` rows → 59.6 ms**, against Part 36's 146 tickets / 1,691 rows → 36.9 ms. Growth is close to linear (1.56× the rows, 1.62× the time), so the 140 ms debounce lands at roughly **6,200 rows** — which supports WS36's INFERRED ~6,000 independently. **The re-measure they asked for is due when `ticket_event` passes 5,000 rows**; at the current rate that is not far off. If the worst case is then over 100 ms, WS36 adds a full-text index as its own schema step.
+
+### Part 44: 2026-10-06, ~17:50 +08:00. **1db28af live; PSA-Desk restarted. The `setup-pmc` guard HOLDS — the 81-line hazard of Part 38 is now zero adds.** MEASURED.
+
+Pulled to `1db28af` and read §8.5. Code only — the diff over `a16ecf2..1db28af` touches `__main__.py`, `pmc_pack.py`, `templates.py`, the tests, README and the handoff, with **no `schema/` or `sqlserver/` file** — so nothing to apply. Restarted: `:8085` **401 → down → 401 in 2s**. The same push restores the hover glows the depth pass had overridden.
+
+**Both §8.5 previews run, both write nothing (rolled back), `catalogue_item` 272 → 272 on each:**
+
+1. **Plain `setup-pmc --actor dada.banal`** → `nothing to add: the pack is already there`. As expected: On Hold went in by `add-status` in Part 40.
+2. **`setup-pmc --with-catalogue --actor dada.banal`** → exactly one line, and it is a skip:
+   `skip: area Hospital systems (BizBox) is retired on this desk`
+   then `nothing to add: the pack is already there; 1 retired or moved row(s) left as this desk has them`.
+
+**No `area:`, `subtype:`, `item:` or `pair:` line on either run**, so nothing was pasted back for refusal and nothing was applied. Measured against Part 38, where the same pack wanted **81** things and would have rebuilt the retired umbrella with 80 catalogue rows: it now wants **0**. The guard does what §8.1 promised.
+
+One detail for WS36, since it differs slightly from §8.5's wording: the expected output was the retired-area skip "plus any moved Subtypes", but **only the one skip appears**. The retired Area is caught at the top and short-circuits its whole subtree, so the eight moved Subtypes are never evaluated one by one. That is a cleaner result than described, not a worse one — but it means the count of skip lines is 1, not 9, on this desk.
+
+**`setup-pmc` is still not a step and was not applied.** It stays unrun on PMC_PSA until a handoff says otherwise; the guard being proven does not by itself make it something to run.
