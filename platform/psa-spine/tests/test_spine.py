@@ -14596,7 +14596,7 @@ class PmcPackTest(unittest.TestCase):
             pmc_pack.apply(self.conn, procurement="PROCUREMENT", live=True, owner="dada.banal", at=self.at, actor="x")
         self.conn.rollback()
         added = pmc_pack.apply(self.conn, procurement="PROCUREMENT", live=True, owner="dada.banal",
-                               deputy="jefferson.simon", at=self.at, actor="sql01 for dada.banal")
+                               deputy="jefferson.simon", catalogue=True, at=self.at, actor="sql01 for dada.banal")
         self.assertIn("status IT_HELP: Waiting on Parts", added)
         self.assertIn("status PROCUREMENT: PO Raised", added)
         self.assertIn("pair: BizBox HIS > Not working -> IT_HELP", added)
@@ -14620,7 +14620,42 @@ class PmcPackTest(unittest.TestCase):
                                       " WHERE c.display_name = 'BizBox HIS' AND a.display_name = 'Not working'").fetchone()[0])
         self.assertIn(self.conn.execute("SELECT priority FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()[0], ("P1", "P2"))
         self.assertEqual(self.conn.execute("SELECT is_live FROM board WHERE board_id = 'PROCUREMENT'").fetchone()[0], 1)
-        self.assertEqual(pmc_pack.apply(self.conn, procurement="PROCUREMENT", at=self.at, actor="x"), [])   # once
+        self.assertEqual(pmc_pack.apply(self.conn, procurement="PROCUREMENT", catalogue=True,
+                                        at=self.at, actor="x"), [])   # once
+
+    def test_the_pack_never_rebuilds_what_this_desk_retired_or_moved(self):
+        """SQL01, 6 Oct 2026: on the live desk the pack's preview was 81 lines,
+        On Hold plus 80 that rebuilt "Hospital systems (BizBox)", which the
+        2 Oct restructure retired after moving its Subtypes. The catalogue now
+        comes only when asked for, and even then a retired or moved row is
+        listed as a skip and left as the desk has it."""
+        from psaspine import catalogue as cat, pmc_pack
+        pmc_pack.apply(self.conn, procurement="PROCUREMENT", catalogue=True, at=self.at, actor="x")
+        fam = lambda name: self.conn.execute("SELECT family_id FROM service_family WHERE display_name = ?",
+                                             (name,)).fetchone()[0]
+        sub = lambda name: self.conn.execute("SELECT component_id FROM service_component WHERE display_name = ?",
+                                             (name,)).fetchone()[0]
+        # the 2 Oct shape, in miniature: a Subtype moves out, the umbrella retires
+        premiere = cat.add_area(self.conn, "Premiere One", at=self.at, actor="dada")
+        cat.save_subtype(self.conn, sub("Payroll"), family_id=premiere, at=self.at, actor="dada")
+        cat.save_area(self.conn, fam("Hospital systems (BizBox)"), inactive=True, at=self.at, actor="dada")
+        # and in an Area still in use: one Subtype retired, one moved to an Area of its own
+        cat.save_subtype(self.conn, sub("Laptop"), inactive=True, at=self.at, actor="dada")
+        printing = cat.add_area(self.conn, "Printing", at=self.at, actor="dada")
+        cat.save_subtype(self.conn, sub("Printer"), family_id=printing, at=self.at, actor="dada")
+        self.conn.commit()
+        count = lambda t: self.conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+        before = {t: count(t) for t in ("service_family", "service_component", "service_action", "catalogue_item")}
+
+        plain = pmc_pack.apply(self.conn, procurement="PROCUREMENT", at=self.at, actor="sql01")
+        self.assertFalse([l for l in plain if not l.startswith("status ")], "no catalogue unless asked")
+
+        asked = pmc_pack.apply(self.conn, procurement="PROCUREMENT", catalogue=True, at=self.at, actor="sql01")
+        self.assertFalse([l for l in asked if l.split(":")[0] in ("area", "subtype", "item", "pair")], asked)
+        self.assertIn("skip: area Hospital systems (BizBox) is retired on this desk", asked)
+        self.assertIn("skip: subtype Computers and devices > Laptop is retired on this desk", asked)
+        self.assertIn("skip: subtype Printer sits under another area on this desk", asked)
+        self.assertEqual({t: count(t) for t in before}, before, "not one catalogue row added")
 
 
 class TimeTimerTest(unittest.TestCase):
@@ -14747,7 +14782,7 @@ class CataloguePickerTest(unittest.TestCase):
         setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
         setup.apply_template(self.conn, actor="t", at=self.at)
         from psaspine import pmc_pack
-        pmc_pack.apply(self.conn, helpdesk="IT_HELP", at=self.at, actor="t")
+        pmc_pack.apply(self.conn, helpdesk="IT_HELP", catalogue=True, at=self.at, actor="t")
         self.conn.commit()
 
     def _html(self, selected=None):

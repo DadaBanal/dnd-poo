@@ -175,26 +175,51 @@ def _add_statuses(conn, board_id: str, statuses, report: list[str]) -> None:
 
 
 def _add_catalogue(conn, board_id: str, tree: dict, report: list[str], *, at: datetime, actor: str) -> None:
+    """Add the pack's Areas, Subtypes, Items and pairs that this desk has never
+    had. A row this desk has retired, or a Subtype it has moved to another
+    Area, is the desk's decision and is never brought back (SQL01, 6 Oct 2026:
+    the 2 Oct restructure retired "Hospital systems (BizBox)" and moved its
+    Subtypes; the pack would have rebuilt all 80 pairs). Each such row is
+    listed as a skip, so the preview says why it is not added."""
     from . import catalogue as cat
     for area, subtypes in tree.items():
-        fid = _find(conn, "service_family", "family_id", area)
+        row = conn.execute("SELECT family_id, COALESCE(inactive, 0) AS inactive FROM service_family"
+                           " WHERE LOWER(display_name) = LOWER(?)", (area,)).fetchone()
+        if row is not None and row["inactive"]:
+            report.append(f"skip: area {area} is retired on this desk")
+            continue
+        fid = row["family_id"] if row else None
         if fid is None:
             fid = cat.add_area(conn, area, at=at, actor=actor)
             report.append(f"area: {area}")
         for sub, items, clinical, floor in subtypes:
-            cid = _find(conn, "service_component", "component_id", sub, " AND family_id = ?", (fid,))
+            crow = conn.execute("SELECT component_id, is_draft FROM service_component"
+                                " WHERE LOWER(display_name) = LOWER(?) AND family_id = ?", (sub, fid)).fetchone()
+            if crow is not None and crow["is_draft"]:
+                report.append(f"skip: subtype {area} > {sub} is retired on this desk")
+                continue
+            if crow is None and conn.execute("SELECT 1 FROM service_component WHERE LOWER(display_name) = LOWER(?)"
+                                             " AND family_id <> ?", (sub, fid)).fetchone():
+                report.append(f"skip: subtype {sub} sits under another area on this desk")
+                continue
+            cid = crow["component_id"] if crow else None
             if cid is None:
                 cid = cat.add_subtype(conn, fid, sub, at=at, actor=actor)
                 report.append(f"subtype: {area} > {sub}")
             for item in items:
-                aid = _find(conn, "service_action", "action_id", item)
+                arow = conn.execute("SELECT action_id, COALESCE(inactive, 0) AS inactive FROM service_action"
+                                    " WHERE LOWER(display_name) = LOWER(?)", (item,)).fetchone()
+                if arow is not None and arow["inactive"]:
+                    report.append(f"skip: item {item} is retired on this desk")
+                    continue
+                aid = arow["action_id"] if arow else None
                 if aid is None:
                     kind, impact = ITEMS[item]
                     aid = cat.add_item(conn, item, kind=kind, implies_impact=impact, at=at, actor=actor)
                     report.append(f"item: {item}")
                 if conn.execute("SELECT 1 FROM catalogue_item WHERE component_id = ? AND action_id = ?",
                                 (cid, aid)).fetchone():
-                    continue
+                    continue                      # there already, retired or not
                 fault = ITEMS[item][0] == "FAULT"
                 cat.associate(conn, cid, aid, board_id, clinical_impact=clinical and fault,
                               min_priority=floor if fault else None, at=at, actor=actor)
@@ -203,22 +228,26 @@ def _add_catalogue(conn, board_id: str, tree: dict, report: list[str], *, at: da
 
 def apply(conn: sqlite3.Connection, *, helpdesk: str = "IT_HELP", procurement: str | None = None,
           owner: str | None = None, deputy: str | None = None, live: bool = False,
-          statuses_only: bool = False, at: datetime, actor: str) -> list[str]:
-    """Add the PMC statuses and catalogue to the help desk and (when named)
-    the procurement board. With live, the procurement board gets its owner and
-    deputy and goes live. Returns one line per thing added; the caller
-    commits or rolls back."""
+          catalogue: bool = False, statuses_only: bool = False, at: datetime, actor: str) -> list[str]:
+    """Add the PMC statuses to the help desk and (when named) the procurement
+    board, and with catalogue=True the pack's catalogue too. The catalogue is
+    asked for by name because a live desk reshapes its own (2 Oct restructure);
+    statuses_only is kept for the older command line and wins. With live, the
+    procurement board gets its owner and deputy and goes live. Returns one line
+    per thing added, and one per retired or moved row it left alone ("skip:");
+    the caller commits or rolls back."""
     from . import db
     report: list[str] = []
     for b in (helpdesk, procurement):
         if b and conn.execute("SELECT 1 FROM board WHERE board_id = ?", (b,)).fetchone() is None:
             raise ValueError(f"no board {b!r}")
     _add_statuses(conn, helpdesk, HELPDESK_EXTRA, report)
-    if not statuses_only:
+    with_catalogue = catalogue and not statuses_only
+    if with_catalogue:
         _add_catalogue(conn, helpdesk, HELPDESK, report, at=at, actor=actor)
     if procurement:
         _add_statuses(conn, procurement, PROCUREMENT, report)
-        if not statuses_only:
+        if with_catalogue:
             _add_catalogue(conn, procurement, PROCURE, report, at=at, actor=actor)
         if live:
             if not (owner and deputy):
@@ -228,5 +257,6 @@ def apply(conn: sqlite3.Connection, *, helpdesk: str = "IT_HELP", procurement: s
             report.append(f"board {procurement}: live, owner {owner}, deputy {deputy}")
     db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor, action="PMC_PACK",
              subject_kind="board", subject_id=helpdesk,
-             detail=f"{len(report)} added" + (f"; procurement {procurement}" if procurement else ""))
+             detail=f"{sum(not r.startswith('skip:') for r in report)} added"
+                    + (f"; procurement {procurement}" if procurement else ""))
     return report

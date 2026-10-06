@@ -919,6 +919,43 @@ main button.ghost,main .btn.ghost,.backbtn{
 :root[data-theme=dark] .banner.toast,:root[data-theme=dark] [popover]#keys,:root[data-theme=dark] .pal-box,:root[data-theme=dark] dialog.tedlg{
   background:#181e36!important}
 
+/* ---- the effects, back on top (Dada, 6 Oct 2026: "the glowing when hovered
+   was removed ... and all the other effects"). The depth layers above wrote
+   their resting shadows per theme, which out-ranked the plain :hover rules of
+   the control-room pass. Every hover and focus glow is restated here, last and
+   per theme, so a later resting style can never quietly win again. */
+:root[data-theme] .card{transition:box-shadow .22s var(--ease),border-color .22s var(--ease)}
+:root[data-theme=dark] .card:hover{box-shadow:var(--l1-hover),0 0 0 1px rgb(34 211 238/.30),0 0 46px -10px rgb(34 211 238/.35)!important}
+:root[data-theme=light] .card:hover{box-shadow:var(--l1-hover),0 0 0 1px rgb(6 182 212/.35),0 0 46px -12px rgb(6 182 212/.45)!important}
+:root[data-theme] .tiles a.tile:hover{box-shadow:var(--l1-hover),0 0 0 1px rgb(34 211 238/.45),0 18px 50px -14px rgb(34 211 238/.55)!important}
+:root[data-theme] .tiles a.tile.bad:hover{box-shadow:var(--l1-hover),0 0 0 1px rgb(244 63 94/.55),0 18px 50px -14px rgb(244 63 94/.6)!important}
+:root[data-theme] .tiles a.tile.warn:hover{box-shadow:var(--l1-hover),0 0 0 1px rgb(245 158 11/.55),0 18px 50px -14px rgb(245 158 11/.6)!important}
+:root[data-theme] .tile:hover .ic{transform:scale(1.08);box-shadow:0 0 28px -4px currentColor}
+:root[data-theme] main button.ghost:hover,:root[data-theme] main .btn.ghost:hover,:root[data-theme] .backbtn:hover{
+  border-color:var(--neon1)!important;color:var(--ink);
+  box-shadow:0 0 0 3px rgb(34 211 238/.18),0 0 22px -4px rgb(34 211 238/.55),inset 0 1px 0 var(--hi)!important}
+:root[data-theme] main button[type=submit]:not(.ghost):not(.iconbtn):not(.tab):not(.small):not(.danger):hover:not([disabled]),
+:root[data-theme] main .btn:not(.ghost):not(.top):hover{filter:brightness(1.1) saturate(1.1);
+  box-shadow:inset 0 1px 0 rgb(255 255 255/.4),inset 0 -2px 0 rgb(0 0 0/.18),0 0 0 3px rgb(139 92 246/.20),0 14px 34px -8px var(--glow),0 0 30px -6px rgb(34 211 238/.55)!important}
+:root[data-theme] header.top nav button.top:hover,:root[data-theme] header.top nav a.top:hover{
+  color:var(--ink);background:rgb(34 211 238/.10);box-shadow:0 0 0 1px rgb(34 211 238/.25),0 0 18px -6px rgb(34 211 238/.6)}
+:root[data-theme] header.top nav button.top.on:hover,:root[data-theme] header.top nav a.top.on:hover{box-shadow:0 8px 26px -6px var(--glow),0 0 22px -4px rgb(34 211 238/.6)!important}
+:root[data-theme] header.top nav .panel a:hover{background:linear-gradient(90deg,rgb(34 211 238/.14),rgb(139 92 246/.08));
+  box-shadow:inset 3px 0 0 var(--neon1)}
+:root[data-theme] table.grid tbody tr:hover{background:linear-gradient(90deg,rgb(34 211 238/.14),rgb(139 92 246/.07) 60%,transparent)!important;
+  box-shadow:inset 3px 0 0 var(--neon1),0 0 24px -12px rgb(34 211 238/.6)!important}
+:root[data-theme] input:not([type=checkbox]):not([type=radio]):not([type=range]):hover:not(:focus),:root[data-theme] select:hover:not(:focus),
+:root[data-theme] textarea:hover:not(:focus){box-shadow:var(--well-shadow),0 0 0 1px rgb(34 211 238/.35)}
+:root[data-theme] .tabs a:hover{color:var(--ink);text-shadow:0 0 14px var(--glow)}
+:root[data-theme] .slabox:hover .bar i{filter:brightness(1.15)}
+:root[data-theme] .note:hover{box-shadow:inset 0 1px 0 var(--hi),0 0 0 1px rgb(34 211 238/.22),0 14px 30px -14px rgb(34 211 238/.35)!important}
+@media (prefers-reduced-motion:no-preference){
+  :root[data-theme] .tile .ic{transition:transform .2s var(--ease),box-shadow .2s var(--ease)}
+  :root[data-theme] main button,:root[data-theme] main .btn,:root[data-theme] .backbtn,:root[data-theme] header.top nav .top{
+    transition:transform .16s var(--ease),box-shadow .2s var(--ease),filter .16s var(--ease),border-color .2s var(--ease),background .2s var(--ease)}
+  :root[data-theme] .tiles a.tile:hover{transform:translateY(-2px)}
+}
+
 /* ---- motion that does not lag (Dada, 6 Oct 2026: "animations are welcome
    and transitions as long as they dont lag it"). transform and opacity only,
    so the GPU does it; each runs once; none on a list that can be long. */

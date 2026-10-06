@@ -233,3 +233,18 @@ If the scan grows in line with the rows (INFERRED, not measured), it would reach
 ### 8.4 Still Dada's eye
 
 The same as always: anything behind the Windows sign-in. That means the §3 visual list, the pickers, the time and note windows moving, and the new menus. One more is coming. The next push is code only and rides the usual restart: dark mode gets the depth that light already has (raised cards, table header band, edged buttons), and its menus become solid.
+
+### 8.5 `setup-pmc` is now safe, and it is still not a step (later on 6 Oct)
+
+What §8.1 promised is built. `setup-pmc` adds **statuses only** unless `--with-catalogue` is passed. Even with that flag, it never re-adds an Area, Subtype or Item this desk has retired, nor a Subtype that sits under another Area here. Each such row prints as `skip: …`.
+
+**Nothing to run.** On Hold is already in, so on this database a plain preview should print `nothing to add`. If you want to confirm the guard, both of these previews write nothing:
+
+    .\Invoke-PsaSpine.ps1 -Spine "setup-pmc --actor dada.banal"
+    .\Invoke-PsaSpine.ps1 -Spine "setup-pmc --with-catalogue --actor dada.banal"
+
+- **Expected for the first:** `nothing to add: the pack is already there`.
+- **Expected for the second:** only `skip:` lines (`skip: area Hospital systems (BizBox) is retired on this desk`, plus any moved Subtypes), and no `area:`, `subtype:`, `item:` or `pair:` lines.
+- **If either prints an `area:`, `subtype:`, `item:` or `pair:` line**, do not apply. Paste it back.
+
+The same push restores the hover glows that the depth pass had overridden. It is code only and rides the usual restart. Unit suite 767 OK, browser checks **77 of 77**, smoke 7 of 7.

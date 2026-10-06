@@ -233,8 +233,9 @@ def main(argv: list[str] | None = None) -> int:
     pms.add_argument("--show", action="store_true",
                      help="afterwards, print every email the board sends a requester: on or off, subject and words")
     ppk = sub.add_parser("setup-pmc",
-                         help="the PMC pack: hospital statuses, Areas, Subtypes and Items on the help desk and "
-                              "procurement boards; adds only what is missing. Preview unless --apply")
+                         help="the PMC pack: hospital statuses on the help desk and procurement boards, and with "
+                              "--with-catalogue its Areas, Subtypes and Items; adds only what is missing and never "
+                              "brings back a retired or moved row. Preview unless --apply")
     ppk.add_argument("database", help=DB_HELP)
     ppk.add_argument("--helpdesk", default="IT_HELP", help="the help desk board_id (default IT_HELP)")
     ppk.add_argument("--procurement", help="the procurement board_id; omit to leave procurement alone")
@@ -243,9 +244,11 @@ def main(argv: list[str] | None = None) -> int:
     ppk.add_argument("--deputy", help="the procurement board's deputy (a member)")
     ppk.add_argument("--actor", required=True, help="who this is done for, for the audit trail")
     ppk.add_argument("--apply", action="store_true", help="write it; without this nothing is changed")
+    ppk.add_argument("--with-catalogue", action="store_true",
+                     help="also the pack's Areas, Subtypes, Items and pairs. Off unless asked: a live desk shapes its"
+                          " own catalogue. Rows this desk retired or moved are listed as skip: and left alone")
     ppk.add_argument("--statuses-only", action="store_true",
-                     help="the pack's statuses and nothing else. Since the 2 Oct Type restructure the full pack"
-                          " would re-add retired catalogue rows; use this, or add-status")
+                     help="the pack's statuses and nothing else (now the default; kept so older runbooks still work)")
     pas = sub.add_parser("add-status", help="one status on one board, nothing else. Preview unless --apply")
     pas.add_argument("database", help=DB_HELP)
     pas.add_argument("board_id")
@@ -821,6 +824,7 @@ def _run(conn, a) -> int:
         try:
             added = pmc_pack.apply(conn, helpdesk=a.helpdesk, procurement=a.procurement, owner=a.owner,
                                    deputy=a.deputy, live=a.live, statuses_only=a.statuses_only,
+                                   catalogue=a.with_catalogue,
                                    at=datetime.now(), actor=a.actor)
         except ValueError as exc:
             conn.rollback()
@@ -828,7 +832,10 @@ def _run(conn, a) -> int:
             return 1
         for line in added:
             print(line)
-        print(f"{len(added)} thing(s) to add" if added else "nothing to add: the pack is already there")
+        adds = sum(not line.startswith("skip:") for line in added)
+        skips = len(added) - adds
+        print((f"{adds} thing(s) to add" if adds else "nothing to add: the pack is already there")
+              + (f"; {skips} retired or moved row(s) left as this desk has them" if skips else ""))
         if a.apply:
             conn.commit()
             print("applied")

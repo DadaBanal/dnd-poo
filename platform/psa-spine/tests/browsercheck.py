@@ -53,7 +53,7 @@ def build(db_path: Path) -> str:
     at = dt(2026, 10, 3, 9, 0)
     setup.apply_starter(conn, "IT_HELP", actor="t", at=at)
     setup.apply_template(conn, actor="t", at=at)
-    pmc_pack.apply(conn, helpdesk="IT_HELP", at=at, actor="t")
+    pmc_pack.apply(conn, helpdesk="IT_HELP", catalogue=True, at=at, actor="t")
     conn.execute("INSERT OR IGNORE INTO member (member, display_name, email, is_sysadmin)"
                  " VALUES ('tech', 'Tech Person', 'tech@pmcne.ph', 1)")
     conn.execute("INSERT OR REPLACE INTO board_member (board_id, member, access)"
@@ -164,6 +164,25 @@ def main() -> int:
             note(bool(menu) and (menu[2] >= 0.99 or (menu[2] >= 0.8 and menu[3] >= 12)),
                  "and the page does not read through it", str(menu))
             page.mouse.move(5, 600)
+            # --- what answers the pointer still glows (Dada, 6 Oct 2026: "the glowing
+            # when hovered was removed ... and all the other effects": a later resting
+            # style had out-ranked every :hover) -----------------------------------
+            page.mouse.move(700, 880)
+            page.wait_for_timeout(300)
+            for what, sel in (("a board tile", ".tiles a.tile"), ("a card", ".card"),
+                              ("a board row", "table.grid tbody tr"),
+                              ("the Filter button", "main button[type=submit]:not(.ghost)")):
+                el = page.locator(sel).first
+                if not el.count():
+                    note(False, f"{what} lights up under the pointer", "not on the page")
+                    continue
+                rest = el.evaluate("e => getComputedStyle(e).boxShadow")
+                el.hover()
+                page.wait_for_timeout(350)
+                lit = el.evaluate("e => getComputedStyle(e).boxShadow")
+                note(lit != rest, f"{what} lights up under the pointer", f"{rest[:60]} -> {lit[:60]}")
+                page.mouse.move(700, 880)
+                page.wait_for_timeout(250)
 
             page.goto(f"{base}/ticket/{ref}", wait_until="domcontentloaded")
             page.wait_for_timeout(400)

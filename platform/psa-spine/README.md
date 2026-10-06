@@ -2014,6 +2014,25 @@ a header band and visible row lines; fields have a defined well and a cyan focus
 carry their colour further; quiet buttons have an edge. Menus and windows in light are solid
 white, because pale on pale shows through even under blur.
 
+### `setup-pmc` made safe, and the hover glow back (6 Oct 2026)
+
+- **`setup-pmc` no longer touches the catalogue unless asked.** SQL01 measured its preview on the
+  live desk at 81 lines: On Hold, plus 80 that would rebuild *Hospital systems (BizBox)*, which
+  the 2 Oct restructure had retired after moving its Subtypes. Now:
+  - the pack adds statuses only, unless `--with-catalogue` is given;
+  - even with it, an Area, Subtype or Item the desk has retired, or a Subtype it has moved to
+    another Area, is never brought back. Each is printed as `skip: …`, and the count line says
+    how many were left alone;
+  - `--statuses-only` still works, and is now the default behaviour.
+
+  `test_the_pack_never_rebuilds_what_this_desk_retired_or_moved` builds the 2 Oct shape in
+  miniature and asserts that not one catalogue row is added.
+- **The hover effects are back.** The depth layers set each theme's resting shadow on cards,
+  tiles and buttons, and those rules out-ranked the plain `:hover` glows. The glows are now
+  restated last, per theme: cards, tiles (red or amber for a breached or due tile), rows,
+  neon and quiet buttons, menu entries, fields and tabs. Four browser checks hold this: a tile,
+  a card, a row and the Filter button each change under the pointer.
+
 ## One Save, always reachable (3 Oct 2026)
 
 The ticket's own fields were already one form with one **Save changes** — but it
