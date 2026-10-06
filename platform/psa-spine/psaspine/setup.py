@@ -168,6 +168,49 @@ def ensure_cancelled(conn: sqlite3.Connection, board_id: str, *, at: datetime, a
     return lines
 
 
+ESCALATIONS = ("NOT_RESPONDED", "RESPONDED", "RESOLUTION_PLAN", "RESOLVED", "NO_ESCALATION")
+
+
+def add_status(conn: sqlite3.Connection, board_id: str, name: str, *, escalation: str = "NO_ESCALATION",
+               closed: bool = False, portal: str | None = None, at: datetime, actor: str) -> list[str]:
+    """One status on one board and nothing else (SQL01, 6 Oct 2026: On Hold for
+    PMO Helpdesk without the PMC pack, which would re-add the catalogue rows
+    the 2 Oct Type restructure retired). Returns what it did, or [] when the
+    board already has a status of that name; the caller commits or rolls back.
+
+    An open status goes in after the board's other open ones, so the closed
+    ones stay last on the list; it allows time and shows on the board."""
+    if conn.execute("SELECT 1 FROM board WHERE board_id = ?", (board_id,)).fetchone() is None:
+        raise ValueError(f"no board {board_id!r}")
+    name = " ".join((name or "").split())[:60]
+    if not name:
+        raise ValueError("a status needs a name")
+    if escalation not in ESCALATIONS:
+        raise ValueError(f"escalation is one of {', '.join(ESCALATIONS)}")
+    bare = name.lstrip(">").strip().lower()
+    for r in conn.execute("SELECT name FROM board_status WHERE board_id = ?", (board_id,)):
+        if r[0].lstrip(">").strip().lower() == bare:
+            return []
+    sid = status_id(board_id, name)
+    if conn.execute("SELECT 1 FROM board_status WHERE board_status_id = ?", (sid,)).fetchone():
+        sid = status_id(board_id, name + "_2")
+    order = (conn.execute("SELECT MAX(sort_order) FROM board_status WHERE board_id = ? AND is_closed = ?",
+                          (board_id, 1 if closed else 0)).fetchone()[0] or 0) + 5
+    if not closed and escalation != "RESOLVED":
+        # Before Resolved: a status that is still work reads above the one that ends it.
+        first = conn.execute("SELECT MIN(sort_order) FROM board_status WHERE board_id = ? AND is_closed = 0"
+                             " AND escalation_status = 'RESOLVED'", (board_id,)).fetchone()[0]
+        if first is not None:
+            order = first - 5
+    conn.execute(
+        "INSERT INTO board_status (board_status_id, board_id, name, customer_description, escalation_status,"
+        " is_default, is_closed, time_entry_allowed, display_on_board, sort_order) VALUES (?,?,?,?,?,0,?,?,?,?)",
+        (sid, board_id, name, portal, escalation, 1 if closed else 0, 0 if closed else 1, 0 if closed else 1, order))
+    db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor, action="BOARD_SETUP",
+             subject_kind="board", subject_id=board_id, detail=f"status added: {name} ({escalation})")
+    return [f"{board_id}: add status '{name}' ({escalation}{', closed' if closed else ''}) as {sid}"]
+
+
 def ensure_calendars(conn: sqlite3.Connection) -> None:
     for cal_id, name, week in CALENDARS:
         cols = ", ".join(f"{d}_start, {d}_end" for d in DAYS)

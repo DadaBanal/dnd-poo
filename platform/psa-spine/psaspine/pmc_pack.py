@@ -203,7 +203,7 @@ def _add_catalogue(conn, board_id: str, tree: dict, report: list[str], *, at: da
 
 def apply(conn: sqlite3.Connection, *, helpdesk: str = "IT_HELP", procurement: str | None = None,
           owner: str | None = None, deputy: str | None = None, live: bool = False,
-          at: datetime, actor: str) -> list[str]:
+          statuses_only: bool = False, at: datetime, actor: str) -> list[str]:
     """Add the PMC statuses and catalogue to the help desk and (when named)
     the procurement board. With live, the procurement board gets its owner and
     deputy and goes live. Returns one line per thing added; the caller
@@ -214,10 +214,12 @@ def apply(conn: sqlite3.Connection, *, helpdesk: str = "IT_HELP", procurement: s
         if b and conn.execute("SELECT 1 FROM board WHERE board_id = ?", (b,)).fetchone() is None:
             raise ValueError(f"no board {b!r}")
     _add_statuses(conn, helpdesk, HELPDESK_EXTRA, report)
-    _add_catalogue(conn, helpdesk, HELPDESK, report, at=at, actor=actor)
+    if not statuses_only:
+        _add_catalogue(conn, helpdesk, HELPDESK, report, at=at, actor=actor)
     if procurement:
         _add_statuses(conn, procurement, PROCUREMENT, report)
-        _add_catalogue(conn, procurement, PROCURE, report, at=at, actor=actor)
+        if not statuses_only:
+            _add_catalogue(conn, procurement, PROCURE, report, at=at, actor=actor)
         if live:
             if not (owner and deputy):
                 raise ValueError("a live board needs an owner and a deputy")

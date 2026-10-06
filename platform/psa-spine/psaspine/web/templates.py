@@ -495,7 +495,16 @@ ul.plain{list-style:none;padding:0;margin:0} ul.plain li{padding:7px 0;border-bo
 .hdr{display:flex;align-items:start;gap:12px;flex-wrap:wrap} .hdr .grow{flex:1;min-width:0}
 label .req{color:var(--bad,#c0392b);margin-left:2px;font-weight:700}
 details.multipick{border:1px solid var(--line);border-radius:var(--r-sm,6px);background:var(--surface);margin-bottom:8px} details.multipick>summary{cursor:pointer;padding:6px 10px;list-style:none;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis} details.multipick>summary::after{content:'▾';float:right;color:var(--ink-3)} details.multipick .opts{max-height:220px;overflow:auto;padding:4px 10px 8px;border-top:1px solid var(--line)} details.multipick label.pick{display:flex;gap:6px;align-items:center;font-weight:400;color:var(--ink);margin:4px 0} details.multipick label.pick input{width:auto}
-dialog.tedlg{width:min(980px,96vw);max-height:92vh;overflow:auto;padding:0;border:1px solid var(--line-2);border-radius:16px}
+dialog.tedlg{width:min(980px,96vw);max-height:96vh;overflow:auto;padding:0;border:1px solid var(--line-2);border-radius:16px;
+  resize:both;min-width:min(560px,96vw);min-height:420px;max-width:100vw}
+dialog.tedlg[open]{display:flex;flex-direction:column}
+dialog.tedlg .teform{flex:1;display:flex;flex-direction:column;min-height:0}
+dialog.tedlg .composer{flex:1;display:flex;flex-direction:column;min-height:180px}
+dialog.tedlg .composer .editor{flex:1;max-height:none;min-height:120px}
+dialog.tedlg.max{width:calc(100vw - 24px)!important;height:calc(100vh - 24px)!important;max-height:none;left:12px!important;top:12px!important;margin:0}
+dialog.tedlg.moved{margin:0}
+.tehead[data-drag]{cursor:move;user-select:none;touch-action:none} .tehead[data-drag] button{cursor:pointer}
+.tewin{display:inline-flex;gap:2px}
 dialog.tedlg::backdrop{background:rgba(10,14,24,.45);backdrop-filter:blur(3px)}
 dialog.tedlg .teform{padding:16px 18px} .tehead{display:flex;gap:14px;align-items:center;margin:-16px -18px 14px;padding:14px 18px;
   border-bottom:1px solid var(--line);background:linear-gradient(90deg,var(--accent-bg),transparent)}
@@ -606,12 +615,72 @@ dialog.tedlg::backdrop{backdrop-filter:none;background:rgba(10,14,24,.55)}
   .pods>.card:nth-child(4){animation-delay:.09s} .pods>.card:nth-child(5){animation-delay:.12s}
   .pods>.card:nth-child(n+6){animation-delay:.14s}
   table.grid tbody tr{animation:fadein .2s var(--ease) both}
-  .note{animation:rise .2s var(--ease) both}
+  /* notes do not rise: the pod editor keeps the page still by measuring them (browser check, 6 Oct) */
   dialog[open]{animation:pop .18s var(--ease) both}
 }
 @keyframes rise{from{opacity:0;transform:translateY(6px)}}
 @keyframes fadein{from{opacity:0}}
 @keyframes pop{from{opacity:0;transform:translateY(8px) scale(.985)}}
+
+/* ---- "more futuristic and modern" (Dada, 6 Oct 2026, the second pass) ----
+   The same desk, drawn as a control surface: a faint dot grid under deep
+   light, a glass bar, rounder fields that light up when used, pill buttons,
+   numbers that glow. Still only colour, opacity and transform; the grid is a
+   fixed layer, so scrolling does not repaint it. */
+:root{--r-sm:8px;--r:11px;--r-lg:16px;--teal:#14b8a6;--violet:#8b5cf6}
+body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background-image:radial-gradient(color-mix(in srgb,var(--ink) 9%,transparent) 1px,transparent 1.4px);background-size:22px 22px;
+  -webkit-mask-image:linear-gradient(to bottom,#000,transparent 70%);mask-image:linear-gradient(to bottom,#000,transparent 70%)}
+header.top{background:color-mix(in srgb,var(--surface) 72%,transparent)}
+header.top .brand i{background:conic-gradient(from 210deg,var(--accent),var(--teal),var(--violet),var(--accent));
+  box-shadow:0 0 16px -2px var(--glow),inset 0 0 0 1px rgb(255 255 255/.3)}
+header.top .brand{font-weight:700;letter-spacing:-.3px}
+header.top nav button.top,header.top nav a.top{border-radius:999px}
+header.top nav button.top:hover,header.top nav .grp.open button.top,header.top nav a.top:hover{background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--ink);text-decoration:none}
+header.top nav button.top.on,header.top nav a.top.on{color:var(--accent);background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 18%,transparent),color-mix(in srgb,var(--teal) 10%,transparent));
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 30%,transparent)}
+header.top nav button.top.on::after{display:none}
+header.top nav .panel{border-radius:16px;box-shadow:0 24px 60px -20px rgb(0 0 0/.45),0 0 0 1px color-mix(in srgb,var(--accent) 14%,transparent)}
+main h1:not(.sumline),main .hdr h1 .sumtext{background:linear-gradient(92deg,var(--ink) 20%,var(--accent) 70%,var(--teal));
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+h1.sumline{font-size:24px} h1.sumline>:first-child{color:var(--accent)}
+.card{border-radius:var(--r-lg);box-shadow:inset 0 1px 0 rgb(255 255 255/.05),0 1px 2px rgb(0 0 0/.04)}
+.card h3{letter-spacing:.08em}
+.tile{border-radius:var(--r-lg);border:1px solid transparent;
+  background:linear-gradient(160deg,color-mix(in srgb,var(--accent) 9%,var(--surface)),var(--surface) 58%) padding-box,var(--edge) border-box;
+  transition:transform var(--slow) var(--ease),box-shadow var(--slow) var(--ease)}
+.tiles a.tile:hover{transform:translateY(-2px);box-shadow:0 16px 36px -22px var(--glow);background:linear-gradient(160deg,color-mix(in srgb,var(--accent) 14%,var(--surface)),var(--surface) 60%) padding-box,var(--edge) border-box}
+.tile .n{font-size:30px;font-weight:750;letter-spacing:-1px}
+.tile .ic{width:32px;height:32px;padding:7px;border-radius:50%;opacity:1;color:var(--accent);top:10px;right:10px;
+  background:color-mix(in srgb,var(--accent) 12%,transparent);box-shadow:0 0 18px -6px var(--glow)}
+input,select,textarea{border-radius:var(--r);background-color:color-mix(in srgb,var(--surface-2) 55%,var(--surface));
+  transition:border-color var(--fast) var(--ease),box-shadow var(--fast) var(--ease),background-color var(--fast) var(--ease)}
+input:focus,select:focus,textarea:focus{border-color:var(--accent);background-color:var(--surface);
+  box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 16%,transparent),0 0 22px -8px var(--glow);outline:none}
+main button,main .btn{border-radius:999px}
+main .iconbtn,main .edbar .iconbtn,main .edbar summary{border-radius:8px}
+.bar{height:6px;border-radius:99px;background:color-mix(in srgb,var(--ink) 8%,transparent)}
+.bar i{border-radius:99px}
+.slabox{border-radius:var(--r-lg)}
+.slabox:not(.done):not(.bad):not(.warn) .bar i{box-shadow:0 0 12px -1px var(--ok)}
+.slabox.warn .bar i{box-shadow:0 0 12px -1px var(--warn)} .slabox.bad .bar i{box-shadow:0 0 12px -1px var(--bad)}
+.slabox .v{font-size:19px;font-weight:700;letter-spacing:-.3px}
+.note{border-radius:14px}
+.av{background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 30%,var(--surface)),color-mix(in srgb,var(--teal) 22%,var(--surface)))}
+table.grid tbody tr:hover td:nth-child(2) a{text-shadow:0 0 12px var(--glow)}
+.tabs a.on{position:relative}
+.tabs a.on::after{box-shadow:0 0 10px var(--glow)}
+*{scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--accent) 45%,transparent) transparent}
+::-webkit-scrollbar{width:9px;height:9px} ::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--accent) 40%,transparent);border-radius:9px;border:2px solid transparent;background-clip:padding-box}
+:root[data-theme=dark] body,:root:not([data-theme=light]) body{--aur1:color-mix(in srgb,var(--accent) 18%,transparent);--aur2:color-mix(in srgb,var(--teal) 13%,transparent)}
+@media (prefers-color-scheme:light){:root:not([data-theme=dark]) body{--aur1:color-mix(in srgb,var(--accent) 13%,transparent);--aur2:color-mix(in srgb,var(--teal) 10%,transparent)}}
+:root[data-theme=light] body{--aur1:color-mix(in srgb,var(--accent) 13%,transparent);--aur2:color-mix(in srgb,var(--teal) 10%,transparent)}
+@media (prefers-reduced-motion:no-preference){
+  .tile{animation:rise .26s var(--ease) both} .tile:nth-child(2){animation-delay:.04s} .tile:nth-child(3){animation-delay:.08s}
+  .tile:nth-child(4){animation-delay:.12s} .tile:nth-child(5){animation-delay:.16s}
+  header.top .brand i{animation:hue 12s linear infinite}
+}
+@keyframes hue{to{filter:hue-rotate(360deg)}}
 
 /* ---- motion: page transitions, and none of it for those who ask ------- */
 @media (prefers-reduced-motion:no-preference){
@@ -672,9 +741,9 @@ dialog.tedlg::backdrop{backdrop-filter:none;background:rgba(10,14,24,.55)}
 @media (max-width:480px){header.top{gap:4px}header.top .brand{margin-right:4px}header.top nav a{padding:6px 8px}header.top nav a .lbl{display:none}
   header.top nav a .ic{margin-right:0}header.top nav a.on::after{left:6px;right:6px}header.top .who{gap:6px}header.top .newbtn{padding:6px 8px}}
 """.replace("DARKTOKENS", """
-  --canvas:#0f1115; --surface:#161920; --surface-2:#1c2029; --surface-3:#232833;
-  --ink:#eef0f4; --ink-2:#aeb5c2; --ink-3:#7d8594; --line:#262b36; --line-2:#343a47;
-  --accent:#7b93ff; --accent-2:#94a7ff; --on-accent:#0b1020;
+  --canvas:#080b14; --surface:#0f1320; --surface-2:#141a29; --surface-3:#1b2234;
+  --ink:#eef1f8; --ink-2:#b0b8c9; --ink-3:#7f889b; --line:#1e2638; --line-2:#2b3551;
+  --accent:#7f8cff; --accent-2:#9aa6ff; --on-accent:#0b1020;
   --ok:#3fb950; --warn:#e3b341; --bad:#ff6b6b; --chip:#232833;
   --shadow:0 14px 40px -14px rgb(0 0 0/.7); --glass:rgb(22 25 32/.78);
   --s1:#3987e5; --s2:#d95926;
@@ -994,6 +1063,19 @@ setInterval(function(){n++;paint()},1000);paint()})();
 /* The time entry window: Close keeps the clock running; a window asked for
    by Start opens by itself; End empty means "now" on Save. */
 $$("[data-close]").forEach(function(b){var dl=d.getElementById(b.dataset.close);if(dl)b.addEventListener("click",function(){dl.close()})});
+/* Move the window by its title bar; the corner resizes it (CSS resize);
+   the square makes it fill the screen and back. */
+(function(){$$("dialog.tedlg").forEach(function(dl){var bar=dl.querySelector("[data-drag]");if(!bar)return;
+  bar.addEventListener("pointerdown",function(e){if(e.button!==0||e.target.closest("button,a,input,select"))return;
+    if(dl.classList.contains("max"))return;
+    var r=dl.getBoundingClientRect(),dx=e.clientX-r.left,dy=e.clientY-r.top;
+    dl.classList.add("moved");dl.style.left=r.left+"px";dl.style.top=r.top+"px";dl.style.right="auto";dl.style.bottom="auto";
+    bar.setPointerCapture(e.pointerId);
+    function mv(ev){var x=Math.max(0,Math.min(innerWidth-80,ev.clientX-dx)),y=Math.max(0,Math.min(innerHeight-60,ev.clientY-dy));
+      dl.style.left=x+"px";dl.style.top=y+"px"}
+    function up(){bar.removeEventListener("pointermove",mv);bar.removeEventListener("pointerup",up)}
+    bar.addEventListener("pointermove",mv);bar.addEventListener("pointerup",up)});
+  var mx=dl.querySelector("[data-max]");if(mx)mx.addEventListener("click",function(){dl.classList.toggle("max")})})})();
 (function(){var dl=d.getElementById("tedlg");if(!dl||!dl.showModal)return;
   if(dl.hasAttribute("data-autoopen")){dl.showModal();var ed=dl.querySelector(".editor");if(ed)setTimeout(function(){ed.focus()},60);
     try{var u=new URL(location.href);u.searchParams.delete("te");u.searchParams.delete("msg");history.replaceState(null,"",u.pathname+u.search)}catch(e){}}})();

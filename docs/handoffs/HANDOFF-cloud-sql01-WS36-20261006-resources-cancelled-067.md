@@ -81,6 +81,9 @@ Without the table, both would fail.
 
 ## 3b. On Hold on PMO Helpdesk (Dada, later on 6 Oct: "can u add a onhold status")
 
+> **Superseded by §6 below. Do not run `setup-pmc` for this.** SQL01 was right that the full pack would
+> re-add the catalogue rows the 2 Oct Type restructure retired. §6 adds the status and nothing else.
+
 On Hold is an open status. Like the Waiting statuses, it holds the SLA clocks (NO_ESCALATION).
 - **New boards** get it from the starter set.
 - **PROCUREMENT** already has one.
@@ -130,3 +133,54 @@ And one question for Dada rather than for SQL: **which address is in Ethel's bro
 | Drift gate | In step. 067 is in the port. |
 | Smoke | 7 of 7. |
 | Not run here | 067 against SQL Server. The `sql-server` CI job runs it on push. |
+
+
+## 6. On Hold, the status alone (Cloud Build, 6 Oct 2026, later still)
+
+SQL01's point stands: `setup-pmc` brings about 80 catalogue rows back and undoes the 2 Oct Type restructure. That was my mistake in §3b. Two things are built so it cannot happen this way again:
+
+1. **`add-status`: one status on one board, and nothing else.**
+   - It previews unless you pass `--apply`.
+   - If the board already has a status of that name, it does nothing (the leading `>` is ignored when names are compared).
+   - An open status is placed just above Resolved.
+   - The change is written to the audit trail as `BOARD_SETUP`.
+2. **`setup-pmc --statuses-only`**: the pack's statuses without its catalogue. This is for any later board; it is not needed today.
+
+The step:
+
+    .\Invoke-PsaSpine.ps1 -Spine "add-status IT_HELP ""On Hold"" --portal ""On hold; we will tell you when it moves"" --actor dada.banal"
+
+**Expect exactly one line:**
+`would: IT_HELP: add status 'On Hold' (NO_ESCALATION) as IT_HELP.ON_HOLD`, followed by `PREVIEW: nothing written`.
+
+- If you get that line, run the same command with `--apply` added.
+- Verify with:
+
+      SELECT name, escalation_status, is_closed, sort_order FROM psa.board_status WHERE board_id = N'IT_HELP' ORDER BY sort_order;
+
+  On Hold should appear with `NO_ESCALATION`, `is_closed = 0`, sitting above Resolved.
+- **No catalogue table is touched.** `SELECT COUNT(*) FROM psa.catalogue_item` is the same before and after.
+
+If PowerShell mangles the doubled quotes, there are two alternatives:
+- Run the same arguments as a list through `python -m psaspine` under the desk account.
+- Or add it on the desk: **Setup › the board › Statuses**, name On Hold, escalation "No escalation". Note that this form does not set the portal wording; `add-status` does.
+
+**Code only.** No schema step and no restart is needed for the status itself. The window and look changes in the same push do need the usual restart to show.
+
+**Also in this push, code only:**
+- **Time entry: Cancel now cancels.** It asks for confirmation, then discards the clock; no time is recorded. The old separate Discard button is gone. The title bar has **–** (minimise; the clock keeps running) and **▢** (larger).
+- **The window can be moved and resized.** Drag it by its title bar, and resize it from its corner. The notes box grows with the window.
+- **A second design pass:**
+  - a deeper dark theme and a faint dot grid behind the page;
+  - glowing pills on the active menu module, and gradient page titles;
+  - KPI tiles with glowing icons;
+  - rounder inputs that light up on focus, and pill buttons;
+  - glowing SLA bars and thin scrollbars.
+
+  The same rules as before apply: no blur on the page, nothing new fetched, and all of it off under reduced motion.
+
+| | |
+|---|---|
+| Unit suite | **766 OK**, 1 skipped. New: `AddStatusTest` (one status, nothing else, once; the pack's statuses alone), and Cancel discards the clock. |
+| Browser checks | **71 of 71**. New: the window moves by its title bar (150,85 → 50,17); the square makes it larger (980 → 1256 px); its corner resizes it. |
+| Drift gate / smoke | In step / 7 of 7. |

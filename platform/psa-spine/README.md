@@ -1944,6 +1944,27 @@ Nov 2024; Lexical and TipTap 3 need a bundler; Trix has no colour), so the desk
 keeps its own `contenteditable` box; cross-document view transitions run in
 Chrome and Edge 126+ and Safari 18.2+, and Firefox simply loads the page.
 
+### Later on 6 Oct: one status alone, a time entry that cancels, a window that moves, a second look
+
+- **`add-status <db> <board> <name> [--escalation …] [--closed] [--portal …] --actor … [--apply]`**:
+  one status on one board and nothing else. It previews unless `--apply`, and adding the same
+  name again does nothing. It exists because `setup-pmc` would re-add the catalogue rows the
+  2 Oct Type restructure retired (SQL01, MEASURED). `setup-pmc --statuses-only` gives the
+  pack's statuses alone.
+- **Cancel in the time entry window cancels the entry.** It confirms, discards the clock, and
+  records no time. **–** minimises the window (the clock keeps running) and **▢** makes it
+  larger. The window moves by its title bar and resizes from its corner, and the notes box
+  grows with it.
+- **A second design pass:**
+  - a deeper dark theme and a faint dot grid behind the page;
+  - glowing pills on the active menu module, and gradient page titles;
+  - KPI tiles with glowing icons;
+  - rounder inputs that light up on focus, and pill buttons;
+  - glowing SLA bars and thin scrollbars.
+
+  Notes do not rise in like the cards do, because the pod editor keeps the page still by
+  measuring them (the browser check caught a 52 px jump).
+
 ## One Save, always reachable (3 Oct 2026)
 
 The ticket's own fields were already one form with one **Save changes** — but it

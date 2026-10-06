@@ -243,6 +243,19 @@ def main(argv: list[str] | None = None) -> int:
     ppk.add_argument("--deputy", help="the procurement board's deputy (a member)")
     ppk.add_argument("--actor", required=True, help="who this is done for, for the audit trail")
     ppk.add_argument("--apply", action="store_true", help="write it; without this nothing is changed")
+    ppk.add_argument("--statuses-only", action="store_true",
+                     help="the pack's statuses and nothing else. Since the 2 Oct Type restructure the full pack"
+                          " would re-add retired catalogue rows; use this, or add-status")
+    pas = sub.add_parser("add-status", help="one status on one board, nothing else. Preview unless --apply")
+    pas.add_argument("database", help=DB_HELP)
+    pas.add_argument("board_id")
+    pas.add_argument("name", help="e.g. 'On Hold', or '>Cancelled' for a closed one")
+    pas.add_argument("--escalation", default="NO_ESCALATION",
+                     help="NO_ESCALATION holds the SLA clocks (default); NOT_RESPONDED, RESPONDED, RESOLUTION_PLAN, RESOLVED")
+    pas.add_argument("--closed", action="store_true", help="a closed status")
+    pas.add_argument("--portal", help="what the requester reads on the portal")
+    pas.add_argument("--actor", required=True, help="who this is done for, for the audit trail")
+    pas.add_argument("--apply", action="store_true", help="write it; without this nothing is changed")
     pcp = sub.add_parser("calendar-pending", help="059: due Outlook calendar writes as JSON for Sync-PsaCalendars.ps1")
     pcp.add_argument("database", help=DB_HELP)
     pcp.add_argument("--allowed-domain", action="append", required=True)
@@ -783,11 +796,32 @@ def _run(conn, a) -> int:
             print(f"PREVIEW: {n} visit(s) and block(s) would be queued; re-run with --apply")
         return 0
 
+    if a.cmd == "add-status":
+        from . import setup as _setup
+        try:
+            done = _setup.add_status(conn, a.board_id, a.name, escalation=a.escalation, closed=a.closed,
+                                     portal=a.portal, at=datetime.now(), actor=a.actor)
+        except ValueError as exc:
+            conn.rollback()
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        for line in done:
+            print(("done: " if a.apply else "would: ") + line)
+        if not done:
+            print(f"nothing to add: {a.board_id} already has a status called {a.name!r}")
+        if a.apply:
+            conn.commit()
+        else:
+            conn.rollback()
+            print("PREVIEW: nothing written; re-run with --apply")
+        return 0
+
     if a.cmd == "setup-pmc":
         from . import pmc_pack
         try:
             added = pmc_pack.apply(conn, helpdesk=a.helpdesk, procurement=a.procurement, owner=a.owner,
-                                   deputy=a.deputy, live=a.live, at=datetime.now(), actor=a.actor)
+                                   deputy=a.deputy, live=a.live, statuses_only=a.statuses_only,
+                                   at=datetime.now(), actor=a.actor)
         except ValueError as exc:
             conn.rollback()
             print(f"refused: {exc}", file=sys.stderr)

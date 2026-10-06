@@ -889,7 +889,7 @@ def timer(ctx, work_item_id, action):
             msg = f"Timer stopped at {timers.clock(r['seconds'])} — check the time and save it"
         elif action == "discard":
             timers.discard(ctx.conn, int(f.get("timer_id", "0")), member=me)
-            msg = "Timer thrown away; no time was recorded"
+            msg = "Time entry cancelled; no time was recorded"
         elif action == "note":
             timers.note(ctx.conn, int(f.get("timer_id", "0")), member=me, text=f.get("note", ""))
             msg = "Noted"
@@ -926,10 +926,16 @@ def _time_dialog(ctx, tk, run, *, status_pairs, notify_tick: bool) -> str:
         "<dialog id=tedlg class='card tedlg'" + (" data-autoopen" if ctx.request.query.get("te") == "1" else "") + ">"
         f"<form method=post action='/ticket/{wid}/time' enctype='multipart/form-data' class=teform>"
         + (f"<input type=hidden name=timer_id value='{run['timer_id']}'>" if run is not None else "")
-        + "<div class=tehead><div><h3 style='margin:0'>" + t.icon("clock") + " Time entry</h3>"
+        # The title bar moves the window and its corner resizes it (Dada, 6 Oct
+        # 2026: "make sure the time entry window can be moved or made larger");
+        # the square makes it fill the screen, the bar hides it with the clock
+        # still running.
+        + "<div class=tehead data-drag title='Drag to move'><div><h3 style='margin:0'>" + t.icon("clock") + " Time entry</h3>"
         f"<div class=muted style='font-size:12.5px'>{wid} · {t.esc(tk['summary'])}</div></div>" + clock
-        + "<button type=button class=iconbtn data-close=tedlg aria-label='Close; the clock keeps running'"
-          " title='Close; the clock keeps running'>" + t.icon("x") + "</button></div>"
+        + "<span class=tewin><button type=button class=iconbtn data-close=tedlg aria-label='Minimise; the clock keeps running'"
+          " title='Minimise; the clock keeps running'><b style='font-size:16px;line-height:1'>&#8211;</b></button>"
+          "<button type=button class=iconbtn data-max=tedlg aria-label='Make the window larger' title='Larger / smaller'>"
+          "<b style='font-size:14px;line-height:1'>&#9634;</b></button></span></div>"
         f"<div class=temember><label>Member</label><div class=ro>{member}</div></div>"
         + _time_fields(ctx, tk, prefill=prefill)
         + ("<p class=why style='margin:4px 0 10px'>Leave <b>End</b> empty and Save stops the clock now and fills it in.</p>"
@@ -946,11 +952,14 @@ def _time_dialog(ctx, tk, run, *, status_pairs, notify_tick: bool) -> str:
         + "<label class=tick><input type=checkbox name=notify_resources value=1> Resources</label>"
           "<span class=grow></span><label style='margin:0'>Status</label><select name=to_status style='width:auto'>"
         + _options([("", "(no change)")] + status_pairs, "") + "</select></div>"
-        + "<div class=tefoot>"
-        + (f"<button type=submit formaction='/ticket/{wid}/timer/discard' formnovalidate class='ghost danger'"
-           " onclick=\"return confirm('Throw this clock away? No time is recorded.')\">Discard</button>" if run is not None else "")
-        + "<span class=grow></span><button type=button class=ghost data-close=tedlg>Cancel</button>"
-          "<button type=submit>" + t.icon("check") + " Save time entry</button></div></form></dialog>")
+        + "<div class=tefoot><span class=grow></span>"
+        # Cancel is the end of this entry, not a pause (Dada, 6 Oct 2026: "on
+        # the time entry cancel also is discard"): the clock is thrown away and
+        # nothing is booked. Minimise, above, is the way to step away.
+        + (f"<button type=submit formaction='/ticket/{wid}/timer/discard' formnovalidate class=ghost"
+           " onclick=\"return confirm('Cancel this time entry? The clock is thrown away and no time is recorded.')\">"
+           "Cancel</button>" if run is not None else "<button type=button class=ghost data-close=tedlg>Cancel</button>")
+        + "<button type=submit>" + t.icon("check") + " Save time entry</button></div></form></dialog>")
 
 
 def _resource_picker(ctx, tk, *, can_work: bool) -> str:

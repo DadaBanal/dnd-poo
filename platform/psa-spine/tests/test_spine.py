@@ -4427,6 +4427,43 @@ class SixOctAsksTest(unittest.TestCase):
         self.assertIn('sessionStorage.getItem(K)', page)
 
 
+class AddStatusTest(unittest.TestCase):
+    """SQL01, 6 Oct 2026: On Hold for PMO Helpdesk without the PMC pack, which
+    would re-add the catalogue rows the 2 Oct Type restructure retired."""
+
+    def setUp(self):
+        from psaspine import setup
+        self.conn = db.init(":memory:")
+        self.at = datetime(2026, 10, 6, 9)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        self.conn.execute("DELETE FROM board_status WHERE name = 'On Hold'")
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_one_status_and_nothing_else_once(self):
+        from psaspine import setup
+        before = self.conn.execute("SELECT COUNT(*) FROM catalogue_item").fetchone()[0]
+        said = setup.add_status(self.conn, "IT_HELP", "On Hold", portal="On hold", at=self.at, actor="dada")
+        self.assertEqual(len(said), 1)
+        row = self.conn.execute("SELECT escalation_status, is_closed, time_entry_allowed, sort_order FROM board_status"
+                                " WHERE board_id = 'IT_HELP' AND name = 'On Hold'").fetchone()
+        self.assertEqual(tuple(row[:3]), ("NO_ESCALATION", 0, 1), "open, and it holds the SLA clocks")
+        resolved = self.conn.execute("SELECT sort_order FROM board_status WHERE board_id='IT_HELP' AND name='Resolved'").fetchone()[0]
+        self.assertLess(row[3], resolved, "a status that is still work reads above Resolved")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM catalogue_item").fetchone()[0], before)
+        self.assertEqual(setup.add_status(self.conn, "IT_HELP", "on hold", at=self.at, actor="dada"), [], "once")
+        with self.assertRaises(ValueError):
+            setup.add_status(self.conn, "IT_HELP", "X", escalation="NOPE", at=self.at, actor="dada")
+
+    def test_the_pack_can_be_asked_for_its_statuses_alone(self):
+        from psaspine import pmc_pack
+        said = pmc_pack.apply(self.conn, statuses_only=True, at=self.at, actor="dada")
+        self.assertTrue(said)
+        self.assertTrue(all(line.startswith("status ") for line in said), said)
+        self.assertIn("status IT_HELP: On Hold", said)
+
+
 class NoteEditorAndTimeWindowTest(unittest.TestCase):
     """Dada, 6 Oct 2026: a Teams-style note box (fonts, colours, pictures,
     GIFs), and the ConnectWise time entry window opened by the clock."""
@@ -4515,6 +4552,25 @@ class NoteEditorAndTimeWindowTest(unittest.TestCase):
         conn.close()
         _, _, page = self._call("GET", "/ticket/ITO-1", cookie=alice)
         self.assertIn("New time entry", page, "the clock is free for the next one")
+
+    def test_cancel_throws_the_clock_away(self):
+        alice = self._cookie_for("alice")
+        self._call("POST", "/ticket/ITO-1/timer/start", cookie=alice, form={"open": "1"})
+        _, _, page = self._call("GET", "/ticket/ITO-1", cookie=alice)
+        foot = page[page.index("<div class=tefoot>"):page.index("</dialog>")]
+        self.assertIn("formaction='/ticket/ITO-1/timer/discard'", foot[:foot.index("Cancel</button>")],
+                      "Cancel is discard, not just close")
+        self.assertIn("data-drag", page)
+        self.assertIn("data-max=tedlg", page)
+        conn = db.connect(self.db_path)
+        tid = conn.execute("SELECT timer_id FROM time_timer WHERE work_item_id='ITO-1'").fetchone()[0]
+        conn.close()
+        _, headers, _ = self._call("POST", "/ticket/ITO-1/timer/discard", cookie=alice, form={"timer_id": str(tid)})
+        self.assertIn("cancelled", next(v for k, v in headers if k == "Location"))
+        conn = db.connect(self.db_path)
+        self.assertIsNone(conn.execute("SELECT 1 FROM time_timer WHERE timer_id = ?", (tid,)).fetchone())
+        self.assertIsNone(conn.execute("SELECT 1 FROM time_entry WHERE work_item_id='ITO-1'").fetchone())
+        conn.close()
 
 
 class CancelledStatusTest(unittest.TestCase):
