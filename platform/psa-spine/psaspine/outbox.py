@@ -648,6 +648,35 @@ def queue_owner(conn: sqlite3.Connection, work_item_id: str, *, at: datetime, ac
     return True
 
 
+RESOURCE = "RESOURCE"
+
+
+def queue_resource(conn: sqlite3.Connection, work_item_id: str, member: str, *, at: datetime,
+                   actor: str) -> bool:
+    """067: a member put on a ticket as a resource gets the same email the
+    owner gets when it is assigned to them, on the same board switch
+    (notify_owner). Nobody is emailed for adding themselves."""
+    from .board import _event
+    from .intake import subject_token
+    row = conn.execute("SELECT t.board_id, b.notify_owner FROM ticket t JOIN board b ON b.board_id = t.board_id"
+                       " WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
+    if row is None or not row["notify_owner"] or (member or "").lower() == (actor or "").lower():
+        return False
+    if not address_for(conn, member):
+        return False
+    if conn.execute("SELECT 1 FROM notification WHERE work_item_id = ? AND recipient = ? AND recipient_role = ?"
+                    " AND status = 'PENDING'", (work_item_id, member, RESOURCE)).fetchone():
+        return False
+    stamp = at.isoformat(sep=" ", timespec="minutes")
+    headline, said = words(conn, row["board_id"], "ASSIGNED", **_values(conn, work_item_id, at=at, actor=actor))
+    conn.execute(
+        "INSERT INTO notification (work_item_id, recipient, recipient_role, subject, body, created_at, status)"
+        " VALUES (?,?,?,?,?,?,'PENDING')",
+        (work_item_id, member, RESOURCE, f"{subject_token(work_item_id)} {headline}", said, stamp))
+    _event(conn, work_item_id, stamp, "NOTIFY", "desk", f"email to a resource queued: {member}")
+    return True
+
+
 APPROVER = "APPROVER"
 
 

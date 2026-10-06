@@ -61,6 +61,28 @@ def identifiers(conn: sqlite3.Connection) -> list[str]:
     return sorted(seen.values(), key=str.lower)
 
 
+def staff_test(conn: sqlite3.Connection):
+    """A function that says whether a note's actor is PMO staff (6 Oct 2026:
+    "color coding for replies one color for pmo staff and another color for
+    requestor"). Staff is any identifier the desk knows, or an address that is
+    a member record's email; an address the desk does not know is the
+    requester's side (the requester, a Cc, a supplier writing in). Built once
+    per page, so a long ticket asks the database twice, not once a note."""
+    known = {x.lower() for x in identifiers(conn)}
+    mails = {r[0].lower() for r in conn.execute("SELECT email FROM member WHERE email IS NOT NULL") if r[0]}
+
+    def is_staff(actor: str | None) -> bool:
+        a = (actor or "").strip().lower()
+        if not a:
+            return True
+        if a in known or a in mails:
+            return True
+        if "@" in a:
+            return False
+        return True                      # a desk account (system, a script) writes as the desk
+    return is_staff
+
+
 def exists(conn: sqlite3.Connection, member: str) -> bool:
     m = (member or "").strip().lower()
     return bool(m) and m in {x.lower() for x in identifiers(conn)}

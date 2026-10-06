@@ -41,6 +41,12 @@ CALENDARS = (
      [("08:00", "17:00")] * 6 + [(None, None)]),
 )
 
+# Dada, 6 Oct 2026: "add a >cancelled status". The '>' is the desk's mark of a
+# closed status, as on >Closed: a request withdrawn or no longer needed ends
+# here, closed, with no survey asked (survey.pending) and no time booked.
+CANCELLED = ">Cancelled"
+CANCELLED_WORDS = "Cancelled — closed without the work being done"
+
 # name, escalation, default, closed, time entry allowed, on board, portal wording
 STARTER_STATUSES = (
     ("New", "NOT_RESPONDED", 1, 0, 1, 1, "Received — waiting for someone to pick it up"),
@@ -51,6 +57,7 @@ STARTER_STATUSES = (
     ("Waiting on Vendor", "NO_ESCALATION", 0, 0, 1, 1, "Waiting on a supplier"),
     ("Awaiting approval", "NO_ESCALATION", 0, 0, 1, 1, "Waiting for an approval"),
     ("Resolved", "RESOLVED", 0, 0, 1, 1, "We think this is fixed — reply if it is not"),
+    (">Cancelled", "RESOLVED", 0, 1, 0, 0, CANCELLED_WORDS),
     (">Closed", "RESOLVED", 0, 1, 0, 0, "Closed"),
 )
 
@@ -68,6 +75,7 @@ CHANGE_STATUSES = (
     ("Implemented", "RESOLVED", 0, 0, 1, 1, "Done - reply if anything is wrong", 1),
     ("Backed Out", "RESOLVED", 0, 0, 1, 1, "Undone - it did not work as planned", 0),
     ("Declined", "RESOLVED", 0, 0, 0, 1, "Not approved", 0),
+    (">Cancelled", "RESOLVED", 0, 1, 0, 0, CANCELLED_WORDS, 0),
     (">Closed", "RESOLVED", 0, 1, 0, 0, "Closed", 0),
 )
 # A project board. The reference PSA: "SLA timers do not run on project tickets"
@@ -79,6 +87,7 @@ PROJECT_STATUSES = (
     ("In Progress", "RESOLUTION_PLAN", 0, 0, 1, 1, "Under way", 0),
     ("On Hold", "NO_ESCALATION", 0, 0, 1, 1, "On hold", 0),
     ("Completed", "RESOLVED", 0, 0, 1, 1, "Completed", 0),
+    (">Cancelled", "RESOLVED", 0, 1, 0, 0, CANCELLED_WORDS, 0),
     (">Closed", "RESOLVED", 0, 1, 0, 0, "Closed", 0),
 )
 PROFILE_STATUSES = {"SERVICE": tuple(s + (0,) for s in STARTER_STATUSES),
@@ -97,6 +106,63 @@ STARTER_NOTE = "starter placeholder: set by the Service Manager"
 
 def status_id(board_id: str, name: str) -> str:
     return f"{board_id}.{re.sub(r'[^A-Z0-9]+', '_', name.upper()).strip('_') or 'STATUS'}"
+
+
+def is_cancelled_name(name: str | None) -> bool:
+    return (name or "").lstrip(">").strip().lower() == "cancelled"
+
+
+def ensure_cancelled(conn: sqlite3.Connection, board_id: str, *, at: datetime, actor: str,
+                     apply: bool = False) -> list[str]:
+    """Give a board the closed >Cancelled status (6 Oct 2026). Returns what it
+    did, or with apply=False what it would do; the caller commits.
+
+    A board that already has a closed status called Cancelled is left alone.
+    A board with an OPEN status called Cancelled (Procurement had one, from
+    the 1 Oct pack) gets the closed one beside it; every ticket sitting in the
+    open one is moved across through change_status, so it is closed the way
+    any close is (clocks stopped, closed_at set, the event written), and the
+    open one is then retired and renamed so the two cannot be confused.
+    """
+    from . import board as _board
+    rows = conn.execute("SELECT board_status_id, name, is_closed, inactive FROM board_status"
+                        " WHERE board_id = ?", (board_id,)).fetchall()
+    if any(is_cancelled_name(r["name"]) and r["is_closed"] and not r["inactive"] for r in rows):
+        return []
+    taken = {r["board_status_id"] for r in rows}
+    sid = status_id(board_id, CANCELLED)
+    if sid in taken:
+        sid = status_id(board_id, "CANCELLED_CLOSED")
+    old = [r for r in rows if is_cancelled_name(r["name"]) and not r["is_closed"] and not r["inactive"]]
+    stuck = []
+    for r in old:
+        stuck += [x[0] for x in conn.execute(
+            "SELECT work_item_id FROM ticket WHERE board_status_id = ? AND closed_at IS NULL"
+            " ORDER BY work_item_id", (r["board_status_id"],))]
+    lines = [f"{board_id}: add {CANCELLED} (closed)"]
+    for r in old:
+        lines.append(f"{board_id}: retire the open status '{r['name']}' as 'Cancelled (open, retired)'")
+    if stuck:
+        lines.append(f"{board_id}: move {len(stuck)} ticket(s) from the open Cancelled to {CANCELLED}, which"
+                     f" closes them: {', '.join(stuck[:20])}{' …' if len(stuck) > 20 else ''}")
+    if not apply:
+        return lines
+    order = (conn.execute("SELECT MAX(sort_order) FROM board_status WHERE board_id = ? AND is_closed = 0",
+                          (board_id,)).fetchone()[0] or 0) + 5
+    conn.execute(
+        "INSERT INTO board_status (board_status_id, board_id, name, customer_description, escalation_status,"
+        " is_default, is_closed, time_entry_allowed, display_on_board, sort_order)"
+        " VALUES (?,?,?,?, 'RESOLVED', 0, 1, 0, 0, ?)",
+        (sid, board_id, CANCELLED, CANCELLED_WORDS, order))
+    for wid in stuck:
+        _board.change_status(conn, wid, sid, at=at, actor=actor)
+    for r in old:
+        conn.execute("UPDATE board_status SET inactive = 1, name = 'Cancelled (open, retired)'"
+                     " WHERE board_status_id = ?", (r["board_status_id"],))
+    db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor, action="BOARD_SETUP",
+             subject_kind="board", subject_id=board_id,
+             detail=f"{CANCELLED} added; {len(stuck)} ticket(s) moved from the open Cancelled")
+    return lines
 
 
 def ensure_calendars(conn: sqlite3.Connection) -> None:

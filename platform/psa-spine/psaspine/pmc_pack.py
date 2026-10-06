@@ -40,7 +40,7 @@ PROCUREMENT = (
     ("Ordered", "RESOLUTION_PLAN", 0, 1, 1, "Ordered from the supplier"),
     ("Delivered", "RESOLUTION_PLAN", 0, 1, 1, "Delivered to the hospital; being checked and received"),
     ("Issued", "RESOLVED", 0, 1, 1, "Issued to you - reply if anything is wrong"),
-    ("Cancelled", "RESOLVED", 0, 0, 1, "Cancelled"),
+    (">Cancelled", "RESOLVED", 1, 0, 0, "Cancelled — closed without the work being done"),
     (">Closed", "RESOLVED", 1, 0, 0, "Closed"),
     # SQL01 added these live on 1 Oct 2026 (Dada: "add additional statuses subtype item to the bizbox one")
     ("Waiting on BizBox", "NO_ESCALATION", 0, 1, 1, "Raised with the BizBox support team; we will tell you when they answer"),
@@ -160,8 +160,8 @@ def _add_statuses(conn, board_id: str, statuses, report: list[str]) -> None:
     for name, esc, closed, effort, shown, portal in statuses:
         if name.lower() in have or name.lstrip(">").lower() in {n.lstrip(">") for n in have}:
             continue
-        if closed and has_closed:
-            continue                              # one closed status is enough; the board's own stays
+        if closed and has_closed and name.lstrip(">").lower() == "closed":
+            continue                              # the board's own closing status stays; >Cancelled is added
         order += 10
         default = 1 if (not has_default and esc == "NOT_RESPONDED") else 0
         has_default = has_default or bool(default)

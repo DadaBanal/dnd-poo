@@ -72,6 +72,13 @@ def main(argv: list[str] | None = None) -> int:
                                " fills them if they are thin. Reads only; writes nothing")
     pcat.add_argument("database", help=DB_HELP)
     pcat.add_argument("--board", help="one board_id, instead of every board")
+    pcan = sub.add_parser("add-cancelled",
+                          help="give every board the closed >Cancelled status; moves tickets out of an open"
+                               " 'Cancelled' and retires it. Shows what it would do unless --apply")
+    pcan.add_argument("database", help=DB_HELP)
+    pcan.add_argument("--board", help="one board_id, instead of every active board")
+    pcan.add_argument("--apply", action="store_true", help="do it; without this nothing is written")
+    pcan.add_argument("--actor", default="add-cancelled")
     pcmp = sub.add_parser("board-compare",
                           help="how one board is set up differently from another: settings, statuses, SLA targets,"
                                " members, addresses, emails, catalogue. Reads only; writes nothing")
@@ -451,6 +458,28 @@ def _run(conn, a) -> int:
                   r" (D:\psa\mail-state\mail-pickup-<mailbox>.log), or run Repair-PsaMailPickup.ps1.")
         return 0
 
+    if a.cmd == "add-cancelled":
+        from . import setup as _setup
+        from datetime import datetime as _dt
+        boards = [a.board] if a.board else [r[0] for r in conn.execute(
+            "SELECT board_id FROM board WHERE COALESCE(inactive, 0) = 0 ORDER BY board_id")]
+        lines = []
+        try:
+            for b in boards:
+                lines += _setup.ensure_cancelled(conn, b, at=_dt.now(), actor=a.actor, apply=a.apply)
+            if a.apply:
+                conn.commit()
+            else:
+                conn.rollback()
+        except Exception as exc:                          # noqa: BLE001
+            conn.rollback()
+            print(f"refused, nothing written: {exc}", file=sys.stderr)
+            return 2
+        for line in lines:
+            print(("done: " if a.apply else "would: ") + line)
+        print(("" if lines else "every board already has >Cancelled. ")
+              + ("Applied." if a.apply else "Nothing was written; add --apply to do it."))
+        return 0
     if a.cmd == "board-compare":
         from . import setup as _setup
         try:

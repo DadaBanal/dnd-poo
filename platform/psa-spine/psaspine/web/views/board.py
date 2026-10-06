@@ -104,8 +104,10 @@ def _where(ctx, boards, f, tile_ids: dict[str, set]) -> tuple[str, list]:
         where.append("t.board_id = ?")
         params.append(f["board"])
     if f["owner"] == "me" or f["tile"] == "mine":
-        where.append("LOWER(t.owner) IN (?, ?)")
-        params += [(ctx.user.id or "").lower(), (ctx.user.name or "").lower()]
+        # Mine is what I own and what I am a resource on (067).
+        where.append("(LOWER(t.owner) IN (?, ?) OR EXISTS (SELECT 1 FROM ticket_resource tr"
+                     " WHERE tr.work_item_id = t.work_item_id AND LOWER(tr.member) = ?))")
+        params += [(ctx.user.id or "").lower(), (ctx.user.name or "").lower(), (ctx.user.id or "").lower()]
     elif f["owner"] == "none" or f["tile"] == "unassigned":
         where.append("(t.owner IS NULL OR t.owner = '')")
     if f["tile"] in ("breached", "due"):
@@ -142,6 +144,8 @@ def _tile_counts(ctx, boards) -> tuple[dict, dict[str, set]]:
         f"SELECT work_item_id, owner FROM ticket WHERE board_id IN ({marks})"
         f" AND state NOT IN {CLOSED_STATES_SQL}", tuple(boards)).fetchall()
     states = common.clock_states_many(ctx.conn, [r["work_item_id"] for r in rows], now=ctx.now)
+    from ... import resources as _resources
+    on = _resources.tickets_of(ctx.conn, ctx.user.id)
     breached, due = set(), set()
     for r in rows:
         running = [s for s in states[r["work_item_id"]] if s["state"] not in ("MET", "MISSED")]
@@ -151,7 +155,7 @@ def _tile_counts(ctx, boards) -> tuple[dict, dict[str, set]]:
             due.add(r["work_item_id"])
     counts = {"": len(rows), "breached": len(breached), "due": len(due),
               "unassigned": sum(not r["owner"] for r in rows),
-              "mine": sum(_is_mine(ctx, r["owner"]) for r in rows)}
+              "mine": sum(_is_mine(ctx, r["owner"]) or r["work_item_id"] in on for r in rows)}
     return counts, {"breached": breached, "due": due}
 
 

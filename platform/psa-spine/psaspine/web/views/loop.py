@@ -22,7 +22,8 @@ def form(ctx, work_item_id, *, error=""):
 
     closed = ctx.conn.execute(
         "SELECT board_status_id, name FROM board_status"
-        " WHERE board_id = ? AND is_closed = 1 AND inactive = 0 ORDER BY name",
+        " WHERE board_id = ? AND is_closed = 1 AND inactive = 0"
+        " ORDER BY CASE WHEN LOWER(name) LIKE '%cancel%' THEN 1 ELSE 0 END, name",
         (tk["board_id"],)).fetchall()
     if not closed:
         return Response(body=t.page(

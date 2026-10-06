@@ -17,9 +17,14 @@ CLOSED = ("RESOLVED", "CLOSED", "CANCELLED")
 
 def pending(conn: sqlite3.Connection, work_item_id: str) -> bool:
     """Is the ticket closed, unmerged, and still unanswered?"""
-    row = conn.execute("SELECT t.state, t.closed_at, t.merged_into, b.survey_enabled FROM ticket t"
-                       " JOIN board b ON b.board_id = t.board_id WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
+    row = conn.execute("SELECT t.state, t.closed_at, t.merged_into, b.survey_enabled, s.name AS status_name"
+                       " FROM ticket t JOIN board b ON b.board_id = t.board_id"
+                       " LEFT JOIN board_status s ON s.board_status_id = t.board_status_id"
+                       " WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
     if row is None or row["merged_into"] or not (row["closed_at"] or row["state"] in CLOSED):
+        return False
+    from .setup import is_cancelled_name
+    if is_cancelled_name(row["status_name"]):  # 6 Oct 2026: nothing was done, so nothing to rate
         return False
     if row["survey_enabled"] == 0:            # 057: a board may switch it off; unset is on, as it always was
         return False

@@ -1088,6 +1088,10 @@
     "time_timer.stopped_at": "TIMESTAMP_TEXT",
     "time_timer.paused_at": "TIMESTAMP_TEXT",
     "time_timer.note": "FREE",
-    "attachment.content_id": "REF"
+    "attachment.content_id": "REF",
+    "ticket_resource.work_item_id": "ID",
+    "ticket_resource.member": "PERSON",
+    "ticket_resource.added_at": "TIMESTAMP_TEXT",
+    "ticket_resource.added_by": "PERSON"
   }
 }

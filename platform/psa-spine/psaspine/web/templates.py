@@ -470,6 +470,9 @@ ul.plain{list-style:none;padding:0;margin:0} ul.plain li{padding:7px 0;border-bo
 /* ---- the ticket: notes, tabs, layout ----------------------------------- */
 .rail{display:grid;grid-template-columns:minmax(0,2fr) minmax(300px,1fr);gap:16px;align-items:start}
 .hdr{display:flex;align-items:start;gap:12px;flex-wrap:wrap} .hdr .grow{flex:1;min-width:0}
+label .req{color:var(--bad,#c0392b);margin-left:2px;font-weight:700}
+details.multipick{border:1px solid var(--line);border-radius:var(--r-sm,6px);background:var(--surface);margin-bottom:8px} details.multipick>summary{cursor:pointer;padding:6px 10px;list-style:none;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis} details.multipick>summary::after{content:'\25BE';float:right;color:var(--ink-3)} details.multipick .opts{max-height:220px;overflow:auto;padding:4px 10px 8px;border-top:1px solid var(--line)} details.multipick label.pick{display:flex;gap:6px;align-items:center;font-weight:400;color:var(--ink);margin:4px 0} details.multipick label.pick input{width:auto}
+a.backbtn{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--ink2);text-decoration:none;margin:0 0 6px;padding:3px 10px 3px 6px;border:1px solid var(--line);border-radius:999px} a.backbtn:hover{color:var(--ink);border-color:var(--ink2)} a.backbtn .ic{width:15px;height:15px}
 dialog.viewer{width:min(96vw,1200px);max-width:none;height:min(92vh,900px);max-height:none;padding:0;border:0;border-radius:var(--r);background:var(--card);color:var(--fg);overflow:hidden}
 dialog.viewer:not([open]){display:none} dialog.viewer::backdrop{background:rgb(10 12 18/.55)}
 dialog.viewer .vbar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line)} dialog.viewer .vbar .grow{flex:1}
@@ -492,10 +495,21 @@ h1.sumline .sumform{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margi
 .stabs a.on{background:var(--ink);color:var(--canvas);border-color:var(--ink)}
 .stream{list-style:none;padding:0;margin:0} .stream li{padding:8px 0;border-bottom:1px solid var(--line)} .stream li:last-child{border-bottom:none}
 .stream .meta{color:var(--ink-3);font-size:12px}
+.stream li.by-req,.stream li.by-staff{border:0;border-left:4px solid var(--accent);border-radius:var(--r-md,8px);padding:8px 12px;margin:0 0 8px;background:var(--accent-bg)} .stream li.by-req{border-left-color:var(--req);background:var(--req-bg)}
 .note{position:relative;border:1px solid var(--line);border-radius:var(--r-lg);padding:10px 12px 10px 16px;margin-bottom:10px;background:var(--surface);overflow:hidden}
 .note::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent)}
 .note.INTERNAL{background:var(--warn-bg);border-color:transparent} .note.INTERNAL::before{background:var(--warn)}
 .note.RESOLUTION{background:var(--ok-bg);border-color:transparent} .note.RESOLUTION::before{background:var(--ok)}
+:root{--req:#0e8a8a;--req-bg:color-mix(in srgb,#0e8a8a 10%,transparent)}
+:root[data-theme=dark]{--req:#3cc6c6}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--req:#3cc6c6}}
+.note.by-req{background:var(--req-bg);border-color:color-mix(in srgb,var(--req) 30%,transparent)} .note.by-req::before{background:var(--req);width:4px}
+.note.by-staff.DISCUSSION::before{width:4px}
+.note.by-req .av{color:var(--req);background:color-mix(in srgb,var(--req) 16%,var(--surface))}
+.who{font-size:10.5px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;border-radius:999px;padding:1px 8px}
+.who.staff{color:var(--accent);background:var(--accent-bg)} .who.req{color:var(--req);background:var(--req-bg)}
+.wholegend{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-3);margin-left:12px}
+.wholegend i{width:10px;height:10px;border-radius:3px;display:inline-block;margin-left:6px} .wholegend i.staff{background:var(--accent)} .wholegend i.req{background:var(--req)}
 .note .h{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--ink-3);margin-bottom:4px;flex-wrap:wrap}
 .av{width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,var(--accent-bg),var(--surface-3));color:var(--accent);font-weight:700;
   font-size:11px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--line)}
@@ -846,6 +860,7 @@ $$("select.cat-item").forEach(function(item){
   else showSubs(false);
   ts.addEventListener("change",function(){showSubs(false)});
   ss.addEventListener("change",showItems);
+  if(item.required){ts.required=true;ss.required=true}
   ts.hidden=false;ss.hidden=false})})();
 /* One Save, always reachable. The ticket's own fields are already one form;
    this only makes its Save impossible to lose behind a scroll, and names how
@@ -1128,6 +1143,24 @@ if(window.MutationObserver){
   new MutationObserver(function(ms){for(var i=0;i<ms.length;i++)if(ms[i].addedNodes.length){mailAll();break}})
     .observe(d.body,{childList:true,subtree:true})}
 })();
+// Back (Dada, 6 Oct 2026: "add a back button"). Every desk page notes itself
+// in this tab's trail; a page that only reloads itself (a ticket after a save,
+// a board with ?msg=) replaces its own entry rather than adding one, so Back
+// goes to where the person came from -- the board, a search, Dispatch -- and
+// never to the same ticket a save ago. Without the trail it goes to the board.
+(function(){var K="psa_trail",tr=[];try{tr=JSON.parse(sessionStorage.getItem(K)||"[]")}catch(e){}
+  if(!Array.isArray(tr))tr=[];
+  var here=location.pathname+location.search,path=location.pathname;
+  var name=(document.title||"").split(" · ")[0];
+  var last=tr[tr.length-1];
+  if(last&&last.p===path)tr[tr.length-1]={u:here,p:path,n:name};else tr.push({u:here,p:path,n:name});
+  if(tr.length>30)tr=tr.slice(-30);
+  try{sessionStorage.setItem(K,JSON.stringify(tr))}catch(e){}
+  document.querySelectorAll("[data-back]").forEach(function(a){
+    var prev=tr.length>1?tr[tr.length-2]:null;
+    if(prev){a.href=prev.u.replace(/([?&])(msg|err)=[^&]*&?/g,"$1").replace(/[?&]$/,"");
+      var l=a.querySelector(".lbl");if(l&&prev.n)l.textContent="Back to "+prev.n;a.title="Back to "+(prev.n||"the last page")}
+    a.addEventListener("click",function(){tr.pop();try{sessionStorage.setItem(K,JSON.stringify(tr))}catch(e){}})})})();
 // A filter applies the moment it is picked (Dada, 1 Oct 2026: "when the
 // drop down is picked it updates automatically"): a select or a checkbox in
 // a GET form sends the form; the button stays for the keyboard and for text.

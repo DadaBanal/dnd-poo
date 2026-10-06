@@ -18,6 +18,10 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime
 
+# A close the desk makes for someone (a child with its parent, a merged
+# duplicate) lands in the board's ordinary closed status, never >Cancelled
+# (6 Oct 2026): nobody cancelled it. A board with no other is left alone.
+CLOSING_PICK = "AND LOWER(name) NOT LIKE '%cancel%' ORDER BY sort_order"
 CLOSED_STATES = ("RESOLVED", "CLOSED", "CANCELLED")
 
 
@@ -114,7 +118,7 @@ def close_with_parent(conn: sqlite3.Connection, parent_id: str, *, at: datetime,
             continue
         target = conn.execute(
             "SELECT board_status_id FROM board_status WHERE board_id = ? AND is_closed = 1"
-            " AND inactive = 0 ORDER BY sort_order LIMIT 1", (child["board_id"],)).fetchone()
+            " AND inactive = 0 " + CLOSING_PICK + " LIMIT 1", (child["board_id"],)).fetchone()
         if target is None:
             left.append(child["work_item_id"])
             _event(conn, child["work_item_id"], stamp, "CHILD", actor,
@@ -163,7 +167,7 @@ def merge(conn: sqlite3.Connection, dup_id: str, into_id: str, *, actor: str,
         raise Refused(f"{dup_id} has children and {into_id} is a child; children have no children")
     target = conn.execute(
         "SELECT board_status_id FROM board_status WHERE board_id = ? AND is_closed = 1"
-        " AND inactive = 0 ORDER BY sort_order LIMIT 1", (dup["board_id"],)).fetchone()
+        " AND inactive = 0 " + CLOSING_PICK + " LIMIT 1", (dup["board_id"],)).fetchone()
     if target is None:
         raise Refused(f"{dup_id}'s board has no closed status to merge into")
     stamp = _stamp(at)

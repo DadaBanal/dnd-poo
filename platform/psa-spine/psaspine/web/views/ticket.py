@@ -122,7 +122,12 @@ def _contact_list(conn, list_id: str, entity_id: str | None = None) -> str:
         + "</datalist>")
 
 
-def _catalogue_select(conn, board_id, selected, *, disabled="") -> str:
+REQ = " <span class=req title='Required' aria-hidden=true>*</span>"
+REQUIRED_SAY = ("Company, Ticket type and the Type › Subtype › Item are required"
+                " (Dada, 6 Oct 2026); fill them in and save again")
+
+
+def _catalogue_select(conn, board_id, selected, *, disabled="", required: bool = False) -> str:
     """Type, then Subtype, then Item: three dependent selects, as the reference
     PSA asks them (SQL01's spec to WS36, 2 Oct 2026). Picking a Type shows its
     Subtypes; picking a Subtype shows its Items; what is submitted is still the
@@ -167,17 +172,18 @@ def _catalogue_select(conn, board_id, selected, *, disabled="") -> str:
     # The two narrowing selects carry no name: they are not part of the form's
     # answer, only of how a person reaches it. `hidden` until the script has
     # filled them, so a page without one never shows two empty boxes.
-    return ("<label>Type</label><select class=cat-type aria-label='Type'"
+    star, req = (REQ, " required") if required and not disabled else ("", "")
+    return (f"<label>Type{star}</label><select class=cat-type aria-label='Type'"
             f" hidden{disabled}></select>"
-            "<label>Subtype</label><select class=cat-sub aria-label='Subtype'"
+            f"<label>Subtype{star}</label><select class=cat-sub aria-label='Subtype'"
             f" hidden{disabled}></select>"
-            "<label>Item</label>"
-            f"<select name=catalogue_item_id class=cat-item{disabled}>"
+            f"<label>Item{star}</label>"
+            f"<select name=catalogue_item_id class=cat-item{disabled}{req}>"
             + "".join(opts) + "</select>")
 
 
 def _type_select(conn, board_id: str | None, selected: str | None, *, disabled: str = "",
-                 blank: str | None = None) -> str:
+                 blank: str | None = None, required: bool = False) -> str:
     """The board's Types (Dada PSA's Types tab): Incident, Request, Problem,
     Event on a service board. With no board, every Type."""
     from ... import itil
@@ -191,6 +197,9 @@ def _type_select(conn, board_id: str | None, selected: str | None, *, disabled: 
     # ward (SQL01's #3 to WS36, 2 Oct 2026). This one is the ITIL record kind --
     # Incident, Request, Problem, Event -- so it is the ticket's type; the
     # cascade stays Type -> Subtype -> Item.
+    if required and not disabled:
+        return (f"<label>Ticket type{REQ}</label><select name=record_type required>"
+                + _options([("", "(choose one)")] + [p for p in pairs if p[0]], selected or "") + "</select>")
     return (f"<label>Ticket type</label><select name=record_type{disabled}>"
             + _options(pairs, selected or "") + "</select>")
 
@@ -325,12 +334,9 @@ def detail(ctx, work_item_id):
     # The reference PSA's Owner and Resources: the owner is the point of contact;
     # the resources are the people scheduled on it (its schedule entries). The
     # owner defaults to the first resource scheduled and can always be changed.
-    from ... import members as _members, schedule as _schedule
-    resources = []
-    for r in _schedule.entries_for(ctx.conn, work_item_id):
-        if r["member"].lower() not in {x.lower() for x in resources}:
-            resources.append(r["member"])
-    resources_line = (" · <span class=pill title='The people scheduled on this ticket'>resources: "
+    from ... import members as _members, resources as _resources
+    resources = _resources.everyone(ctx.conn, work_item_id)
+    resources_line = (" · <span class=pill title='The people on this ticket: assigned, or with a visit booked'>resources: "
                       + t.esc(", ".join(_members.name_of(ctx.conn, m) for m in resources)) + "</span>" if resources else "")
     if can_work and not tk["closed_at"]:
         me_owner = (tk["owner"] or "").lower() == ctx.user.id.lower()
@@ -364,6 +370,8 @@ def detail(ctx, work_item_id):
          f"{t.esc(tk['merged_into'])}</a>; the work continues there.</div>" if tk["merged_into"] else "") +
         (f"<div class='banner ok toast'>{t.icon('check')} {t.esc(msg)}</div>" if msg else "") +
         (f"<div class='banner err toast'>{t.icon('alert')} {t.esc(err)}</div>" if err else "") +
+        "<a class=backbtn data-back href='/' title='Back to the Service Board'>" + t.icon("left")
+        + "<span class=lbl>Back to the Service Board</span></a>"
         "<div class=hdr><div class=grow>"
         f"<h1 class=sumline>{wid}<span class=sumtext> · {t.esc(tk['summary'])}</span>"
         + (f" <button type=button class='iconbtn sumedit' data-edit=summary title='Edit the summary'>{t.icon('edit')}</button>"
@@ -420,6 +428,7 @@ def detail(ctx, work_item_id):
         f"{label} {counts[key]}</a>"
         for key, label in (("ALL", "All"), ("DISCUSSION", "Discussion"), ("INTERNAL", "Internal"),
                            ("RESOLUTION", "Resolution"), ("SYSTEM", "System")))
+    tabs += ("<span class=wholegend aria-hidden=true><i class=staff></i>PMO staff<i class=req></i>Requester</span>")
     flip = "new" if order == "old" else "old"
     tabs += (f"<a class=order href='/ticket/{wid}?tab={t.esc(tab)}&amp;order={flip}' data-order='{order}'"
              f" title='{'Oldest first: click for newest first' if order == 'old' else 'Newest first: click for oldest first'}'"
@@ -434,6 +443,7 @@ def detail(ctx, work_item_id):
 
     # An email's inline pictures, by Content-ID, as this desk may see them (066).
     pictures = t.desk_images(ctx.conn, work_item_id)
+    is_staff = _members.staff_test(ctx.conn)
     items = []
     for e in (reversed(events) if order == "new" else events):
         flag = e["note_flag"]
@@ -446,9 +456,20 @@ def detail(ctx, work_item_id):
         if flag:
             extra = ("<span class='flag RESOLUTION'>Resolution</span>"
                      if e["is_resolution"] and flag != "RESOLUTION" else "")
+            # Who wrote it, by colour and in words (6 Oct 2026): PMO staff in
+            # the desk's blue, the requester's side in teal. An Internal note
+            # keeps its amber; only staff write those.
+            # The person who asked is the requester on their own ticket, even
+            # when they are staff; anyone else the desk knows is staff, by
+            # whichever door their words came in.
+            staff = (is_staff(e["actor"])
+                     and (e["actor"] or "").strip().lower() != (tk["requested_by"] or "").strip().lower())
+            who = "staff" if staff else "req"
             items.append(
-                f"<div class='note {flag}'><div class=h><span class=av>{t.esc(_initials(e['actor']))}</span>"
-                f"<b>{t.esc(e['actor'] or '—')}</b><span class='flag {flag}'>{FLAG_LABEL[flag]}</span>{extra}"
+                f"<div class='note {flag} by-{who}'><div class=h><span class=av>{t.esc(_initials(e['actor']))}</span>"
+                f"<b>{t.esc(e['actor'] or '—')}</b>"
+                f"<span class='who {who}'>{'PMO staff' if staff else 'Requester'}</span>"
+                f"<span class='flag {flag}'>{FLAG_LABEL[flag]}</span>{extra}"
                 f"{t.esc(e['occurred_at'])} · {t.esc(e['kind'].replace('_', ' ').lower())}"
                 "<button type=button class='iconbtn copy' data-copy title='Copy this note' aria-label='Copy this note'>"
                 + t.icon("copy") + "</button></div>"
@@ -585,17 +606,19 @@ def detail(ctx, work_item_id):
         f"<label>Board</label><select name=board_id{dis}>{_options(board_pairs, tk['board_id'])}</select>"
         f"<label>Status</label><select name=to_status{dis}>"
         f"{_options(([] if tk['board_status_id'] else [('', '(none)')]) + status_pairs, tk['board_status_id'] or '')}</select>"
-        f"<label>Owner</label>" + common.owner_select(ctx.conn, [tk["board_id"]], tk["owner"], attrs=dis, me=ctx.user.id) +
-        f"<label>Company</label><select name=entity_id{dis}>"
-        f"{_options([(e['entity_id'], e['name']) for e in entities], tk['entity_id'] or '')}</select>"
+        f"<label>Owner</label>" + common.owner_select(ctx.conn, [tk["board_id"]], tk["owner"], attrs=dis, me=ctx.user.id)
+        + _resource_picker(ctx, tk, can_work=can_work)
+        + ("<input type=hidden name=fields value=1>" if can_work else "")
+        + f"<label>Company{REQ if can_work else ''}</label><select name=entity_id{dis}{' required' if can_work else ''}>"
+        f"{_options([('', '(choose a company)')] + [(e['entity_id'], e['name']) for e in entities], tk['entity_id'] or '')}</select>"
         f"<label>Contact</label><input name=requested_by list=contacts-ticket "
         f"value='{t.esc(tk['requested_by'] or '')}'{dis}>"
         + _contact_list(ctx.conn, "contacts-ticket", tk["entity_id"]) + person_line
         + f"<label>Cc</label><input name=cc value='{t.esc(', '.join(_cc.of(ctx.conn, work_item_id)))}'"
           f" placeholder='addresses, separated by commas' title='They get the emails the requester gets'{dis}>"
         + _type_select(ctx.conn, tk["board_id"], tk["record_type"], disabled=dis,
-                       blank=None if tk["record_type"] else "(not set)")
-        + _catalogue_select(ctx.conn, tk["board_id"], tk["catalogue_item_id"], disabled=dis) +
+                       blank=None if tk["record_type"] else "(not set)", required=can_work)
+        + _catalogue_select(ctx.conn, tk["board_id"], tk["catalogue_item_id"], disabled=dis, required=can_work) +
         f"<label>Who is affected</label><select name=impact{dis}>{_options(WHO_IS_AFFECTED, tk['impact'])}</select>"
         f"<label>Is a patient waiting</label><select name=urgency{dis}>{_options(PATIENT_WAITING, tk['urgency'])}</select>"
         f"<label>Priority</label><div class=ro>{t.badge(tk['priority'])} "
@@ -879,6 +902,57 @@ def timer(ctx, work_item_id, action):
     return _back(work_item_id, msg=msg)
 
 
+def _resource_picker(ctx, tk, *, can_work: bool) -> str:
+    """Resources (067): tick every member who is on this ticket besides the
+    owner. People with a visit booked are shown ticked and fixed: they are on
+    it because of the visit, and come off when the visit does."""
+    from ... import board as _board, members as _members, resources as _resources, schedule as _schedule
+    wid = tk["work_item_id"]
+    picked = {m.lower() for m in _resources.assigned(ctx.conn, wid)}
+    booked = {r["member"].lower() for r in _schedule.entries_for(ctx.conn, wid)}
+    people = {m.lower(): m for m in _board._working_members(ctx.conn, tk["board_id"])}
+    for m in _resources.assigned(ctx.conn, wid):
+        people.setdefault(m.lower(), m)
+    rows = sorted(people.values(), key=lambda m: _members.name_of(ctx.conn, m).lower())
+    names = [_members.name_of(ctx.conn, m) for m in rows if m.lower() in picked | booked]
+    dis = "" if can_work else " disabled"
+    on_board = _board_lower(ctx, tk)
+    bits = []
+    for m in rows:
+        k = m.lower()
+        fixed = k in booked and k not in picked
+        attrs = (" checked" if k in picked or k in booked else "") + (" disabled title='Booked on a visit'" if fixed else dis)
+        bits.append(f"<label class=pick><input type=checkbox name=resources value='{t.esc(m)}'{attrs}>"
+                    f" {t.esc(_members.name_of(ctx.conn, m))}"
+                    + (" <span class=muted>(visit booked)</span>" if k in booked else "")
+                    + ("" if k in on_board else " <span class=muted>(not on this board)</span>") + "</label>")
+    opts = "".join(bits)
+    return ("<label>Resources</label>"
+            + ("<input type=hidden name=resources_shown value=1>" if can_work else "")
+            + "<details class=multipick><summary>" + (t.esc(", ".join(names)) if names else "<span class=muted>Nobody else</span>")
+            + "</summary><div class=opts>" + (opts or "<span class=muted>Nobody works this board yet.</span>")
+            + "</div></details>")
+
+
+def _board_lower(ctx, tk) -> set[str]:
+    from ... import board as _board
+    return {m.lower() for m in _board._working_members(ctx.conn, tk["board_id"])}
+
+
+def _missing_required(ctx, f, board_id: str | None) -> list[str]:
+    """Which of the five required fields a posted form left empty (6 Oct 2026).
+    The Item is required only where there is an Item to choose."""
+    from ... import setup
+    missing = []
+    if not (f.get("entity_id") or "").strip():
+        missing.append("Company")
+    if not (f.get("record_type") or "").strip():
+        missing.append("Ticket type")
+    if not (f.get("catalogue_item_id") or "").strip() and setup.catalogue_choices(ctx.conn, board_id):
+        missing.append("Type › Subtype › Item")
+    return missing
+
+
 def update(ctx, work_item_id):
     """The right-hand panel. A board change is a move (one id, clocks intact);
     the rest are field edits; a status change goes through the one seam."""
@@ -886,6 +960,13 @@ def update(ctx, work_item_id):
     common.require_board(ctx, tk["board_id"], need="WORK")
     f = ctx.request.form()
     changed = []
+    if f.get("fields") == "1":
+        # The Ticket card's own Save (it carries fields=1). Assign me, the
+        # summary pencil and the other one-field forms post without it and are
+        # not held to the card's required fields.
+        missing = _missing_required(ctx, f, f.get("board_id") or tk["board_id"])
+        if missing:
+            return _back(work_item_id, err=f"Not saved: {', '.join(missing)} still empty. {REQUIRED_SAY}.")
     try:
         to_board = f.get("board_id", tk["board_id"])
         want_type = f.get("record_type") if "record_type" in f else None
@@ -905,6 +986,13 @@ def update(ctx, work_item_id):
             record_type=want_type, priority=f.get("priority") or None,
             priority_reason=f.get("priority_reason"),
             summary=f.get("summary") if "summary" in f else None, **change_fields_from(f))
+        if f.get("resources_shown") == "1":
+            from ... import board as _bd, resources as _resources
+            allowed = {m.lower() for m in _bd._working_members(ctx.conn, tk["board_id"])}
+            line = _resources.set_(ctx.conn, work_item_id, ctx.request.form_list("resources"),
+                                   at=ctx.now, actor=ctx.user.id, allowed=allowed)
+            if line:
+                changed.append(line)
         if "cc" in f:
             from ... import cc as _cc
             line = _cc.set_(ctx.conn, work_item_id, f.get("cc"), at=ctx.now, actor=ctx.user.id)
@@ -981,12 +1069,13 @@ def new_form(ctx, *, error: str = "", values: dict | None = None):
            "it is attached when the ticket is created.</p>" if machine else "") + "<div class=grid2>"
         f"<div><label>Board</label><select name=board_id>{_options([(b['board_id'], b['display_name']) for b in boards], v.get('board_id', ''))}</select></div>"
         f"<div><label>Source</label><select name=source>{_options(SOURCES, v.get('source', 'PHONE'))}</select></div>"
-        f"<div><label>Company</label><select name=entity_id>{_options([(e['entity_id'], e['name']) for e in entities], v.get('entity_id', 'PMC'))}</select></div>"
+        "<input type=hidden name=fields value=1>"
+        f"<div><label>Company{REQ}</label><select name=entity_id required>{_options([('', '(choose a company)')] + [(e['entity_id'], e['name']) for e in entities], v.get('entity_id', 'PMC'))}</select></div>"
         f"<div><label>Contact</label><input name=requested_by list=contacts-new value='{t.esc(v.get('requested_by', ''))}' placeholder='start typing a name, or an email'>"
         + _contact_list(ctx.conn, "contacts-new") + "</div>"
         f"<div style='grid-column:1/-1'><label>Summary</label><input name=summary required value='{t.esc(v.get('summary', ''))}' placeholder='What is wrong, in one line'></div>"
-        + f"<div>{_type_select(ctx.conn, None, v.get('record_type', ''), blank='(the board default)')}</div><div></div>"
-        + (f"<div style='grid-column:1/-1'>{_catalogue_select(ctx.conn, None, v.get('catalogue_item_id', ''))}</div>"
+        + f"<div>{_type_select(ctx.conn, None, v.get('record_type', ''), required=True)}</div><div></div>"
+        + (f"<div style='grid-column:1/-1'>{_catalogue_select(ctx.conn, None, v.get('catalogue_item_id', ''), required=True)}</div>"
            if _catalogue_select(ctx.conn, None, "") else "") +
         "<div class=radiorow><label style='color:var(--muted);font-weight:600'>Who is affected?</label>"
         f"{radios('impact', WHO_IS_AFFECTED, v.get('impact', ''))}</div>"
@@ -1015,6 +1104,10 @@ def new_create(ctx):
     if impact not in dict(WHO_IS_AFFECTED) or urgency not in dict(PATIENT_WAITING):
         return new_form(ctx, error="Answer both questions: who is affected, and whether a "
                                    "patient is waiting.", values=f)
+    if f.get("fields") == "1":
+        missing = _missing_required(ctx, f, board_id)
+        if missing:
+            return new_form(ctx, error=f"Not created: {', '.join(missing)} still empty. {REQUIRED_SAY}.", values=f)
     if source not in dict(SOURCES):
         source = "DESK"
     entity_id = f.get("entity_id") or None

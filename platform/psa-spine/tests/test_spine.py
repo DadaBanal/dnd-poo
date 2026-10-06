@@ -4315,6 +4315,166 @@ class EmailOnTheTicketTest(unittest.TestCase):
             _setup.board_compare(self.conn, "IT_HELP", "NOPE")
 
 
+class SixOctAsksTest(unittest.TestCase):
+    """Dada, 6 Oct 2026: required fields on the ticket, a >Cancelled status,
+    and a Back button."""
+
+    setUp = WebWSGITest.setUp
+    tearDown = WebWSGITest.tearDown
+    _call = WebWSGITest._call
+    _environ = WebWSGITest._environ
+    _cookie_for = WebWSGITest._cookie_for
+
+    def _where(self, headers):
+        return _urlparse.unquote_plus(next(v for k, v in headers if k == "Location"))
+
+    def test_the_ticket_card_will_not_save_without_its_required_fields(self):
+        alice = self._cookie_for("alice")
+        _, _, page = self._call("GET", "/ticket/ITO-1", cookie=alice)
+        self.assertIn("name=fields value=1", page)
+        self.assertIn("name=entity_id required", page)
+        self.assertIn("name=record_type required", page)
+        form = {"fields": "1", "board_id": "IT_HELP", "impact": "I3", "urgency": "U3",
+                "to_status": "IT_HELP.NEW", "entity_id": "", "record_type": "", "requested_by": ""}
+        status, headers, _ = self._call("POST", "/ticket/ITO-1/update", cookie=alice, form=form)
+        self.assertTrue(status.startswith("303"))
+        where = self._where(headers)
+        self.assertIn("Company", where)
+        self.assertIn("Ticket type", where)
+        conn = db.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT impact FROM ticket WHERE work_item_id='ITO-1'").fetchone()[0], "I1",
+                         "nothing was written")
+        conn.close()
+        form.update(entity_id="PMC", record_type="INCIDENT")
+        _, headers, _ = self._call("POST", "/ticket/ITO-1/update", cookie=alice, form=form)
+        self.assertIn("msg=Saved", next(v for k, v in headers if k == "Location"))
+        # A one-field form (Assign me) carries no fields=1 and is not held to them.
+        _, headers, _ = self._call("POST", "/ticket/ITO-1/update", cookie=alice, form={"owner": "alice"})
+        self.assertNotIn("err=", next(v for k, v in headers if k == "Location"))
+
+    def test_a_new_ticket_needs_them_too(self):
+        alice = self._cookie_for("alice")
+        _, _, page = self._call("GET", "/ticket/new", cookie=alice)
+        self.assertIn("name=entity_id required", page)
+        status, _, page = self._call("POST", "/ticket/new", cookie=alice, form={
+            "fields": "1", "board_id": "IT_HELP", "summary": "Mouse", "impact": "I3", "urgency": "U3",
+            "entity_id": "PMC", "record_type": "", "source": "PHONE"})
+        self.assertIn("Ticket type", page)
+        self.assertIn("Not created", page)
+
+    def test_replies_are_coloured_by_who_wrote_them(self):
+        from psaspine import board
+        conn = db.connect(self.db_path)
+        at = datetime(2026, 10, 6, 9)
+        board.add_note(conn, "ITO-1", body="STAFF-SAID", flag="DISCUSSION", actor="alice", at=at,
+                       notify_requester=False)
+        conn.execute("INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail, note_flag)"
+                     " VALUES ('ITO-1', '2026-10-06 10:00', 'INTAKE_REPLY', 'ward3@pmcne.ph', 'WARD-SAID', 'DISCUSSION')")
+        conn.commit()
+        conn.close()
+        _, _, page = self._call("GET", "/ticket/ITO-1", cookie=self._cookie_for("alice"))
+        staff = page[:page.index("STAFF-SAID")].rsplit("<div class='note", 1)[1]
+        ward = page[:page.index("WARD-SAID")].rsplit("<div class='note", 1)[1]
+        self.assertIn("by-staff", staff)
+        self.assertIn("PMO staff", staff)
+        self.assertIn("by-req", ward)
+        self.assertIn(">Requester<", ward)
+        self.assertIn("class=wholegend", page)
+
+    def test_a_ticket_can_carry_several_members(self):
+        conn = db.connect(self.db_path)
+        conn.execute("INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','bob','WORK')")
+        conn.execute("INSERT OR REPLACE INTO board_member (board_id,member,access) VALUES ('IT_HELP','dina','WORK')")
+        conn.commit()
+        conn.close()
+        alice = self._cookie_for("alice")
+        _, _, page = self._call("GET", "/ticket/ITO-1", cookie=alice)
+        self.assertIn("<label>Resources</label>", page)
+        self.assertIn("name=resources value='bob'", page)
+        form = {"fields": "1", "board_id": "IT_HELP", "impact": "I1", "urgency": "U1", "to_status": "IT_HELP.NEW",
+                "entity_id": "PMC", "record_type": "INCIDENT", "requested_by": "", "resources_shown": "1"}
+        status, headers, _ = WebWSGITest._call(self, "POST", "/ticket/ITO-1/update", cookie=alice,
+                                              form=[*form.items(), ("resources", "bob"), ("resources", "dina")])
+        self.assertIn("msg=Saved", next(v for k, v in headers if k == "Location"))
+        conn = db.connect(self.db_path)
+        from psaspine import resources
+        self.assertEqual(resources.assigned(conn, "ITO-1"), ["bob", "dina"])
+        self.assertIn("resources: added bob, dina", [r[0] for r in conn.execute(
+            "SELECT detail FROM ticket_event WHERE work_item_id='ITO-1' AND kind='RESOURCE'")])
+        conn.close()
+        bob = self._cookie_for("bob")
+        _, _, board = self._call("GET", "/", cookie=bob, query="tile=mine")
+        self.assertIn("ITO-1", board, "a resource finds it under Mine")
+        # Taking one off leaves the other.
+        WebWSGITest._call(self, "POST", "/ticket/ITO-1/update", cookie=alice,
+                          form=[*form.items(), ("resources", "dina")])
+        conn = db.connect(self.db_path)
+        self.assertEqual(resources.assigned(conn, "ITO-1"), ["dina"])
+        # Somebody not working the board cannot be added.
+        with self.assertRaises(ValueError):
+            resources.set_(conn, "ITO-1", ["dina", "carol"], at=datetime(2026, 10, 6), actor="alice",
+                           allowed={"alice", "bob", "dina"})
+        conn.close()
+
+    def test_the_ticket_page_has_a_back_button(self):
+        _, _, page = self._call("GET", "/ticket/ITO-1", cookie=self._cookie_for("alice"))
+        self.assertIn("class=backbtn data-back href='/'", page)
+        self.assertIn('sessionStorage.getItem(K)', page)
+
+
+class CancelledStatusTest(unittest.TestCase):
+    """Dada, 6 Oct 2026: "add a >cancelled status"."""
+
+    def setUp(self):
+        from psaspine import setup
+        self.conn = db.init(":memory:")
+        self.at = datetime(2026, 10, 6, 9)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_every_new_board_has_it_closed_and_off_the_board(self):
+        row = self.conn.execute("SELECT is_closed, display_on_board, time_entry_allowed FROM board_status"
+                                " WHERE board_id = 'IT_HELP' AND name = '>Cancelled'").fetchone()
+        self.assertEqual(tuple(row), (1, 0, 0))
+
+    def test_a_cancelled_ticket_is_closed_and_asks_no_survey(self):
+        from psaspine import board, survey, tickets
+        wid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="Not needed", impact="I3",
+                                  urgency="U3", requested_by="a@pmcne.ph", at=self.at)
+        board.change_status(self.conn, wid, "IT_HELP.CANCELLED", at=self.at, actor="t")
+        self.assertIsNotNone(self.conn.execute("SELECT closed_at FROM ticket WHERE work_item_id = ?",
+                                               (wid,)).fetchone()[0])
+        self.assertFalse(survey.pending(self.conn, wid), "nothing was done, so nothing to rate")
+        other = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="Done", impact="I3",
+                                    urgency="U3", requested_by="a@pmcne.ph", at=self.at)
+        board.change_status(self.conn, other, "IT_HELP.CLOSED", at=self.at, actor="t")
+        self.assertTrue(survey.pending(self.conn, other), "an ordinary close still asks")
+
+    def test_a_board_with_an_open_cancelled_is_moved_across_preview_first(self):
+        from psaspine import board, setup, tickets
+        self.conn.execute("DELETE FROM board_status WHERE board_status_id = 'IT_HELP.CANCELLED'")
+        self.conn.execute("INSERT INTO board_status (board_status_id, board_id, name, escalation_status, is_default,"
+                          " is_closed, time_entry_allowed, display_on_board, sort_order) VALUES"
+                          " ('IT_HELP.CANCELLED','IT_HELP','Cancelled','RESOLVED',0,0,1,1,85)")
+        wid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="x", impact="I3", urgency="U3",
+                                  requested_by="a@pmcne.ph", at=self.at)
+        board.change_status(self.conn, wid, "IT_HELP.CANCELLED", at=self.at, actor="t")
+        said = setup.ensure_cancelled(self.conn, "IT_HELP", at=self.at, actor="t")
+        self.assertTrue(any("move 1 ticket" in line for line in said))
+        self.assertIsNone(self.conn.execute("SELECT closed_at FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()[0],
+                          "a preview writes nothing")
+        setup.ensure_cancelled(self.conn, "IT_HELP", at=self.at, actor="t", apply=True)
+        row = self.conn.execute("SELECT t.closed_at, s.name FROM ticket t JOIN board_status s"
+                                " ON s.board_status_id = t.board_status_id WHERE t.work_item_id = ?", (wid,)).fetchone()
+        self.assertIsNotNone(row[0])
+        self.assertEqual(row[1], ">Cancelled")
+        self.assertEqual(self.conn.execute("SELECT inactive FROM board_status WHERE board_status_id = 'IT_HELP.CANCELLED'"
+                                           ).fetchone()[0], 1)
+        self.assertEqual(setup.ensure_cancelled(self.conn, "IT_HELP", at=self.at, actor="t"), [], "once is enough")
+
+
 class PortalTest(unittest.TestCase):
     """The requester portal: ownership, not board membership, is the filter.
 
@@ -6801,7 +6961,7 @@ class BoardSetupTest(unittest.TestCase):
 
     def test_the_starter_makes_a_board_ready(self):
         r = setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
-        self.assertEqual((r["statuses"], r["targets"]), (9, 12))                                  # 049 added Awaiting approval
+        self.assertEqual((r["statuses"], r["targets"]), (10, 12))                                 # 049 Awaiting approval; 6 Oct >Cancelled
         self.assertEqual(setup.readiness(self.conn, "IT_HELP"), [])
         # Every starter target is measured, never promised.
         self.assertEqual(self.conn.execute(
@@ -6969,7 +7129,7 @@ class ManyBoardsTest(unittest.TestCase):
         bid = setup.create_board(self.conn, display_name="Biomedical", fulfiller_group="Biomed",
                                  creator="dada", at=self.at, copy_from="IT_HELP")
         self.assertEqual(self.conn.execute(
-            "SELECT COUNT(*) FROM board_status WHERE board_id = ?", (bid,)).fetchone()[0], 9)      # 049 added Awaiting approval
+            "SELECT COUNT(*) FROM board_status WHERE board_id = ?", (bid,)).fetchone()[0], 10)     # 049 Awaiting approval; 6 Oct >Cancelled
         self.assertEqual(self.conn.execute(
             "SELECT target_minutes FROM sla_target WHERE board_id = ? AND priority='P1'"
             " AND clock='RESPOND'", (bid,)).fetchone()[0], 5)
@@ -14293,8 +14453,8 @@ class PmcPackTest(unittest.TestCase):
         for k, v in before.items():                                     # nothing already there changed
             self.assertEqual(tuple(self.conn.execute("SELECT name, sort_order, is_default FROM board_status"
                                                      " WHERE board_status_id = ?", (k,)).fetchone()), v)
-        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM board_status WHERE board_id = 'PROCUREMENT'"
-                                           " AND is_closed = 1").fetchone()[0], 1)
+        self.assertEqual({r[0] for r in self.conn.execute("SELECT name FROM board_status WHERE board_id = 'PROCUREMENT'"
+                                                          " AND is_closed = 1")}, {">Closed", ">Cancelled"})
         # a clinical system that is down is never queued behind a mouse
         row = self.conn.execute(
             "SELECT i.clinical_impact, i.min_priority FROM catalogue_item i JOIN service_component c ON c.component_id ="

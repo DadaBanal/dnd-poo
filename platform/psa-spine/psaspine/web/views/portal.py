@@ -335,7 +335,7 @@ def detail(ctx, work_item_id):
     shared = _visible_files(ctx, work_item_id)
     pictures = _portal_pictures(ctx, work_item_id, shared)
     stream = "".join(
-        f"<li><div class=rtx>{t.note_html(e['detail'], e['body_format'], kind=e['kind'], images=pictures, label='Your email' if who(e) == 'You' else 'Email')}</div>"
+        f"<li class='{'by-req' if who(e) == 'You' else 'by-staff'}'><div class=rtx>{t.note_html(e['detail'], e['body_format'], kind=e['kind'], images=pictures, label='Your email' if who(e) == 'You' else 'Email')}</div>"
         f"<div class='meta'>{who(e)} &middot; {t.esc(e['occurred_at'])}</div></li>"
         for e in events) or "<li class='muted'>Nothing yet.</li>"
     files_card = ""
