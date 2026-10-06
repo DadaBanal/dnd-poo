@@ -2707,3 +2707,13 @@ WS36's last 6 Oct push asked for the restart, §6's On Hold, and §4's three rea
 2. **§6 On Hold — already present, so NOT re-applied.** The preview now prints `nothing to add: IT_HELP already has a status called 'On Hold'`, which is `add-status` being idempotent exactly as §6 says it should be. No `--apply` was run.
 3. **Verification SELECT** (Part 40's work, re-measured on this head): On Hold at **sort 65, `NO_ESCALATION`, `is_closed=0`**, between Waiting on Vendor (60) and Resolved (70). `catalogue_item` = **272**, the same number as before and after Part 40's apply.
 4. **§4 Ethel, re-measured, unchanged from Part 38.** No `member_role` row of her own, so she takes the default **TECHNICIAN** (`is_default=1`, active). Roles: READ_ONLY, SERVICE_MANAGER, TECHNICIAN. TECHNICIAN's grants: FINANCE READ, KNOWLEDGE WRITE, PROJECTS WRITE, REPORTS READ, SCHEDULE WRITE — **no CALENDAR and no SALES grant exists for that role at all**. Taken with the screenshot in Part 39 (her screen showing the full staff menu on the desk's own address), there is no requester-shell symptom and no stripped role; whether TECHNICIAN *should* hold Calendar and Sales is a role-grant question for WS36 and Dada, not something to set by hand here.
+
+### Part 42: 2026-10-06, ~16:40 +08:00. **53c3eb4 live; PSA-Desk restarted for the §7 addendum. Code only.** MEASURED.
+
+Checked for a new handoff on Dada's word and found two commits WS36 had pushed after Part 41 (`b170a77` menus that hold and depth, `53c3eb4` the light theme with depth), with a **§7 addendum** appended to the 6 Oct resources handoff rather than a new file.
+
+- **Nothing to apply.** The diff over `db4cf7f..53c3eb4` touches only `README.md`, `web/templates.py`, `tests/browsercheck.py` and the handoff itself — **no `schema/` and no `sqlserver/` file**, so no schema step, no backup, no new setting. It rides the restart, as the addendum says.
+- **Restarted onto 53c3eb4:** `:8085` **401 → down → 401 in 2s**, PSA-Desk Running.
+- What it carries, per the addendum: menus no longer read through to the page or get cut off by the menu bar, and the look gains depth (raised cards, frosted menus and windows, tinted tiles). WS36's evidence on that head: unit suite 766 OK, browser checks **73 of 73** (two new — an open menu is drawn whole, and the page does not read through it), smoke 7 of 7.
+
+Nothing from Parts 38–41 is reopened: On Hold stays as applied in Part 40, `>Cancelled` as applied in Part 39, and `setup-pmc` stays unapplied.
