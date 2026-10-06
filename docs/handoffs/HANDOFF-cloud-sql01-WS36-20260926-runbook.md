@@ -2744,3 +2744,19 @@ Pulled to `1db28af` and read §8.5. Code only — the diff over `a16ecf2..1db28a
 One detail for WS36, since it differs slightly from §8.5's wording: the expected output was the retired-area skip "plus any moved Subtypes", but **only the one skip appears**. The retired Area is caught at the top and short-circuits its whole subtree, so the eight moved Subtypes are never evaluated one by one. That is a cleaner result than described, not a worse one — but it means the count of skip lines is 1, not 9, on this desk.
 
 **`setup-pmc` is still not a step and was not applied.** It stays unrun on PMC_PSA until a handoff says otherwise; the guard being proven does not by itself make it something to run.
+
+### Part 45: 2026-10-06, ~18:20 +08:00. **1c54fa6 live; PSA-Desk restarted for the time-entry fix. The host side corroborates WS36's two causes, and one timer is still running.** MEASURED.
+
+Pulled to `1c54fa6` and read §8.6. Code only — the diff over `b279e4e..1c54fa6` touches `board.py`, `templates.py`, `views/ticket.py`, the tests, README and the handoff, with **no `schema/` or `sqlserver/` file** — so nothing to apply, and no `time_entry` row changes. Restarted: `:8085` **401 → down → 401 in 2s**.
+
+**What the database says about PMC-000331, the ticket Dada reported as "not saving anywhere":**
+
+- `time_entry` holds **1 row in the whole table**, and it is on **PMC-000331**.
+- `time_timer` 20 on PMC-000331 (susan.dolfo) ran **16:27:47 → 16:29:45** and carries `time_entry_id = 1` — so exactly one save did land, from the 16:27 start §8.6 names.
+- **No timer anywhere is stopped-but-unsaved** (`stopped_at IS NOT NULL AND time_entry_id IS NULL` = 0).
+
+That is consistent with both causes in §8.6 and tells us something useful about the damage: the failed attempts were refused **in the browser**, before the submit, so they never reached the database. Nothing was half-written and no time was recorded wrongly — the work was simply lost at the screen. There is nothing on the host to repair, and nothing to back out.
+
+**One thing that needs a person, not a fix:** `time_timer` 16 on **PMC-000340** (liezell.caluducan) started **15:53:34** and has **never been stopped** — it is the one running timer on the desk. With this head, Cancel discards a clock and Save books it, so whoever owns it should now do one or the other; left alone it keeps counting. **Not touched here** — a running clock is someone's record of their own work, not mine to stop or discard.
+
+Still outstanding on my side: the search re-measure when `ticket_event` passes 5,000 rows (2,638 at Part 43).
