@@ -233,7 +233,30 @@ iframe.mail{display:block;width:100%;border:0;margin:0;background:transparent;co
 .editor{min-height:120px;max-height:420px;overflow:auto;border:1px solid var(--line-2);border-radius:var(--r);
   padding:10px 12px;background:var(--surface);color:var(--ink);font-size:14.5px;line-height:1.55;outline:none}
 .editor:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-bg,#e9eefc)}
-.editor.empty::before{content:attr(data-ph);color:var(--ink-3);pointer-events:none;display:block}
+/* "is-empty", not "empty": .empty is the desk's empty-state box, whose inbox
+   picture and padding were drawn inside a blank note box (Dada's screenshot,
+   6 Oct 2026). */
+.editor.is-empty::before{content:attr(data-ph);color:var(--ink-3);pointer-events:none;display:block}
+.editor img,.rtx img{max-width:100%;height:auto;border-radius:6px;vertical-align:middle}
+.editor h3,.rtx h3{font-size:1.15em;margin:6px 0} .editor h4,.rtx h4{font-size:1.02em;margin:6px 0}
+.editor pre,.rtx pre{font-family:var(--mono);font-size:.9em;background:var(--surface-3);border-radius:6px;padding:8px 10px;white-space:pre-wrap}
+.rtx .tc-red{color:#c62828}.rtx .tc-orange{color:#c25e00}.rtx .tc-green{color:#1a7f37}.rtx .tc-blue{color:#2f52c4}.rtx .tc-purple{color:#7b3fbf}.rtx .tc-grey{color:#6b7280}
+:root[data-theme=dark] .rtx .tc-red{color:#ff8a80}:root[data-theme=dark] .rtx .tc-orange{color:#ffb15c}:root[data-theme=dark] .rtx .tc-green{color:#6fdc8c}
+:root[data-theme=dark] .rtx .tc-blue{color:#8fb0ff}:root[data-theme=dark] .rtx .tc-purple{color:#c9a2ff}:root[data-theme=dark] .rtx .tc-grey{color:#a3acba}
+.rtx .fs-s{font-size:.85em}.rtx .fs-l{font-size:1.25em}.rtx .fs-xl{font-size:1.5em}
+.rtx mark{color:inherit;border-radius:3px;padding:0 2px}.rtx .hl-yellow{background:#fff3a3}.rtx .hl-green{background:#c9f2d4}.rtx .hl-blue{background:#cfe3ff}.rtx .hl-pink{background:#ffd6e8}
+:root[data-theme=dark] .rtx mark{color:#14171d}
+.edbar .pop{position:relative} .edbar .pop>summary{list-style:none} .edbar .pop>summary::-webkit-details-marker{display:none}
+.edbar .pop>.menu{position:absolute;z-index:30;top:32px;left:0;background:var(--surface);border:1px solid var(--line-2);border-radius:10px;
+  box-shadow:0 12px 32px rgba(0,0,0,.18);padding:6px;display:grid;gap:4px;min-width:150px}
+.edbar .pop>.menu.sw{grid-template-columns:repeat(6,26px);min-width:0} .edbar .pop>.menu.emo{grid-template-columns:repeat(8,30px);min-width:0}
+.edbar .pop>.menu button{border:0;background:none;color:var(--ink);text-align:left;padding:5px 8px;border-radius:6px;cursor:pointer;font:inherit;font-size:13px}
+.edbar .pop>.menu button:hover{background:var(--surface-3)} .edbar .pop>.menu.emo button{font-size:18px;padding:2px;text-align:center}
+.edbar .swatch{width:22px;height:22px;border-radius:50%;border:2px solid var(--surface);box-shadow:0 0 0 1px var(--line-2);padding:0!important}
+.edbar .iconbtn .aa{font-weight:800;border-bottom:3px solid #c62828;line-height:1;padding:0 2px}
+.edbar .iconbtn .hl{background:#fff3a3;color:#14171d;border-radius:3px;padding:0 3px;font-weight:700}
+.edhint{font-size:11.5px;color:var(--ink-3);padding:4px 10px;border-top:1px solid var(--line);background:var(--surface-2)}
+.composer.drop{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-bg)}
 .editor p{margin:0 0 10px} .editor p:last-child{margin-bottom:0}
 .editor ul,.editor ol{margin:0 0 10px;padding-left:22px} .editor li{margin:0 0 3px}
 .editor blockquote{margin:0 0 10px;padding:2px 0 2px 10px;border-left:3px solid var(--line-2);color:var(--ink-2)}
@@ -471,7 +494,21 @@ ul.plain{list-style:none;padding:0;margin:0} ul.plain li{padding:7px 0;border-bo
 .rail{display:grid;grid-template-columns:minmax(0,2fr) minmax(300px,1fr);gap:16px;align-items:start}
 .hdr{display:flex;align-items:start;gap:12px;flex-wrap:wrap} .hdr .grow{flex:1;min-width:0}
 label .req{color:var(--bad,#c0392b);margin-left:2px;font-weight:700}
-details.multipick{border:1px solid var(--line);border-radius:var(--r-sm,6px);background:var(--surface);margin-bottom:8px} details.multipick>summary{cursor:pointer;padding:6px 10px;list-style:none;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis} details.multipick>summary::after{content:'\25BE';float:right;color:var(--ink-3)} details.multipick .opts{max-height:220px;overflow:auto;padding:4px 10px 8px;border-top:1px solid var(--line)} details.multipick label.pick{display:flex;gap:6px;align-items:center;font-weight:400;color:var(--ink);margin:4px 0} details.multipick label.pick input{width:auto}
+details.multipick{border:1px solid var(--line);border-radius:var(--r-sm,6px);background:var(--surface);margin-bottom:8px} details.multipick>summary{cursor:pointer;padding:6px 10px;list-style:none;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis} details.multipick>summary::after{content:'▾';float:right;color:var(--ink-3)} details.multipick .opts{max-height:220px;overflow:auto;padding:4px 10px 8px;border-top:1px solid var(--line)} details.multipick label.pick{display:flex;gap:6px;align-items:center;font-weight:400;color:var(--ink);margin:4px 0} details.multipick label.pick input{width:auto}
+dialog.tedlg{width:min(980px,96vw);max-height:92vh;overflow:auto;padding:0;border:1px solid var(--line-2);border-radius:16px}
+dialog.tedlg::backdrop{background:rgba(10,14,24,.45);backdrop-filter:blur(3px)}
+dialog.tedlg .teform{padding:16px 18px} .tehead{display:flex;gap:14px;align-items:center;margin:-16px -18px 14px;padding:14px 18px;
+  border-bottom:1px solid var(--line);background:linear-gradient(90deg,var(--accent-bg),transparent)}
+.tehead>div:first-child{flex:1} .teclock{display:inline-flex;flex-direction:column;align-items:flex-end}
+.teclock .tick{font-family:var(--mono);font-size:22px;letter-spacing:.04em;color:var(--accent)}
+.temember{display:flex;gap:10px;align-items:baseline;margin-bottom:6px} .temember label{margin:0} .temember .ro{color:var(--ink);font-weight:600;background:none;border:0;padding:0}
+.teflags{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:10px 0 0} .teflags label.tick{display:inline-flex;gap:5px;align-items:center;margin:0;font-weight:500;color:var(--ink)}
+.teflags label.tick input{width:auto} .teflags .tesep{width:1px;height:20px;background:var(--line)} .teflags .grow{flex:1}
+.tefoot{display:flex;gap:8px;align-items:center;margin:14px -18px -16px;padding:12px 18px;border-top:1px solid var(--line);background:var(--surface-2)} .tefoot .grow{flex:1}
+.btn.clockbtn{display:inline-flex;gap:6px;align-items:center} .btn.clockbtn.on{background:var(--accent);color:var(--on-accent)}
+.btn.clockbtn .tick{font-family:var(--mono);letter-spacing:.03em}
+@media (prefers-reduced-motion:no-preference){.btn.clockbtn.on{animation:clockglow 2.4s ease-in-out infinite}}
+@keyframes clockglow{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 45%,transparent)}50%{box-shadow:0 0 0 6px color-mix(in srgb,var(--accent) 0%,transparent)}}
 a.backbtn{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--ink2);text-decoration:none;margin:0 0 6px;padding:3px 10px 3px 6px;border:1px solid var(--line);border-radius:999px} a.backbtn:hover{color:var(--ink);border-color:var(--ink2)} a.backbtn .ic{width:15px;height:15px}
 dialog.viewer{width:min(96vw,1200px);max-width:none;height:min(92vh,900px);max-height:none;padding:0;border:0;border-radius:var(--r);background:var(--card);color:var(--fg);overflow:hidden}
 dialog.viewer:not([open]){display:none} dialog.viewer::backdrop{background:rgb(10 12 18/.55)}
@@ -529,6 +566,52 @@ em{font-style:italic}
 .pal-box li{display:flex;justify-content:space-between;gap:12px;padding:8px 10px;border-radius:var(--r);cursor:pointer;color:var(--ink)}
 .pal-box li small{color:var(--ink-3)} .pal-box li.on,.pal-box li:hover{background:var(--accent-bg)}
 .pal-box .hint{padding:6px 12px 10px;color:var(--ink-3);font-size:11px;border-top:1px solid var(--line);display:flex;gap:12px;flex-wrap:wrap}
+
+/* ---- the 6 Oct 2026 look (Dada: "add futuristic design on the whole
+   ticketing board and transitions") ----------------------------------------
+   Light from behind, edges that catch it, things that rise into place. Only
+   colour, opacity and transform move, nothing is blurred, and every effect is
+   off for a reader who asks for less motion: ward PCs are old, and a clinical
+   desk is read before it is admired. */
+:root{--glow:color-mix(in srgb,var(--accent) 38%,transparent);--aur1:color-mix(in srgb,var(--accent) 13%,transparent);
+  --aur2:color-mix(in srgb,#14b8a6 10%,transparent);--aur3:color-mix(in srgb,#8b5cf6 9%,transparent);
+  --edge:linear-gradient(135deg,color-mix(in srgb,var(--accent) 34%,var(--line)),var(--line) 38%,var(--line) 70%,color-mix(in srgb,#14b8a6 26%,var(--line)))}
+body{background:
+  radial-gradient(1100px 520px at 0% -8%,var(--aur1),transparent 62%),
+  radial-gradient(900px 480px at 100% -4%,var(--aur2),transparent 60%),
+  radial-gradient(800px 600px at 50% 110%,var(--aur3),transparent 65%),var(--canvas);background-repeat:no-repeat}
+header.top{border-bottom:0!important;box-shadow:0 1px 0 var(--line)}
+header.top::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;pointer-events:none;
+  background:linear-gradient(90deg,transparent,var(--accent) 22%,#14b8a6 52%,#8b5cf6 78%,transparent);opacity:.75}
+.card{border:1px solid transparent;background:linear-gradient(var(--surface),var(--surface)) padding-box,var(--edge) border-box;
+  transition:box-shadow var(--slow) var(--ease),transform var(--slow) var(--ease)}
+.card:hover{box-shadow:0 18px 42px -26px var(--glow)}
+main button[type=submit]:not(.ghost):not(.iconbtn):not(.tab):not(.small):not(.danger),main .btn:not(.ghost):not(.top){
+  background-image:linear-gradient(135deg,var(--accent),color-mix(in srgb,var(--accent) 70%,#8b5cf6));border-color:transparent;
+  transition:box-shadow var(--fast) var(--ease),transform var(--fast) var(--ease),filter var(--fast) var(--ease)}
+main button[type=submit]:not(.ghost):not(.iconbtn):not(.tab):not(.small):not(.danger):hover,main .btn:not(.ghost):not(.top):hover{box-shadow:0 6px 20px -6px var(--glow);filter:brightness(1.06)}
+main button[type=submit]:not(.ghost):not(.iconbtn):not(.tab):not(.small):not(.danger):active,main .btn:not(.ghost):not(.top):active{transform:scale(.98)}
+:focus-visible{box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 18%,transparent)}
+table.grid tbody tr:hover{background:linear-gradient(90deg,color-mix(in srgb,var(--accent) 10%,transparent),transparent 70%);box-shadow:inset 3px 0 0 var(--accent)}
+.bar i{background-image:linear-gradient(90deg,color-mix(in srgb,currentColor 0%,transparent),rgb(255 255 255/.28))}
+.slabox{background:linear-gradient(160deg,color-mix(in srgb,var(--accent) 6%,var(--surface)),var(--surface) 60%)}
+h1{letter-spacing:-.01em}
+.note{transition:transform var(--fast) var(--ease),box-shadow var(--fast) var(--ease)}
+.note:hover{box-shadow:0 10px 26px -20px var(--glow)}
+dialog.tedlg::backdrop{backdrop-filter:none;background:rgba(10,14,24,.55)}
+@media (prefers-reduced-motion:no-preference){
+  .pods>.card,main>.card,.rail .card,.slastrip .slabox{animation:rise .24s var(--ease) both}
+  .pods>.card:nth-child(2),.slastrip .slabox:nth-child(2){animation-delay:.03s}
+  .pods>.card:nth-child(3),.slastrip .slabox:nth-child(3){animation-delay:.06s}
+  .pods>.card:nth-child(4){animation-delay:.09s} .pods>.card:nth-child(5){animation-delay:.12s}
+  .pods>.card:nth-child(n+6){animation-delay:.14s}
+  table.grid tbody tr{animation:fadein .2s var(--ease) both}
+  .note{animation:rise .2s var(--ease) both}
+  dialog[open]{animation:pop .18s var(--ease) both}
+}
+@keyframes rise{from{opacity:0;transform:translateY(6px)}}
+@keyframes fadein{from{opacity:0}}
+@keyframes pop{from{opacity:0;transform:translateY(8px) scale(.985)}}
 
 /* ---- motion: page transitions, and none of it for those who ask ------- */
 @media (prefers-reduced-motion:no-preference){
@@ -903,11 +986,17 @@ f.addEventListener("submit",function(){if(bar)bar.classList.remove("up")})})();
 /* The stopwatch counts in front of the person it belongs to (065). The server
    sends the seconds it had when the page was drawn; this only paints the one
    that is running, so a reload and a tick never disagree about the total. */
-(function(){var el=$(".swatch .tick[data-run]");if(!el)return;
-var n=+el.dataset.tick||0;
-function paint(){var h=Math.floor(n/3600),m=Math.floor(n%3600/60),s=n%60;
-  el.textContent=h+":"+String(m).padStart(2,"0")+":"+String(s).padStart(2,"0")}
+(function(){var els=$$("b.tick[data-run]");if(!els.length)return;
+var n=+els[0].dataset.tick||0;
+function paint(){var h=Math.floor(n/3600),m=Math.floor(n%3600/60),s=n%60,txt=h+":"+String(m).padStart(2,"0")+":"+String(s).padStart(2,"0");
+  els.forEach(function(el){el.textContent=txt})}
 setInterval(function(){n++;paint()},1000);paint()})();
+/* The time entry window: Close keeps the clock running; a window asked for
+   by Start opens by itself; End empty means "now" on Save. */
+$$("[data-close]").forEach(function(b){var dl=d.getElementById(b.dataset.close);if(dl)b.addEventListener("click",function(){dl.close()})});
+(function(){var dl=d.getElementById("tedlg");if(!dl||!dl.showModal)return;
+  if(dl.hasAttribute("data-autoopen")){dl.showModal();var ed=dl.querySelector(".editor");if(ed)setTimeout(function(){ed.focus()},60);
+    try{var u=new URL(location.href);u.searchParams.delete("te");u.searchParams.delete("msg");history.replaceState(null,"",u.pathname+u.search)}catch(e){}}})();
 /* A visit's To follows its From. Moving the start of a visit and leaving the
    end behind it is how a form ends up refusing to submit with nothing said;
    the end keeps whatever length the person had set, and an end they have
@@ -968,21 +1057,69 @@ function rebuild(node,into){
       el.href=h;el.target="_blank";el.rel="noopener noreferrer"}
     rebuild(n,el);into.appendChild(el)}
   return into}
+/* What the browser's own commands write -- <font color>, <font size>, a span
+   with a background -- becomes the desk's fixed classes before it is sent, so
+   the server never sees a colour it did not offer (richtext NOTE_SPAN/MARK). */
+var TC={"#c62828":"tc-red","#c25e00":"tc-orange","#1a7f37":"tc-green","#2f52c4":"tc-blue","#7b3fbf":"tc-purple","#6b7280":"tc-grey"};
+var HL={"#fff3a3":"hl-yellow","#c9f2d4":"hl-green","#cfe3ff":"hl-blue","#ffd6e8":"hl-pink"};
+var FS={"1":"fs-s","2":"fs-s","4":"fs-l","5":"fs-l","6":"fs-xl","7":"fs-xl"};
+function hexOf(c){c=(c||"").trim().toLowerCase();if(c.charAt(0)==="#")return c.length===4?"#"+c[1]+c[1]+c[2]+c[2]+c[3]+c[3]:c;
+  var m=c.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);if(!m)return "";
+  return "#"+[m[1],m[2],m[3]].map(function(x){return("0"+(+x).toString(16)).slice(-2)}).join("")}
+function unwrap(el){var p=el.parentNode;while(el.firstChild)p.insertBefore(el.firstChild,el);p.removeChild(el)}
+function wrapIn(el,tag,cls){var w=d.createElement(tag);w.className=cls;el.parentNode.insertBefore(w,el);while(el.firstChild)w.appendChild(el.firstChild);el.parentNode.removeChild(el)}
+function tidy(ed){var c=ed.cloneNode(true);
+  $$("img",c).forEach(function(i){if(i.dataset.pic){i.setAttribute("src","cid:"+i.dataset.pic);i.removeAttribute("data-pic")}else i.parentNode.removeChild(i)});
+  $$("font,span",c).reverse().forEach(function(el){
+    var col=hexOf(el.getAttribute("color")||el.style.color),bg=hexOf(el.style.backgroundColor),sz=el.getAttribute("size");
+    if(el.tagName==="SPAN"&&/^(tc|fs)-/.test(el.className))return;
+    var cls=TC[col]||"",hl=HL[bg]||"",fs=FS[sz]||"";
+    if(hl){var m=d.createElement("mark");m.className=hl;el.parentNode.insertBefore(m,el);m.appendChild(el)}
+    if(cls||fs)wrapIn(el,"span",[cls,fs].filter(Boolean).join(" "));else unwrap(el)});
+  $$("mark",c).forEach(function(m){if(!/^hl-/.test(m.className))unwrap(m)});
+  return c.innerHTML}
 function sync(ed){var f=ed.closest("form"),ta=f&&f.querySelector("textarea[name=body]");if(!ta)return;
   var plain=f.classList.contains("plain");
-  ta.value=plain?ta.value:ed.innerHTML;
+  ta.value=plain?ta.value:tidy(ed);
   var fmt=f.querySelector("[name=body_format]");if(fmt)fmt.value=plain?"":"HTML";
-  ed.classList.toggle("empty",!ed.textContent.trim()&&!ed.querySelector("img,br+br"))}
+  ed.classList.toggle("is-empty",!ed.textContent.trim()&&!ed.querySelector("img,br+br"))}
+/* Pictures and GIFs: pasted, dropped or picked, each added to the form's own
+   file field and drawn in the note where it went; the note names it by a
+   token the server turns into the stored file's Content-ID. */
+var MAXPICS=9*1024*1024;
+function addPics(ed,files){var f=ed.closest("form");if(!f)return;var inp=f.querySelector("input.edpics"),tok=f.querySelector("[name=pic_tokens]");
+  if(!inp||!tok||!window.DataTransfer)return;
+  var dt=new DataTransfer(),total=0,list=tok.value?tok.value.split(","):[];
+  Array.prototype.forEach.call(inp.files,function(x){dt.items.add(x);total+=x.size});
+  Array.prototype.forEach.call(files,function(file){
+    if(!/^image\//.test(file.type))return;
+    if(total+file.size>MAXPICS){alert("That picture is too big to add: one note carries up to 9 MB of pictures.");return}
+    total+=file.size;dt.items.add(file);
+    var t="p"+(list.length+1)+"-"+Math.random().toString(36).slice(2,8);list.push(t);
+    var img=d.createElement("img");img.src=URL.createObjectURL(file);img.dataset.pic=t;img.alt=file.name||"picture";
+    var sel=window.getSelection();
+    if(sel&&sel.rangeCount&&ed.contains(sel.anchorNode)){var r=sel.getRangeAt(0);r.collapse(false);r.insertNode(img);r.setStartAfter(img);sel.removeAllRanges();sel.addRange(r)}
+    else ed.appendChild(img)});
+  inp.files=dt.files;tok.value=list.join(",");sync(ed)}
 function editorOf(el){var f=el.closest("form");return f?f.querySelector(".editor"):null}
 $$(".editor").forEach(function(ed){
   var f=ed.closest("form"),ta=f&&f.querySelector("textarea[name=body]");
   if(!ta)return;
-  ta.style.display="none";ta.removeAttribute("required");ed.classList.add("empty");
+  ta.style.display="none";ta.removeAttribute("required");ed.classList.add("is-empty");
+  var box=ed.closest(".composer");
+  ed.addEventListener("dragover",function(e){if(e.dataTransfer&&Array.prototype.some.call(e.dataTransfer.types||[],function(x){return x==="Files"})){e.preventDefault();box&&box.classList.add("drop")}});
+  ed.addEventListener("dragleave",function(){box&&box.classList.remove("drop")});
+  ed.addEventListener("drop",function(e){box&&box.classList.remove("drop");var fl=e.dataTransfer&&e.dataTransfer.files;
+    if(fl&&fl.length){e.preventDefault();addPics(ed,fl)}});
+  var pick=f.querySelector("input.edpick");
+  if(pick)pick.addEventListener("change",function(){if(pick.files.length){ed.focus();addPics(ed,pick.files)}pick.value=""});
   ed.addEventListener("input",function(){sync(ed)});
   ed.addEventListener("blur",function(){sync(ed)});
   /* Outlook and Word paste a document; only the writer's words and marks are taken. */
   ed.addEventListener("paste",function(e){
     var dt=e.clipboardData;if(!dt)return;e.preventDefault();
+    var pasted=Array.prototype.filter.call(dt.files||[],function(x){return /^image\//.test(x.type)});
+    if(pasted.length&&!dt.getData("text/plain")){addPics(ed,pasted);return}
     var html=dt.getData("text/html"),frag;
     if(html){var box=d.createElement("div");box.innerHTML="";
       var parsed=new DOMParser().parseFromString(html,"text/html");
@@ -999,12 +1136,21 @@ $$(".editor").forEach(function(ed){
 /* A toolbar button keeps the focus on the words it acts on. Without this the
    selection is gone before the command runs, and Bold did nothing (MEASURED
    in a browser, 2 Oct 2026). */
-d.addEventListener("mousedown",function(e){if(e.target.closest&&e.target.closest(".edbar [data-do]"))e.preventDefault()});
+d.addEventListener("mousedown",function(e){if(e.target.closest&&e.target.closest(".edbar [data-do],.edbar summary"))e.preventDefault()});
 d.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest(".edbar [data-do]");if(!b)return;
   e.preventDefault();var ed=editorOf(b);if(!ed)return;
-  var what=b.dataset.do;
+  var what=b.dataset.do,arg=b.dataset.arg||"",pop=b.closest("details.pop");if(pop)pop.open=false;
+  if(what==="image"){var pk=b.closest("form").querySelector("input.edpick");if(pk)pk.click();return}
+  if(d.activeElement!==ed&&!ed.contains(window.getSelection().anchorNode))ed.focus();
   try{
-    if(what==="quote")d.execCommand("formatBlock",false,"blockquote");
+    if(what==="block")d.execCommand("formatBlock",false,arg);
+    else if(what==="size")d.execCommand("fontSize",false,arg);
+    else if(what==="color"){d.execCommand("styleWithCSS",false,false);
+      if(arg==="auto")d.execCommand("removeFormat",false,null);else d.execCommand("foreColor",false,arg)}
+    else if(what==="hilite"){d.execCommand("styleWithCSS",false,true);
+      d.execCommand("hiliteColor",false,arg==="none"?"transparent":arg);d.execCommand("styleWithCSS",false,false)}
+    else if(what==="emoji")d.execCommand("insertText",false,arg);
+    else if(what==="quote")d.execCommand("formatBlock",false,"blockquote");
     else if(what==="code"){var sel=String(window.getSelection()||"");
       if(sel){var c=d.createElement("code");c.textContent=sel;
         var r=window.getSelection().getRangeAt(0);r.deleteContents();r.insertNode(c)}}
@@ -1013,6 +1159,7 @@ d.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest(
     else d.execCommand(what,false,null);
   }catch(err){}
   sync(ed)});
+d.addEventListener("click",function(e){$$(".edbar details.pop[open]").forEach(function(p){if(!p.contains(e.target))p.open=false})});
 /* Rich or Plain: the same note, written either way. */
 d.addEventListener("click",function(e){var t=e.target.closest&&e.target.closest(".edbar [data-plain]");if(!t)return;
   e.preventDefault();var f=t.closest("form"),ed=f.querySelector(".editor"),ta=f.querySelector("textarea[name=body]");
@@ -1307,6 +1454,7 @@ ICONS = {
     "up": "M12 19V5M5 12l7-7 7 7",
     "down": "M12 5v14M5 12l7 7 7-7",
     "left": "M19 12H5M12 5l-7 7 7 7",
+    "image": "M4 5h16v14H4zM4 15l4-4 4 4 3-3 5 5M15.5 9.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0",
     "right": "M5 12h14M12 5l7 7-7 7",
     "edit": "M4 20h4l11-11-4-4L4 16zM13 7l4 4",
     "sparkle": "M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6",
@@ -1480,6 +1628,79 @@ def is_email_note(body_format, kind=None) -> bool:
     return f == "EMAIL" or (f == "HTML" and kind in INTAKE_KINDS)
 
 
+EMOJI = ("👍", "👌", "🙏", "😊", "😀", "😅", "😮", "😢", "❤️", "🎉", "✅", "❌", "⚠️", "⏳", "📞", "📧",
+         "🖨️", "💻", "🖥️", "🔧", "🔌", "📶", "🔒", "📎")
+COLOURS = (("tc-red", "#c62828", "Red"), ("tc-orange", "#c25e00", "Orange"), ("tc-green", "#1a7f37", "Green"),
+           ("tc-blue", "#2f52c4", "Blue"), ("tc-purple", "#7b3fbf", "Purple"), ("tc-grey", "#6b7280", "Grey"))
+HIGHLIGHTS = (("hl-yellow", "#fff3a3", "Yellow"), ("hl-green", "#c9f2d4", "Green"),
+              ("hl-blue", "#cfe3ff", "Blue"), ("hl-pink", "#ffd6e8", "Pink"))
+
+
+def note_editor(*, placeholder: str, required: bool = True, rows_hint: str = "") -> str:
+    """The note box the desk writes in, as a Teams reply box is laid out
+    (Dada, 6 Oct 2026: "add extra options for fonts add image attachment gif
+    just like when u reply to teams"): a style and a size, bold, italic,
+    underline and strikethrough, a text colour and a highlight from a fixed
+    palette, lists, a quote, code, a link, an emoji, and a picture or a GIF
+    pasted, dropped or attached. One component, on the note composer and in
+    the time entry window, so the two never drift apart.
+
+    What goes up is still `body` (HTML) and `body_format`; pictures go up as
+    `pics` files with `pic_tokens` naming each, and the note refers to them by
+    Content-ID, exactly as an email's inline picture does. Nothing here
+    fetches from outside the desk: the emoji are characters, and a GIF is a
+    file the technician has."""
+    b = lambda do, label, inner, arg="": (  # noqa: E731
+        f"<button type=button class=iconbtn data-do={do}" + (f" data-arg='{arg}'" if arg else "")
+        + f" title='{esc(label)}' aria-label='{esc(label)}'>{inner}</button>")
+    styles = "".join(f"<button type=button data-do=block data-arg={a}>{lab}</button>" for a, lab in (
+        ("p", "Paragraph"), ("h3", "<b style='font-size:1.1em'>Heading</b>"), ("h4", "<b>Subheading</b>"),
+        ("pre", "<span style='font-family:var(--mono)'>Monospaced</span>")))
+    sizes = "".join(f"<button type=button data-do=size data-arg={a}>{lab}</button>" for a, lab in (
+        ("2", "<span style='font-size:12px'>Small</span>"), ("3", "Normal"),
+        ("5", "<span style='font-size:18px'>Large</span>"), ("6", "<span style='font-size:22px'>Huge</span>")))
+    colours = "".join(f"<button type=button class=swatch data-do=color data-arg='{hexv}' title='{n}' aria-label='{n}'"
+                      f" style='background:{hexv}'></button>" for _, hexv, n in COLOURS)
+    colours += "<button type=button data-do=color data-arg=auto title='Automatic' style='grid-column:1/-1;text-align:center'>Automatic</button>"
+    lights = "".join(f"<button type=button class=swatch data-do=hilite data-arg='{hexv}' title='{n}' aria-label='{n} highlight'"
+                     f" style='background:{hexv}'></button>" for _, hexv, n in HIGHLIGHTS)
+    lights += "<button type=button data-do=hilite data-arg=none title='No highlight' style='grid-column:span 2;text-align:center'>None</button>"
+    emoji = "".join(f"<button type=button data-do=emoji data-arg='{e}' aria-label='{e}'>{e}</button>" for e in EMOJI)
+    pop = lambda label, face, menu, cls="": (  # noqa: E731
+        f"<details class=pop><summary class=iconbtn title='{esc(label)}' aria-label='{esc(label)}'>{face}</summary>"
+        f"<div class='menu {cls}'>{menu}</div></details>")
+    return (
+        "<input type=hidden name=body_format value=HTML>"
+        "<input type=file name=pics multiple accept='image/*' hidden class=edpics>"
+        "<input type=hidden name=pic_tokens value=''>"
+        "<input type=file accept='image/*' multiple hidden class=edpick>"
+        "<div class=composer>"
+        "<div class=edbar role=toolbar aria-label='Formatting'>"
+        "<span class=g>" + pop("Paragraph style", "<b style='font-size:12px'>¶</b>", styles)
+        + pop("Text size", "<b style='font-size:12px'>A<span style='font-size:9px'>A</span></b>", sizes) + "</span>"
+        "<span class=sep></span><span class=g>"
+        + b("bold", "Bold (Ctrl+B)", "<b>B</b>") + b("italic", "Italic (Ctrl+I)", "<i>I</i>")
+        + b("underline", "Underline (Ctrl+U)", "<u>U</u>") + b("strikeThrough", "Strikethrough", "<s>S</s>")
+        + pop("Font colour", "<span class=aa>A</span>", colours, "sw")
+        + pop("Highlight", "<span class=hl>ab</span>", lights, "sw") + "</span>"
+        "<span class=sep></span><span class=g>"
+        + b("insertUnorderedList", "Bulleted list", "&bull;&#8211;") + b("insertOrderedList", "Numbered list", "<b>1.</b>")
+        + b("quote", "Quote", "&ldquo;") + b("code", "Code", "<b style='font-family:var(--mono)'>&lt;&gt;</b>") + "</span>"
+        "<span class=sep></span><span class=g>"
+        + b("link", "Link", icon("link"))
+        + pop("Emoji", "<span style='font-size:15px'>☺</span>", emoji, "emo")
+        + b("image", "Picture or GIF: attach one, or paste or drop it in", icon("image"))
+        + b("removeFormat", "Clear formatting", icon("x")) + "</span>"
+        "<span class=grow></span>"
+        "<button type=button class='tab on' data-plain=0 title='Write with formatting'>Rich</button>"
+        "<button type=button class=tab data-plain=1 title='Write as plain text'>Plain</button></div>"
+        f"<div class=editor contenteditable=true role=textbox aria-multiline=true aria-label='The note' data-ph='{esc(placeholder)}'></div>"
+        f"<textarea name=body{' required' if required else ''} placeholder='{esc(placeholder)}'></textarea>"
+        "<div class=edhint>Paste or drop a screenshot or a GIF straight in. Pictures are kept with the ticket's files and "
+        "checked for patient details before a requester sees them." + (f" {esc(rows_hint)}" if rows_hint else "") + "</div>"
+        "</div>")
+
+
 def note_html(detail, body_format=None, *, email: bool = False, kind=None, images=None,
               label: str = "") -> str:
     """A note as it should be read, whichever way it was written (064).
@@ -1503,7 +1724,10 @@ def note_html(detail, body_format=None, *, email: bool = False, kind=None, image
     if richtext.is_rich(body_format):
         # READ_MAX, not MAX: re-reading a stored note under a typed note's
         # bound would cut a long one off mid-sentence.
-        return richtext.clean(detail, limit=richtext.READ_MAX)
+        # A picture pasted into the note is named by Content-ID, as an email's
+        # is, and drawn only as this reader may see it (6 Oct 2026).
+        html = richtext.clean(detail, limit=richtext.READ_MAX)
+        return richtext.resolve_images(html, images) if "cid:" in html else html
     return rich(detail)
 
 

@@ -2559,7 +2559,8 @@ class WebWSGITest(unittest.TestCase):
         for field in ("name=worked_on", "name=start", "name=end", "name=hours", "name=deduct",
                       "name=work_role", "name=work_type", "name=bill", "name=charge"):
             self.assertIn(field, page, field)
-        self.assertIn("Add time", page)
+        self.assertIn("Enter time by hand", page)                   # 6 Oct 2026: the time entry window
+        self.assertIn("<dialog id=tedlg", page)
         self.assertNotIn("No time</option>", page)                # the band picker is gone
         status, headers, _ = self._call("POST", "/ticket/ITO-1/time", cookie=alice, form={
             "worked_on": "2026-09-17", "start": "09:00", "end": "11:40", "deduct": "0.25",
@@ -4165,7 +4166,11 @@ class EmailOnTheTicketTest(unittest.TestCase):
         """The email profile is for an email drawn in its sandbox. A note typed
         or pasted at the desk is drawn in the page, and keeps yesterday's rules."""
         paste = '<table><tr><td style="font-weight:bold">a</td><td>b</td></tr></table><img src="cid:x@y">'
-        self.assertEqual(richtext.clean(paste), "a b", "unwrapped, cells apart, the picture dropped")
+        # Unwrapped, cells apart. Since 6 Oct 2026 a note may carry a picture by
+        # Content-ID (one pasted into it, kept with the ticket's files); a
+        # remote one never.
+        self.assertEqual(richtext.clean(paste), 'a b <br><img src="cid:x@y" alt="">')
+        self.assertEqual(richtext.clean('a<img src="https://x.example.net/p.gif">'), "a")
         self.assertIn("<table>", richtext.clean(paste, profile="email"))
 
     # ---------------------------------------------- the sandbox it is drawn in
@@ -4420,6 +4425,96 @@ class SixOctAsksTest(unittest.TestCase):
         _, _, page = self._call("GET", "/ticket/ITO-1", cookie=self._cookie_for("alice"))
         self.assertIn("class=backbtn data-back href='/'", page)
         self.assertIn('sessionStorage.getItem(K)', page)
+
+
+class NoteEditorAndTimeWindowTest(unittest.TestCase):
+    """Dada, 6 Oct 2026: a Teams-style note box (fonts, colours, pictures,
+    GIFs), and the ConnectWise time entry window opened by the clock."""
+
+    setUp = WebWSGITest.setUp
+    tearDown = WebWSGITest.tearDown
+    _call = WebWSGITest._call
+    _environ = WebWSGITest._environ
+    _cookie_for = WebWSGITest._cookie_for
+
+    GIF = (b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00"
+           b",\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;")
+
+    def _multipart(self, path, cookie, fields, pics=()):
+        import io as _io_
+        import wsgiref.validate as _v
+        boundary = "----psa-test-boundary"
+        parts = [f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode()
+                 for k, v in fields.items()]
+        for fname, data in pics:
+            parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="pics"; filename="{fname}"'
+                         "\r\nContent-Type: image/gif\r\n\r\n".encode() + data + b"\r\n")
+        body = b"".join(parts) + f"--{boundary}--\r\n".encode()
+        env = self._environ("POST", path, cookie=cookie, body=body, query="", headers=None, remote_addr=None)
+        env["CONTENT_TYPE"] = f"multipart/form-data; boundary={boundary}"
+        env["CONTENT_LENGTH"] = str(len(body))
+        got = {}
+        it = _v.validator(self.raw)(env, lambda st, h, e=None: got.update(status=st, headers=dict(h)))
+        try:
+            b"".join(it)
+        finally:
+            it.close()
+        return got["status"], got["headers"]
+
+    def test_the_note_box_has_teams_tools_and_no_stray_empty_state(self):
+        _, _, page = self._call("GET", "/ticket/ITO-1", cookie=self._cookie_for("alice"))
+        for tool in ("data-do=color", "data-do=hilite", "data-do=size", "data-do=block", "data-do=emoji",
+                     "data-do=image", "name=pics", "name=pic_tokens", "enctype='multipart/form-data'"):
+            self.assertIn(tool, page, tool)
+        self.assertIn(".editor.is-empty::before", page)
+        self.assertNotIn('ed.classList.add("empty")', page, "the empty-state class drew an inbox in the note box")
+
+    def test_a_gif_pasted_into_a_note_is_kept_as_a_file_and_drawn_in_place(self):
+        alice = self._cookie_for("alice")
+        status, headers = self._multipart("/ticket/ITO-1/note", alice, {
+            "body": '<p>Like this <span class="tc-red">red</span></p><p><img src="cid:p1-abc123" alt="shot.gif"></p>',
+            "body_format": "HTML", "flag": "INTERNAL", "pic_tokens": "p1-abc123,p2-zzz999"},
+            pics=[("shot.gif", self.GIF), ("dropped-later.gif", self.GIF)])
+        self.assertIn("Note+saved", headers["Location"])
+        conn = db.connect(self.db_path)
+        rows = conn.execute("SELECT attachment_id, content_id, media_type FROM attachment WHERE work_item_id='ITO-1'").fetchall()
+        self.assertEqual(len(rows), 1, "the picture taken out of the note before Save is not kept")
+        self.assertEqual(rows[0]["media_type"], "image/gif")
+        detail = conn.execute("SELECT detail FROM ticket_event WHERE work_item_id='ITO-1' AND note_flag='INTERNAL'"
+                              " ORDER BY ticket_event_id DESC").fetchone()[0]
+        conn.close()
+        self.assertIn(f'cid:{rows[0]["content_id"]}', detail)
+        self.assertIn('class="tc-red"', detail)
+        _, _, page = self._call("GET", "/ticket/ITO-1", cookie=alice)
+        self.assertIn(f'<img src="/ticket/ITO-1/file/{rows[0]["attachment_id"]}"', page)
+
+    def test_the_clock_starts_a_time_entry_and_save_stops_it(self):
+        alice = self._cookie_for("alice")
+        _, _, page = self._call("GET", "/ticket/ITO-1", cookie=alice)
+        self.assertIn("New time entry", page)
+        status, headers, _ = self._call("POST", "/ticket/ITO-1/timer/start", cookie=alice, form={"open": "1"})
+        self.assertIn("te=1", next(v for k, v in headers if k == "Location"))
+        _, _, page = self._call("GET", "/ticket/ITO-1", cookie=alice, query="te=1")
+        self.assertIn("<dialog id=tedlg class='card tedlg' data-autoopen>", page)
+        conn = db.connect(self.db_path)
+        tid, started = conn.execute("SELECT timer_id, started_at FROM time_timer WHERE work_item_id='ITO-1'").fetchone()
+        conn.close()
+        self.assertIn(f"name=timer_id value='{tid}'", page)
+        self.assertIn(f"name=start step=300 value='{started[11:16]}'", page, "the start is the moment the clock began")
+        status, headers = self._multipart("/ticket/ITO-1/time", alice, {
+            "timer_id": str(tid), "worked_on": started[:10], "start": started[11:16], "end": "", "hours": "",
+            "deduct": "", "work_role": "", "work_type": "", "bill": "NO_DEFAULT",
+            "charge": "INCLUDED_IN_MONTHLY_FEE", "body": "<p>Swapped the toner.</p>", "body_format": "HTML", "flag": "DISCUSSION", "pic_tokens": ""})
+        self.assertIn("Time+saved", headers["Location"])
+        conn = db.connect(self.db_path)
+        row = conn.execute("SELECT stopped_at, time_entry_id FROM time_timer WHERE timer_id = ?", (tid,)).fetchone()
+        self.assertIsNotNone(row[0])
+        self.assertIsNotNone(row[1], "the timer is spent: it leaves the header and cannot be saved twice")
+        self.assertIsNotNone(conn.execute("SELECT 1 FROM ticket_event WHERE work_item_id='ITO-1'"
+                                          " AND detail LIKE '%Swapped the toner%'").fetchone())
+        conn.close()
+        _, _, page = self._call("GET", "/ticket/ITO-1", cookie=alice)
+        self.assertIn("New time entry", page, "the clock is free for the next one")
 
 
 class CancelledStatusTest(unittest.TestCase):
@@ -8986,11 +9081,11 @@ class DeskLookTest(unittest.TestCase):
         Teams composer -- grouped buttons, one frame, a box that grows."""
         from psaspine.web import templates
         _, _, ticket = self._call("GET", "/ticket/ITO-1", cookie=self._cookie_for("alice"))
-        i = ticket.index("<div class=composer>")
+        i = ticket.index("<div class=composer>", ticket.index("data-pod=composer"))   # the note card's own
         frame = ticket[i:ticket.index("</textarea>", i)]
         self.assertLess(frame.index("class=edbar"), frame.index("class=editor"))   # toolbar above the box
-        self.assertEqual(frame.count("<span class=g>"), 3)                         # marks, lists, links
-        self.assertEqual(frame.count("<span class=sep>"), 2)                       # one rule between each
+        self.assertEqual(frame.count("<span class=g>"), 4)                         # style, marks, lists, links
+        self.assertEqual(frame.count("<span class=sep>"), 3)                       # one rule between each
         self.assertIn("data-ph='Type a note.", frame)
         css = templates.CSS if hasattr(templates, "CSS") else templates.STYLE
         self.assertIn(".composer:focus-within", css)        # the ring is the whole frame's

@@ -351,6 +351,7 @@ def detail(ctx, work_item_id):
     # to arrange). Which cards show, in what order, at what size and height
     # is this person's own and lives in their browser; the dialog's lists are
     # built from the cards on the page.
+    buttons += "%%TEBUTTON%%"
     buttons += (" <button type=button class='iconbtn' data-layedit aria-pressed=false"
                 " title='Edit layout: move the cards about' aria-label='Edit layout'>" + t.icon("grip") + "</button>"
                 " <button type=button class='iconbtn' data-open=poddlg title='Screen layout: which cards show, and where'"
@@ -511,43 +512,13 @@ def detail(ctx, work_item_id):
                           f"{t.esc(n['name'])}</option>" for n in std) + "</select></div></div>")
         composer = (
             "<div class=card data-pod=composer id=composer><h3><svg class=ic aria-hidden=true><use href=#i-note></use></svg>Add a note</h3>"
-            f"<form method=post action='/ticket/{wid}/note' class=noting>" + picker +
-            # A note is written the way a Teams message is: the buttons act on
-            # what is selected, and a paste out of Outlook or Word keeps its
-            # bold and its lists and brings none of its markup (064). The words
-            # go up in `body`, and `body_format` says they are HTML; nothing is
-            # stored until richtext.clean has rebuilt it.
-            "<input type=hidden name=body_format value=HTML>"
-            # One frame holds the toolbar and the box, the way a Teams composer
-            # does: the border and the focus ring belong to the whole thing, the
-            # buttons sit in groups above it, and the box grows as it is written
-            # in (SQL01's spec to WS36, 2 Oct 2026).
-            "<div class=composer>"
-            "<div class=edbar role=toolbar aria-label='Formatting'>"
-            "<span class=g>"
-            "<button type=button class=iconbtn data-do=bold title='Bold (Ctrl+B)' aria-label=Bold><b>B</b></button>"
-            "<button type=button class=iconbtn data-do=italic title='Italic (Ctrl+I)' aria-label=Italic><i>I</i></button>"
-            "<button type=button class=iconbtn data-do=underline title='Underline (Ctrl+U)' aria-label=Underline><u>U</u></button>"
-            "<button type=button class=iconbtn data-do=strikeThrough title='Strikethrough' aria-label=Strikethrough><s>S</s></button>"
-            "</span><span class=sep></span><span class=g>"
-            "<button type=button class=iconbtn data-do=insertUnorderedList title='Bulleted list' aria-label='Bulleted list'>&bull;&#8211;</button>"
-            "<button type=button class=iconbtn data-do=insertOrderedList title='Numbered list' aria-label='Numbered list'><b>1.</b></button>"
-            "<button type=button class=iconbtn data-do=quote title='Quote' aria-label=Quote>&ldquo;</button>"
-            "<button type=button class=iconbtn data-do=code title='Code' aria-label=Code><b style='font-family:var(--mono)'>&lt;&gt;</b></button>"
-            "</span><span class=sep></span><span class=g>"
-            "<button type=button class=iconbtn data-do=link title='Link' aria-label=Link>" + t.icon("link") + "</button>"
-            "<button type=button class=iconbtn data-do=removeFormat title='Clear formatting' aria-label='Clear formatting'>" + t.icon("x") + "</button>"
-            "</span>"
-            "<span class=grow></span>"
-            "<button type=button class='tab on' data-plain=0 title='Write with formatting'>Rich</button>"
-            "<button type=button class=tab data-plain=1 title='Write as plain text'>Plain</button></div>"
-            "<div class=editor contenteditable=true role=textbox aria-multiline=true"
-            " aria-label='The note' data-ph='Type a note. What you found, what you did, what is next."
-            " The ward, room and machine say it best; a patient never needs naming (&#167;6.1).'></div>"
-            # The textarea is still the thing that is submitted, and it is
-            # still what a browser with no JavaScript shows and types into.
-            "<textarea name=body required placeholder='What you found, what you did, what is next. The ward, room and machine say it best; a patient never needs naming (§6.1).'></textarea>"
-            "</div>"
+            f"<form method=post action='/ticket/{wid}/note' class=noting enctype='multipart/form-data'>" + picker
+            # A note is written the way a Teams reply is (064; fonts, colours,
+            # pictures and GIFs 6 Oct 2026): one editor component, shared with
+            # the time entry window. Nothing is stored until richtext.clean has
+            # rebuilt it, and pictures go through the files' review.
+            + t.note_editor(placeholder="Type a note. What you found, what you did, what is next. The ward, room and "
+                            "machine say it best; a patient never needs naming (§6.1).") +
             "<div class=row style='margin-top:10px'>"
             "<div style='flex:0 0 auto'><label>Who can read it</label><div class=seg>"
             "<label><input type=radio name=flag value=DISCUSSION checked><span>Discussion</span></label>"
@@ -653,65 +624,36 @@ def detail(ctx, work_item_id):
         "<th>Hours</th><th>Deduct</th><th>Work role</th><th>Work type</th><th>Bill</th><th>Charged as</th>"
         f"<th>Band</th></tr></thead><tbody>{trs}</tbody></table></div>"
         if trs else "<div class=muted>No time yet.</div>")
-    # The stopwatch (065): the reference PSA's clock for time entries, which is
-    # not the SLA clock above it. It measures what this person worked, and its
-    # whole purpose is to fill the form below with times nobody had to recall.
-    stopwatch, prefill = "", None
+    # The time entry window (Dada, 6 Oct 2026: "time entry clock like
+    # connectwise clicking it launches the time entry or discussion window ...
+    # when clicking it logs the current time it has start and finish and thats
+    # where u enter discussions"). The clock in the header starts this
+    # person's timer (065) -- the moment is logged on the server, so a reload
+    # or a closed window loses nothing -- and opens the window; Save stops it,
+    # fills in the end, and the notes go on the ticket with the time. The
+    # stopwatch still is not the SLA.
+    te_button, te_dialog, run = "", "", None
     if can_work and may:
         from ... import timers as _timers
         run = _timers.for_ticket(ctx.conn, wid, ctx.user.id)
+        te_dialog = _time_dialog(ctx, tk, run, status_pairs=status_pairs, notify_tick=bool(tk["notify_requester"]))
         if run is None:
-            stopwatch = (f"<form method=post action='/ticket/{wid}/timer/start' class=swatch>"
-                         "<button type=submit class=ghost>" + t.icon("clock")
-                         + " Start timer</button>"
-                         "<span class=muted>Counts your time on this ticket. Not the SLA.</span>"
-                         "</form>")
+            te_button = (f"<form method=post action='/ticket/{wid}/timer/start' class=inline>"
+                         "<input type=hidden name=open value=1>"
+                         "<button type=submit class='btn clockbtn' title='Start the clock and open a time entry'>"
+                         + t.icon("clock") + "<span>New time entry</span></button></form>")
         else:
             secs = _timers.elapsed_seconds(run, now=ctx.now)
-            tid = run["timer_id"]
-            if run["stopped_at"]:
-                prefill = _timers.stop(ctx.conn, tid, member=ctx.user.id, at=ctx.now)
-                stopwatch = (
-                    f"<div class='swatch done'><b class=tick>{_timers.clock(secs)}</b>"
-                    f"<span class=muted>stopped · {_timers.hours(secs):g} h to save</span>"
-                    f"<form method=post action='/ticket/{wid}/timer/discard' style=display:inline>"
-                    f"<input type=hidden name=timer_id value='{tid}'>"
-                    "<button type=submit class='ghost small' title='Throw it away; no time is recorded'>"
-                    "Discard</button></form></div>")
-            else:
-                paused = bool(run["paused_at"])
-                nxt = "resume" if paused else "pause"
-                stopwatch = (
-                    f"<div class='swatch{' paused' if paused else ' live'}'>"
-                    f"<b class=tick data-tick='{secs}'{'' if paused else ' data-run=1'}>"
-                    f"{_timers.clock(secs)}</b>"
-                    + (f"<span class=muted>paused</span>" if paused
-                       else "<span class=muted>running</span>")
-                    + f"<form method=post action='/ticket/{wid}/timer/{nxt}' style=display:inline>"
-                      f"<input type=hidden name=timer_id value='{tid}'>"
-                      f"<button type=submit class='ghost small'>{'Resume' if paused else 'Pause'}"
-                      "</button></form>"
-                      f"<form method=post action='/ticket/{wid}/timer/stop' style=display:inline>"
-                      f"<input type=hidden name=timer_id value='{tid}'>"
-                      "<button type=submit class=small>Stop</button></form></div>")
+            live = not run["stopped_at"] and not run["paused_at"]
+            te_button = ("<button type=button class='btn clockbtn on' data-open=tedlg title='Your time entry: open it'>"
+                         + t.icon("clock") + f"<b class=tick data-tick='{secs}'{' data-run=1' if live else ''}>"
+                         f"{_timers.clock(secs)}</b></button>")
     time_form = ""
     if can_work and may:
-        time_form = (
-            f"<details class=timeblock{' open' if prefill else ''}>"
-            f"<summary>{t.icon('plus')} Add time</summary>"
-            f"<form method=post action='/ticket/{wid}/time'>" + _time_fields(ctx, tk, prefill=prefill)
-            + "<div class=row style='margin-top:8px'><div><label>Notes</label>"
-              "<textarea name=body rows=2 placeholder='What was done. The ward, room and machine say it best; a patient never needs naming (§6.1).'></textarea></div>"
-              "<div style='flex:0 0 auto'><label>Who can read the notes</label><div class=seg>"
-              "<label><input type=radio name=flag value=DISCUSSION checked><span>Discussion</span></label>"
-              "<label class=int><input type=radio name=flag value=INTERNAL><span>Internal</span></label>"
-              "</div><label style='display:block;margin-top:6px;color:var(--ink);font-weight:500'>"
-              "<input type=checkbox name=resolution value=1 style='width:auto'> Also the resolution</label>"
-              + notify_tick + "</div>"
-              "<div style='flex:0 0 auto'><button type=submit>" + t.icon("clock") + " Save time</button></div></div>"
-              "<p class=why style='margin:6px 0 0'>Start and end, or the actual hours, not both; a deduction "
-              "comes off; kept to the quarter hour. The band is the smallest of 0.5 / 2 / 4 / 8 / 20 h the "
-              "hours fit in, and is what the capacity arithmetic counts.</p></form></details>")
+        time_form = ("<p class=row style='gap:8px;margin:10px 0 0'>" + te_button.replace("New time entry", "Start a time entry")
+                     + ("<button type=button class='ghost' data-open=tedlg data-te-manual=1 title='Type the times in yourself'>"
+                        + t.icon("plus") + " Enter time by hand</button>" if run is None else "") + "</p>")
+    stopwatch = ""
     time_card = (f"<div class=card data-pod=time><h3><svg class=ic aria-hidden=true><use href=#i-clock></use></svg>"
                  f"Time · {actual_total:g} h" + (f" (band {band_total:g} h)" if time_rows else "") + "</h3>"
                  + stopwatch + time_table + time_form
@@ -741,8 +683,9 @@ def detail(ctx, work_item_id):
     from . import projects as project_views
     configs += (project_views.ticket_card(ctx, tk, can_work=can_work) + kb_views.ticket_card(ctx, tk, can_work=can_work)
                 + finance_views.ticket_card(ctx, tk, can_work=can_work))
+    header = header.replace("%%TEBUTTON%%", (" " + te_button) if te_button else "")
     from . import paging as paging_view
-    body = header + strip + paging_view.banner(ctx, tk, can_work=can_work) + pod_dialog + (
+    body = te_dialog + header + strip + paging_view.banner(ctx, tk, can_work=can_work) + pod_dialog + (
         f"<div class=rail>{left}<div class=pods data-col=right data-order='ticket,change,approval,family,"
                              f"schedule,tasks,files,links,configurations,project,knowledge,finance,time,commercial,details'>{fields}{configs}{time_card}"
                              f"{commercial}{details}</div></div>")
@@ -791,12 +734,38 @@ def change_status(ctx, work_item_id):
     return _back(work_item_id)
 
 
+_PIC_TOKEN = re.compile(r"p\d{1,3}-[a-z0-9]{3,12}")
+
+
+def _note_pictures(ctx, work_item_id: str, f, body: str) -> str:
+    """The pictures and GIFs a note carries (6 Oct 2026), stored as the
+    ticket's files -- through the same review as any other file -- and the
+    note's tokens turned into their Content-IDs. A picture taken out of the
+    note before it was sent is not kept."""
+    from ... import attachments
+    import uuid
+    files = ctx.request.files("pics") if ctx.request.is_multipart() else []
+    tokens = [x for x in (f.get("pic_tokens") or "").split(",") if x]
+    for (name, data), tok in zip(files, tokens):
+        if not _PIC_TOKEN.fullmatch(tok) or f'cid:{tok}"' not in body or not data:
+            continue
+        cid = f"note-{uuid.uuid4().hex[:16]}@desk"
+        try:
+            attachments.add(ctx.conn, work_item_id, data, name or "picture", actor=ctx.user.id, at=ctx.now,
+                            source="DESK", content_id=cid)
+        except attachments.Refused as exc:
+            raise ValueError(f"picture {attachments.safe_name(name or 'picture')}: {exc}")
+        body = body.replace(f'cid:{tok}"', f'cid:{cid}"')
+    return body
+
+
 def add_note(ctx, work_item_id):
     tk = _load(ctx, work_item_id)
     common.require_board(ctx, tk["board_id"], need="WORK")
     f = ctx.request.form()
     try:
-        engine.add_note(ctx.conn, work_item_id, body=f.get("body", ""),
+        body = _note_pictures(ctx, work_item_id, f, f.get("body", ""))
+        engine.add_note(ctx.conn, work_item_id, body=body,
                         body_format=f.get("body_format") or None,
                         flag=f.get("flag", "DISCUSSION") or "DISCUSSION",
                         actor=ctx.user.id, at=ctx.now,
@@ -826,14 +795,34 @@ def add_time(ctx, work_item_id):
     that carries the time (one write, refused whole); without, a bare entry."""
     tk = _load(ctx, work_item_id)
     common.require_board(ctx, tk["board_id"], need="WORK")
-    f = ctx.request.form()
-    body = f.get("body", "").strip()
+    f = dict(ctx.request.form())
+    from ... import timers as _timers
+    tid = int(f["timer_id"]) if (f.get("timer_id") or "").isdigit() else None
     try:
+        if tid is not None and not (f.get("end") or f.get("hours")):
+            # Save is the end of the job: the clock stops now and its times are
+            # the entry's, unless the person typed their own.
+            stopped = _timers.stop(ctx.conn, tid, member=ctx.user.id, at=ctx.now)
+            f["end"] = stopped["time_end"]
+            f["start"] = f.get("start") or stopped["time_start"]
+            f["worked_on"] = f.get("worked_on") or stopped["worked_on"]
+            sh, sm = (int(x) for x in f["start"].split(":"))
+            eh, em = (int(x) for x in f["end"].split(":"))
+            if 0 <= (eh * 60 + em) - (sh * 60 + sm) < 8:
+                # A job the clock measured at under eight minutes would round to
+                # no time at all; it is booked as the smallest entry there is,
+                # one quarter hour from its start.
+                mm = sm + 15
+                f["end"] = f"{(sh + mm // 60) % 24:02d}:{mm % 60:02d}"
+        body = _note_pictures(ctx, work_item_id, f, f.get("body", "")).strip()
+        if body and f.get("body_format") == "HTML" and not re.sub(r"<[^>]+>|&nbsp;|\s", "", body) and "<img" not in body:
+            body = ""                                # an editor left empty is no note
         time = _time_from_form(f)
         if time is None:
             raise engine.EffortRefused("enter a start and end time, or the actual hours")
         if body:
-            r = engine.add_note(ctx.conn, work_item_id, body=body,
+            r = engine.add_note(ctx.conn, work_item_id, body=body, body_format=f.get("body_format") or None,
+                                to_status_id=f.get("to_status") or None,
                                 flag=f.get("flag", "DISCUSSION") or "DISCUSSION",
                                 actor=ctx.user.id, at=ctx.now, time=time,
                                 charge_method=f.get("charge") or None,
@@ -850,6 +839,17 @@ def add_time(ctx, work_item_id):
             engine.add_time(ctx.conn, work_item_id, at=ctx.now, actor=ctx.user.id,
                             charge_method=values["charge_method"], values=values)
             hours = values["actual_hours"]
+            if f.get("to_status"):
+                engine.change_status(ctx.conn, work_item_id, f["to_status"], at=ctx.now, actor=ctx.user.id)
+        if tid is not None:
+            entry = ctx.conn.execute("SELECT MAX(time_entry_id) FROM time_entry WHERE work_item_id = ?",
+                                     (work_item_id,)).fetchone()[0]
+            if entry is not None:
+                _timers.spend(ctx.conn, tid, entry)
+        if f.get("notify_resources") == "1":
+            from ... import outbox, resources as _resources
+            for m in _resources.everyone(ctx.conn, work_item_id):
+                outbox.queue_resource(ctx.conn, work_item_id, m, at=ctx.now, actor=ctx.user.id, note=True)
         ctx.conn.commit()
     except (ValueError, LookupError, engine.EffortRefused, engine.NotOnThisBoard) as exc:
         ctx.conn.rollback()
@@ -899,7 +899,58 @@ def timer(ctx, work_item_id, action):
     except (ValueError, LookupError, timers.NotYours, timers.AlreadyRunning) as exc:
         ctx.conn.rollback()
         return _back(work_item_id, err=str(exc))
-    return _back(work_item_id, msg=msg)
+    # The clock in the header starts the timer and opens the time entry window.
+    return _back(work_item_id, msg=msg, te="1" if action == "start" and f.get("open") == "1" else "")
+
+
+def _time_dialog(ctx, tk, run, *, status_pairs, notify_tick: bool) -> str:
+    """The reference PSA's Time Entry window: who and when across the top (the
+    start already logged, the end filled in on Save), the work role, type and
+    bill option, then the notes in the desk's own editor with the
+    Discussion / Internal / Resolution ticks and who is emailed, and the
+    status. One form, one Save; the window can be closed and reopened while
+    the clock keeps running."""
+    from ... import members as _members, timers as _timers
+    wid = t.esc(tk["work_item_id"])
+    prefill, secs, live = {}, 0, False
+    if run is not None:
+        secs = _timers.elapsed_seconds(run, now=ctx.now)
+        live = not run["stopped_at"] and not run["paused_at"]
+        prefill = {"worked_on": run["started_at"][:10], "time_start": run["started_at"][11:16],
+                   "time_end": run["stopped_at"][11:16] if run["stopped_at"] else ""}
+    clock = (f"<span class=teclock><b class=tick data-tick='{secs}'{' data-run=1' if live else ''}>{_timers.clock(secs)}</b>"
+             f"<span class=muted>{'running' if live else ('paused' if run is not None and run['paused_at'] else 'stopped' if run is not None else 'no clock')}</span></span>"
+             if run is not None else "<span class=teclock><span class=muted>Typed in by hand</span></span>")
+    member = t.esc(_members.name_of(ctx.conn, ctx.user.id))
+    return (
+        "<dialog id=tedlg class='card tedlg'" + (" data-autoopen" if ctx.request.query.get("te") == "1" else "") + ">"
+        f"<form method=post action='/ticket/{wid}/time' enctype='multipart/form-data' class=teform>"
+        + (f"<input type=hidden name=timer_id value='{run['timer_id']}'>" if run is not None else "")
+        + "<div class=tehead><div><h3 style='margin:0'>" + t.icon("clock") + " Time entry</h3>"
+        f"<div class=muted style='font-size:12.5px'>{wid} · {t.esc(tk['summary'])}</div></div>" + clock
+        + "<button type=button class=iconbtn data-close=tedlg aria-label='Close; the clock keeps running'"
+          " title='Close; the clock keeps running'>" + t.icon("x") + "</button></div>"
+        f"<div class=temember><label>Member</label><div class=ro>{member}</div></div>"
+        + _time_fields(ctx, tk, prefill=prefill)
+        + ("<p class=why style='margin:4px 0 10px'>Leave <b>End</b> empty and Save stops the clock now and fills it in.</p>"
+           if run is not None and not run["stopped_at"] else "")
+        + "<label>Notes</label>"
+        + t.note_editor(placeholder="What was done, and what is next. Ticked Discussion, the requester reads it; "
+                                    "a patient never needs naming (§6.1).", required=False)
+        + "<div class=teflags><span class=seg>"
+          "<label><input type=radio name=flag value=DISCUSSION checked><span>Discussion</span></label>"
+          "<label class=int><input type=radio name=flag value=INTERNAL><span>Internal</span></label></span>"
+          "<label class=tick><input type=checkbox name=resolution value=1> Resolution</label>"
+          "<span class=tesep></span><span class=muted>Email:</span>"
+        + ("<label class=tick><input type=checkbox name=notify value=1 checked> Contact</label>" if notify_tick else "")
+        + "<label class=tick><input type=checkbox name=notify_resources value=1> Resources</label>"
+          "<span class=grow></span><label style='margin:0'>Status</label><select name=to_status style='width:auto'>"
+        + _options([("", "(no change)")] + status_pairs, "") + "</select></div>"
+        + "<div class=tefoot>"
+        + (f"<button type=submit formaction='/ticket/{wid}/timer/discard' formnovalidate class='ghost danger'"
+           " onclick=\"return confirm('Throw this clock away? No time is recorded.')\">Discard</button>" if run is not None else "")
+        + "<span class=grow></span><button type=button class=ghost data-close=tedlg>Cancel</button>"
+          "<button type=submit>" + t.icon("check") + " Save time entry</button></div></form></dialog>")
 
 
 def _resource_picker(ctx, tk, *, can_work: bool) -> str:

@@ -258,29 +258,50 @@ def main() -> int:
                  "and it says how many changes are waiting",
                  page.locator(".savebar b").first.inner_text())
 
-            # --- the stopwatch (065) ---------------------------------------
-            start = page.locator("form[action$='/timer/start'] button")
-            note(start.count() == 1, "the Time pod offers a timer")
+            # --- the time entry window (065; 6 Oct 2026) --------------------
+            # Dada: "time entry clock like connectwise clicking it launches the
+            # time entry or discussion window ... it logs the current time".
+            ph = page.evaluate("""() => { const e = document.querySelector('[data-pod=composer] .editor');
+                const b = getComputedStyle(e, '::before'); return [b.content, b.backgroundImage, b.width] }""")
+            note("Type a note" in ph[0] and ph[1] == "none",
+                 "an empty note box shows its words, not the empty-state inbox", str(ph))
+            start = page.locator(".hdr form[action$='/timer/start'] button")
+            note(start.count() == 1, "the ticket's header carries the time entry clock")
             if start.count():
                 start.click()
                 page.wait_for_load_state("domcontentloaded")
-                page.wait_for_timeout(1500)
-                tick = page.locator(".swatch .tick")
-                note(tick.count() == 1, "a running timer shows a clock", tick.first.inner_text() if tick.count() else "")
+                page.wait_for_timeout(900)
+                dlg = page.locator("dialog#tedlg[open]")
+                note(dlg.count() == 1, "one click starts the clock and opens the time entry window")
+                st_v = page.locator("#tedlg input[name=start]").input_value()
+                note(bool(st_v), "the start is already logged", st_v)
+                tick = page.locator("#tedlg b.tick")
                 first = tick.first.inner_text()
                 page.wait_for_timeout(1600)
-                note(tick.first.inner_text() != first, "and it counts up on its own",
+                note(tick.first.inner_text() != first, "and its clock counts up on its own",
                      f"{first} -> {tick.first.inner_text()}")
-                page.locator("form[action$='/timer/stop'] button").click()
+                ed = page.locator("#tedlg .editor")
+                ed.click()
+                page.keyboard.type("Swapped the toner ")
+                page.keyboard.down("Shift")
+                for _ in range(6):
+                    page.keyboard.press("ArrowLeft")
+                page.keyboard.up("Shift")
+                page.locator("#tedlg details.pop summary[title='Font colour']").click()
+                page.locator("#tedlg button[data-do=color][data-arg='#c62828']").click()
+                page.wait_for_timeout(150)
+                sent = page.evaluate("() => document.querySelector('#tedlg textarea[name=body]').value")
+                note('class="tc-red"' in sent and "color" not in sent.replace("tc-red", ""),
+                     "a colour picked in the toolbar goes up as the desk's own class", sent[:120])
+                page.locator("#tedlg select[name=charge]").select_option(index=1)
+                page.locator("#tedlg .tefoot button[type=submit]:not([formaction])").click()
                 page.wait_for_load_state("domcontentloaded")
-                page.wait_for_timeout(400)
-                tf = page.locator("form[action$='/time']")
-                st_v = tf.locator("input[name=start]").first.input_value()
-                en_v = tf.locator("input[name=end]").first.input_value()
-                note(bool(st_v and en_v), "stopping it fills the time entry's Start and End",
-                     f"Start={st_v!r} End={en_v!r}")
-                note(page.locator("details.timeblock[open]").count() == 1,
-                     "and the Add time form is already open")
+                page.wait_for_timeout(500)
+                note("Time saved" in page.locator("body").inner_text(), "Save stops the clock and books the time",
+                     page.url)
+                note(page.locator(".hdr form[action$='/timer/start']").count() == 1,
+                     "and the clock is free for the next job")
+                note(page.locator(".rtx .tc-red").count() >= 1, "the red word reads red on the ticket")
 
             # --- editing the pods must not move the page -------------------
             # Dada, 3 Oct 2026: "when editing pods it resets the screen or
@@ -456,7 +477,11 @@ def main() -> int:
                 note(inmail("d => d.querySelectorAll('details').length === 1 && !d.querySelector('details').open"),
                      "the quoted earlier messages are folded away")
                 before = h_el
-                # clicked as a person clicks: a mouse at a point on the page
+                # clicked as a person clicks: a mouse at a point on the page,
+                # with the email scrolled into view first
+                page.evaluate("() => document.querySelector('iframe.mail').scrollIntoView({block: 'center'})")
+                page.wait_for_timeout(300)
+                before = page.evaluate(fit)[0]
                 xy = page.evaluate("""() => { const f = document.querySelector('iframe.mail'),
                     r = f.getBoundingClientRect(),
                     s = f.contentDocument.querySelector('summary').getBoundingClientRect();

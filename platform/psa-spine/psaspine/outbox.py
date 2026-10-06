@@ -652,7 +652,7 @@ RESOURCE = "RESOURCE"
 
 
 def queue_resource(conn: sqlite3.Connection, work_item_id: str, member: str, *, at: datetime,
-                   actor: str) -> bool:
+                   actor: str, note: bool = False) -> bool:
     """067: a member put on a ticket as a resource gets the same email the
     owner gets when it is assigned to them, on the same board switch
     (notify_owner). Nobody is emailed for adding themselves."""
@@ -664,15 +664,23 @@ def queue_resource(conn: sqlite3.Connection, work_item_id: str, member: str, *, 
         return False
     if not address_for(conn, member):
         return False
+    role = "RESOURCE_NOTE" if note else RESOURCE
     if conn.execute("SELECT 1 FROM notification WHERE work_item_id = ? AND recipient = ? AND recipient_role = ?"
-                    " AND status = 'PENDING'", (work_item_id, member, RESOURCE)).fetchone():
+                    " AND status = 'PENDING'", (work_item_id, member, role)).fetchone():
         return False
     stamp = at.isoformat(sep=" ", timespec="minutes")
-    headline, said = words(conn, row["board_id"], "ASSIGNED", **_values(conn, work_item_id, at=at, actor=actor))
+    if note:
+        # The time entry window's "Email: Resources" tick (6 Oct 2026). That a
+        # note was added, and by whom; the note itself stays on the desk.
+        from . import members as _members
+        headline = "A note was added"
+        said = f"{_members.name_of(conn, actor)} added a note and time to {work_item_id}."
+    else:
+        headline, said = words(conn, row["board_id"], "ASSIGNED", **_values(conn, work_item_id, at=at, actor=actor))
     conn.execute(
         "INSERT INTO notification (work_item_id, recipient, recipient_role, subject, body, created_at, status)"
         " VALUES (?,?,?,?,?,?,'PENDING')",
-        (work_item_id, member, RESOURCE, f"{subject_token(work_item_id)} {headline}", said, stamp))
+        (work_item_id, member, role, f"{subject_token(work_item_id)} {headline}", said, stamp))
     _event(conn, work_item_id, stamp, "NOTIFY", "desk", f"email to a resource queued: {member}")
     return True
 

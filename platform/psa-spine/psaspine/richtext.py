@@ -113,6 +113,27 @@ _INT = re.compile(r"^\d{1,4}%?$")
 _CID = re.compile(r"^cid:[^\s\"'<>\\]{1,400}$", re.I)
 
 
+# A note's own colour, size and highlight (Dada, 6 Oct 2026: "add extra
+# options for fonts ... just like when u reply to teams"). Never a free colour
+# or a style attribute: a fixed class from these lists, drawn by the desk's
+# stylesheet in a shade that reads in light and dark alike, and written out
+# inline only when the note leaves in an email (NOTE_CLASS_STYLE).
+NOTE_SPAN = {"tc-red", "tc-orange", "tc-green", "tc-blue", "tc-purple", "tc-grey",
+             "fs-s", "fs-l", "fs-xl"}
+NOTE_MARK = {"hl-yellow", "hl-green", "hl-blue", "hl-pink"}
+NOTE_CLASS_STYLE = {
+    "tc-red": "color:#c62828", "tc-orange": "color:#c25e00", "tc-green": "color:#1a7f37",
+    "tc-blue": "color:#2f52c4", "tc-purple": "color:#7b3fbf", "tc-grey": "color:#6b7280",
+    "fs-s": "font-size:12px", "fs-l": "font-size:18px", "fs-xl": "font-size:22px",
+    "hl-yellow": "background:#fff3a3", "hl-green": "background:#c9f2d4",
+    "hl-blue": "background:#cfe3ff", "hl-pink": "background:#ffd6e8"}
+
+
+def _note_classes(attrs, allowed: set) -> list[str]:
+    raw = next((v for k, v in attrs if k.lower() == "class" and v), "")
+    return [c for c in raw.split() if c in allowed][:2]
+
+
 def css(style: str) -> str:
     """Keep only the declarations on the lists, rebuilt, lower case."""
     keep = []
@@ -189,7 +210,16 @@ class _Clean(HTMLParser):
                 self.out.append(f"<span{extra}>")
                 self.open.append("span")
             return
-        kept = tag in ALLOWED or (self.email and tag in EMAIL_KEEP)
+        if not self.email and tag in ("span", "mark"):
+            # A note keeps a span or a mark only for a colour, a size or a
+            # highlight from the fixed lists, written as a class and nothing else.
+            cls = _note_classes(attrs, NOTE_SPAN if tag == "span" else NOTE_MARK)
+            self.spans.append(bool(cls))
+            if cls:
+                self.out.append(f'<{tag} class="{" ".join(cls)}">')
+                self.open.append(tag)
+            return
+        kept = tag in ALLOWED or tag == "img" or (self.email and tag in EMAIL_KEEP)
         if not kept or (tag in UNWRAP and not (self.email and tag in EMAIL_KEEP)):
             return                 # its words are kept; the tag is not
         if tag == "a":
@@ -235,7 +265,7 @@ class _Clean(HTMLParser):
             return
         if self.skip or tag in VOID or (self.email and tag in EMAIL_VOID):
             return
-        if self.email and tag == "span":
+        if tag == "span" or (tag == "mark" and not self.email):
             # An unwrapped span's end must not close a kept one around it.
             if not (self.spans and self.spans.pop()):
                 return
@@ -429,6 +459,11 @@ def email_inline(html: str) -> str:
     out = unfolded(html)
     out = re.sub(r"<img\b[^>]*>", "", out)
     out = re.sub(r'<span class="imgph">.*?</span>', "", out)
+    # A note's colour, size and highlight, which a mail client has no
+    # stylesheet for, written as the style each class stands for.
+    out = re.sub(r'<(span|mark) class="([a-z\- ]+)">',
+                 lambda m: f'<{m.group(1)} style="{";".join(NOTE_CLASS_STYLE[c] for c in m.group(2).split() if c in NOTE_CLASS_STYLE)}">',
+                 out)
 
     def style(m):
         tag, rest = m.group(1).lower(), m.group(2) or ""

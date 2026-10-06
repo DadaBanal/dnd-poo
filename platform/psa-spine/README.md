@@ -1850,6 +1850,100 @@ harness's, not the desk's: a bare page with the same frame and a plain mouse
 click logs none (MEASURED). The checks read the email through the page, as the
 desk itself does, and click with the mouse.
 
+## After part 37: resources, >Cancelled, required fields, the time entry window, a Teams note box (067, 6 Oct 2026)
+
+Dada's list once SQL01 had 066 live: *"assigning tickets to multiple members"*,
+*"time entry clock like connectwise clicking it launches the time entry or
+discussion window"*, *"add a >cancelled status"*, *"add required on the fields
+company ticket type type and subtype and item"*, *"color coding for replies one
+color for pmo staff and another color for requestor"*, then a Teams-like note
+box with fonts, pictures and GIFs, a Back button, and *"futuristic design on
+the whole ticketing board and transitions"*.
+
+**Several members on a ticket (schema 067 `ticket_resource`).** The Ticket card
+has a **Resources** picker: tick any of the board's working members. They show
+beside the owner, together with anyone who has a visit booked (who stay ticked
+and fixed: they come off when the visit does). **Mine** on the board includes
+tickets you are a resource on. Each member added gets the owner's "assigned"
+email on boards that send it. Somebody not working the board cannot be added;
+an existing assignment of somebody who has since left is kept, not dropped.
+
+**>Cancelled.** A closed status (the `>` is the desk's mark of closed, as on
+`>Closed`) on every new board's starter set and in the PMC pack. A cancelled
+ticket asks no satisfaction survey. A close the desk makes for someone (a child
+closing with its parent, a merged duplicate) never lands in it; a board whose
+only other closed status is retired leaves the child open, as before. Existing
+boards get it with `add-cancelled`, which previews unless `--apply`; on a board
+with an *open* status called Cancelled (Procurement, from the 1 Oct pack) it
+moves those tickets across through `change_status`, so they close the way any
+close does, and then retires and renames the open one.
+
+**Required fields.** Company, Ticket type and Type › Subtype › Item carry a red
+asterisk and are refused empty by the browser and by the server, on the Ticket
+card's Save and on New ticket. One-field forms (Assign me, the summary pencil)
+carry no `fields=1` and are not held to them, so assigning an emailed ticket
+does not first need it classified. The Item is required only where the board
+has a catalogue to choose from.
+
+**Replies coloured by who wrote them.** PMO staff in the desk's blue, the
+requester's side in teal, each labelled and with a legend by the tabs; an
+Internal note keeps its amber. Staff is anyone the desk knows or a member's
+email; the requester on their own ticket is the requester even when they are
+staff. The portal shows the same two colours ("You" and the team).
+
+**The time entry window.** The clock in the ticket's header starts this
+person's timer (065) -- the start is logged on the server -- and opens a
+window laid out as the reference PSA's Time Entry is (field order from
+docs.topleft.team/knowledge/editing-connectwise-tickets, VERIFIED 6 Oct 2026):
+member, date, start, end, actual hours, deduct; work role, work type, bill,
+charged as; the notes in the desk's note box; Discussion / Internal and
+Resolution; Email Contact and Resources; Status; Save. Leaving End empty means
+"now": Save stops the clock, fills it in, books the time and spends the timer
+(which `timers.spend` existed for and nothing called until today). A job the
+clock measured at under eight minutes is booked as one quarter hour rather than
+rounded to nothing. Closing the window keeps the clock running, and the header
+shows it ticking; the Time card keeps the table and offers *Enter time by hand*.
+
+**The note box (a Teams reply box).** Paragraph style (heading, subheading,
+monospaced), size, bold / italic / underline / strike, a **text colour** and a
+**highlight** from a fixed palette, lists, quote, code, link, emoji, and a
+**picture or GIF pasted, dropped or attached**. Colour, size and highlight go
+up as the desk's own classes (`tc-*`, `fs-*`, `hl-*`), never a free colour or a
+style attribute; the gate (`richtext` note profile) keeps nothing else, and an
+email to the requester writes each class as its inline style. Pictures go up as
+files, are kept with the ticket's files (so through the patient-details review;
+a requester sees one only once it is cleared, or straight away if it is their
+own), and the note names each by Content-ID exactly as an email's inline
+picture is (066). A GIF is stored as it came, so it still moves. A picture
+taken out of the note before Save is not kept. Up to 9 MB of pictures a note.
+
+Not built, on purpose: a GIF search. Teams' is GIPHY, which would send staff
+search terms and addresses to a third party, and Tenor's API was shut on
+1 July 2026 (VERIFIED 6 Oct 2026, 9to5google.com/2026/06/30/google-tenor-api-gif-updates/).
+A GIF on the desk is a file somebody has.
+
+The stray inbox picture in an empty note box (Dada's screenshot) was the
+editor reusing the class name `empty`, which the desk's empty-state boxes use;
+it is `is-empty` now.
+
+**Back.** The ticket page has *Back to …*, to wherever it was opened from
+(the board, a search, Dispatch, a project). Each tab keeps a short trail in
+`sessionStorage`; a page that only reloads itself, a ticket after a save,
+replaces its own entry, so Back never returns to the same ticket a save ago.
+
+**The look.** A soft aurora behind the page, a gradient rule under the header,
+cards with a lit edge that rise into place and lift on hover, gradient primary
+buttons with a glow, highlighted board rows and gradient SLA bars, on top of
+the page cross-fade the desk already had. Only colour, opacity and transform
+move, nothing is blurred (old ward PCs), effects stay under a quarter second,
+and all of it is off for a reader who asks for reduced motion.
+
+Research behind these choices (VERIFIED 6 Oct 2026): the editor libraries
+(Quill 2.0.3 is the only single-file one with colour and size, last released
+Nov 2024; Lexical and TipTap 3 need a bundler; Trix has no colour), so the desk
+keeps its own `contenteditable` box; cross-document view transitions run in
+Chrome and Edge 126+ and Safari 18.2+, and Firefox simply loads the page.
+
 ## One Save, always reachable (3 Oct 2026)
 
 The ticket's own fields were already one form with one **Save changes** — but it
