@@ -881,6 +881,44 @@ main button.ghost,main .btn.ghost,.backbtn{
 :root[data-theme=light] .banner.toast,:root[data-theme=light] [popover]#keys,:root[data-theme=light] .pal-box,:root[data-theme=light] dialog.tedlg{
   background:#fff!important}
 
+/* ---- dark, with the same depth (Dada, 6 Oct 2026: "it didnt apply on the dark
+   mode"). The light pass's band, edges and shadows had no dark twin, and dark
+   cards sat too near the canvas to stand off it. A darker canvas, lighter
+   cards with a brighter lit edge, and every light-only rule given its pair. */
+:root[data-theme=dark]{
+  --l1:linear-gradient(180deg,rgb(38 47 82/.96),rgb(22 28 50/.96));
+  --l1-edge:linear-gradient(180deg,rgb(180 195 255/.42),rgb(150 165 255/.12) 35%,rgb(150 165 255/.08));
+  --l1-shadow:inset 0 1px 0 rgb(255 255 255/.10),0 1px 1px rgb(0 0 0/.5),0 6px 14px -4px rgb(0 0 0/.55),0 30px 60px -22px rgb(0 0 0/.9);
+  --l1-hover:inset 0 1px 0 rgb(255 255 255/.12),0 1px 1px rgb(0 0 0/.5),0 8px 18px -4px rgb(0 0 0/.6),0 34px 70px -22px rgb(0 0 0/.95),0 0 0 1px rgb(130 150 255/.30),0 0 40px -12px var(--glow);
+  --well:rgb(5 7 16/.70);--well-shadow:inset 0 2px 4px rgb(0 0 0/.55),inset 0 0 0 1px rgb(150 165 255/.16)}
+:root[data-theme=dark] body{background:
+  radial-gradient(1200px 700px at 8% -15%,rgb(99 102 241/.34),transparent 60%),
+  radial-gradient(1000px 600px at 105% -5%,rgb(34 211 238/.20),transparent 62%),
+  radial-gradient(1100px 800px at 55% 125%,rgb(139 92 246/.28),transparent 60%),
+  radial-gradient(140% 100% at 50% 40%,transparent 50%,rgb(0 0 0/.55)),
+  linear-gradient(180deg,#04060c,#070b18 55%,#05070f);background-attachment:fixed}
+:root[data-theme=dark] table.grid thead th{background:linear-gradient(180deg,rgb(50 60 100/.55),rgb(36 44 76/.55))!important;color:#aab4d6;
+  box-shadow:inset 0 -1px 0 rgb(150 165 255/.22)}
+:root[data-theme=dark] table.grid tbody td{border-color:rgb(150 165 255/.12)!important}
+:root[data-theme=dark] .card>h2:first-child,:root[data-theme=dark] .card>.cardhead:first-child{
+  padding-bottom:10px;margin-bottom:12px;box-shadow:0 1px 0 rgb(150 165 255/.14)}
+:root[data-theme=dark] main button.ghost,:root[data-theme=dark] main .btn.ghost,:root[data-theme=dark] .backbtn{
+  border:1px solid rgb(150 165 255/.26)!important;
+  background:linear-gradient(180deg,rgb(255 255 255/.09),rgb(255 255 255/.02))!important;
+  box-shadow:inset 0 1px 0 rgb(255 255 255/.10),0 1px 2px rgb(0 0 0/.5),0 6px 14px -8px rgb(0 0 0/.7)}
+:root[data-theme=dark] input:focus,:root[data-theme=dark] select:focus,:root[data-theme=dark] textarea:focus{
+  background-color:rgb(8 12 26/.9)!important;box-shadow:0 0 0 1px #22d3ee,0 0 0 4px rgb(34 211 238/.20),0 0 24px -6px rgb(34 211 238/.6)!important}
+:root[data-theme=dark] .tile.bad{background:linear-gradient(160deg,rgb(244 63 94/.28),transparent 65%) padding-box,var(--l1) padding-box,
+  linear-gradient(180deg,rgb(251 113 133/.7),rgb(244 63 94/.15)) border-box!important}
+:root[data-theme=dark] .tile.warn{background:linear-gradient(160deg,rgb(245 158 11/.26),transparent 65%) padding-box,var(--l1) padding-box,
+  linear-gradient(180deg,rgb(252 211 77/.65),rgb(245 158 11/.15)) border-box!important}
+:root[data-theme=dark] .tile.on{background:linear-gradient(160deg,rgb(34 211 238/.24),rgb(139 92 246/.12) 60%,transparent) padding-box,var(--l1) padding-box,
+  var(--neon) border-box!important}
+:root[data-theme=dark] .note{box-shadow:inset 0 1px 0 rgb(255 255 255/.06),0 1px 2px rgb(0 0 0/.5),0 12px 26px -14px rgb(0 0 0/.8)!important}
+:root[data-theme=dark] header.top nav .panel,:root[data-theme=dark] .edbar .pop>.menu,:root[data-theme=dark] details.tip>.tipbody,
+:root[data-theme=dark] .banner.toast,:root[data-theme=dark] [popover]#keys,:root[data-theme=dark] .pal-box,:root[data-theme=dark] dialog.tedlg{
+  background:#181e36!important}
+
 /* ---- motion that does not lag (Dada, 6 Oct 2026: "animations are welcome
    and transitions as long as they dont lag it"). transform and opacity only,
    so the GPU does it; each runs once; none on a list that can be long. */

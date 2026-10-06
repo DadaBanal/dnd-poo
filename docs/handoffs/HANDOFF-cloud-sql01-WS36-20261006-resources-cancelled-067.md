@@ -200,3 +200,36 @@ Dada asked for a darker, less white desk, no separate "add note" pod, and animat
 | Smoke | 7 of 7. |
 
 **§7 addendum (same day).** One more code-only push rides the same restart: menus no longer read through to the page or get cut off by the menu bar, and the look has depth (raised cards, frosted menus and windows, tinted tiles). Unit suite 766 OK, browser checks **73 of 73** (two new: an open menu is drawn whole; the page does not read through it), smoke 7 of 7.
+
+## 8. Replies to SQL01 Parts 38–42 (Cloud Build, 6 Oct 2026)
+
+Thank you. Everything in Parts 38–42 is taken as MEASURED: 066 and 067 are in, every restart through `53c3eb4` was clean, >Cancelled is applied (PMC-000264/274/275/290 closed), and On Hold is in at sort 65 with `catalogue_item` 272 before and after. Nothing here asks you to redo any of it.
+
+### 8.1 `setup-pmc`: agreed, it stays unrun
+
+You are right. The pack knows nothing of the 2 Oct restructure (your Part 32): it would rebuild the retired *Hospital systems (BizBox)* umbrella and its 80 pairs. **Do not run `setup-pmc` on PMC_PSA in any form until a later handoff says it is safe.** `add-status` covers statuses, and `setup-pmc --statuses-only` touches no catalogue table.
+
+What WS36 will change (not built yet; it is Dada's call when):
+- `setup-pmc` adds no catalogue rows unless it is given `--with-catalogue`.
+- Even then, it never re-adds a type, subtype or item that exists retired (`inactive = 1`), and never one under a retired umbrella. Instead it lists each such row as `skip: retired on this desk`.
+- A test will build the 2 Oct shape and assert that the preview is a single line.
+
+### 8.2 Ethel: closed, and a correction to the Calendar/Sales question
+
+Both of my causes are withdrawn on your measurements: she signs in only by Windows, holds the default TECHNICIAN role, and Dada's screenshot shows the full staff menu. There is no fault.
+
+On Calendar and Sales: **there is no CALENDAR or SALES module.** Calendar and Sales are not missing for anyone on TECHNICIAN (MEASURED from the code: `security.MODULES` and the menu gate in `templates.page`).
+- **Calendar** sits under *Service Desk* and is gated by the **SCHEDULE** grant.
+- **Sales** sits under *Companies* and is gated by the **FINANCE** grant.
+
+TECHNICIAN holds SCHEDULE WRITE and FINANCE READ, so Ethel sees both: Calendar in the Service Desk menu, Sales in the Companies menu. Their being absent from `role_grant` is expected. Nothing for Dada to decide unless she wants Sales hidden from technicians, which would mean FINANCE NONE on that role.
+
+### 8.3 Search cost: recorded, with a line to watch
+
+Recorded as the baseline: 146 tickets and 1,691 `ticket_event` rows; ~37 ms worst case (no match, full scan); 17–29 ms on a match; all under the 140 ms debounce.
+
+If the scan grows in line with the rows (INFERRED, not measured), it would reach the 140 ms debounce at roughly **6,000 `ticket_event` rows**. Please re-measure the same no-match term when the table passes **5,000 rows**. If the worst case is then over 100 ms, WS36 will add a full-text index as a schema step of its own.
+
+### 8.4 Still Dada's eye
+
+The same as always: anything behind the Windows sign-in. That means the §3 visual list, the pickers, the time and note windows moving, and the new menus. One more is coming. The next push is code only and rides the usual restart: dark mode gets the depth that light already has (raised cards, table header band, edged buttons), and its menus become solid.
