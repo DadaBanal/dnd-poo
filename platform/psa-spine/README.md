@@ -2058,6 +2058,39 @@ Browser checks hold all of it: Charged as starts on Included and is not required
 minutes after the clock's start is valid; a refused Save reopens the window with the note and its
 colour kept.
 
+## Projects in the reference PSA's shape: team, tickets inside, a live board (7 Oct 2026, schema 068)
+
+Dada, 7 Oct 2026: *"adding project members have not yet added please review connectwise projects and load
+everything that is missing from there also the projects board should show the projects and tickets live or
+can be created inside of the project itself like connectwise"*, and *"make sure it doesnt mess up or break
+anything on the current build"*.
+
+The reference was read from ConnectWise's own documentation (MEASURED via the public `?psa=1` pages:
+Project Details, Team Members, Work Plan, Project statuses) and its API models. What it has, and what this
+desk now has:
+
+| ConnectWise | Dada PSA, 7 Oct |
+|---|---|
+| Team: member, project role, est. hours, start, finish; the PM is on the team | **Team** card: member, role (Project manager, Team lead, Team member, Engineer, Consultant, Stakeholder), dates, planned hours against hours booked. The manager joins as Project manager, and so does a new manager; whoever a project ticket is given to joins as a team member (INFERRED from "anyone scheduled is added") |
+| New ticket from a phase on the Work Plan; summary and a status from the project board; budget hours | **+ Ticket** on every phase, and **New ticket** at the top, open one window: summary, phase, who, budget hours. The ticket is opened on the project's board through `tickets.open_ticket`, the one door every ticket comes in by |
+| Work plan: phases with their tickets, budget against actual | The **Work plan** card lists each phase's tickets under it, with who has each and its hours against its budget |
+| Project ticket board by status | A **Ticket board** card: one lane per status on the project's board |
+| Project list: company, PM, status, % complete; My projects / all | **Projects**: Company, Complete (share of tickets closed), Hours, Tickets, Team, each project's open tickets under it, and **My projects** (managed or on the team) |
+| Notes pod | **Notes** card |
+| Company on the project | **Company** on New project and on the project's own form, and the board can be changed there too |
+| (live updates NOT VERIFIED in ConnectWise) | The list and the project page refresh themselves when a project, its phases, team, notes or any of its tickets change (`/live?scope=projects`, `project:<id>`), the same quiet poll the board uses |
+
+**Not built yet** (the reference has them): project contacts, project templates and Copy Project, status
+health indicators (On Track / At Risk / Off Track), the close-project dialog that sets phase and ticket statuses,
+a Gantt view, ticket predecessors, and the billing fields (billing method, PO, rates).
+
+**What did not change.** 068 is additive: two new tables (`project_member`, `project_note`) and two nullable
+columns (`project_ticket.budget_hours`, `project.entity_id`). Every existing page, check and test still passes,
+including the restricted-board rule: a ticket on a board the viewer cannot read is in none of the new cards, its
+hours are in no total, and the projects list counts only what the viewer may see. Six new browser checks drive it:
++ Ticket opens the window with its phase picked, the ticket lands under its phase and on the board, a member is
+added with a role and hours, and the list shows each project's open tickets.
+
 ## One Save, always reachable (3 Oct 2026)
 
 The ticket's own fields were already one form with one **Save changes** — but it

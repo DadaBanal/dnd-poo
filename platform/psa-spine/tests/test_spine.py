@@ -6477,6 +6477,79 @@ class ModulesTest(unittest.TestCase):
 
     # ---------------------------------------------------------- projects
 
+    def test_a_project_has_a_team_and_opens_its_own_tickets(self):
+        """068. Dada, 7 Oct 2026: "adding project members have not yet added
+        ... tickets ... can be created inside the project itself like
+        connectwise", "the projects board should show the projects and
+        tickets live", and "make sure it doesnt ... break anything"."""
+        from psaspine import projects
+        conn = self._conn()
+        pid = projects.create(conn, name="Ward 5 NUC refresh", manager="alice", board_id="IT_HELP",
+                              budget_hours=20, at=self.at, actor="alice")
+        # the manager is on the team as the reference PSA puts them
+        self.assertEqual([(r["member"], r["project_role"]) for r in projects.team(conn, pid)],
+                         [("alice", "PROJECT_MANAGER")])
+        self.assertEqual(projects.add_member(conn, pid, "jun.reyes", role="ENGINEER", hours="12",
+                                             starts_on="2026-10-08", ends_on="2026-10-20", at=self.at, actor="alice"),
+                         "jun.reyes joined the team as engineer")
+        self.assertIn("role ENGINEER -> TEAM_LEAD", projects.add_member(
+            conn, pid, "Jun.Reyes", role="TEAM_LEAD", hours="12", starts_on="2026-10-08", ends_on="2026-10-20",
+            at=self.at, actor="alice"))
+        with self.assertRaises(projects.Refused):
+            projects.add_member(conn, pid, "x", role="BOSS", at=self.at, actor="alice")
+        ph = projects.add_phase(conn, pid, name="Install", at=self.at, actor="alice")
+        wid = projects.open_ticket(conn, pid, summary="Swap the PC at the nurses' station", phase_id=ph,
+                                   owner="mia.santos", budget_hours="2", at=self.at, actor="alice")
+        row = conn.execute("SELECT t.board_id, pt.phase_id, pt.budget_hours FROM ticket t JOIN project_ticket pt"
+                           " ON pt.work_item_id = t.work_item_id WHERE t.work_item_id = ?", (wid,)).fetchone()
+        self.assertEqual(tuple(row), ("IT_HELP", ph, 2.0), "on the project's board, in its phase, with its budget")
+        self.assertIn("mia.santos", {r["member"] for r in projects.team(conn, pid)}, "whoever has the work joins the team")
+        self.assertEqual(projects.percent_complete(conn, pid), 0)
+        self.assertEqual(projects.projects_of(conn, "MIA.SANTOS"), {pid})
+        unboarded = projects.create(conn, name="Nowhere", at=self.at, actor="alice")
+        with self.assertRaises(projects.Refused):
+            projects.open_ticket(conn, unboarded, summary="x", at=self.at, actor="alice")
+        conn.commit()
+
+        # the page: a dashboard, the work plan with the ticket under its phase, the board, the team, notes
+        _, _, page = self._call("GET", f"/project/{pid}", cookie=self.alice)
+        for bit in ("id=plan", "id=pboard", "id=team", "id=pnotes", "<dialog id=ptdlg",
+                    f"data-open=ptdlg data-phase='{ph}'", "class=planticket", f"data-live='project:{pid}'"):
+            self.assertIn(bit, page, bit)
+        # a ticket opened from the page, and a team member and a note added there
+        _, h, _ = self._call("POST", f"/project/{pid}/ticket/new", cookie=self.alice,
+                             form={"summary": "Move the label printer", "phase_id": str(ph), "budget_hours": "1"})
+        self.assertIn("created+in+the+project", dict(h)["Location"])
+        _, h, _ = self._call("POST", f"/project/{pid}/member", cookie=self.alice,
+                             form={"member": "lea.cruz", "role": "TEAM_MEMBER", "hours": "4"})
+        self.assertNotIn("err=", dict(h)["Location"])
+        _, h, _ = self._call("POST", f"/project/{pid}/note", cookie=self.alice, form={"body": "Kick-off held"})
+        self.assertNotIn("err=", dict(h)["Location"])
+        _, h, _ = self._call("POST", f"/project/{pid}/member/remove", cookie=self.alice, form={"member": "lea.cruz"})
+        c = self._conn()
+        self.assertEqual(c.execute("SELECT COUNT(*) FROM project_ticket WHERE project_id = ?", (pid,)).fetchone()[0], 2)
+        self.assertEqual(c.execute("SELECT COUNT(*) FROM project_note WHERE project_id = ?", (pid,)).fetchone()[0], 1)
+        self.assertIsNone(c.execute("SELECT 1 FROM project_member WHERE member = 'lea.cruz'").fetchone())
+        # someone who only reads the project's board cannot open a ticket on it
+        status, _, _ = self._call("POST", f"/project/{pid}/ticket/new", cookie=self._cookie_for("carol"),
+                                  form={"summary": "nope"})
+        self.assertFalse(status.startswith("303"), status)
+        self.assertEqual(c.execute("SELECT COUNT(*) FROM project_ticket WHERE project_id = ?", (pid,)).fetchone()[0], 2)
+
+        # the list: company, % complete, team, the open tickets under each project, Mine, and live
+        _, _, page = self._call("GET", "/projects", cookie=self.alice)
+        self.assertIn("data-live='projects'", page)
+        self.assertIn("2 open ticket(s)", page)
+        _, _, mine = self._call("GET", "/projects", query="show=mine", cookie=self.alice)
+        self.assertIn("Ward 5 NUC refresh", mine)
+        # the live stamp moves when a project ticket changes
+        s1 = self._call("GET", "/live", query=f"scope=project:{pid}", cookie=self.alice)[2]
+        c.execute("UPDATE ticket SET updated_at = '2026-10-07 11:00' WHERE work_item_id = ?", (wid,))
+        c.commit()
+        s2 = self._call("GET", "/live", query=f"scope=project:{pid}", cookie=self.alice)[2]
+        self.assertNotEqual(s1, s2)
+        self.assertTrue(self._call("GET", "/live", query="scope=projects", cookie=self.alice)[0].startswith("200"))
+
     def test_projects_phases_predecessors_tickets_and_actual_hours(self):
         from psaspine import projects
         conn = self._conn()

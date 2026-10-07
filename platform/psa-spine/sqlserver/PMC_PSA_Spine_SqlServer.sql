@@ -233,6 +233,8 @@ BEGIN
     PRINT N'    psa.dispatch_view';
     PRINT N'    psa.time_timer';
     PRINT N'    psa.ticket_resource';
+    PRINT N'    psa.project_member';
+    PRINT N'    psa.project_note';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -291,13 +293,15 @@ BEGIN
     PRINT N'    psa.ux_time_timer_running';
     PRINT N'    psa.ix_time_timer_member';
     PRINT N'    psa.ix_ticket_resource_member';
+    PRINT N'    psa.ix_project_member_member';
+    PRINT N'    psa.ix_project_note_project';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  135 tables, 57 indexes, 4 triggers.';
+    PRINT N'  137 tables, 59 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -3519,6 +3523,46 @@ CREATE TABLE psa.[ticket_resource] (
 END;
 
 -- --------------------------------------------------------------------------
+-- project_member   (from schema/068_project_team.sql)
+IF OBJECT_ID(N'psa.[project_member]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[project_member] (
+    [project_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_project_member_project_id] REFERENCES psa.[project]([project_id]),
+    [member] NVARCHAR(200) NOT NULL,
+    [project_role] NVARCHAR(32) NOT NULL CONSTRAINT [DF_project_member_project_role] DEFAULT ('TEAM_MEMBER'),
+    [starts_on] NVARCHAR(32) NULL,
+    [ends_on] NVARCHAR(32) NULL,
+    [hours] DECIMAL(9,2) NULL,
+    [added_at] NVARCHAR(64) NOT NULL,
+    [added_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [starts_on_parsed] AS (CASE WHEN [starts_on] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [starts_on], 112) WHEN [starts_on] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [starts_on], 23) END),
+    [ends_on_parsed] AS (CASE WHEN [ends_on] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [ends_on], 112) WHEN [ends_on] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [ends_on], 23) END),
+    [added_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [added_at], 126), CASE WHEN [added_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [added_at], 112) END)),
+    CONSTRAINT [PK_project_member] PRIMARY KEY ([project_id], [member])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- project_note   (from schema/068_project_team.sql)
+IF OBJECT_ID(N'psa.[project_note]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[project_note] (
+    [note_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_project_note] PRIMARY KEY,
+    [project_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_project_note_project_id] REFERENCES psa.[project]([project_id]),
+    [body] NVARCHAR(MAX) NOT NULL,
+    [written_at] NVARCHAR(64) NOT NULL,
+    [written_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [written_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [written_at], 126), CASE WHEN [written_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [written_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -3997,6 +4041,12 @@ ALTER TABLE psa.[notification] ADD [body_html] NVARCHAR(MAX) NULL;
 IF COL_LENGTH(N'psa.[attachment]', N'content_id') IS NULL
 ALTER TABLE psa.[attachment] ADD [content_id] NVARCHAR(400) NULL;
 
+IF COL_LENGTH(N'psa.[project_ticket]', N'budget_hours') IS NULL
+ALTER TABLE psa.[project_ticket] ADD [budget_hours] DECIMAL(9,2) NULL;
+
+IF COL_LENGTH(N'psa.[project]', N'entity_id') IS NULL
+ALTER TABLE psa.[project] ADD [entity_id] NVARCHAR(64) NULL;
+
 IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
 ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
 
@@ -4189,6 +4239,13 @@ CREATE INDEX [ix_time_timer_member] ON psa.[time_timer] ([member], [stopped_at])
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ticket_resource_member' AND object_id = OBJECT_ID(N'psa.[ticket_resource]'))
 CREATE INDEX [ix_ticket_resource_member] ON psa.[ticket_resource] ([member]);
 
+-- "My projects": every project a person is on, by person.
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_project_member_member' AND object_id = OBJECT_ID(N'psa.[project_member]'))
+CREATE INDEX [ix_project_member_member] ON psa.[project_member] ([member]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_project_note_project' AND object_id = OBJECT_ID(N'psa.[project_note]'))
+CREATE INDEX [ix_project_note_project] ON psa.[project_note] ([project_id]);
+
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
@@ -4324,10 +4381,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 135 OR @Triggers <> 4 OR @Indexes < 57
+IF @Tables <> 137 OR @Triggers <> 4 OR @Indexes < 59
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 135), %d triggers (expected 4), %d indexes (expected at least 57). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 137), %d triggers (expected 4), %d indexes (expected at least 59). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -4383,6 +4440,8 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[project_note];
+    DROP TABLE IF EXISTS psa.[project_member];
     DROP TABLE IF EXISTS psa.[ticket_resource];
     DROP TABLE IF EXISTS psa.[time_timer];
     DROP TABLE IF EXISTS psa.[dispatch_view];

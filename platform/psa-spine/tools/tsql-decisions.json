@@ -168,6 +168,14 @@
     "quote_line.quantity": {
       "sql": "DECIMAL(12,3)",
       "why": "A count or a length; 0.5 of a day is exact in DECIMAL and not in binary FLOAT."
+    },
+    "project_ticket.budget_hours": {
+      "sql": "DECIMAL(9,2)",
+      "why": "A project ticket's budget, as its phase's and project's are (068)."
+    },
+    "project_member.hours": {
+      "sql": "DECIMAL(9,2)",
+      "why": "Hours planned for a team member on a project (068); the same unit as the budget."
     }
   },
   "columns": {
@@ -1092,6 +1100,18 @@
     "ticket_resource.work_item_id": "ID",
     "ticket_resource.member": "PERSON",
     "ticket_resource.added_at": "TIMESTAMP_TEXT",
-    "ticket_resource.added_by": "PERSON"
+    "ticket_resource.added_by": "PERSON",
+    "project.entity_id": "ID",
+    "project_member.project_id": "ID",
+    "project_member.member": "PERSON",
+    "project_member.project_role": "CODE",
+    "project_member.starts_on": "DATE_TEXT",
+    "project_member.ends_on": "DATE_TEXT",
+    "project_member.added_at": "TIMESTAMP_TEXT",
+    "project_member.added_by": "PERSON",
+    "project_note.project_id": "ID",
+    "project_note.body": "FREE",
+    "project_note.written_at": "TIMESTAMP_TEXT",
+    "project_note.written_by": "PERSON"
   }
 }

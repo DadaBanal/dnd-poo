@@ -507,6 +507,39 @@ def main() -> int:
                 note("no longer waits on" in page.locator("body").inner_text(),
                      "the wrong predecessor comes off, so both phases can finish", page.url)
 
+            # --- a project's own tickets and team (068; Dada, 7 Oct 2026) ------
+            page.goto(f"{base}/project/{prj}", wait_until="domcontentloaded")
+            page.wait_for_timeout(400)
+            plus = page.locator(f"button[data-open=ptdlg][data-phase='{ph_b}']")
+            note(plus.count() == 1, "each phase offers + Ticket")
+            if plus.count():
+                plus.click()
+                page.wait_for_timeout(300)
+                picked = page.evaluate("() => [document.getElementById('ptdlg').open,"
+                                       " document.querySelector('#ptdlg select[name=phase_id]').value]")
+                note(picked == [True, str(ph_b)], "and opens the project ticket window with that phase picked", str(picked))
+                page.fill("#ptdlg input[name=summary]", "Hand the ward its new PCs")
+                page.fill("#ptdlg input[name=budget_hours]", "3")
+                page.locator("#ptdlg .tefoot button[type=submit]").click()
+                page.wait_for_load_state("domcontentloaded")
+                page.wait_for_timeout(500)
+                plan = page.locator("#plan").inner_text()
+                note("created in the project" in page.locator("body").inner_text()
+                     and "Hand the ward its new PCs" in plan,
+                     "the ticket is created inside the project and sits under its phase in the work plan")
+                note(page.locator("#pboard .pcard").count() >= 2, "and is on the project's ticket board")
+            page.locator("#team select[name=member]").select_option(index=0)
+            page.locator("#team select[name=role]").select_option("ENGINEER")
+            page.locator("#team input[name=hours]").fill("8")
+            page.locator("#team button[type=submit]").first.click()
+            page.wait_for_load_state("domcontentloaded")
+            page.wait_for_timeout(400)
+            note("joined the team" in page.locator("body").inner_text() or "on the team" in page.locator("body").inner_text(),
+                 "a member is added to the project's team with a role and hours")
+            page.goto(f"{base}/projects", wait_until="domcontentloaded")
+            page.wait_for_timeout(300)
+            note("open ticket(s)" in page.locator("body").inner_text(), "the projects list shows each project's open tickets")
+
             # --- an email as its sender laid it out (6 Oct 2026) -------------
             # Dada: "HTML is or emails are not rendering properly on the ticket
             # viewer", "images are not rendering on the ticket", and "search on

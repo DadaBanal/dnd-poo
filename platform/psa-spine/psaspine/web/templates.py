@@ -963,6 +963,24 @@ main button.ghost,main .btn.ghost,.backbtn{
 .sys.time::after{border-color:var(--neon2)!important;box-shadow:0 0 10px rgb(139 92 246/.7)!important}
 label b.req{color:var(--bad,#e5484d)}
 
+/* ---- projects (068): the tab bar, the work plan's ticket rows, the ticket board, % complete */
+.ptabs{position:sticky;top:76px;z-index:5;display:flex;gap:4px;flex-wrap:wrap;margin:10px 0 12px;padding:6px;border-radius:14px;
+  background:var(--l2-bg,var(--surface));box-shadow:var(--l2-shadow,none)}
+.ptabs a{padding:6px 12px;border-radius:999px;color:var(--ink-2);text-decoration:none;font-weight:600;font-size:13.5px}
+.ptabs a:hover{color:var(--ink);background:rgb(34 211 238/.10)}
+tr.planticket td{font-size:13.5px;color:var(--ink-2)} tr.planticket td .ic{width:13px;height:13px;vertical-align:-2px;color:var(--neon1,var(--accent))}
+tr.planhead td{padding-top:12px}
+.planess{display:flex;gap:12px;overflow-x:auto;padding-bottom:6px}
+.plane{flex:0 0 250px;background:rgb(127 127 127/.06);border-radius:12px;padding:8px}
+.plane h4{margin:2px 4px 8px;font-size:12.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3)}
+.pcard{display:flex;flex-direction:column;gap:3px;padding:9px 10px;margin-bottom:8px;border-radius:10px;text-decoration:none;
+  color:var(--ink);background:var(--surface);box-shadow:var(--l1-shadow,0 1px 2px rgb(0 0 0/.2));border:1px solid var(--line)}
+.pcard:hover{border-color:var(--neon1,var(--accent))}
+.pcard span{font-size:12px}
+.pbar{display:inline-block;width:70px;height:6px;border-radius:999px;background:rgb(127 127 127/.25);vertical-align:middle;overflow:hidden}
+.pbar i{display:block;height:100%;background:var(--neon,var(--accent))}
+tr.popen td{padding-top:0;border-top:0}
+
 /* ---- motion that does not lag (Dada, 6 Oct 2026: "animations are welcome
    and transitions as long as they dont lag it"). transform and opacity only,
    so the GPU does it; each runs once; none on a list that can be long. */
@@ -1608,7 +1626,10 @@ function fallback(){var ta=d.createElement("textarea");ta.value=text;ta.setAttri
   ta.style.cssText="position:fixed;left:-9999px";d.body.appendChild(ta);ta.select();
   try{d.execCommand("copy");done()}catch(err){}d.body.removeChild(ta)}});
 /* a button with data-open opens that dialog; data-tick ticks every box in its form, or none */
-d.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest("[data-open]");if(b){var dl=d.getElementById(b.dataset.open);if(dl&&dl.showModal){dl.showModal();return}}
+d.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest("[data-open]");if(b){var dl=d.getElementById(b.dataset.open);
+  /* a phase's + Ticket opens the project ticket window with that phase picked (068) */
+  if(dl&&b.dataset.phase!==undefined){var ps=dl.querySelector("select[name=phase_id]");if(ps)ps.value=b.dataset.phase}
+  if(dl&&dl.showModal){dl.showModal();return}}
   var k=e.target.closest&&e.target.closest("[data-tick]");if(k&&k.form){$$("input[type=checkbox]",k.form).forEach(function(c){c.checked=k.dataset.tick==="1"})}});
 /* the departments grid: a row or column box ticks its line */
 var dg=$("#deptgrid");if(dg){dg.addEventListener("change",function(e){var b=e.target;

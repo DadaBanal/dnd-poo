@@ -72,7 +72,8 @@ def _next_id(conn) -> str:
 
 
 def create(conn, *, name: str, manager: str | None = None, board_id: str | None = None, starts_on=None,
-           ends_on=None, budget_hours=None, description: str | None = None, at: datetime, actor: str) -> str:
+           ends_on=None, budget_hours=None, description: str | None = None, entity_id: str | None = None,
+           at: datetime, actor: str) -> str:
     name = " ".join((name or "").split())[:200]
     if not name:
         raise Refused("A project needs a name.")
@@ -86,7 +87,11 @@ def create(conn, *, name: str, manager: str | None = None, board_id: str | None 
                  " description, created_at, created_by) VALUES (?,?,?,?, 'PLANNED', ?,?,?,?,?,?)",
                  (pid, name, board_id or None, (manager or "").strip() or None, s, e, _hours(budget_hours),
                   (description or "").strip() or None, _stamp(at), actor))
+    if entity_id:                                   # the company (068)
+        conn.execute("UPDATE project SET entity_id = ? WHERE project_id = ?", (entity_id, pid))
     _audit(conn, at, actor, pid, f"project created: {name}")
+    if (manager or "").strip():                     # the manager is on the team, as the reference PSA puts them
+        add_member(conn, pid, manager.strip(), role="PROJECT_MANAGER", at=at, actor=actor)
     return pid
 
 
@@ -118,6 +123,13 @@ def update(conn, project_id: str, *, at: datetime, actor: str, **fields) -> str:
         new["budget_hours"] = _hours(fields["budget_hours"])
     if "description" in fields:
         new["description"] = (fields["description"] or "").strip() or None
+    if "entity_id" in fields:                       # the company (068)
+        new["entity_id"] = (fields["entity_id"] or "").strip() or None
+    if "board_id" in fields:
+        b = (fields["board_id"] or "").strip() or None
+        if b and not conn.execute("SELECT 1 FROM board WHERE board_id = ?", (b,)).fetchone():
+            raise Refused("No such board.")
+        new["board_id"] = b
     s = new.get("starts_on", row["starts_on"])
     e = new.get("ends_on", row["ends_on"])
     if s and e and e < s:
@@ -130,6 +142,10 @@ def update(conn, project_id: str, *, at: datetime, actor: str, **fields) -> str:
     words = "; ".join(f"{k} {row[k] if row[k] is not None else '-'} -> {v if v is not None else '-'}"
                       for k, v in changed.items() if k != "description") or "description changed"
     _audit(conn, at, actor, project_id, words)
+    m = changed.get("manager")
+    if m and not conn.execute("SELECT 1 FROM project_member WHERE project_id = ? AND LOWER(member) = LOWER(?)",
+                              (project_id, m)).fetchone():
+        add_member(conn, project_id, m, role="PROJECT_MANAGER", at=at, actor=actor)   # 068
     return words
 
 
@@ -498,3 +514,164 @@ def hours_by_project(conn, *, boards=None) -> dict[str, float]:
 
 def actual_hours(conn, project_id: str, *, boards=None) -> float:
     return round(sum(hours_by_phase(conn, project_id, boards=boards).values()), 2)
+
+
+# ------------------------------------------------------------------ team (068)
+# Dada, 7 Oct 2026: "adding project members have not yet added". The reference
+# PSA's project has a team: each member with a role on this project, the dates
+# they are on it and the hours planned for them. The team is who the project's
+# tickets are offered to first, and what "My projects" reads.
+
+ROLES = {"PROJECT_MANAGER": "Project manager", "TEAM_LEAD": "Team lead", "TEAM_MEMBER": "Team member",
+         "ENGINEER": "Engineer", "CONSULTANT": "Consultant", "STAKEHOLDER": "Stakeholder"}
+
+
+def team(conn, project_id: str) -> list:
+    return conn.execute("SELECT * FROM project_member WHERE project_id = ? ORDER BY"
+                        " CASE project_role WHEN 'PROJECT_MANAGER' THEN 0 WHEN 'TEAM_LEAD' THEN 1 ELSE 2 END, member",
+                        (project_id,)).fetchall()
+
+
+def add_member(conn, project_id: str, member: str, *, role: str = "TEAM_MEMBER", starts_on=None, ends_on=None,
+               hours=None, at: datetime, actor: str) -> str:
+    """Put a member on the project's team, or change their role, dates or hours
+    if they are on it already. Returns a sentence for the page and the audit."""
+    p = get(conn, project_id)
+    if p is None:
+        raise Refused("No such project.")
+    member = (member or "").strip()
+    if not member:
+        raise Refused("Pick a member.")
+    if role not in ROLES:
+        raise Refused("No such project role.")
+    s, e = _day(starts_on, "Start"), _day(ends_on, "End")
+    if s and e and e < s:
+        raise Refused("A member's time on the project ends after it starts.")
+    h = _hours(hours)
+    before = conn.execute("SELECT * FROM project_member WHERE project_id = ? AND LOWER(member) = LOWER(?)",
+                          (project_id, member)).fetchone()
+    if before is None:
+        conn.execute("INSERT INTO project_member (project_id, member, project_role, starts_on, ends_on, hours,"
+                     " added_at, added_by) VALUES (?,?,?,?,?,?,?,?)",
+                     (project_id, member, role, s, e, h, _stamp(at), actor))
+        words = f"{member} joined the team as {ROLES[role].lower()}"
+    else:
+        new = {"project_role": role, "starts_on": s, "ends_on": e, "hours": h}
+        changed = {k: v for k, v in new.items() if v != before[k]}
+        if not changed:
+            return "nothing changed"
+        conn.execute(f"UPDATE project_member SET {', '.join(k + ' = ?' for k in changed)}"
+                     " WHERE project_id = ? AND member = ?", [*changed.values(), project_id, before["member"]])
+        words = f"{before['member']} on the team: " + "; ".join(
+            f"{k.replace('project_', '')} {before[k] if before[k] is not None else '-'} -> {v if v is not None else '-'}"
+            for k, v in changed.items())
+    _audit(conn, at, actor, project_id, words)
+    return words
+
+
+def remove_member(conn, project_id: str, member: str, *, at: datetime, actor: str) -> str:
+    """Take a member off the team. Their tickets, time and history stay theirs;
+    only the place on the team goes."""
+    row = conn.execute("SELECT member FROM project_member WHERE project_id = ? AND LOWER(member) = LOWER(?)",
+                       (project_id, (member or "").strip())).fetchone()
+    if row is None:
+        return "nothing changed"
+    conn.execute("DELETE FROM project_member WHERE project_id = ? AND member = ?", (project_id, row["member"]))
+    words = f"{row['member']} left the team"
+    _audit(conn, at, actor, project_id, words)
+    return words
+
+
+def projects_of(conn, member: str) -> set[str]:
+    """Every project a person manages or is on the team of ("My projects")."""
+    m = (member or "").strip().lower()
+    return {r[0] for r in conn.execute(
+        "SELECT project_id FROM project WHERE LOWER(COALESCE(manager, '')) = ? UNION"
+        " SELECT project_id FROM project_member WHERE LOWER(member) = ?", (m, m))}
+
+
+# ------------------------------------------------------- project tickets (068)
+# Dada, 7 Oct 2026: tickets "can be created inside the project itself like
+# connectwise". A project ticket is opened in a phase from the project, on the
+# project's board, through the same door as every other ticket (tickets.
+# open_ticket: one number sequence, the board's status, clocks and audit), and
+# carries its own budget hours.
+
+def open_ticket(conn, project_id: str, *, summary: str, phase_id: int | None = None, owner: str | None = None,
+                budget_hours=None, description: str | None = None, at: datetime, actor: str) -> str:
+    from . import tickets as _tickets
+    p = get(conn, project_id)
+    if p is None:
+        raise Refused("No such project.")
+    if not p["board_id"]:
+        raise Refused("Give the project a board first: its tickets are opened on the project's board.")
+    summary = " ".join((summary or "").split())[:200]
+    if not summary:
+        raise Refused("A ticket needs a summary.")
+    if phase_id is not None:
+        ph = _phase(conn, phase_id)
+        if ph is None or ph["project_id"] != project_id:
+            raise Refused("That phase is not on this project.")
+    budget = _hours(budget_hours)
+    wid = _tickets.open_ticket(conn, board_id=p["board_id"], summary=summary, impact="I3", urgency="U3",
+                               requested_by=None, at=at, actor=actor, description=(description or "").strip() or None,
+                               entity_id=p["entity_id"] if "entity_id" in p.keys() else None,
+                               owner=(owner or "").strip() or None, source="DESK")
+    link_ticket(conn, wid, project_id, phase_id, at=at, actor=actor)
+    who = (owner or "").strip()
+    if who and not conn.execute("SELECT 1 FROM project_member WHERE project_id = ? AND LOWER(member) = LOWER(?)",
+                                (project_id, who)).fetchone():
+        add_member(conn, project_id, who, at=at, actor=actor)   # whoever has the work is on the team
+    if budget is not None:
+        conn.execute("UPDATE project_ticket SET budget_hours = ? WHERE work_item_id = ?", (budget, wid))
+    _audit(conn, at, actor, project_id, f"ticket {wid} opened in the project: {summary}")
+    return wid
+
+
+def set_ticket_budget(conn, work_item_id: str, budget_hours, *, at: datetime, actor: str) -> str:
+    row = conn.execute("SELECT project_id, budget_hours FROM project_ticket WHERE work_item_id = ?",
+                       (work_item_id,)).fetchone()
+    if row is None:
+        raise Refused("That ticket is not on a project.")
+    b = _hours(budget_hours)
+    if b == row["budget_hours"]:
+        return "nothing changed"
+    conn.execute("UPDATE project_ticket SET budget_hours = ? WHERE work_item_id = ?", (b, work_item_id))
+    words = f"{work_item_id} budget {row['budget_hours'] if row['budget_hours'] is not None else '-'} -> {b if b is not None else '-'} h"
+    _audit(conn, at, actor, row["project_id"], words)
+    return words
+
+
+def ticket_hours(conn, project_id: str) -> dict[str, float]:
+    """Actual hours on each of the project's tickets (their time entries)."""
+    return {r[0]: float(r[1] or 0) for r in conn.execute(
+        f"SELECT pt.work_item_id, SUM({_entry_hours()}) FROM project_ticket pt JOIN time_entry te"
+        " ON te.work_item_id = pt.work_item_id WHERE pt.project_id = ? GROUP BY pt.work_item_id", (project_id,))}
+
+
+def percent_complete(conn, project_id: str, *, boards=None) -> int | None:
+    """The share of the project's tickets that are closed, as the reference
+    PSA's calculated % complete reads it. None while it has no tickets."""
+    clause, args = _board_clause(boards)
+    row = conn.execute("SELECT COUNT(*), SUM(CASE WHEN t.state IN ('RESOLVED', 'CLOSED') THEN 1 ELSE 0 END)"
+                       " FROM project_ticket pt JOIN ticket t ON t.work_item_id = pt.work_item_id"
+                       f" WHERE pt.project_id = ?{clause}", [project_id, *args]).fetchone()
+    return round(100 * (row[1] or 0) / row[0]) if row[0] else None
+
+
+# ------------------------------------------------------------------ notes (068)
+
+def add_note(conn, project_id: str, body: str, *, at: datetime, actor: str) -> int:
+    if get(conn, project_id) is None:
+        raise Refused("No such project.")
+    body = (body or "").strip()
+    if not body:
+        raise Refused("A note needs some words.")
+    cur = conn.execute("INSERT INTO project_note (project_id, body, written_at, written_by) VALUES (?,?,?,?)",
+                       (project_id, body[:8000], _stamp(at), actor))
+    _audit(conn, at, actor, project_id, "note added")
+    return cur.lastrowid
+
+
+def notes(conn, project_id: str) -> list:
+    return conn.execute("SELECT * FROM project_note WHERE project_id = ? ORDER BY note_id DESC", (project_id,)).fetchall()

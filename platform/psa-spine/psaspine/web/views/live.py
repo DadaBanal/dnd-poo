@@ -45,6 +45,30 @@ def stamp(ctx):
         vis = conn.execute(f"SELECT COUNT(*), MAX(s.schedule_id) FROM ticket_schedule s JOIN ticket t ON"
                            f" t.work_item_id = s.work_item_id WHERE t.board_id IN {frag}", ids).fetchone()
         parts = (tk[0], tk[1], ev[0], vis[0], vis[1])
+    elif scope == "projects" or scope.startswith("project:"):
+        # 068: the projects list and a project page move when a project, its
+        # phases, team, notes or any of its tickets the person may see change.
+        pid = scope[8:] if scope.startswith("project:") else None
+        if pid is not None:
+            row = conn.execute("SELECT board_id FROM project WHERE project_id = ?", (pid,)).fetchone()
+            if row is None or (row["board_id"] and not common.may_access_board(ctx, row["board_id"])):
+                return Response("404 Not Found", "", content_type="text/plain; charset=utf-8")
+        frag, ids = _in(common.board_ids_for(ctx))
+        one = " AND pt.project_id = ?" if pid else ""
+        arg = (pid,) if pid else ()
+        tk = conn.execute(f"SELECT COUNT(*), MAX(t.updated_at), MAX(t.board_status_id) FROM project_ticket pt JOIN ticket t"
+                          f" ON t.work_item_id = pt.work_item_id WHERE t.board_id IN {frag}{one}", ids + arg).fetchone()
+        te = conn.execute(f"SELECT COUNT(*), MAX(te.time_entry_id) FROM project_ticket pt JOIN ticket t ON t.work_item_id ="
+                          f" pt.work_item_id JOIN time_entry te ON te.work_item_id = pt.work_item_id"
+                          f" WHERE t.board_id IN {frag}{one}", ids + arg).fetchone()
+        w = " WHERE project_id = ?" if pid else ""
+        pr = conn.execute(f"SELECT COUNT(*), MAX(name || status || COALESCE(manager, '') || COALESCE(budget_hours, ''))"
+                          f" FROM project{w}", arg).fetchone()
+        ph = conn.execute(f"SELECT COUNT(*), MAX(phase_id), SUM(CASE WHEN status = 'DONE' THEN 1 ELSE 0 END)"
+                          f" FROM project_phase{w}", arg).fetchone()
+        tm = conn.execute(f"SELECT COUNT(*), MAX(added_at) FROM project_member{w}", arg).fetchone()
+        nt = conn.execute(f"SELECT COUNT(*) FROM project_note{w}", arg).fetchone()
+        parts = (*tk, *te, *pr, *ph, *tm, nt[0])
     else:
         return Response("400 Bad Request", "", content_type="text/plain; charset=utf-8")
     body = "|".join("" if p is None else str(p) for p in parts)
