@@ -235,6 +235,9 @@ BEGIN
     PRINT N'    psa.ticket_resource';
     PRINT N'    psa.project_member';
     PRINT N'    psa.project_note';
+    PRINT N'    psa.project_contact';
+    PRINT N'    psa.project_ticket_dependency';
+    PRINT N'    psa.project_plan_item';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -295,13 +298,14 @@ BEGIN
     PRINT N'    psa.ix_ticket_resource_member';
     PRINT N'    psa.ix_project_member_member';
     PRINT N'    psa.ix_project_note_project';
+    PRINT N'    psa.ix_project_plan_item_project';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  137 tables, 59 indexes, 4 triggers.';
+    PRINT N'  140 tables, 60 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -3563,6 +3567,55 @@ CREATE TABLE psa.[project_note] (
 END;
 
 -- --------------------------------------------------------------------------
+-- project_contact   (from schema/069_project_plan.sql)
+IF OBJECT_ID(N'psa.[project_contact]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[project_contact] (
+    [project_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_project_contact_project_id] REFERENCES psa.[project]([project_id]),
+    [contact_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_project_contact_contact_id] REFERENCES psa.[contact]([contact_id]),
+    [role] NVARCHAR(400) NULL,
+    [added_at] NVARCHAR(64) NOT NULL,
+    [added_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [added_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [added_at], 126), CASE WHEN [added_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [added_at], 112) END)),
+    CONSTRAINT [PK_project_contact] PRIMARY KEY ([project_id], [contact_id])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- project_ticket_dependency   (from schema/069_project_plan.sql)
+IF OBJECT_ID(N'psa.[project_ticket_dependency]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[project_ticket_dependency] (
+    [work_item_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_project_ticket_dependency_work_item_id] REFERENCES psa.[project_ticket]([work_item_id]),
+    [depends_on] NVARCHAR(64) NOT NULL CONSTRAINT [FK_project_ticket_dependency_depends_on] REFERENCES psa.[project_ticket]([work_item_id]),
+    CONSTRAINT [PK_project_ticket_dependency] PRIMARY KEY ([work_item_id], [depends_on]),
+    CONSTRAINT [CK_project_ticket_dependency_01] CHECK (work_item_id <> depends_on)
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- project_plan_item   (from schema/069_project_plan.sql)
+IF OBJECT_ID(N'psa.[project_plan_item]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[project_plan_item] (
+    [item_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_project_plan_item] PRIMARY KEY,
+    [project_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_project_plan_item_project_id] REFERENCES psa.[project]([project_id]),
+    [phase_id] INT NULL CONSTRAINT [FK_project_plan_item_phase_id] REFERENCES psa.[project_phase]([phase_id]),
+    [summary] NVARCHAR(400) NOT NULL,
+    [budget_hours] DECIMAL(9,2) NULL,
+    [sort_order] INT NOT NULL CONSTRAINT [DF_project_plan_item_sort_order] DEFAULT (0),
+    [created_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -4047,6 +4100,18 @@ ALTER TABLE psa.[project_ticket] ADD [budget_hours] DECIMAL(9,2) NULL;
 IF COL_LENGTH(N'psa.[project]', N'entity_id') IS NULL
 ALTER TABLE psa.[project] ADD [entity_id] NVARCHAR(64) NULL;
 
+IF COL_LENGTH(N'psa.[project]', N'is_template') IS NULL
+ALTER TABLE psa.[project] ADD [is_template] INT NULL;
+
+IF COL_LENGTH(N'psa.[project]', N'health') IS NULL
+ALTER TABLE psa.[project] ADD [health] NVARCHAR(32) NULL;
+
+IF COL_LENGTH(N'psa.[project_ticket]', N'starts_on') IS NULL
+ALTER TABLE psa.[project_ticket] ADD [starts_on] NVARCHAR(32) NULL;
+
+IF COL_LENGTH(N'psa.[project_ticket]', N'due_on') IS NULL
+ALTER TABLE psa.[project_ticket] ADD [due_on] NVARCHAR(32) NULL;
+
 IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
 ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
 
@@ -4246,6 +4311,9 @@ CREATE INDEX [ix_project_member_member] ON psa.[project_member] ([member]);
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_project_note_project' AND object_id = OBJECT_ID(N'psa.[project_note]'))
 CREATE INDEX [ix_project_note_project] ON psa.[project_note] ([project_id]);
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_project_plan_item_project' AND object_id = OBJECT_ID(N'psa.[project_plan_item]'))
+CREATE INDEX [ix_project_plan_item_project] ON psa.[project_plan_item] ([project_id]);
+
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
@@ -4381,10 +4449,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 137 OR @Triggers <> 4 OR @Indexes < 59
+IF @Tables <> 140 OR @Triggers <> 4 OR @Indexes < 60
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 137), %d triggers (expected 4), %d indexes (expected at least 59). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 140), %d triggers (expected 4), %d indexes (expected at least 60). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -4440,6 +4508,9 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[project_plan_item];
+    DROP TABLE IF EXISTS psa.[project_ticket_dependency];
+    DROP TABLE IF EXISTS psa.[project_contact];
     DROP TABLE IF EXISTS psa.[project_note];
     DROP TABLE IF EXISTS psa.[project_member];
     DROP TABLE IF EXISTS psa.[ticket_resource];

@@ -51,6 +51,8 @@ def index(ctx):
     status = q.get("status", "") if q.get("status", "") in projects.STATUSES else ""
     seen = common.board_ids_for(ctx)
     rows = [r for r in projects.all_projects(ctx.conn, status=status or None, boards=seen) if _visible(ctx, r, seen)]
+    tpls = [r for r in rows if projects.is_template(r)]            # 069: templates are listed apart
+    rows = [r for r in rows if not projects.is_template(r)]
     # "My projects" (068): the ones a person manages or is on the team of; Every project shows the rest
     mine = projects.projects_of(ctx.conn, ctx.user.id)
     scope = q.get("show", "")
@@ -72,7 +74,7 @@ def index(ctx):
         lis = "".join(f"<li><a href='/ticket/{t.esc(x['work_item_id'])}'>{t.esc(x['work_item_id'])}</a> {t.esc(x['summary'])}"
                       f" <span class=muted>· {t.esc(x['phase_name'] or 'no phase')} · {t.esc(x['owner'] or 'unassigned')}"
                       f" · {t.esc(x['state'].lower().replace('_', ' '))}</span></li>" for x in tk)
-        return (f"<tr class=popen><td></td><td colspan=9><details><summary class=muted>{len(tk)} open ticket(s)</summary>"
+        return (f"<tr class=popen><td></td><td colspan=10><details><summary class=muted>{len(tk)} open ticket(s)</summary>"
                 f"<ul class=plain>{lis}</ul></details></td></tr>")
     def pct(pid):
         v = projects.percent_complete(ctx.conn, pid, boards=seen)
@@ -81,7 +83,7 @@ def index(ctx):
     trs = "".join(
         f"<tr><td><a href='/project/{t.esc(r['project_id'])}'>{t.esc(r['project_id'])}</a></td><td><b>{t.esc(r['name'])}</b></td>"
         f"<td>{t.esc(names.get(r['entity_id'], '') if 'entity_id' in r.keys() and r['entity_id'] else '')}</td>"
-        f"<td>{t.chip(projects.STATUSES[r['status']])}</td><td>{t.esc(r['manager'] or '')}</td>"
+        f"<td>{t.chip(projects.STATUSES[r['status']])}</td><td>{_health_chip(ctx, r, seen)}</td><td>{t.esc(r['manager'] or '')}</td>"
         f"<td>{t.esc(r['starts_on'] or '')} → {t.esc(r['ends_on'] or '')}</td>"
         f"<td>{pct(r['project_id'])}</td>"
         f"<td>{_bar(hours.get(r['project_id'], 0.0), r['budget_hours'])}</td>"
@@ -114,10 +116,21 @@ def index(ctx):
               f"<option value=''{'' if scope == 'mine' else ' selected'}>Every project</option>"
               f"<option value=mine{' selected' if scope == 'mine' else ''}>My projects</option></select></div>"
               "<div style='flex:0 0 auto'><button class=ghost type=submit>Show</button></div></form>"
-              "<div class=tablewrap><table><thead><tr><th>Project</th><th>Name</th><th>Company</th><th>Status</th><th>Manager</th><th>Dates</th>"
-              f"<th>Complete</th><th>Hours</th><th>Tickets</th><th>Team</th></tr></thead><tbody>{trs or '<tr><td colspan=10 class=muted>No projects yet.</td></tr>'}"
-              "</tbody></table></div></div>" + new)
+              "<div class=tablewrap><table><thead><tr><th>Project</th><th>Name</th><th>Company</th><th>Status</th><th>Health</th><th>Manager</th><th>Dates</th>"
+              f"<th>Complete</th><th>Hours</th><th>Tickets</th><th>Team</th></tr></thead><tbody>{trs or '<tr><td colspan=11 class=muted>No projects yet.</td></tr>'}"
+              "</tbody></table></div></div>" + _templates_list(tpls) + new)
     return Response(body=t.page("Projects", body, user=ctx.user, active="projects", live="projects"))
+
+
+def _templates_list(tpls) -> str:
+    """069: the project templates, each a link to its page where a project is made from it."""
+    if not tpls:
+        return ""
+    lis = "".join(f"<li><a href='/project/{t.esc(r['project_id'])}#ptemplate'>{t.esc(r['name'])}</a>"
+                  f" <span class=muted>{t.esc(r['project_id'])}</span></li>" for r in tpls)
+    return (f"<div class=card id=ptemplates><h3>{t.icon('layers')}Templates · {len(tpls)}</h3>"
+            "<p class=why style='margin-top:0'>Open one to make a project from it: its phases, team, contacts and planned "
+            f"tickets come across.</p><ul class=plain>{lis}</ul></div>")
 
 
 def create(ctx):
@@ -309,7 +322,9 @@ def _new_ticket_dialog(ctx, p, pid, phs) -> str:
               "<input name=summary required maxlength=200 placeholder='Swap the PC at the nurses station'></div>"
               f"<div><label>Phase</label><select name=phase_id>{phase_opts}</select></div>"
               f"<div><label>Assigned to</label><select name=owner>{people}</select></div>"
-              "<div><label>Budget hours</label><input name=budget_hours inputmode=decimal placeholder='2'></div>"
+              "<div><label>Budget hours</label><input name=budget_hours inputmode=decimal placeholder='2'></div><div></div>"
+              "<div><label>Estimated start</label><input type=date name=starts_on></div>"
+              "<div><label>Required by</label><input type=date name=due_on></div>"
               "<div style='grid-column:1/-1'><label>Description</label><textarea name=description rows=4></textarea></div></div>"
             + "<div class=tefoot><span class=grow></span><button type=button class=ghost data-close=ptdlg>Cancel</button>"
               "<button type=submit>" + t.icon("check") + " Create ticket</button></div></form></dialog>")
@@ -329,18 +344,215 @@ def _board_opts(ctx, selected, seen) -> str:
         if b["board_id"] in seen or b["board_id"] == selected)
 
 
-def _plan_ticket_rows(rows, depth: int, hours: dict, heading: str | None = None) -> list[str]:
-    """A phase's tickets as rows under it in the work plan: the ticket, its
-    status, its hours against its budget and who has it."""
+def _health_chip(ctx, p, seen) -> str:
+    code, why, manual = projects.health(ctx.conn, p["project_id"], boards=seen, today=ctx.now.date())
+    cls = {"ON_TRACK": "sla-ok", "AT_RISK": "sla-warn", "HIGH_RISK": "sla-bad", "OFF_TRACK": "sla-bad"}[code]
+    return (f"<span class='chip {cls} health' title='{t.esc(why)}'>{projects.HEALTH[code]}"
+            + ("" if manual else " <span class=muted style='font-weight:400'>· read by the desk</span>") + "</span>")
+
+
+def _contacts_card(ctx, p, pid, can) -> str:
+    """The project's contacts (069): who it is for or answers to."""
+    rows = projects.contacts(ctx.conn, p["project_id"])
+    trs = "".join(
+        f"<tr><td><b>{t.esc(r['display_name'])}</b></td><td>{t.esc(r['role'] or '')}</td>"
+        f"<td>{t.esc(r['email'] or '')}</td><td>{t.esc(r['phone'] or '')}</td><td>{t.esc(r['department'] or '')}</td>"
+        + (f"<td><form method=post action='/project/{pid}/contact/remove' class=inline>"
+           f"<input type=hidden name=contact_id value='{t.esc(r['contact_id'])}'>"
+           "<button class='ghost small' type=submit>Remove</button></form></td>" if can else "<td></td>")
+        + "</tr>" for r in rows)
+    form = ""
+    if can:
+        ent = p["entity_id"]
+        opts = ctx.conn.execute(
+            "SELECT contact_id, display_name, email FROM contact"
+            + (" ORDER BY CASE WHEN entity_id = ? THEN 0 ELSE 1 END, display_name LIMIT 500" if ent else
+               " ORDER BY display_name LIMIT 500"), (ent,) if ent else ()).fetchall()
+        dl = "".join(f"<option value='{t.esc(o['contact_id'])}'>{t.esc(o['display_name'])}"
+                     f"{' · ' + t.esc(o['email']) if o['email'] else ''}</option>" for o in opts)
+        form = (f"<form method=post action='/project/{pid}/contact' class=grid2 style='margin-top:10px'>"
+                "<div><label>Contact</label><input name=contact list=pcontacts required autocomplete=off"
+                " placeholder='Search by name, or type an email'>"
+                f"<datalist id=pcontacts>{dl}</datalist></div>"
+                "<div><label>Role on the project</label><input name=role maxlength=200 placeholder='Ward manager, sign-off'></div>"
+                "<div><button class=ghost type=submit>" + t.icon("plus") + " Add contact</button></div></form>")
+    return (f"<div class=card id=pcontacts-card><h3>{t.icon('companies')}Contacts · {len(rows)}</h3>"
+            "<div class=tablewrap><table><thead><tr><th>Name</th><th>Role</th><th>Email</th><th>Phone</th><th>Department</th>"
+            f"<th></th></tr></thead><tbody>{trs or '<tr><td colspan=6 class=muted>No contacts yet.</td></tr>'}"
+            f"</tbody></table></div>{form}</div>")
+
+
+def _gantt(ctx, p, phs, tks) -> str:
+    """The plan against time (069): each phase and each dated ticket as a bar,
+    with today marked. Drawn from the dates the plan carries; anything undated
+    is listed, not guessed."""
+    from datetime import date as _date, timedelta as _td
+    items = []
+    for ph in phs:
+        items.append(("phase", ph["depth"], ph["name"], ph["starts_on"], ph["ends_on"], ph["status"] == "DONE", ""))
+    for r in tks:
+        st, du = r["starts_on"] if "starts_on" in r.keys() else None, r["due_on"] if "due_on" in r.keys() else None
+        items.append(("ticket", 1, f"{r['work_item_id']} {r['summary']}", st, du,
+                      r["state"] in ("RESOLVED", "CLOSED", "CANCELLED"), r["work_item_id"]))
+    dates = [d for it in items for d in (it[3], it[4]) if d] + [d for d in (p["starts_on"], p["ends_on"]) if d]
+    if not dates:
+        return ("<div class=card id=pgantt><h3>" + t.icon("calendar") + "Gantt</h3><div class=muted>Give the project, its "
+                "phases or its tickets start and end dates and the Gantt draws them.</div></div>")
+    lo = min(_date.fromisoformat(d) for d in dates)
+    hi = max(_date.fromisoformat(d) for d in dates)
+    span = max((hi - lo).days + 1, 7)
+    def x(d):
+        return ((_date.fromisoformat(d) - lo).days / span) * 100
+    today = ctx.now.date()
+    marker = (f"<i class=gtoday style='left:{((today - lo).days / span) * 100:.2f}%' title='Today'></i>"
+              if lo <= today <= lo + _td(days=span) else "")
+    ticks, d = [], lo
+    step = 7 if span <= 120 else 30
+    while d <= hi:
+        ticks.append(f"<span style='left:{((d - lo).days / span) * 100:.2f}%'>{d.strftime('%d %b')}</span>")
+        d += _td(days=step)
+    rows, undated = [], []
+    for kind, depth, name, st, en, done, wid in items:
+        if not (st or en):
+            undated.append(name)
+            continue
+        a = st or en
+        b = en or st
+        left, width = x(a), max(x(b) - x(a) + 100 / span, 0.8)
+        label = (f"<a href='/ticket/{t.esc(wid)}'>{t.esc(name)}</a>" if wid else t.esc(name))
+        rows.append(f"<div class='grow {kind}{' done' if done else ''}'><div class=glabel style='padding-left:{depth * 14}px'>{label}</div>"
+                    f"<div class=gtrack>{marker}<b class=gbar style='left:{left:.2f}%;width:{width:.2f}%'"
+                    f" title='{t.esc(a)} → {t.esc(b)}'></b></div></div>")
+    return ("<div class=card id=pgantt><h3>" + t.icon("calendar") + "Gantt</h3>"
+            f"<div class=gantt><div class=grow><div class=glabel></div><div class='gtrack gticks'>{''.join(ticks)}</div></div>"
+            + "".join(rows) + "</div>"
+            + (f"<p class=why style='margin:8px 0 0'>Not on the chart yet (no dates): {t.esc(', '.join(undated))}.</p>" if undated else "")
+            + "</div>")
+
+
+def _close_dialog(ctx, p, pid) -> str:
+    """Close the project as the reference PSA's close dialog does: its status,
+    and if asked its open tickets to a closed status and its phases done."""
+    closed = []
+    if p["board_id"]:
+        closed = ctx.conn.execute("SELECT board_status_id, name FROM board_status WHERE board_id = ? AND is_closed = 1"
+                                  " AND inactive = 0 ORDER BY sort_order", (p["board_id"],)).fetchall()
+    from ...setup import is_cancelled_name
+    closed = sorted(closed, key=lambda r: is_cancelled_name(r["name"]))      # Closed before >Cancelled
+    opts = ("<option value=''>The board's own closing status</option>"
+            + "".join(f"<option value='{t.esc(r['board_status_id'])}'>{t.esc(r['name'].lstrip('>'))}</option>" for r in closed))
+    return ("<dialog id=pclose class='card tedlg'>"
+            f"<form method=post action='/project/{pid}/close' class=teform>"
+            "<div class=tehead data-drag><div><h3 style='margin:0'>" + t.icon("check") + " Close the project</h3>"
+            f"<div class=muted style='font-size:12.5px'>{pid} · {t.esc(p['name'])}</div></div>"
+            "<span class=tewin><button type=button class=iconbtn data-close=pclose aria-label=Close>"
+            "<b style='font-size:16px;line-height:1'>&#8211;</b></button></span></div>"
+            "<div class=grid2><div><label>Close as</label><select name=status><option value=DONE>Done</option>"
+            "<option value=CANCELLED>Cancelled</option></select></div><div></div>"
+            "<label class=tick style='grid-column:1/-1'><input type=checkbox name=close_tickets value=1 checked>"
+            " Close its open tickets</label>"
+            + (f"<div><label>To the status</label><select name=ticket_status>{opts}</select></div><div></div>" if opts else "")
+            + "<label class=tick style='grid-column:1/-1'><input type=checkbox name=close_phases value=1 checked>"
+              " Mark its open phases done</label></div>"
+              "<p class=why>A ticket on another board goes to that board's first closed status. Tickets and their time "
+              "are kept; nothing is deleted.</p>"
+              "<div class=tefoot><span class=grow></span><button type=button class=ghost data-close=pclose>Cancel</button>"
+              "<button type=submit>" + t.icon("check") + " Close the project</button></div></form></dialog>")
+
+
+def _ticket_plan_dialog(ctx, pid, tks) -> str:
+    """One window for a project ticket's dates, budget and predecessors; the
+    work plan's Plan button fills it."""
+    opts = "<option value=''>(nothing)</option>" + "".join(
+        f"<option value='{t.esc(r['work_item_id'])}'>{t.esc(r['work_item_id'])} {t.esc(r['summary'])}</option>" for r in tks)
+    return ("<dialog id=ptplan class='card tedlg'>"
+            f"<form method=post action='/project/{pid}/ticket/plan' class=teform>"
+            "<div class=tehead data-drag><div><h3 style='margin:0'>" + t.icon("calendar") + " Plan <span data-fill=wid></span></h3>"
+            "<div class=muted style='font-size:12.5px' data-fill=summary></div></div>"
+            "<span class=tewin><button type=button class=iconbtn data-close=ptplan aria-label=Close>"
+            "<b style='font-size:16px;line-height:1'>&#8211;</b></button></span></div>"
+            "<input type=hidden name=work_item_id>"
+            "<div class=grid2><div><label>Estimated start</label><input type=date name=starts_on></div>"
+            "<div><label>Required by</label><input type=date name=due_on></div>"
+            "<div><label>Budget hours</label><input name=budget_hours inputmode=decimal></div>"
+            f"<div><label>Waits on</label><select name=depends_on>{opts}</select></div></div>"
+            "<p class=why>A ticket that waits on another takes no time until that one is done, as the reference PSA has it.</p>"
+            "<div class=tefoot><span class=grow></span><button type=button class=ghost data-close=ptplan>Cancel</button>"
+            "<button type=submit>" + t.icon("check") + " Save</button></div></form></dialog>")
+
+
+def _template_card(ctx, p, pid, phs, can) -> str:
+    """A template's planned tickets and New project from it; on a project, Copy project (069)."""
+    if not can:
+        return ""
+    who = t.esc(ctx.user.id)
+    if projects.is_template(p):
+        items = projects.plan_items(ctx.conn, p["project_id"])
+        lis = "".join(
+            f"<tr><td>{t.esc(i['summary'])}</td><td>{t.esc(i['phase_name'] or '')}</td>"
+            f"<td>{'' if i['budget_hours'] is None else format(i['budget_hours'], 'g') + ' h'}</td>"
+            f"<td><form method=post action='/project/{pid}/plan/remove' class=inline><input type=hidden name=item_id value={i['item_id']}>"
+            "<button class='ghost small' type=submit>Remove</button></form></td></tr>" for i in items)
+        phase_opts = "<option value=''>(no phase)</option>" + "".join(
+            f"<option value={ph['phase_id']}>{'— ' * ph['depth']}{t.esc(ph['name'])}</option>" for ph in phs)
+        return ("<div class=card id=ptemplate><h3>" + t.icon("layers") + "Template: planned tickets</h3>"
+                "<p class=why style='margin-top:0'>These become real tickets, in the matching phases, on each project made "
+                "from this template. Nothing here sits on a board.</p>"
+                "<div class=tablewrap><table><thead><tr><th>Ticket</th><th>Phase</th><th>Budget</th><th></th></tr></thead>"
+                f"<tbody>{lis or '<tr><td colspan=4 class=muted>None planned yet.</td></tr>'}</tbody></table></div>"
+                f"<form method=post action='/project/{pid}/plan' class=grid2 style='margin-top:8px'>"
+                "<div style='grid-column:1/-1'><label>Planned ticket</label><input name=summary required maxlength=200></div>"
+                f"<div><label>Phase</label><select name=phase_id>{phase_opts}</select></div>"
+                "<div><label>Budget hours</label><input name=budget_hours inputmode=decimal></div>"
+                "<div><button class=ghost type=submit>" + t.icon("plus") + " Plan it</button></div></form>"
+                f"<h3 style='margin-top:16px'>{t.icon('plus')}New project from this template</h3>"
+                f"<form method=post action='/project/{pid}/copy' class=grid2>"
+                "<div style='grid-column:1/-1'><label>Name</label><input name=name required maxlength=200></div>"
+                "<div><label>Starts</label><input type=date name=starts_on></div>"
+                f"<div><label>Manager</label><input name=manager value='{who}'></div>"
+                "<div><button type=submit>Create the project</button></div></form></div>")
+    return ("<div class=card id=pcopy><h3>" + t.icon("layers") + "Copy project</h3>"
+            "<p class=why style='margin-top:0'>A new project with this one's phases, predecessors, team and contacts, and a new "
+            "ticket for each of its tickets, unassigned. Dates move to the new start.</p>"
+            f"<form method=post action='/project/{pid}/copy' class=grid2>"
+            f"<div style='grid-column:1/-1'><label>Name</label><input name=name required maxlength=200 value='{t.esc(p['name'])} (copy)'></div>"
+            "<div><label>Starts</label><input type=date name=starts_on></div>"
+            f"<div><label>Manager</label><input name=manager value='{who}'></div>"
+            "<div><button class=ghost type=submit>Copy</button></div></form>"
+            + ("" if projects.tickets(ctx.conn, p["project_id"]) else
+               f"<form method=post action='/project/{pid}/template' style='margin-top:10px'><input type=hidden name=on value=1>"
+               "<button class='ghost small' type=submit>Make this a template</button>"
+               " <span class=why>A template plans tickets instead of holding them.</span></form>")
+            + "</div>")
+
+
+def _plan_ticket_rows(rows, depth: int, hours: dict, heading: str | None = None, *, preds: dict | None = None,
+                      pid: str = "", can: bool = False) -> list[str]:
+    """A phase's tickets as rows under it in the work plan: the ticket, who has
+    it, its hours against its budget, its dates and what it waits on (069)."""
     out = []
+    preds = preds or {}
     if rows and heading:
         out.append(f"<tr class=planhead><td colspan=6 class=muted style='padding-left:8px'><b>{t.esc(heading)}</b></td></tr>")
     for r in rows:
         b = r["budget_hours"] if "budget_hours" in r.keys() else None
+        st = r["starts_on"] if "starts_on" in r.keys() else None
+        du = r["due_on"] if "due_on" in r.keys() else None
+        waits = " ".join(
+            f"<span class='chip{' sla-warn' if w['state'] not in ('RESOLVED', 'CLOSED', 'CANCELLED') else ''}'>{t.esc(w['depends_on'])}"
+            + (f" <form method=post action='/project/{pid}/ticket/unwait' class=inline>"
+               f"<input type=hidden name=work_item_id value='{t.esc(r['work_item_id'])}'>"
+               f"<input type=hidden name=depends_on value='{t.esc(w['depends_on'])}'>"
+               "<button class=linky type=submit title='Stop waiting on this'>&times;</button></form>" if can else "")
+            + "</span>" for w in preds.get(r["work_item_id"], []))
+        plan = (f"<button type=button class='ghost small' data-open=ptplan data-plan='{t.esc(r['work_item_id'])}'"
+                f" data-summary='{t.esc(r['summary'])}' data-starts='{t.esc(st or '')}' data-due='{t.esc(du or '')}'"
+                f" data-budget='{'' if b is None else format(b, 'g')}'>" + t.icon("calendar") + " Plan</button>" if can else "")
         out.append(f"<tr class=planticket><td style='padding-left:{8 + depth * 22}px'>{t.icon('note')} "
                    f"<a href='/ticket/{t.esc(r['work_item_id'])}'>{t.esc(r['work_item_id'])}</a> {t.esc(r['summary'])}</td>"
-                   f"<td>{t.esc(r['owner'] or 'unassigned')}</td><td>{_bar(hours.get(r['work_item_id'], 0.0), b)}</td>"
-                   f"<td></td><td>{t.esc(r['state'])}</td><td></td></tr>")
+                   f"<td>{t.esc(st or '')} → {t.esc(du or '')}<div class=muted>{t.esc(r['owner'] or 'unassigned')}</div></td>"
+                   f"<td>{_bar(hours.get(r['work_item_id'], 0.0), b)}</td>"
+                   f"<td>{('waits on ' + waits) if waits else ''}</td><td>{t.esc(r['state'])}</td><td>{plan}</td></tr>")
     return out
 
 
@@ -361,6 +573,8 @@ def detail(ctx, project_id):
     for r in tks:
         by_phase.setdefault(r["phase_id"], []).append(r)
     t_hours = projects.ticket_hours(ctx.conn, p["project_id"])
+    preds = {r["work_item_id"]: projects.ticket_predecessors(ctx.conn, r["work_item_id"]) for r in tks}
+    template = projects.is_template(p)
     rows = []
     for ph in phs:
         ph_id = ph["phase_id"]
@@ -391,7 +605,7 @@ def detail(ctx, project_id):
                       f"<input type=hidden name=phase_id value={ph_id}>"
                       "<button class='ghost small danger' type=submit>Remove</button></form>" if not why
                       else f" <span class=why title='{t.esc(why)}'>kept: {t.esc(why)}</span>"))
-        if can and p["board_id"]:
+        if can and p["board_id"] and not template:
             act += (f" <button type=button class='ghost small' data-open=ptdlg data-phase='{ph_id}'"
                     " title='A new ticket in this phase'>" + t.icon("plus") + " Ticket</button>")
         rows.append(f"<tr{' style=opacity:.6' if ph['status'] == 'DONE' else ''}"
@@ -400,8 +614,8 @@ def detail(ctx, project_id):
                     f"<td>{t.esc(ph['starts_on'] or '')} → {t.esc(ph['ends_on'] or '')}</td>"
                     f"<td>{_bar(ph['actual_hours'], ph['budget_hours'])}</td>"
                     f"<td>{('waits on ' + waits) if waits else ''}</td><td>{'Done' if ph['status'] == 'DONE' else 'Open'}</td><td>{act}</td></tr>")
-        rows.extend(_plan_ticket_rows(by_phase.get(ph_id, []), ph["depth"] + 1, t_hours))
-    rows.extend(_plan_ticket_rows(by_phase.get(None, []), 1, t_hours, heading="Not in a phase"))
+        rows.extend(_plan_ticket_rows(by_phase.get(ph_id, []), ph["depth"] + 1, t_hours, preds=preds, pid=pid, can=can))
+    rows.extend(_plan_ticket_rows(by_phase.get(None, []), 1, t_hours, heading="Not in a phase", preds=preds, pid=pid, can=can))
     common.audit_restricted_reads(ctx, (r["board_id"] for r in tks), detail=f"project {p['project_id']} listed")
     def _unlink(wid):
         if not can:
@@ -442,6 +656,9 @@ def detail(ctx, project_id):
             f"<div><label>Ends</label><input type=date name=ends_on value='{t.esc(p['ends_on'] or '')}'></div>"
             f"<div><label>Budget hours</label><input name=budget_hours value='{t.esc(p['budget_hours'] if p['budget_hours'] is not None else '')}'></div>"
             f"<div><label>Company</label><select name=entity_id>{_company_opts(ctx, p['entity_id'])}</select></div>"
+            "<div><label>Health</label><select name=health><option value=''>Read by the desk (budget and dates)</option>"
+            + "".join(f"<option value='{k}'{' selected' if k == p['health'] else ''}>{v}</option>" for k, v in projects.HEALTH.items())
+            + "</select></div>"
             f"<div><label>Board</label><select name=board_id>{_board_opts(ctx, p['board_id'], seen)}</select></div>"
             "<div style='align-self:end'><button class=ghost type=submit>Save</button></div>"
             "<div style='grid-column:1/-1'><label>Description</label>"
@@ -484,14 +701,20 @@ def detail(ctx, project_id):
             f"<div class=tile><div class=n>{len(tks)}</div><div class=l>Tickets</div></div>"
             f"<div class=tile><div class=n style='font-size:18px'>{t.esc(span[0] or '—')}</div><div class=l>Actual start"
             + (f" · last {t.esc(span[1])}" if span[1] else "") + "</div></div></div>")
-    tabs = ("<nav class='tabs ptabs'><a href='#plan'>Work plan</a><a href='#pboard'>Ticket board</a><a href='#team'>Team</a>"
-            "<a href='#pnotes'>Notes</a><a href='#ptickets'>All tickets</a>" + ("<a href='#pfinance'>Finance</a>" if finance else "")
+    tabs = ("<nav class='tabs ptabs'><a href='#plan'>Work plan</a><a href='#pgantt'>Gantt</a><a href='#pboard'>Ticket board</a>"
+            "<a href='#team'>Team</a><a href='#pcontacts-card'>Contacts</a><a href='#pnotes'>Notes</a><a href='#ptickets'>All tickets</a>"
+            + ("<a href='#pfinance'>Finance</a>" if finance else "")
+            + (f"<a href='#{'ptemplate' if template else 'pcopy'}'>{'Template' if template else 'Copy'}</a>" if can else "")
             + ("<a href='#psettings'>Project</a>" if can else "") + "</nav>")
-    new_btn = (" <button type=button data-open=ptdlg>" + t.icon("plus") + " New ticket</button>" if can and p["board_id"] else "")
+    new_btn = (" <button type=button data-open=ptdlg>" + t.icon("plus") + " New ticket</button>"
+               if can and p["board_id"] and not template else "")
+    if can and not template and p["status"] not in ("DONE", "CANCELLED"):
+        new_btn += " <button type=button class=ghost data-open=pclose>" + t.icon("check") + " Close project</button>"
     body = ((f"<div class='banner ok'>{t.esc(q.get('msg', ''))}</div>" if q.get("msg") else "")
             + (f"<div class='banner err'>{t.esc(q.get('err', ''))}</div>" if q.get("err") else "")
             + f"<div class=row style='align-items:center'><h1 style='flex:1'>{t.esc(p['name'])}</h1>{new_btn}</div>"
-              f"<p class=sub>{pid} · {t.chip(projects.STATUSES[p['status']])}" + (f" · {t.esc(company)}" if company else "") + " · manager "
+              f"<p class=sub>{pid} · " + (t.chip("Template") + " · " if template else "") + f"{t.chip(projects.STATUSES[p['status']])} · "
+              + _health_chip(ctx, p, seen) + (f" · {t.esc(company)}" if company else "") + " · manager "
               f"{t.esc(p['manager'] or '—')} · {t.esc(p['starts_on'] or '?')} → {t.esc(p['ends_on'] or '?')} · "
               f"{t.esc(p['board_name'] or 'no board')} · {_bar(actual, p['budget_hours'])} · <a href='/projects'>Projects</a></p>"
             + dash + tabs
@@ -499,11 +722,13 @@ def detail(ctx, project_id):
             + "<div class=card id=plan><h3>" + t.icon("layers") + "Work plan: phases and their tickets</h3><div class=tablewrap><table><thead><tr><th>Phase</th><th>Dates</th>"
               f"<th>Hours</th><th>Predecessors</th><th>State</th><th></th></tr></thead><tbody>"
             + ("".join(rows) or "<tr><td colspan=6 class=muted>No phases yet.</td></tr>") + "</tbody></table></div></div>"
-            + _ticket_board(ctx, p, tks) + _team_card(ctx, p, pid, can, tks) + _notes_card(ctx, p["project_id"], can)
+            + _gantt(ctx, p, phs, tks) + _ticket_board(ctx, p, tks) + _team_card(ctx, p, pid, can, tks)
+            + _contacts_card(ctx, p, pid, can) + _notes_card(ctx, p["project_id"], can) + _template_card(ctx, p, pid, phs, can)
             + "<div class=card id=ptickets><h3>" + t.icon("note") + "All tickets</h3><div class=tablewrap><table><thead><tr><th>Ticket</th><th>Summary</th>"
               f"<th>Phase</th><th>State</th><th>Owner</th><th></th></tr></thead><tbody>{ticket_rows or '<tr><td colspan=6 class=muted>No tickets linked.</td></tr>'}"
               "</tbody></table></div></div>" + finance + (f"<div id=psettings>{forms}</div>" if forms else "")
-            + (_new_ticket_dialog(ctx, p, pid, phs) if can and p["board_id"] else ""))
+            + (_new_ticket_dialog(ctx, p, pid, phs) if can and p["board_id"] and not template else "")
+            + (_close_dialog(ctx, p, pid) + _ticket_plan_dialog(ctx, pid, tks) if can and not template else ""))
     return Response(body=t.page(p["name"], body, user=ctx.user, active="projects", live=f"project:{p['project_id']}"))
 
 
@@ -587,8 +812,14 @@ def update(ctx, project_id):
         if f.get("board_id") and f["board_id"] not in common.board_ids_for(ctx):
             return _back(f"/project/{project_id}", err="You are not on that board.")
         fields["board_id"] = f.get("board_id")
-    return _try(ctx, project_id, lambda: projects.update(
-        ctx.conn, project_id, at=ctx.now, actor=ctx.user.id, **fields), lambda r: f"Project: {r}")
+    def go():
+        said = projects.update(ctx.conn, project_id, at=ctx.now, actor=ctx.user.id, **fields)
+        if "health" in f:                                    # 069
+            h = projects.set_health(ctx.conn, project_id, f.get("health") or None, at=ctx.now, actor=ctx.user.id)
+            if h != "nothing changed":
+                said = h if said == "nothing changed" else f"{said}; {h}"
+        return said
+    return _try(ctx, project_id, go, lambda r: f"Project: {r}")
 
 
 def _phase_of(ctx, project_id, raw: str) -> int:
@@ -736,7 +967,8 @@ def new_ticket(ctx, project_id):
         wid = projects.open_ticket(ctx.conn, project_id, summary=f.get("summary", ""),
                                    phase_id=int(f["phase_id"]) if (f.get("phase_id") or "").isdigit() else None,
                                    owner=f.get("owner") or None, budget_hours=f.get("budget_hours"),
-                                   description=f.get("description"), at=ctx.now, actor=ctx.user.id)
+                                   description=f.get("description"), starts_on=f.get("starts_on"), due_on=f.get("due_on"),
+                                   at=ctx.now, actor=ctx.user.id)
         ctx.conn.commit()
     except (projects.Refused, ValueError, LookupError) as exc:
         ctx.conn.rollback()
@@ -748,3 +980,106 @@ def add_note(ctx, project_id):
     f = ctx.request.form()
     return _try(ctx, project_id, lambda: projects.add_note(ctx.conn, project_id, f.get("body", ""),
                                                            at=ctx.now, actor=ctx.user.id), lambda r: "Note added.")
+
+
+# ------------------------------------------------------------- 069 handlers
+
+def add_contact(ctx, project_id):
+    f = ctx.request.form()
+    raw = (f.get("contact") or "").strip()
+    row = ctx.conn.execute("SELECT contact_id FROM contact WHERE contact_id = ? OR LOWER(COALESCE(email, '')) = LOWER(?)",
+                           (raw, raw)).fetchone()
+    return _try(ctx, project_id, lambda: projects.add_contact(
+        ctx.conn, project_id, row[0] if row else raw, role=f.get("role"), at=ctx.now, actor=ctx.user.id),
+        lambda r: r[:1].upper() + r[1:])
+
+
+def remove_contact(ctx, project_id):
+    f = ctx.request.form()
+    return _try(ctx, project_id, lambda: projects.remove_contact(
+        ctx.conn, project_id, f.get("contact_id", ""), at=ctx.now, actor=ctx.user.id), lambda r: r[:1].upper() + r[1:])
+
+
+def _project_ticket(ctx, project_id, wid):
+    """A ticket proven to be on this project and on a board the person may work."""
+    from .. import HttpError
+    row = ctx.conn.execute("SELECT pt.work_item_id, t.board_id FROM project_ticket pt JOIN ticket t ON t.work_item_id ="
+                           " pt.work_item_id WHERE pt.work_item_id = ? AND pt.project_id = ?", (wid, project_id)).fetchone()
+    if row is None:
+        raise HttpError("404 Not Found", "That ticket is not on this project.")
+    common.require_board(ctx, row["board_id"], need="WORK")
+    return row["work_item_id"]
+
+
+def plan_ticket(ctx, project_id):
+    f = ctx.request.form()
+    wid = (f.get("work_item_id") or "").strip()
+
+    def go():
+        _project_ticket(ctx, project_id, wid)
+        said = projects.set_ticket_plan(ctx.conn, wid, starts_on=f.get("starts_on"), due_on=f.get("due_on"),
+                                        budget_hours=f.get("budget_hours"), at=ctx.now, actor=ctx.user.id)
+        if f.get("depends_on"):
+            d = projects.add_ticket_dependency(ctx.conn, wid, f["depends_on"], at=ctx.now, actor=ctx.user.id)
+            said = d if said == "nothing changed" else f"{said}; {d}"
+        return said
+    return _try(ctx, project_id, go, lambda r: r)
+
+
+def unwait_ticket(ctx, project_id):
+    f = ctx.request.form()
+    wid = (f.get("work_item_id") or "").strip()
+
+    def go():
+        _project_ticket(ctx, project_id, wid)
+        return projects.remove_ticket_dependency(ctx.conn, wid, f.get("depends_on", ""), at=ctx.now, actor=ctx.user.id)
+    return _try(ctx, project_id, go, lambda r: r)
+
+
+def close_project(ctx, project_id):
+    f = ctx.request.form()
+    p = _load(ctx, project_id)
+    if f.get("close_tickets") == "1":
+        for r in projects.tickets(ctx.conn, project_id):          # closing a ticket is work on its board
+            if r["state"] not in ("RESOLVED", "CLOSED", "CANCELLED"):
+                common.require_board(ctx, r["board_id"], need="WORK")
+    return _try(ctx, project_id, lambda: projects.close(
+        ctx.conn, project_id, f.get("status", ""), ticket_status=f.get("ticket_status") or None,
+        close_tickets=f.get("close_tickets") == "1", close_phases=f.get("close_phases") == "1",
+        at=ctx.now, actor=ctx.user.id), lambda r: f"{p['name']} closed: " + ("; ".join(r) or "nothing else to do"))
+
+
+def set_template(ctx, project_id):
+    f = ctx.request.form()
+    return _try(ctx, project_id, lambda: projects.set_template(
+        ctx.conn, project_id, f.get("on") == "1", at=ctx.now, actor=ctx.user.id), lambda r: r[:1].upper() + r[1:])
+
+
+def add_plan_item(ctx, project_id):
+    f = ctx.request.form()
+    return _try(ctx, project_id, lambda: projects.add_plan_item(
+        ctx.conn, project_id, summary=f.get("summary", ""),
+        phase_id=int(f["phase_id"]) if (f.get("phase_id") or "").isdigit() else None,
+        budget_hours=f.get("budget_hours"), at=ctx.now, actor=ctx.user.id), lambda r: "Planned ticket added.")
+
+
+def remove_plan_item(ctx, project_id):
+    f = ctx.request.form()
+    return _try(ctx, project_id, lambda: projects.remove_plan_item(
+        ctx.conn, project_id, int(f.get("item_id") or 0), at=ctx.now, actor=ctx.user.id), lambda r: r[:1].upper() + r[1:])
+
+
+def copy_project(ctx, project_id):
+    common.require_module(ctx, "PROJECTS", "WRITE")
+    src = _load(ctx, project_id)
+    if src["board_id"]:
+        common.require_board(ctx, src["board_id"], need="WORK")
+    f = ctx.request.form()
+    try:
+        pid = projects.copy(ctx.conn, project_id, name=f.get("name", ""), manager=f.get("manager") or None,
+                            starts_on=f.get("starts_on") or None, at=ctx.now, actor=ctx.user.id)
+        ctx.conn.commit()
+    except (projects.Refused, ValueError, LookupError) as exc:
+        ctx.conn.rollback()
+        return _back(f"/project/{project_id}", err=f"Not created: {exc}")
+    return _back(f"/project/{pid}", msg=f"Project made from {project_id}.")

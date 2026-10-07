@@ -6550,6 +6550,100 @@ class ModulesTest(unittest.TestCase):
         self.assertNotEqual(s1, s2)
         self.assertTrue(self._call("GET", "/live", query="scope=projects", cookie=self.alice)[0].startswith("200"))
 
+    def test_projects_have_contacts_health_closing_a_gantt_predecessors_and_templates(self):
+        """069. Dada, 7 Oct 2026: "add those missing ... except for the billing
+        bit": contacts, templates and Copy project, health, the close dialog,
+        a Gantt and ticket predecessors, and still nothing broken."""
+        from datetime import date
+        from psaspine import board, projects
+        conn = self._conn()
+        conn.execute("INSERT INTO contact (contact_id, entity_id, display_name, email, source, created_at)"
+                     " VALUES ('C-W5', 'PMC', 'Ward 5 nurse manager', 'w5.manager@example.org', 'MANUAL', '2026-10-07')")
+        # a template: phases with a predecessor, planned tickets, and none of it on a board
+        tpl = projects.create(conn, name="NUC refresh", manager="alice", board_id="IT_HELP", starts_on="2026-01-05",
+                              ends_on="2026-01-30", budget_hours=10, at=self.at, actor="alice")
+        self.assertEqual(projects.set_template(conn, tpl, True, at=self.at, actor="alice"), "made a template")
+        a = projects.add_phase(conn, tpl, name="Survey", starts_on="2026-01-05", ends_on="2026-01-09", at=self.at, actor="alice")
+        b = projects.add_phase(conn, tpl, name="Install", starts_on="2026-01-12", ends_on="2026-01-23", at=self.at, actor="alice")
+        projects.add_dependency(conn, b, a, at=self.at, actor="alice")
+        projects.add_plan_item(conn, tpl, summary="Count the PCs", phase_id=a, budget_hours=2, at=self.at, actor="alice")
+        projects.add_plan_item(conn, tpl, summary="Swap each PC", phase_id=b, budget_hours=6, at=self.at, actor="alice")
+        projects.add_contact(conn, tpl, "C-W5", role="Sign-off", at=self.at, actor="alice")
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM project_ticket WHERE project_id = ?", (tpl,)).fetchone()[0], 0)
+        real = projects.create(conn, name="Real", at=self.at, actor="alice")
+        with self.assertRaises(projects.Refused):                          # planned tickets are a template's
+            projects.add_plan_item(conn, real, summary="x", at=self.at, actor="alice")
+        # a project from it: phases moved to the new start, the predecessor kept, team, contact, tickets opened
+        pid = projects.copy(conn, tpl, name="Ward 5 NUC refresh", starts_on="2026-10-12", at=self.at, actor="alice")
+        self.assertEqual([(p["name"], p["starts_on"], p["ends_on"], bool(p["depends_on"])) for p in projects.phases(conn, pid)],
+                         [("Survey", "2026-10-12", "2026-10-16", False), ("Install", "2026-10-19", "2026-10-30", True)])
+        self.assertEqual(projects.get(conn, pid)["ends_on"], "2026-11-06")
+        tk = projects.tickets(conn, pid)
+        self.assertEqual([(r["summary"], r["phase_name"], r["budget_hours"]) for r in tk],
+                         [("Count the PCs", "Survey", 2.0), ("Swap each PC", "Install", 6.0)])
+        self.assertEqual([c["contact_id"] for c in projects.contacts(conn, pid)], ["C-W5"])
+        self.assertFalse(projects.is_template(projects.get(conn, pid)))
+        # predecessors: a loop is refused; time waits for the predecessor, as the reference PSA blocks it
+        w1, w2 = tk[0]["work_item_id"], tk[1]["work_item_id"]
+        projects.add_ticket_dependency(conn, w2, w1, at=self.at, actor="alice")
+        with self.assertRaises(projects.Refused):
+            projects.add_ticket_dependency(conn, w1, w2, at=self.at, actor="alice")
+        ok, why = board.may_book_effort(conn, w2)
+        self.assertEqual((ok, why), (False, f"this ticket waits on {w1}; time goes on once that is done"))
+        self.assertTrue(board.may_book_effort(conn, w1)[0], "the first ticket is not held up")
+        projects.set_ticket_plan(conn, w1, starts_on="2026-10-12", due_on="2026-10-13", at=self.at, actor="alice")
+        # health: read from budget and dates unless a person sets it
+        self.assertEqual(projects.health(conn, pid, today=date(2026, 10, 13))[0], "ON_TRACK")
+        self.assertEqual(projects.health(conn, pid, today=date(2026, 11, 20))[0], "OFF_TRACK", "past its end, work open")
+        projects.set_health(conn, pid, "AT_RISK", at=self.at, actor="alice")
+        self.assertEqual(projects.health(conn, pid)[:2], ("AT_RISK", "set by a person"))
+        conn.commit()
+
+        # the page draws all of it
+        _, _, page = self._call("GET", f"/project/{pid}", cookie=self.alice)
+        for bit in ("id=pgantt", "class=gbar", "id=pcontacts-card", "Ward 5 nurse manager", "<dialog id=pclose",
+                    "<dialog id=ptplan", f"data-plan='{w1}'", f"waits on <span class='chip sla-warn'>{w1}", "At risk",
+                    "id=pcopy"):
+            self.assertIn(bit, page, bit)
+        _, _, tpage = self._call("GET", f"/project/{tpl}", cookie=self.alice)
+        self.assertIn("id=ptemplate", tpage)
+        self.assertNotIn("<dialog id=ptdlg", tpage, "a template plans tickets instead of opening them")
+        _, _, plist = self._call("GET", "/projects", cookie=self.alice)
+        self.assertIn("id=ptemplates", plist)
+        self.assertIn("Health</th>", plist)
+
+        # the plan window, a predecessor taken off, Copy project and closing, through the page
+        _, h, _ = self._call("POST", f"/project/{pid}/ticket/unwait", cookie=self.alice,
+                             form={"work_item_id": w2, "depends_on": w1})
+        self.assertIn("no+longer+waits+on", dict(h)["Location"])
+        _, h, _ = self._call("POST", f"/project/{pid}/ticket/plan", cookie=self.alice,
+                             form={"work_item_id": w2, "starts_on": "2026-10-19", "due_on": "2026-10-23",
+                                   "budget_hours": "5", "depends_on": w1})
+        self.assertNotIn("err=", dict(h)["Location"])
+        _, h, _ = self._call("POST", f"/project/{pid}/copy", cookie=self.alice,
+                             form={"name": "Ward 6 NUC refresh", "starts_on": "2026-11-02"})
+        self.assertIn("Project+made+from", dict(h)["Location"])
+        _, h, _ = self._call("POST", f"/project/{pid}/close", cookie=self.alice,
+                             form={"status": "DONE", "close_tickets": "1", "close_phases": "1"})
+        self.assertNotIn("err=", dict(h)["Location"])
+        c = self._conn()
+        self.assertEqual(c.execute("SELECT status FROM project WHERE project_id = ?", (pid,)).fetchone()[0], "DONE")
+        self.assertEqual({r[0] for r in c.execute("SELECT t.state FROM project_ticket pt JOIN ticket t ON"
+                                                  " t.work_item_id = pt.work_item_id WHERE pt.project_id = ?", (pid,))}, {"CLOSED"})
+        names = {r[0] for r in c.execute("SELECT s.name FROM project_ticket pt JOIN ticket t ON t.work_item_id ="
+                                         " pt.work_item_id JOIN board_status s ON s.board_status_id = t.board_status_id"
+                                         " WHERE pt.project_id = ?", (pid,))}
+        self.assertFalse(any("cancel" in n.lower() for n in names), f"a project closed Done never cancels its tickets: {names}")
+        self.assertEqual(c.execute("SELECT COUNT(*) FROM project_phase WHERE project_id = ? AND status = 'OPEN'",
+                                   (pid,)).fetchone()[0], 0)
+        # someone who only reads the board cannot close the project's tickets
+        p2 = projects.create(c, name="Read only", board_id="IT_HELP", at=self.at, actor="alice")
+        projects.open_ticket(c, p2, summary="Stays open", at=self.at, actor="alice")
+        c.commit()
+        status, _, _ = self._call("POST", f"/project/{p2}/close", cookie=self._cookie_for("carol"),
+                                  form={"status": "DONE", "close_tickets": "1"})
+        self.assertFalse(status.startswith("303"), status)
+
     def test_projects_phases_predecessors_tickets_and_actual_hours(self):
         from psaspine import projects
         conn = self._conn()

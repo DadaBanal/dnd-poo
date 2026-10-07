@@ -1,6 +1,8 @@
 # HANDOFF — Cloud Build → SQL01, WS36, 7 Oct 2026
 
-**One schema step (068: two new tables, two nullable columns), then the usual restart.**
+**Two schema steps, applied together (068 and 069: five new tables, six nullable columns), then the usual restart.**
+
+> §5 was added later on 7 Oct for 069, before any of this was run. Apply 068 and 069 in the one sitting.
 
 Supersedes nothing. It follows `…-20261006-resources-cancelled-067.md`, whose §8.6 is still pending a restart; this restart covers both.
 
@@ -68,3 +70,37 @@ Dada also asked that it break nothing: 068 adds and never alters. Unit suite 770
 | Drift gate | In step. 068 is in the port (137 tables). |
 | Smoke | 7 of 7. |
 | Not run here | 068 against SQL Server. The `sql-server` CI job runs it on push. |
+
+## 5. And 069, in the same sitting (later on 7 Oct)
+
+Dada: "add those missing … except for the billing bit". 069 is additive like 068, and the same rule holds: **069 must be in before PSA-Desk starts on this head.** INFERRED from the code: project pages read the new tables, and so does **every time entry**, because `board.may_book_effort` now checks project ticket predecessors.
+
+Apply it straight after 068, in the same transaction, from `sqlserver/PMC_PSA_Spine_SqlServer.sql`. Every statement is guarded:
+- `CREATE TABLE psa.[project_contact]`, with FKs to `project` and `contact`;
+- `CREATE TABLE psa.[project_ticket_dependency]`, with FKs to `project_ticket`, and `CHECK (work_item_id <> depends_on)`;
+- `CREATE TABLE psa.[project_plan_item]`, with `ix_project_plan_item_project`;
+- `ALTER TABLE psa.[project] ADD [is_template] INT NULL` and `ADD [health] NVARCHAR(32) NULL`;
+- `ALTER TABLE psa.[project_ticket] ADD [starts_on] NVARCHAR(32) NULL` and `ADD [due_on] NVARCHAR(32) NULL`.
+
+Verify:
+- `OBJECT_ID` is non-NULL for all three new tables.
+- `COL_LENGTH` is non-NULL for all four new columns.
+- All three new tables return `COUNT(*) = 0`.
+- `SELECT COUNT(*) FROM psa.time_entry` is unchanged.
+
+**What Dada will see:**
+- On a project:
+  - a **Health** chip ("read by the desk" until someone sets it);
+  - **Close project**, which closes as Done or Cancelled, with the open tickets moved to the board's closing status (never >Cancelled for Done) and the phases marked done;
+  - a **Gantt** card;
+  - a **Contacts** card;
+  - **Plan** on each work plan ticket (dates, budget, waits on);
+  - **Copy project**, or **Make this a template** while the project has no tickets.
+- On **Projects**: a Health column and a Templates card.
+- A project ticket that waits on an open one refuses time and says which ticket it waits on, as ConnectWise does.
+
+| | |
+|---|---|
+| Unit suite | **771 OK**, 1 skipped. New: `test_projects_have_contacts_health_closing_a_gantt_predecessors_and_templates` (template to project with moved dates, a predecessor loop refused, time held, health read and set, Copy, Close as Done never Cancelled, a reader refused). |
+| Browser checks | **91 of 91**. New: Plan opens filled with its ticket; a dated ticket is drawn on the Gantt; Close project opens its window. |
+| Drift gate | In step. 069 is in the port. |

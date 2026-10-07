@@ -536,6 +536,30 @@ def main() -> int:
             page.wait_for_timeout(400)
             note("joined the team" in page.locator("body").inner_text() or "on the team" in page.locator("body").inner_text(),
                  "a member is added to the project's team with a role and hours")
+            # --- 069: plan a ticket's dates, see it on the Gantt; the close window --
+            plan = page.locator("button[data-open=ptplan]").first
+            note(plan.count() == 1, "each project ticket in the work plan offers Plan")
+            if plan.count():
+                want = plan.get_attribute("data-plan")
+                plan.click()
+                page.wait_for_timeout(300)
+                got = page.evaluate("() => [document.getElementById('ptplan').open,"
+                                    " document.querySelector('#ptplan [name=work_item_id]').value]")
+                note(got == [True, want], "Plan opens its window filled with that ticket", f"{got} vs {want}")
+                page.fill("#ptplan input[name=starts_on]", "2026-10-08")
+                page.fill("#ptplan input[name=due_on]", "2026-10-10")
+                page.locator("#ptplan .tefoot button[type=submit]").click()
+                page.wait_for_load_state("domcontentloaded")
+                page.wait_for_timeout(400)
+                note(page.locator("#pgantt .grow.ticket .gbar").count() >= 1,
+                     "and the dated ticket is drawn on the Gantt")
+            close_btn = page.locator("button[data-open=pclose]")
+            note(close_btn.count() == 1, "an open project offers Close project")
+            if close_btn.count():
+                close_btn.click()
+                page.wait_for_timeout(300)
+                note(page.evaluate("() => document.getElementById('pclose').open"), "which opens the close window")
+                page.locator("#pclose [data-close=pclose]").first.click()
             page.goto(f"{base}/projects", wait_until="domcontentloaded")
             page.wait_for_timeout(300)
             note("open ticket(s)" in page.locator("body").inner_text(), "the projects list shows each project's open tickets")

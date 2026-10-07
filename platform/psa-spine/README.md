@@ -2080,9 +2080,27 @@ desk now has:
 | Company on the project | **Company** on New project and on the project's own form, and the board can be changed there too |
 | (live updates NOT VERIFIED in ConnectWise) | The list and the project page refresh themselves when a project, its phases, team, notes or any of its tickets change (`/live?scope=projects`, `project:<id>`), the same quiet poll the board uses |
 
-**Not built yet** (the reference has them): project contacts, project templates and Copy Project, status
-health indicators (On Track / At Risk / Off Track), the close-project dialog that sets phase and ticket statuses,
-a Gantt view, ticket predecessors, and the billing fields (billing method, PO, rates).
+**Later on 7 Oct (schema 069): the rest, except billing.** Dada: *"add those missing ... except for the billing
+bit"*. Additive again: `project_contact`, `project_ticket_dependency`, `project_plan_item`, and nullable
+`project.is_template`, `project.health`, `project_ticket.starts_on` / `due_on`.
+
+- **Contacts**: a Contacts card, from the desk's contacts (the project company's first), with a role on the project.
+- **Health**: On track / At risk / High risk / Off track, as the reference PSA's status indicator. Left alone, the
+  desk reads it: over budget, or past the end with tickets open, is Off track; past 85% of budget, or within a week
+  of the end under 80% done, At risk. A person can set it on the project's form; it shows on the project and the list.
+- **Close project**: a window that closes the project as Done or Cancelled, and if asked moves its open tickets to a
+  closed status and marks its phases done. Closing as Done never uses >Cancelled (the desk's 067 rule); a ticket
+  on another board goes to that board's own closing status. Closing a ticket needs WORK on its board.
+- **Ticket predecessors and dates**: **Plan** on each work plan ticket sets its estimated start, required date,
+  budget, and what it waits on. A loop is refused. As the reference PSA does, a ticket waiting on an open one takes
+  no time (`board.may_book_effort` says why), and a predecessor can be taken off with its ×.
+- **Gantt**: phases and dated tickets as bars on a day scale with today marked; anything undated is listed, not guessed.
+- **Templates and Copy project**: a project with no tickets can be made a template, whose **planned tickets** sit on
+  no board. **New project from this template** and **Copy project** carry the phases (nesting, predecessors, budgets,
+  dates moved to the new start), the team and the contacts, and open a new unassigned ticket for each planned
+  ticket (or each of the copied project's tickets). Templates are listed apart on Projects.
+
+Still not built, on purpose: billing (method, PO, rates), as Dada said.
 
 **What did not change.** 068 is additive: two new tables (`project_member`, `project_note`) and two nullable
 columns (`project_ticket.budget_hours`, `project.entity_id`). Every existing page, check and test still passes,

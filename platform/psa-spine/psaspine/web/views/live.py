@@ -68,7 +68,14 @@ def stamp(ctx):
                           f" FROM project_phase{w}", arg).fetchone()
         tm = conn.execute(f"SELECT COUNT(*), MAX(added_at) FROM project_member{w}", arg).fetchone()
         nt = conn.execute(f"SELECT COUNT(*) FROM project_note{w}", arg).fetchone()
-        parts = (*tk, *te, *pr, *ph, *tm, nt[0])
+        ct = conn.execute(f"SELECT COUNT(*) FROM project_contact{w}", arg).fetchone()            # 069
+        pl = conn.execute(f"SELECT COUNT(*), MAX(item_id) FROM project_plan_item{w}", arg).fetchone()
+        dp = conn.execute(f"SELECT COUNT(*) FROM project_ticket_dependency d JOIN project_ticket pt ON pt.work_item_id ="
+                          f" d.work_item_id{' WHERE pt.project_id = ?' if pid else ''}", arg).fetchone()
+        hl = conn.execute(f"SELECT MAX(COALESCE(health, '') || COALESCE(is_template, 0)) FROM project{w}", arg).fetchone()
+        dt = conn.execute(f"SELECT MAX(COALESCE(starts_on, '') || COALESCE(due_on, '') || COALESCE(budget_hours, ''))"
+                          f" FROM project_ticket{w}", arg).fetchone()
+        parts = (*tk, *te, *pr, *ph, *tm, nt[0], ct[0], *pl, dp[0], hl[0], dt[0])
     else:
         return Response("400 Bad Request", "", content_type="text/plain; charset=utf-8")
     body = "|".join("" if p is None else str(p) for p in parts)

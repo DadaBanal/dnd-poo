@@ -981,6 +981,19 @@ tr.planhead td{padding-top:12px}
 .pbar i{display:block;height:100%;background:var(--neon,var(--accent))}
 tr.popen td{padding-top:0;border-top:0}
 
+/* ---- the Gantt (069): one row per phase and dated ticket, bars on a day scale, today marked */
+.gantt{display:flex;flex-direction:column;gap:4px;overflow-x:auto}
+.gantt .grow{display:grid;grid-template-columns:minmax(220px,32%) 1fr;align-items:center;gap:10px;min-width:640px}
+.gantt .glabel{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gantt .grow.phase .glabel{font-weight:700}
+.gantt .gtrack{position:relative;height:18px;border-radius:6px;background:rgb(127 127 127/.08)}
+.gantt .gticks{height:16px;background:none}
+.gantt .gticks span{position:absolute;top:0;font-size:11px;color:var(--ink-3);transform:translateX(-2px);white-space:nowrap}
+.gantt .gbar{position:absolute;top:3px;height:12px;border-radius:6px;background:var(--neon,var(--accent));box-shadow:0 0 12px -2px rgb(34 211 238/.6)}
+.gantt .grow.ticket .gbar{background:linear-gradient(90deg,#8b5cf6,#a78bfa);height:10px;top:4px}
+.gantt .grow.done .gbar{opacity:.4;box-shadow:none}
+.gantt .gtoday{position:absolute;top:-3px;bottom:-3px;width:2px;background:#f43f5e;border-radius:2px;z-index:1}
+
 /* ---- motion that does not lag (Dada, 6 Oct 2026: "animations are welcome
    and transitions as long as they dont lag it"). transform and opacity only,
    so the GPU does it; each runs once; none on a list that can be long. */
@@ -1629,6 +1642,12 @@ function fallback(){var ta=d.createElement("textarea");ta.value=text;ta.setAttri
 d.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest("[data-open]");if(b){var dl=d.getElementById(b.dataset.open);
   /* a phase's + Ticket opens the project ticket window with that phase picked (068) */
   if(dl&&b.dataset.phase!==undefined){var ps=dl.querySelector("select[name=phase_id]");if(ps)ps.value=b.dataset.phase}
+  /* a work plan ticket's Plan fills the plan window with that ticket's dates, budget and number (069) */
+  if(dl&&b.dataset.plan!==undefined){var put=function(n,v){var x=dl.querySelector("[name="+n+"]");if(x)x.value=v||""};
+    put("work_item_id",b.dataset.plan);put("starts_on",b.dataset.starts);put("due_on",b.dataset.due);put("budget_hours",b.dataset.budget);
+    put("depends_on","");var dep=dl.querySelector("select[name=depends_on]");
+    if(dep)Array.prototype.forEach.call(dep.options,function(o){o.disabled=o.value===b.dataset.plan});
+    $$("[data-fill]",dl).forEach(function(x){x.textContent=x.dataset.fill==="wid"?b.dataset.plan:(b.dataset.summary||"")})}
   if(dl&&dl.showModal){dl.showModal();return}}
   var k=e.target.closest&&e.target.closest("[data-tick]");if(k&&k.form){$$("input[type=checkbox]",k.form).forEach(function(c){c.checked=k.dataset.tick==="1"})}});
 /* the departments grid: a row or column box ticks its line */

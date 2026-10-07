@@ -225,6 +225,15 @@ def may_book_effort(conn: sqlite3.Connection, work_item_id: str) -> tuple[bool, 
                        "it can consume effort")
     if row["board_status_id"] and not row["time_entry_allowed"]:
         return False, f"the status {row['name']!r} does not allow effort to be booked"
+    # 069: a project ticket waiting on another that is still open takes no time,
+    # as the reference PSA blocks it
+    waiting = conn.execute(
+        "SELECT d.depends_on FROM project_ticket_dependency d JOIN ticket t ON t.work_item_id = d.depends_on"
+        " WHERE d.work_item_id = ? AND t.state NOT IN ('RESOLVED', 'CLOSED', 'CANCELLED') ORDER BY d.depends_on",
+        (work_item_id,)).fetchall()
+    if waiting:
+        return False, ("this ticket waits on " + ", ".join(r[0] for r in waiting)
+                       + "; time goes on once that is done")
     return True, "allowed"
 
 

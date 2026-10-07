@@ -176,6 +176,10 @@
     "project_member.hours": {
       "sql": "DECIMAL(9,2)",
       "why": "Hours planned for a team member on a project (068); the same unit as the budget."
+    },
+    "project_plan_item.budget_hours": {
+      "sql": "DECIMAL(9,2)",
+      "why": "A template's planned ticket budget (069), the unit of every project budget."
     }
   },
   "columns": {
@@ -1112,6 +1116,19 @@
     "project_note.project_id": "ID",
     "project_note.body": "FREE",
     "project_note.written_at": "TIMESTAMP_TEXT",
-    "project_note.written_by": "PERSON"
+    "project_note.written_by": "PERSON",
+    "project_contact.project_id": "ID",
+    "project_contact.contact_id": "ID",
+    "project_contact.role": "NAME",
+    "project_contact.added_at": "TIMESTAMP_TEXT",
+    "project_contact.added_by": "PERSON",
+    "project_ticket_dependency.work_item_id": "ID",
+    "project_ticket_dependency.depends_on": "ID",
+    "project_plan_item.project_id": "ID",
+    "project_plan_item.summary": "NAME",
+    "project_plan_item.created_at": "TIMESTAMP_TEXT",
+    "project.health": "CODE",
+    "project_ticket.starts_on": "DATE_TEXT",
+    "project_ticket.due_on": "DATE_TEXT"
   }
 }

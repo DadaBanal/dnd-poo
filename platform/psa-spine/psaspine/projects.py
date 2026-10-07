@@ -598,7 +598,8 @@ def projects_of(conn, member: str) -> set[str]:
 # carries its own budget hours.
 
 def open_ticket(conn, project_id: str, *, summary: str, phase_id: int | None = None, owner: str | None = None,
-                budget_hours=None, description: str | None = None, at: datetime, actor: str) -> str:
+                budget_hours=None, description: str | None = None, starts_on=None, due_on=None,
+                at: datetime, actor: str) -> str:
     from . import tickets as _tickets
     p = get(conn, project_id)
     if p is None:
@@ -613,6 +614,9 @@ def open_ticket(conn, project_id: str, *, summary: str, phase_id: int | None = N
         if ph is None or ph["project_id"] != project_id:
             raise Refused("That phase is not on this project.")
     budget = _hours(budget_hours)
+    sd, dd = _day(starts_on, "Start"), _day(due_on, "Due")
+    if sd and dd and dd < sd:
+        raise Refused("A ticket is due after it starts.")
     wid = _tickets.open_ticket(conn, board_id=p["board_id"], summary=summary, impact="I3", urgency="U3",
                                requested_by=None, at=at, actor=actor, description=(description or "").strip() or None,
                                entity_id=p["entity_id"] if "entity_id" in p.keys() else None,
@@ -624,6 +628,8 @@ def open_ticket(conn, project_id: str, *, summary: str, phase_id: int | None = N
         add_member(conn, project_id, who, at=at, actor=actor)   # whoever has the work is on the team
     if budget is not None:
         conn.execute("UPDATE project_ticket SET budget_hours = ? WHERE work_item_id = ?", (budget, wid))
+    if sd or dd:                                     # 069: the dates the Gantt draws
+        conn.execute("UPDATE project_ticket SET starts_on = ?, due_on = ? WHERE work_item_id = ?", (sd, dd, wid))
     _audit(conn, at, actor, project_id, f"ticket {wid} opened in the project: {summary}")
     return wid
 
@@ -675,3 +681,332 @@ def add_note(conn, project_id: str, body: str, *, at: datetime, actor: str) -> i
 
 def notes(conn, project_id: str) -> list:
     return conn.execute("SELECT * FROM project_note WHERE project_id = ? ORDER BY note_id DESC", (project_id,)).fetchall()
+
+
+# ================================================================ 069
+# Dada, 7 Oct 2026: "add those missing ... except for the billing bit": the
+# reference PSA's project contacts, health, closing, ticket predecessors and
+# dates (which the Gantt draws), templates and Copy Project.
+
+HEALTH = {"ON_TRACK": "On track", "AT_RISK": "At risk", "HIGH_RISK": "High risk", "OFF_TRACK": "Off track"}
+
+
+def _col(row, name):
+    return row[name] if name in row.keys() else None
+
+
+def health(conn, project_id: str, *, today: date | None = None, boards=None) -> tuple[str, str, bool]:
+    """(code, why, set_by_a_person). A person's setting wins; otherwise the
+    desk reads it from budget and dates: over budget or past its end with work
+    open is Off track; within 15% of budget, or within a week of its end with
+    under 80% done, At risk; else On track."""
+    p = get(conn, project_id)
+    if p is None:
+        raise Refused("No such project.")
+    if _col(p, "health") in HEALTH:
+        return p["health"], "set by a person", True
+    today = today or date.today()
+    actual = actual_hours(conn, project_id, boards=boards)
+    pct = percent_complete(conn, project_id, boards=boards)
+    open_work = pct is not None and pct < 100
+    if p["status"] in ("DONE", "CANCELLED"):
+        return "ON_TRACK", "closed", False
+    if p["budget_hours"] and actual > p["budget_hours"]:
+        return "OFF_TRACK", f"{actual:g} h booked against a budget of {p['budget_hours']:g} h", False
+    end = date.fromisoformat(p["ends_on"]) if p["ends_on"] else None
+    if end and today > end and open_work:
+        return "OFF_TRACK", f"past its end ({p['ends_on']}) with tickets open", False
+    if p["budget_hours"] and actual > 0.85 * p["budget_hours"]:
+        return "AT_RISK", f"{actual / p['budget_hours'] * 100:.0f}% of the budget booked", False
+    if end and (end - today).days <= 7 and pct is not None and pct < 80:
+        return "AT_RISK", f"ends {p['ends_on']} with {pct}% done", False
+    return "ON_TRACK", "within budget and dates", False
+
+
+def set_health(conn, project_id: str, code: str | None, *, at: datetime, actor: str) -> str:
+    p = get(conn, project_id)
+    if p is None:
+        raise Refused("No such project.")
+    code = code or None
+    if code is not None and code not in HEALTH:
+        raise Refused("No such health.")
+    if _col(p, "health") == code:
+        return "nothing changed"
+    conn.execute("UPDATE project SET health = ? WHERE project_id = ?", (code, project_id))
+    words = f"health {HEALTH.get(code, 'read by the desk') if code else 'read by the desk'}"
+    _audit(conn, at, actor, project_id, words)
+    return words
+
+
+# ------------------------------------------------------------------ contacts
+
+def contacts(conn, project_id: str) -> list:
+    return conn.execute("SELECT pc.*, c.display_name, c.email, c.phone, c.department FROM project_contact pc"
+                        " JOIN contact c ON c.contact_id = pc.contact_id WHERE pc.project_id = ?"
+                        " ORDER BY c.display_name", (project_id,)).fetchall()
+
+
+def add_contact(conn, project_id: str, contact_id: str, *, role: str | None = None, at: datetime, actor: str) -> str:
+    if get(conn, project_id) is None:
+        raise Refused("No such project.")
+    c = conn.execute("SELECT contact_id, display_name FROM contact WHERE contact_id = ?",
+                     ((contact_id or "").strip(),)).fetchone()
+    if c is None:
+        raise Refused("No such contact.")
+    role = " ".join((role or "").split())[:200] or None
+    before = conn.execute("SELECT role FROM project_contact WHERE project_id = ? AND contact_id = ?",
+                          (project_id, c["contact_id"])).fetchone()
+    if before is None:
+        conn.execute("INSERT INTO project_contact (project_id, contact_id, role, added_at, added_by) VALUES (?,?,?,?,?)",
+                     (project_id, c["contact_id"], role, _stamp(at), actor))
+        words = f"contact {c['display_name']} added" + (f" as {role}" if role else "")
+    elif before["role"] != role:
+        conn.execute("UPDATE project_contact SET role = ? WHERE project_id = ? AND contact_id = ?",
+                     (role, project_id, c["contact_id"]))
+        words = f"contact {c['display_name']}: role {before['role'] or '-'} -> {role or '-'}"
+    else:
+        return "nothing changed"
+    _audit(conn, at, actor, project_id, words)
+    return words
+
+
+def remove_contact(conn, project_id: str, contact_id: str, *, at: datetime, actor: str) -> str:
+    n = conn.execute("DELETE FROM project_contact WHERE project_id = ? AND contact_id = ?",
+                     (project_id, contact_id)).rowcount
+    if not n:
+        return "nothing changed"
+    _audit(conn, at, actor, project_id, f"contact {contact_id} taken off")
+    return "contact taken off"
+
+
+# ------------------------------------------- ticket dates and predecessors
+
+def set_ticket_plan(conn, work_item_id: str, *, starts_on=None, due_on=None, budget_hours="__keep__",
+                    at: datetime, actor: str) -> str:
+    """A project ticket's estimated start, required date and budget."""
+    row = conn.execute("SELECT * FROM project_ticket WHERE work_item_id = ?", (work_item_id,)).fetchone()
+    if row is None:
+        raise Refused("That ticket is not on a project.")
+    s, e = _day(starts_on, "Start"), _day(due_on, "Due")
+    if s and e and e < s:
+        raise Refused("A ticket is due after it starts.")
+    new = {"starts_on": s, "due_on": e}
+    if budget_hours != "__keep__":
+        new["budget_hours"] = _hours(budget_hours)
+    changed = {k: v for k, v in new.items() if v != _col(row, k)}
+    if not changed:
+        return "nothing changed"
+    conn.execute(f"UPDATE project_ticket SET {', '.join(k + ' = ?' for k in changed)} WHERE work_item_id = ?",
+                 [*changed.values(), work_item_id])
+    words = f"{work_item_id}: " + "; ".join(f"{k} {_col(row, k) or '-'} -> {v if v is not None else '-'}"
+                                             for k, v in changed.items())
+    _audit(conn, at, actor, row["project_id"], words)
+    return words
+
+
+def ticket_predecessors(conn, work_item_id: str) -> list:
+    """The tickets this one waits on, each with its state."""
+    return conn.execute("SELECT d.depends_on, w.name AS summary, t.state FROM project_ticket_dependency d"
+                        " JOIN ticket t ON t.work_item_id = d.depends_on JOIN work_item w ON w.work_item_id = t.work_item_id"
+                        " WHERE d.work_item_id = ? ORDER BY d.depends_on", (work_item_id,)).fetchall()
+
+
+def open_predecessors(conn, work_item_id: str) -> list[str]:
+    return [r["depends_on"] for r in ticket_predecessors(conn, work_item_id)
+            if r["state"] not in ("RESOLVED", "CLOSED", "CANCELLED")]
+
+
+def add_ticket_dependency(conn, work_item_id: str, depends_on: str, *, at: datetime, actor: str) -> str:
+    a = conn.execute("SELECT project_id FROM project_ticket WHERE work_item_id = ?", (work_item_id,)).fetchone()
+    b = conn.execute("SELECT project_id FROM project_ticket WHERE work_item_id = ?", ((depends_on or "").strip(),)).fetchone()
+    if a is None or b is None or a[0] != b[0]:
+        raise Refused("Both tickets must be on the same project.")
+    depends_on = depends_on.strip()
+    if depends_on == work_item_id:
+        raise Refused("A ticket cannot wait on itself.")
+    # refuse a loop: depends_on must not already (however deep) wait on work_item_id
+    seen, todo = set(), [depends_on]
+    while todo:
+        cur = todo.pop()
+        if cur == work_item_id:
+            raise Refused("That would make the two tickets wait on each other.")
+        if cur in seen:
+            continue
+        seen.add(cur)
+        todo += [r[0] for r in conn.execute("SELECT depends_on FROM project_ticket_dependency WHERE work_item_id = ?", (cur,))]
+    if conn.execute("SELECT 1 FROM project_ticket_dependency WHERE work_item_id = ? AND depends_on = ?",
+                    (work_item_id, depends_on)).fetchone():
+        return "nothing changed"
+    conn.execute("INSERT INTO project_ticket_dependency (work_item_id, depends_on) VALUES (?,?)", (work_item_id, depends_on))
+    words = f"{work_item_id} waits on {depends_on}"
+    _audit(conn, at, actor, a[0], words)
+    return words
+
+
+def remove_ticket_dependency(conn, work_item_id: str, depends_on: str, *, at: datetime, actor: str) -> str:
+    row = conn.execute("SELECT project_id FROM project_ticket WHERE work_item_id = ?", (work_item_id,)).fetchone()
+    n = conn.execute("DELETE FROM project_ticket_dependency WHERE work_item_id = ? AND depends_on = ?",
+                     (work_item_id, depends_on)).rowcount
+    if not n or row is None:
+        return "nothing changed"
+    words = f"{work_item_id} no longer waits on {depends_on}"
+    _audit(conn, at, actor, row[0], words)
+    return words
+
+
+# ------------------------------------------------------------------ closing
+
+def close(conn, project_id: str, status: str, *, ticket_status: str | None = None, close_tickets: bool = False,
+          close_phases: bool = False, at: datetime, actor: str) -> list[str]:
+    """Close a project the way the reference PSA's close dialog does: the
+    project's status, and, if asked, its open phases done and its open tickets
+    moved to a closed status (the one named where it is on the ticket's own
+    board, else that board's first closed status). Returns what was done."""
+    from . import board as _board
+    if status not in ("DONE", "CANCELLED"):
+        raise Refused("A project closes as Done or Cancelled.")
+    if get(conn, project_id) is None:
+        raise Refused("No such project.")
+    said = []
+    if close_tickets:
+        for r in tickets(conn, project_id):
+            if r["state"] in ("RESOLVED", "CLOSED", "CANCELLED"):
+                continue
+            target = None
+            if ticket_status:
+                ok = conn.execute("SELECT 1 FROM board_status WHERE board_status_id = ? AND board_id = ? AND is_closed = 1"
+                                  " AND inactive = 0", (ticket_status, r["board_id"])).fetchone()
+                target = ticket_status if ok else None
+            if target is None:
+                # the board's own closing status; >Cancelled only when the project itself is cancelled,
+                # as the desk never closes work as cancelled on someone's behalf (067)
+                from .setup import is_cancelled_name
+                rows = conn.execute("SELECT board_status_id, name FROM board_status WHERE board_id = ? AND is_closed = 1"
+                                    " AND inactive = 0 ORDER BY sort_order", (r["board_id"],)).fetchall()
+                want_cancel = status == "CANCELLED"
+                pick = [x for x in rows if is_cancelled_name(x["name"]) == want_cancel] or \
+                       [x for x in rows if not is_cancelled_name(x["name"])]
+                target = pick[0]["board_status_id"] if pick else None
+            if target is None:
+                said.append(f"{r['work_item_id']} left open: its board has no closed status")
+                continue
+            _board.change_status(conn, r["work_item_id"], target, at=at, actor=actor)
+            said.append(f"{r['work_item_id']} closed")
+    if close_phases:
+        n = conn.execute("UPDATE project_phase SET status = 'DONE' WHERE project_id = ? AND status = 'OPEN'",
+                         (project_id,)).rowcount
+        if n:
+            said.append(f"{n} phase(s) done")
+    words = update(conn, project_id, status=status, at=at, actor=actor)
+    if words != "nothing changed":
+        said.append(words)
+    return said
+
+
+# -------------------------------------------------------------- templates
+
+def is_template(row) -> bool:
+    return bool(_col(row, "is_template"))
+
+
+def set_template(conn, project_id: str, flag: bool, *, at: datetime, actor: str) -> str:
+    p = get(conn, project_id)
+    if p is None:
+        raise Refused("No such project.")
+    if flag and conn.execute("SELECT 1 FROM project_ticket WHERE project_id = ?", (project_id,)).fetchone():
+        raise Refused("A project with tickets is work, not a template. Use Copy project to start a new one from it.")
+    if bool(_col(p, "is_template")) == bool(flag):
+        return "nothing changed"
+    conn.execute("UPDATE project SET is_template = ? WHERE project_id = ?", (1 if flag else 0, project_id))
+    words = "made a template" if flag else "no longer a template"
+    _audit(conn, at, actor, project_id, words)
+    return words
+
+
+def plan_items(conn, project_id: str) -> list:
+    return conn.execute("SELECT i.*, ph.name AS phase_name FROM project_plan_item i LEFT JOIN project_phase ph"
+                        " ON ph.phase_id = i.phase_id WHERE i.project_id = ? ORDER BY i.sort_order, i.item_id",
+                        (project_id,)).fetchall()
+
+
+def add_plan_item(conn, project_id: str, *, summary: str, phase_id: int | None = None, budget_hours=None,
+                  at: datetime, actor: str) -> int:
+    p = get(conn, project_id)
+    if p is None:
+        raise Refused("No such project.")
+    if not is_template(p):
+        raise Refused("Planned tickets belong to a template; on a project, create the ticket itself.")
+    summary = " ".join((summary or "").split())[:200]
+    if not summary:
+        raise Refused("A planned ticket needs a summary.")
+    if phase_id is not None:
+        ph = _phase(conn, phase_id)
+        if ph is None or ph["project_id"] != project_id:
+            raise Refused("That phase is not on this template.")
+    order = (conn.execute("SELECT MAX(sort_order) FROM project_plan_item WHERE project_id = ?",
+                          (project_id,)).fetchone()[0] or 0) + 10
+    cur = conn.execute("INSERT INTO project_plan_item (project_id, phase_id, summary, budget_hours, sort_order, created_at)"
+                       " VALUES (?,?,?,?,?,?)", (project_id, phase_id, summary, _hours(budget_hours), order, _stamp(at)))
+    _audit(conn, at, actor, project_id, f"planned ticket added: {summary}")
+    return cur.lastrowid
+
+
+def remove_plan_item(conn, project_id: str, item_id: int, *, at: datetime, actor: str) -> str:
+    n = conn.execute("DELETE FROM project_plan_item WHERE project_id = ? AND item_id = ?", (project_id, item_id)).rowcount
+    if not n:
+        return "nothing changed"
+    _audit(conn, at, actor, project_id, "planned ticket removed")
+    return "planned ticket removed"
+
+
+def templates(conn) -> list:
+    return conn.execute("SELECT * FROM project WHERE COALESCE(is_template, 0) = 1 ORDER BY name").fetchall()
+
+
+def copy(conn, source_id: str, *, name: str, manager: str | None = None, board_id: str | None = None,
+         starts_on=None, entity_id: str | None = None, copy_team: bool = True, at: datetime, actor: str) -> str:
+    """A new project from a template (Apply template) or from another project
+    (Copy project). The phases come across with their nesting, predecessors,
+    budgets and dates (moved to the new start), and so do the team and the
+    contacts. A template's planned tickets, or a project's tickets, are opened
+    as new tickets in the matching phases, unassigned and with their budgets.
+    Nothing on the source changes."""
+    src = get(conn, source_id)
+    if src is None:
+        raise Refused("No such project or template.")
+    board = board_id or src["board_id"]
+    shift = None
+    s = _day(starts_on, "Start")
+    if s and src["starts_on"]:
+        shift = date.fromisoformat(s) - date.fromisoformat(src["starts_on"])
+
+    def moved(d):
+        """A source date moved by the gap between the two starts."""
+        return (date.fromisoformat(d) + shift).isoformat() if d and shift is not None else d
+    ends = moved(src["ends_on"])
+    pid = create(conn, name=name or f"{src['name']} (copy)", manager=manager if manager is not None else src["manager"],
+                 board_id=board, starts_on=s or src["starts_on"], ends_on=ends, budget_hours=src["budget_hours"],
+                 description=src["description"], entity_id=entity_id or _col(src, "entity_id"), at=at, actor=actor)
+    mapping: dict[int, int] = {}
+    for ph in phases(conn, source_id):
+        new_id = add_phase(conn, pid, name=ph["name"], parent_id=mapping.get(ph["parent_id"]),
+                           starts_on=moved(ph["starts_on"]), ends_on=moved(ph["ends_on"]),
+                           budget_hours=ph["budget_hours"], at=at, actor=actor)
+        mapping[ph["phase_id"]] = new_id
+    for d in conn.execute("SELECT d.phase_id, d.depends_on FROM phase_dependency d JOIN project_phase p"
+                          " ON p.phase_id = d.phase_id WHERE p.project_id = ?", (source_id,)).fetchall():
+        if d[0] in mapping and d[1] in mapping:
+            conn.execute("INSERT INTO phase_dependency (phase_id, depends_on) VALUES (?,?)", (mapping[d[0]], mapping[d[1]]))
+    if copy_team:
+        for m in team(conn, source_id):
+            add_member(conn, pid, m["member"], role=m["project_role"], hours=m["hours"], at=at, actor=actor)
+        for c in contacts(conn, source_id):
+            add_contact(conn, pid, c["contact_id"], role=c["role"], at=at, actor=actor)
+    work = ([(i["summary"], i["phase_id"], i["budget_hours"]) for i in plan_items(conn, source_id)] if is_template(src)
+            else [(r["summary"], r["phase_id"], _col(r, "budget_hours")) for r in tickets(conn, source_id)])
+    if work and not board:
+        raise Refused("The new project needs a board for its tickets.")
+    for summary, phase_id, budget in work:
+        open_ticket(conn, pid, summary=summary, phase_id=mapping.get(phase_id), budget_hours=budget, at=at, actor=actor)
+    _audit(conn, at, actor, pid, f"made from {'template' if is_template(src) else 'project'} {source_id}")
+    return pid
