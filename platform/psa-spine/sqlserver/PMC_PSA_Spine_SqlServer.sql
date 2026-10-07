@@ -244,6 +244,9 @@ BEGIN
     PRINT N'    psa.project_issue';
     PRINT N'    psa.chat_session';
     PRINT N'    psa.chat_message';
+    PRINT N'    psa.chat_reaction';
+    PRINT N'    psa.chat_file';
+    PRINT N'    psa.chat_survey';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -309,13 +312,14 @@ BEGIN
     PRINT N'    psa.ix_chat_session_status';
     PRINT N'    psa.ix_chat_session_requester';
     PRINT N'    psa.ix_chat_message_chat';
+    PRINT N'    psa.ix_chat_file_chat';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  146 tables, 64 indexes, 4 triggers.';
+    PRINT N'  149 tables, 65 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -3732,6 +3736,67 @@ CREATE TABLE psa.[chat_message] (
 END;
 
 -- --------------------------------------------------------------------------
+-- chat_reaction   (from schema/072_chat_extras.sql)
+IF OBJECT_ID(N'psa.[chat_reaction]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[chat_reaction] (
+    [message_id] INT NOT NULL CONSTRAINT [FK_chat_reaction_message_id] REFERENCES psa.[chat_message]([message_id]),
+    [member] NVARCHAR(200) NOT NULL,
+    [emoji] NVARCHAR(32) NOT NULL,
+    [reacted_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [reacted_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [reacted_at], 126), CASE WHEN [reacted_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [reacted_at], 112) END)),
+    CONSTRAINT [PK_chat_reaction] PRIMARY KEY ([message_id], [member], [emoji])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- chat_file   (from schema/072_chat_extras.sql)
+IF OBJECT_ID(N'psa.[chat_file]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[chat_file] (
+    [file_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_chat_file] PRIMARY KEY,
+    [chat_id] INT NOT NULL CONSTRAINT [FK_chat_file_chat_id] REFERENCES psa.[chat_session]([chat_id]),
+    [message_id] INT NOT NULL CONSTRAINT [FK_chat_file_message_id] REFERENCES psa.[chat_message]([message_id]),
+    [filename] NVARCHAR(400) NOT NULL,
+    [media_type] NVARCHAR(400) NOT NULL,
+    [size_received] INT NOT NULL CONSTRAINT [CK_chat_file_01] CHECK (size_received > 0),
+    [size_stored] INT NOT NULL CONSTRAINT [CK_chat_file_02] CHECK (size_stored > 0),
+    [sha256] NVARCHAR(64) NOT NULL,
+    [encoding] NVARCHAR(32) NOT NULL CONSTRAINT [CK_chat_file_03] CHECK (encoding IN ('IDENTITY', 'GZIP')),
+    [uploaded_by] NVARCHAR(200) NOT NULL,
+    [uploaded_at] NVARCHAR(64) NOT NULL,
+    [review_status] NVARCHAR(32) NOT NULL CONSTRAINT [CK_chat_file_04] CHECK (review_status IN ('PENDING', 'CLEARED', 'WITHHELD')),
+    [reviewed_by] NVARCHAR(200) NULL,
+    [reviewed_at] NVARCHAR(64) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [uploaded_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [uploaded_at], 126), CASE WHEN [uploaded_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [uploaded_at], 112) END)),
+    [reviewed_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [reviewed_at], 126), CASE WHEN [reviewed_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [reviewed_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- chat_survey   (from schema/072_chat_extras.sql)
+IF OBJECT_ID(N'psa.[chat_survey]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[chat_survey] (
+    [chat_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_chat_survey] PRIMARY KEY CONSTRAINT [FK_chat_survey_chat_id] REFERENCES psa.[chat_session]([chat_id]),
+    [score] INT NOT NULL CONSTRAINT [CK_chat_survey_01] CHECK (score BETWEEN 1 AND 5),
+    [comment] NVARCHAR(MAX) NULL,
+    [answered_by] NVARCHAR(200) NOT NULL,
+    [answered_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [answered_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [answered_at], 126), CASE WHEN [answered_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [answered_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -4234,6 +4299,9 @@ ALTER TABLE psa.[project] ADD [project_status_id] NVARCHAR(64) NULL;
 IF COL_LENGTH(N'psa.[project]', N'project_type_id') IS NULL
 ALTER TABLE psa.[project] ADD [project_type_id] NVARCHAR(64) NULL;
 
+IF COL_LENGTH(N'psa.[board]', N'chat_welcome') IS NULL
+ALTER TABLE psa.[board] ADD [chat_welcome] NVARCHAR(400) NULL;
+
 IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
 ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
 
@@ -4448,6 +4516,9 @@ CREATE INDEX [ix_chat_session_requester] ON psa.[chat_session] ([requester]);
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_chat_message_chat' AND object_id = OBJECT_ID(N'psa.[chat_message]'))
 CREATE INDEX [ix_chat_message_chat] ON psa.[chat_message] ([chat_id], [message_id]);
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_chat_file_chat' AND object_id = OBJECT_ID(N'psa.[chat_file]'))
+CREATE INDEX [ix_chat_file_chat] ON psa.[chat_file] ([chat_id]);
+
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
@@ -4583,10 +4654,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 146 OR @Triggers <> 4 OR @Indexes < 64
+IF @Tables <> 149 OR @Triggers <> 4 OR @Indexes < 65
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 146), %d triggers (expected 4), %d indexes (expected at least 64). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 149), %d triggers (expected 4), %d indexes (expected at least 65). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -4642,6 +4713,9 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[chat_survey];
+    DROP TABLE IF EXISTS psa.[chat_file];
+    DROP TABLE IF EXISTS psa.[chat_reaction];
     DROP TABLE IF EXISTS psa.[chat_message];
     DROP TABLE IF EXISTS psa.[chat_session];
     DROP TABLE IF EXISTS psa.[project_issue];

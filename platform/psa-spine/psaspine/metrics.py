@@ -50,7 +50,7 @@ def desk(conn: sqlite3.Connection, boards, *, now: datetime, months: int = 6,
              "median_respond": None, "median_resolve": None,
              "respond_met_total": None, "resolve_met_total": None,
              "by_board": [], "by_type": [], "by_source": [], "by_priority": [],
-             "satisfaction": None, "satisfaction_n": 0}
+             "satisfaction": None, "satisfaction_n": 0, "chat_rating": None, "chat_rating_n": 0}
     if not boards:
         return empty
     marks = ",".join("?" * len(boards))
@@ -115,6 +115,13 @@ def desk(conn: sqlite3.Connection, boards, *, now: datetime, months: int = 6,
             f" WHERE t.board_id IN ({marks}) AND s.answered_at >= ?", (*boards, since)).fetchone()
         if row and row[1]:
             out["satisfaction"], out["satisfaction_n"] = round(row[0], 2), row[1]
+    if db.table_exists(conn, "chat_survey"):                 # 072: chats rated at their end
+        row = conn.execute(
+            f"SELECT AVG(CAST(s.score AS REAL)), COUNT(*) FROM chat_survey s"
+            f" JOIN chat_session c ON c.chat_id = s.chat_id"
+            f" WHERE c.board_id IN ({marks}) AND s.answered_at >= ?", (*boards, since)).fetchone()
+        if row and row[1]:
+            out["chat_rating"], out["chat_rating_n"] = round(row[0], 2), row[1]
     return out
 
 

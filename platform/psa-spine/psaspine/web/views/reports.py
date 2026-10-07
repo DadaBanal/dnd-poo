@@ -165,6 +165,10 @@ def index(ctx):
     if m["satisfaction"] is not None:
         sat = (f"<div class=card><h3>{t.icon('sparkle')}Satisfaction</h3><div class=n style='font-size:26px;font-weight:650'>"
                f"{m['satisfaction']} / 5</div><div class=why>{m['satisfaction_n']} answer(s) in the period.</div></div>")
+    if m.get("chat_rating") is not None:                     # 072: beside it, the chats
+        sat += (f"<div class=card id=chatrating><h3>{t.icon('note')}Chat rating</h3><div class=n style='font-size:26px;"
+                f"font-weight:650'>{m['chat_rating']} / 5</div><div class=why>{m['chat_rating_n']} chat(s) rated in the period."
+                "</div></div>")
     table = ("<div class=tablewrap><table><thead><tr><th>Month</th><th class=right>Opened</th><th class=right>Closed</th>"
              "<th class=right>Respond met</th><th class=right>Resolve met</th></tr></thead><tbody>" + "".join(
                  f"<tr><td>{_month_label(k)} {k[:4]}</td><td class=right>{m['opened'][k]}</td>"

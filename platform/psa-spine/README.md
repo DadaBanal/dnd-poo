@@ -2189,6 +2189,45 @@ behind sign-in, NOT VERIFIED.
 
 Schema 071 is additive: `chat_session` and `chat_message`.
 
+## Chat, round two: a moving banner and a chime, reactions, files, a rating (7 Oct 2026, schema 072)
+
+Dada, 7 Oct 2026: *"add a banner ... a moving banner like moving from right to left ... and a sound or a chime
+... reactions and emojis to the chat and also attachments and a survey at the end"*. Confirmed before building:
+Teams-style reactions, pictures and files through the patient-details review, the requester rates the chat.
+
+- **The banner.** On every desk page (never the portal), the chats waiting on the person's boards run across the
+  top, right to left, each a link to the chat, with *Open Chat* beside them. A hover holds it still, and it is
+  still for anyone whose system asks for less motion. It polls `GET /chat/waiting.json` every 8 seconds and hides
+  when nothing waits.
+- **The chime.** A new waiting chat chimes: two soft notes made in the page (Web Audio), no sound file. The bell on
+  the banner turns it off or on, remembered in that browser. A browser plays sound only after the person has
+  clicked once on the page, so the first chime of a fresh tab may wait for that click.
+- **Reactions.** 👍 ❤️ 😄 😮 🙏 ✅ on any line, Teams-style. Hover a line and press ☺+; the counts sit under the
+  line, yours marked, and a second press takes yours off. Both sides see them change without a reload.
+- **Emoji.** 😊 by the box opens a set of forty to put into the message. They are characters, so nothing is fetched.
+- **Pictures and files.** The paperclip, a pasted screenshot, or a file dropped on the conversation sends it as its
+  own line, with the typed words as its caption. Pictures show in the conversation.
+  - Files are kept in the tickets' store, by hash, with the same packing and checks (10 MB at most).
+  - A ward's file arrives PENDING: the desk sees it at once with **Clear** and **Withhold**, and the sender sees
+    their own. The desk's files are cleared as sent. A withheld file is gone from the requester's side.
+  - The store's integrity check counts chat files as live, and a purge keeps their bytes, so retention never takes
+    them for orphans.
+  - When the chat becomes a ticket, or joins one, its files go onto the ticket with the review they already had;
+    a withheld one stays behind.
+- **The rating.** When a chat ends, the requester sees *How did we do?*: one to five stars and an optional
+  sentence (scanned like every requester text), once. It shows on the desk's chat page, in the queue, and in
+  Reports as **Chat rating** beside Satisfaction.
+
+- **"Please wait".** Dada: *"a message to the user ... before a ticket gets picked up like please wait ... similar
+  to support chats"*. Confirmed: in the chat, editable per board. The moment a chat starts, the desk's welcome line
+  appears in it ("Thanks, you are in the queue. Someone from IT Help will be with you shortly ..."). Above the
+  conversation, the ward reads *Please wait, someone will be with you shortly: you are number 2 in the queue*, kept
+  current by the poll. When a technician picks it up or replies, a line says who has joined, and the state reads
+  *Jun Reyes is with you*. Each board writes its own welcome on its Setup page (*Chat welcome*; `{board}` is its
+  name). Unset, it reads the desk's words.
+
+Schema 072 is additive: `chat_reaction`, `chat_file`, `chat_survey`, and the nullable `board.chat_welcome`.
+
 ## Only a project's members see it (7 Oct 2026, code only)
 
 Dada, 7 Oct 2026: *"make sure that they will only have access to projects they are a member of"*. Confirmed before

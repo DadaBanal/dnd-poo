@@ -1161,6 +1161,22 @@
     "chat_message.sender": "PERSON",
     "chat_message.sender_kind": "CODE",
     "chat_message.body": "FREE",
-    "chat_message.sent_at": "TIMESTAMP_TEXT"
+    "chat_message.sent_at": "TIMESTAMP_TEXT",
+    "chat_reaction.member": "PERSON",
+    "chat_reaction.emoji": "CODE",
+    "chat_reaction.reacted_at": "TIMESTAMP_TEXT",
+    "chat_file.filename": "NAME",
+    "chat_file.media_type": "NAME",
+    "chat_file.sha256": "HASH",
+    "chat_file.encoding": "CODE",
+    "chat_file.uploaded_by": "PERSON",
+    "chat_file.uploaded_at": "TIMESTAMP_TEXT",
+    "chat_file.review_status": "CODE",
+    "chat_file.reviewed_by": "PERSON",
+    "chat_file.reviewed_at": "TIMESTAMP_TEXT",
+    "chat_survey.comment": "FREE",
+    "chat_survey.answered_by": "PERSON",
+    "chat_survey.answered_at": "TIMESTAMP_TEXT",
+    "board.chat_welcome": "NAME"
   }
 }

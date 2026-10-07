@@ -6906,14 +6906,17 @@ class ModulesTest(unittest.TestCase):
                                               (cid,)).fetchone()[:], ("ACTIVE", "alice"))
         opener = self._conn().execute("SELECT MIN(message_id) FROM chat_message WHERE chat_id = ?", (cid,)).fetchone()[0]
         got = _json.loads(self._call("GET", f"/my/chat/{cid}/messages.json", query=f"after={opener}", cookie=nurse)[2])
-        self.assertEqual([m["body"] for m in got["messages"]], ["On my way to ward 7."])
+        self.assertEqual([m["body"] for m in got["messages"] if m["kind"] == "STAFF"], ["On my way to ward 7."])
+        self.assertEqual([m["body"] for m in got["messages"] if m["kind"] == "SYSTEM"],
+                         [chat.DEFAULT_WELCOME.replace("{board}", "IT Help"), "alice has joined the chat"])
         self.assertEqual(got["status"], "ACTIVE")
         # the requester replies in the background (js=1); a patient detail is kept, flagged and warned about
         reply = _json.loads(self._call("POST", f"/my/chat/{cid}/send", query="js=1", cookie=nurse,
                                        form={"body": "Patient: Juan, PhilHealth 12-345678901-2 is waiting"})[2])
         self.assertTrue(reply["warn"])
         c = self._conn()
-        self.assertEqual(c.execute("SELECT COUNT(*) FROM chat_message WHERE chat_id = ?", (cid,)).fetchone()[0], 3)
+        self.assertEqual(c.execute("SELECT COUNT(*) FROM chat_message WHERE chat_id = ? AND sender_kind <> 'SYSTEM'",
+                                   (cid,)).fetchone()[0], 3)
         self.assertGreater(c.execute("SELECT COUNT(*) FROM data_quality WHERE run_id = 'chat' AND subject_id = ?",
                                      (str(cid),)).fetchone()[0], 0)
         # a reader cannot answer; someone else's chat and another requester's are not there
@@ -6953,6 +6956,143 @@ class ModulesTest(unittest.TestCase):
         self._call("POST", f"/my/chat/{cid}/end", cookie=nurse)
         reply = _json.loads(self._call("POST", f"/chat/{cid}/send", query="js=1", cookie=self.alice, form={"body": "x"})[2])
         self.assertIn("ended", reply["error"])
+
+    def _upload(self, path, cookie, *, body="", filename="screen.png", data=b"", query="js=1"):
+        import wsgiref.validate as _v
+        boundary = "----psa-chat-boundary"
+        payload = (f'--{boundary}\r\nContent-Disposition: form-data; name="body"\r\n\r\n{body}\r\n'.encode()
+                   + f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+                     "Content-Type: application/octet-stream\r\n\r\n".encode() + data + b"\r\n"
+                   + f"--{boundary}--\r\n".encode())
+        env = self._environ("POST", path, cookie=cookie, body=payload, query=query, headers=None, remote_addr=None)
+        env["CONTENT_TYPE"] = f"multipart/form-data; boundary={boundary}"
+        env["CONTENT_LENGTH"] = str(len(payload))
+        got = {}
+        it = _v.validator(self.raw)(env, lambda st, h, e=None: got.update(status=st, headers=dict(h)))
+        try:
+            out = b"".join(it).decode()
+        finally:
+            it.close()
+        return got["status"], got["headers"], out
+
+    def _status(self, path, cookie):
+        """The status of a GET whose body may be a file's bytes."""
+        got = {}
+        it = self.raw(self._environ("GET", path, cookie=cookie, body=b"", query="", headers=None, remote_addr=None),
+                      lambda st, h, e=None: got.update(status=st))
+        try:
+            b"".join(it)
+        finally:
+            if hasattr(it, "close"):
+                it.close()
+        return got["status"]
+
+    def test_chat_banner_reactions_files_and_a_rating_at_the_end(self):
+        """072. Dada, 7 Oct 2026: "a banner ... moving from right to left ... and
+        a sound or a chime", "reactions and emojis", "attachments", "a survey
+        at the end". Confirmed: Teams-style reactions, pictures and files through
+        the patient-details review, the requester rates the chat when it ends."""
+        import os
+        from psaspine import attachments, chat, metrics
+        os.environ["PSA_ATTACHMENT_DIR"] = os.path.join(self.tmp.name, "files")
+        self.addCleanup(os.environ.pop, "PSA_ATTACHMENT_DIR", None)
+        nurse = self._cookie_for("nurse")
+        conn = self._conn()
+        cid, _ = chat.start(conn, requester="nurse", board_id="IT_HELP", subject="Label printer jams",
+                            first="The label printer on ward 7 jams on every label.", at=self.at)
+        conn.commit()
+        # "please wait": the desk's welcome line at once, and the place in the queue, kept current
+        c = self._conn()
+        lines = [r[0] for r in c.execute("SELECT body FROM chat_message WHERE chat_id = ? AND sender_kind = 'SYSTEM'", (cid,))]
+        self.assertEqual(lines, [chat.DEFAULT_WELCOME.replace("{board}", "IT Help")])
+        cid_b, _ = chat.start(c, requester="nurse", board_id="IT_HELP", subject="Second in line", first="z", at=self.at)
+        c.commit()
+        self.assertEqual((chat.position(c, cid), chat.position(c, cid_b)), (1, 2))
+        self.assertIn("you are number 2 in the queue",
+                      _json.loads(self._call("GET", f"/my/chat/{cid_b}/messages.json", cookie=nurse)[2])["status_words"])
+        self.assertIn("number 2 in the queue", self._call("GET", f"/chat/{cid_b}", cookie=self.alice)[2])
+        self._call("POST", f"/chat/{cid_b}/end", cookie=self.alice)                    # out of the way again
+        # a board writes its own words
+        self._call("POST", "/admin/board/IT_HELP/settings", cookie=self.alice, form={"display_name": "IT Help",
+                   "chat_welcome": "Hi from {board}! A technician will join you in a moment."})
+        self.assertEqual(chat.welcome(self._conn(), "IT_HELP"), "Hi from IT Help! A technician will join you in a moment.")
+        # the banner: on every desk page, never on the portal; waiting.json lists what waits on her boards
+        _, _, board_page = self._call("GET", "/", cookie=self.alice)
+        self.assertIn("id=chatticker", board_page)
+        self.assertNotIn("id=chatticker", self._call("GET", "/my/chat", cookie=nurse)[2])
+        waiting = _json.loads(self._call("GET", "/chat/waiting.json", cookie=self.alice)[2])["chats"]
+        self.assertEqual([(w["id"], w["subject"]) for w in waiting], [(cid, "Label printer jams")])
+        self.assertEqual(_json.loads(self._call("GET", "/chat/waiting.json", cookie=nurse)[2])["chats"], [])
+        self.assertIn("@keyframes tick", board_page)
+        # reactions: one each side, toggled off again; only the set; the poll carries them
+        first = self._conn().execute("SELECT MIN(message_id) FROM chat_message WHERE chat_id = ?", (cid,)).fetchone()[0]
+        thumbs = chat.REACTIONS[0]
+        self.assertTrue(_json.loads(self._call("POST", f"/chat/{cid}/react", query="js=1", cookie=self.alice,
+                                               form={"message_id": first, "emoji": thumbs})[2])["on"])
+        self._call("POST", f"/my/chat/{cid}/react", query="js=1", cookie=nurse, form={"message_id": first, "emoji": thumbs})
+        polled = _json.loads(self._call("GET", f"/my/chat/{cid}/messages.json", cookie=nurse)[2])
+        self.assertEqual(polled["reactions"][str(first)], [{"e": thumbs, "n": 2, "mine": True, "who": "alice, nurse"}])
+        self._call("POST", f"/my/chat/{cid}/react", query="js=1", cookie=nurse, form={"message_id": first, "emoji": thumbs})
+        polled = _json.loads(self._call("GET", f"/my/chat/{cid}/messages.json", cookie=nurse)[2])
+        self.assertEqual(polled["reactions"][str(first)][0]["n"], 1)
+        self.assertIn("error", _json.loads(self._call("POST", f"/chat/{cid}/react", query="js=1", cookie=self.alice,
+                                                      form={"message_id": first, "emoji": "💩"})[2]))
+        # a picture from the ward: kept, PENDING, the desk sees it to review, the sender sees their own
+        status, _, out = self._upload(f"/my/chat/{cid}/send", nurse, body="This is the error", data=_png(40, 30))
+        self.assertEqual(status, "200 OK", out)
+        fid = self._conn().execute("SELECT file_id FROM chat_file WHERE chat_id = ?", (cid,)).fetchone()[0]
+        desk = _json.loads(self._call("GET", f"/chat/{cid}/messages.json", cookie=self.alice)[2])
+        f = [m["file"] for m in desk["messages"] if m.get("file")][0]
+        self.assertEqual((f["status"], f["image"], f["name"]), ("PENDING", True, "screen.png"))
+        self.assertTrue(self._status(f"/chat/{cid}/file/{fid}", self.alice).startswith("200"))
+        self.assertTrue(self._status(f"/my/chat/{cid}/file/{fid}", nurse).startswith("200"))
+        self.assertTrue(self._status(f"/chat/{cid}/file/{fid}", self._cookie_for("rosa.mendoza")).startswith("404"))
+        _, _, page = self._call("GET", f"/chat/{cid}", cookie=self.alice)
+        self.assertIn(f"/chat/{cid}/file/{fid}/review", page)
+        # the store counts it live: an integrity check never calls it an orphan
+        check = attachments.verify(self._conn(), now=10 ** 12)
+        sha = self._conn().execute("SELECT sha256 FROM chat_file WHERE file_id = ?", (fid,)).fetchone()[0]
+        self.assertNotIn(sha, check["orphans"])
+        # withheld: the requester no longer gets it; cleared otherwise
+        self._call("POST", f"/chat/{cid}/file/{fid}/review", cookie=self.alice, form={"decision": "WITHHELD"})
+        self.assertTrue(self._status(f"/my/chat/{cid}/file/{fid}", nurse).startswith("404"))
+        mine = _json.loads(self._call("GET", f"/my/chat/{cid}/messages.json", cookie=nurse)[2])
+        self.assertEqual([m["file"] for m in mine["messages"] if m.get("file")], [{"withheld": True}])
+        self._call("POST", f"/chat/{cid}/file/{fid}/review", cookie=self.alice, form={"decision": "CLEARED"})
+        # the desk's own file is cleared as it is sent
+        self._upload(f"/chat/{cid}/send", self.alice, body="", filename="steps.txt", data=b"1. Open the cover.\n")
+        self.assertEqual(self._conn().execute("SELECT review_status FROM chat_file WHERE filename = 'steps.txt'"
+                                              ).fetchone()[0], "CLEARED")
+        # made a ticket: the files go with it, their review kept
+        self._call("POST", f"/chat/{cid}/ticket", cookie=self.alice, form={"summary": "Label printer jams, ward 7"})
+        c = self._conn()
+        wid = c.execute("SELECT work_item_id FROM chat_session WHERE chat_id = ?", (cid,)).fetchone()[0]
+        self.assertEqual(sorted((r[0], r[1]) for r in c.execute(
+            "SELECT filename, review_status FROM attachment WHERE work_item_id = ?", (wid,))),
+            [("screen.png", "CLEARED"), ("steps.txt", "CLEARED")])
+        # the rating: not while it runs; once when it has ended; on the desk's page, the queue and Reports
+        status, h, _ = self._call("POST", f"/my/chat/{cid}/survey", cookie=nurse, form={"score": "5"})
+        self.assertIsNone(chat.survey_of(self._conn(), cid))
+        _, _, mine_page = self._call("GET", f"/my/chat/{cid}", cookie=nurse)
+        self.assertIn("id=chatsurvey hidden", mine_page, "the rating waits, hidden, until the chat ends")
+        self._call("POST", f"/my/chat/{cid}/end", cookie=nurse)
+        self.assertTrue(_json.loads(self._call("GET", f"/my/chat/{cid}/messages.json", cookie=nurse)[2])["status"] == "CLOSED")
+        self._call("POST", f"/my/chat/{cid}/survey", cookie=nurse, form={"score": "4", "comment": "Quick, thank you"})
+        self._call("POST", f"/my/chat/{cid}/survey", cookie=nurse, form={"score": "1"})          # once only
+        sv = chat.survey_of(self._conn(), cid)
+        self.assertEqual((sv["score"], sv["comment"]), (4, "Quick, thank you"))
+        self.assertIn("You rated this chat ★★★★☆", self._call("GET", f"/my/chat/{cid}", cookie=nurse)[2])
+        self.assertIn("rated ★★★★☆", self._call("GET", f"/chat/{cid}", cookie=self.alice)[2])
+        self.assertIn("★★★★", self._call("GET", "/chat", cookie=self.alice)[2])
+        m = metrics.desk(self._conn(), {"IT_HELP"}, now=datetime.now())
+        self.assertEqual((m["chat_rating"], m["chat_rating_n"]), (4.0, 1))
+        # emoji picker and the paperclip on the send box
+        conn = self._conn()
+        cid2, _ = chat.start(conn, requester="nurse", board_id="IT_HELP", subject="x", first="y", at=self.at)
+        conn.commit()
+        _, _, page = self._call("GET", f"/my/chat/{cid2}", cookie=nurse)
+        for bit in ("id=emopick", "type=file name=file", "id=rxpick", "enctype='multipart/form-data'"):
+            self.assertIn(bit, page, bit)
 
     def test_projects_phases_predecessors_tickets_and_actual_hours(self):
         from psaspine import projects

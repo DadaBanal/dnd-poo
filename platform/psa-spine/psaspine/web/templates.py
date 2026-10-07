@@ -995,6 +995,39 @@ tr.cfgoff td{opacity:.55} tr.cfgoff:hover td{opacity:.9}
 .chatsend{display:flex;gap:8px;align-items:flex-end;border-top:1px solid var(--line);padding-top:10px}
 .chatsend textarea{flex:1;min-height:44px;resize:vertical}
 tr.chatwait td:first-child{border-left:3px solid var(--accent)}
+/* 072: reactions, files, emoji, survey */
+.chatlog .cr{display:flex;gap:4px;flex-wrap:wrap;margin:3px 4px 0;min-height:0}
+.chatlog .cl.me .cr{justify-content:flex-end}
+.chatlog .rx{font:inherit;font-size:12.5px;line-height:1;padding:3px 7px;border-radius:999px;border:1px solid var(--line);
+  background:var(--surface);color:var(--ink-2);cursor:pointer}
+.chatlog .rx.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,var(--surface))}
+.chatlog .rx.add{opacity:0;transition:opacity .15s} .chatlog .cl:hover .rx.add,.chatlog .rx.add:focus{opacity:.8}
+.rxpick,.emopick{position:absolute;z-index:30;display:flex;flex-wrap:wrap;gap:2px;padding:6px;background:var(--card);
+  border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgb(10 12 18/.2)}
+.rxpick[hidden],.emopick[hidden]{display:none}
+.rxpick button,.emopick button{font-size:20px;line-height:1;padding:5px;border:0;background:none;border-radius:8px;cursor:pointer}
+.rxpick button:hover,.emopick button:hover{background:var(--surface-3)}
+.emopick{bottom:56px;left:0;width:min(360px,90vw)}
+.chatsend{position:relative;flex-wrap:wrap}
+.chattools{display:flex;gap:2px;align-self:center} .chattools .iconbtn{font-size:18px;cursor:pointer}
+.chatlog .cfile{margin-top:4px} .chatlog .cimg{display:block;max-width:min(320px,100%);max-height:240px;border-radius:10px;margin-bottom:4px}
+.stars{display:flex;flex-direction:row-reverse;justify-content:flex-end;gap:6px;flex-wrap:wrap}
+.stars .star input{position:absolute;opacity:0} .stars .star span{font-size:20px;padding:4px 8px;border:1px solid var(--line);border-radius:10px;cursor:pointer;color:#e0a800}
+.stars .star input:checked+span{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent)}
+/* the banner: waiting chats running right to left; still for anyone who asks for less motion */
+/* Drawn by the server already filled when chats wait, so it is there from the first paint and nothing below it
+   jumps when the page loads (MEASURED: a banner that arrived late moved a card 52px under a technician's eye). */
+.ticker{display:flex;align-items:center;gap:10px;margin:8px 16px 0;padding:6px 10px;border-radius:12px;
+  background:color-mix(in srgb,var(--accent) 16%,var(--surface));border:1px solid color-mix(in srgb,var(--accent) 45%,transparent)}
+.ticker[hidden]{display:none}
+.ticker .tlabel{white-space:nowrap;color:var(--ink)}
+.ticker .tview{flex:1;overflow:hidden;white-space:nowrap;-webkit-mask-image:linear-gradient(90deg,transparent,#000 4%,#000 96%,transparent);mask-image:linear-gradient(90deg,transparent,#000 4%,#000 96%,transparent)}
+.ticker .ttrack{display:inline-block;padding-left:100%;animation:tick var(--tdur,18s) linear infinite}
+.ticker:hover .ttrack{animation-play-state:paused}
+.ticker .ttrack a{margin-right:48px;color:var(--ink);font-weight:600}
+.ticker .tsound.off{opacity:.45}
+@keyframes tick{from{transform:translateX(0)}to{transform:translateX(-100%)}}
+@media (prefers-reduced-motion:reduce){.ticker .ttrack{animation:none;padding-left:0}}
 tr.planticket td{font-size:13.5px;color:var(--ink-2)} tr.planticket td .ic{width:13px;height:13px;vertical-align:-2px;color:var(--neon1,var(--accent))}
 tr.planhead td{padding-top:12px}
 .planess{display:flex;gap:12px;overflow-x:auto;padding-bottom:6px}
@@ -1238,7 +1271,13 @@ addEventListener("pageshow",function(){if(np)np.className=""});
     fn();
     if(top!==null&&anchor.getBoundingClientRect){
       var now=anchor.getBoundingClientRect().top;
-      if(Math.abs(now-top)>0.5){jump((window.scrollY||window.pageYOffset)+(now-top));return}}
+      if(Math.abs(now-top)>0.5)jump((window.scrollY||window.pageYOffset)+(now-top));
+      /* The card is the anchor, so the card staying put is the whole job. If the
+         browser's own scroll anchoring already held it (scrollY moved, the card did
+         not), putting the old scrollY back would undo that and move the card
+         (MEASURED in Chromium, 7 Oct 2026: the Reset layout bar appearing above
+         the pods moved a card 52px). */
+      return}
     if((window.scrollY||window.pageYOffset)!==y)jump(y)}
   function apply(){var st=state();
     /* a card only crosses columns when it is actually in the wrong one */
@@ -1895,6 +1934,35 @@ function tick(){if(document.hidden)return;fetch('/live?scope='+encodeURIComponen
 .then(function(r){return r.ok?r.text():null}).then(function(s){if(s===null)return;if(last===null){last=s;return}
 if(s!==last){last=s;if(busy())tell();else location.reload()}}).catch(function(){})}
 setInterval(tick,10000);tick();document.addEventListener('visibilitychange',function(){if(!document.hidden)tick()})})();
+/* 072: the banner of waiting chats on every desk page, and a chime when a new one comes
+   (Dada, 7 Oct 2026: "a moving banner like moving from right to left ... and a sound or a chime").
+   The chime is made here (Web Audio), no sound file; it is on unless the person turns it off. */
+(function(){var tk=document.getElementById('chatticker');if(!tk||!window.fetch)return;
+var track=tk.querySelector('.ttrack'),snd=tk.querySelector('.tsound'),KEY='psa-chat-chime',SEEN='psa-chat-seen',ac=null;
+function on(){try{return localStorage.getItem(KEY)!=='off'}catch(e){return true}}
+function paint(){snd.classList.toggle('off',!on());snd.textContent=on()?'🔔':'🔕'}
+snd.addEventListener('click',function(){try{localStorage.setItem(KEY,on()?'off':'on')}catch(e){}paint();if(on())chime()});
+function ctx(){if(!ac){var A=window.AudioContext||window.webkitAudioContext;if(!A)return null;ac=new A()}if(ac.state==='suspended')ac.resume();return ac}
+document.addEventListener('pointerdown',function(){if(on())ctx()},{once:true});
+function chime(){var a=ctx();if(!a)return;var t=a.currentTime;[[880,0],[1320,.16]].forEach(function(p){var o=a.createOscillator(),g=a.createGain();
+ o.type='sine';o.frequency.value=p[0];g.gain.setValueAtTime(0.0001,t+p[1]);g.gain.exponentialRampToValueAtTime(0.25,t+p[1]+.02);
+ g.gain.exponentialRampToValueAtTime(0.0001,t+p[1]+.35);o.connect(g);g.connect(a.destination);o.start(t+p[1]);o.stop(t+p[1]+.4)})}
+function seen(){try{return JSON.parse(sessionStorage.getItem(SEEN)||'[]')}catch(e){return[]}}
+function remember(ids){try{sessionStorage.setItem(SEEN,JSON.stringify(ids.slice(-200)))}catch(e){}}
+var first=true,HID='psa-chat-hidden';
+function hidden(){try{return JSON.parse(sessionStorage.getItem(HID)||'[]')}catch(e){return[]}}
+tk.querySelector('.tclose').addEventListener('click',function(){tk.hidden=true;
+ try{sessionStorage.setItem(HID,JSON.stringify(Array.prototype.map.call(track.querySelectorAll('a[data-id]'),function(a){return +a.dataset.id})))}catch(e){}});
+function look(){if(document.hidden&&!first)return;fetch('/chat/waiting.json',{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null}).then(function(j){
+ if(!j)return;var cs=j.chats||[];if(!cs.length){tk.hidden=true;track.textContent='';return}
+ var old=seen(),fresh=cs.filter(function(c){return old.indexOf(c.id)<0});
+ var hid=hidden();if(cs.every(function(c){return hid.indexOf(c.id)>=0})){tk.hidden=true;remember(old.concat(fresh.map(function(c){return c.id})));return}
+ track.textContent='';cs.forEach(function(c){var a=document.createElement('a');a.href='/chat/'+c.id;a.dataset.id=c.id;
+  a.textContent='💬 '+c.subject+' — '+c.who+' · '+c.board+' · since '+c.since;track.appendChild(a)});
+ if(cs.length>1){var n=document.createElement('a');n.href='/chat';n.textContent=cs.length+' chats waiting';track.appendChild(n)}
+ track.style.setProperty('--tdur',Math.max(12,8+cs.length*6)+'s');tk.hidden=false;
+ if(fresh.length&&on())chime();remember(old.concat(fresh.map(function(c){return c.id})));first=false}).catch(function(){})}
+paint();look();setInterval(look,8000);document.addEventListener('visibilitychange',function(){if(!document.hidden)look()})})();
 """
 
 # The icon set: two dozen 24-grid stroke icons drawn here (no icon font, no
@@ -2507,6 +2575,18 @@ def _quick_default(nav_items) -> str:
         f"<span>{esc(label if key != 'board' else 'Board')}</span></a>" for href, key, label in items) + "</nav>"
 
 
+def _waiting_items(user) -> str:
+    """The waiting chats the request found for this person (072), as the banner's
+    links, so the banner is drawn filled and never arrives late."""
+    out = []
+    for c in getattr(user, "waiting_chats", None) or []:
+        out.append(f"<a href='/chat/{c['chat_id']}' data-id='{c['chat_id']}'>💬 {esc(c['subject'])} — {esc(c['requester'])}"
+                   f" · {esc(c['board_name'])} · since {esc((c['started_at'] or '')[11:16])}</a>")
+    if len(out) > 1:
+        out.append(f"<a href='/chat'>{len(out)} chats waiting</a>")
+    return "".join(out)
+
+
 def page(title: str, body: str, *, user=None, active: str = "", requester: bool | None = None,
          quick: str | None = None, live: str | None = None) -> str:
     """The shell every page shares: header, nav, the acting user, the body.
@@ -2657,6 +2737,14 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         f'<header class="top"><a class="brand" href="{"/my" if requester else "/"}"><i></i>'
         f'<span>{"PMC Requests" if requester else "Dada PSA"}</span></a>'
         f"<nav class=mega aria-label='Main'>{nav}</nav>{who}</header>"
+        # 072: waiting chats run across the top of every desk page, right to left,
+        # with a chime (Dada, 7 Oct 2026). Filled by the script from /chat/waiting.json.
+        + ("<div id=chatticker class=ticker" + ("" if _waiting_items(user) else " hidden") + " role=status aria-live=polite>"
+           "<b class=tlabel>New chat</b><div class=tview><div class=ttrack>" + _waiting_items(user) + "</div></div>"
+           "<a class='btn small' href='/chat'>Open Chat</a>"
+           "<button type=button class='iconbtn tsound' title='Chime on or off' aria-label='Chime on or off'>🔔</button>"
+           "<button type=button class='iconbtn tclose' title='Hide until the next new chat' aria-label='Hide'>✕</button></div>"
+           if user is not None and not requester else "")
         + (f"<main data-live='{esc(live)}'>" if live else "<main>") + f"{body}</main>"
         + (quick if quick is not None else (_quick_default(nav_items) if user is not None and not requester else ""))
         + ("<footer>PMC Requests — a request reaches the department it is for.</footer>" if requester else

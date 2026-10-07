@@ -123,6 +123,7 @@ def build(db_path: Path) -> str:
 
 
 def main() -> int:
+    from test_spine import _png  # noqa: F401  (a real picture for the chat check)
     from playwright.sync_api import sync_playwright
     tmp = tempfile.TemporaryDirectory()
     db_path = Path(tmp.name) / "desk.db"
@@ -653,6 +654,16 @@ def main() -> int:
 
             # --- chat, live both ways (071; Dada, 7 Oct 2026) -----------------
             cid = 1
+            page.goto(f"{base}/", wait_until="domcontentloaded")
+            page.wait_for_timeout(1500)
+            tk = page.locator("#chatticker")
+            note(tk.is_visible() and "Teams phone silent" in tk.inner_text(),
+                 "a waiting chat runs across the top of the desk page")
+            x0 = page.evaluate("() => new DOMMatrix(getComputedStyle(document.querySelector('#chatticker .ttrack')).transform).m41")
+            page.wait_for_timeout(700)
+            x1 = page.evaluate("() => new DOMMatrix(getComputedStyle(document.querySelector('#chatticker .ttrack')).transform).m41")
+            note(x1 < x0, "moving from right to left", f"{x0:.0f} -> {x1:.0f}px")
+            note(tk.locator(".tsound").count() == 1, "with its chime switch beside it")
             page.goto(f"{base}/chat", wait_until="domcontentloaded")
             note("Teams phone silent" in page.locator("#chatqueue").inner_text(), "the desk sees the waiting chat")
             page.goto(f"{base}/chat/{cid}", wait_until="domcontentloaded")
@@ -663,6 +674,9 @@ def main() -> int:
             ward.click("button[type=submit]")
             ward.wait_for_load_state("domcontentloaded")
             ward.goto(f"{base}/my/chat/{cid}", wait_until="domcontentloaded")
+            note("number 1 in the queue" in ward.locator("#chatstate").inner_text()
+                 and "you are in the queue" in ward.locator("#chatlog").inner_text(),
+                 "the ward reads 'please wait' and its place in the queue", ward.locator("#chatstate").inner_text())
             page.fill("#chatsend textarea", "On my way to ward 7.")
             page.keyboard.press("Enter")
             page.wait_for_timeout(600)
@@ -671,11 +685,39 @@ def main() -> int:
             ward.wait_for_timeout(4500)
             note("On my way to ward 7." in ward.locator("#chatlog").inner_text(),
                  "the requester sees it arrive by itself")
+            note("is with you" in ward.locator("#chatstate").inner_text() and "has joined the chat" in
+                 ward.locator("#chatlog").inner_text(), "and that someone has joined, without a reload")
             ward.fill("#chatsend textarea", "Thank you, I am at the nurses' station.")
             ward.keyboard.press("Enter")
             page.wait_for_timeout(4500)
             note("I am at the nurses' station" in page.locator("#chatlog").inner_text(),
                  "and the desk sees the reply arrive by itself")
+            # 072: a reaction, an emoji, a picture, and the rating at the end
+            line = page.locator("#chatlog .cl.requester").last
+            line.hover()
+            line.locator(".rx.add").click()
+            page.locator("#rxpick button").first.click()
+            page.wait_for_timeout(800)
+            note(line.locator(".rx.on").count() == 1, "a reaction goes on the line and is marked as mine")
+            ward.wait_for_timeout(4000)
+            note(ward.locator("#chatlog .cl.requester .rx:not(.add)").count() >= 1,
+                 "and the requester sees it come by itself")
+            ward.locator("#chatsend .emo").click()
+            ward.locator("#emopick button").first.click()
+            note(len(ward.locator("#chatsend textarea").input_value()) > 0, "the emoji button puts an emoji in the box")
+            ward.fill("#chatsend textarea", "")
+            ward.set_input_files("#chatsend input[type=file]", files=[{"name": "error.png", "mimeType": "image/png",
+                                                                       "buffer": _png(60, 40)}])
+            page.wait_for_timeout(4500)
+            note(page.locator("#chatlog img.cimg").count() == 1, "a picture from the ward shows in the desk's chat")
+            note(page.locator("#chatlog .cfile form[action$='/review']").count() == 1, "with Clear and Withhold beside it")
+            ward.locator("form[action$='/end'] button").click()
+            ward.wait_for_load_state("domcontentloaded")
+            note(ward.locator("#chatsurvey").is_visible(), "ending the chat asks the requester how we did")
+            ward.locator("#chatsurvey .star span").first.click()
+            ward.locator("#chatsurvey button[type=submit]").click()
+            ward.wait_for_load_state("domcontentloaded")
+            note("You rated this chat" in ward.locator("body").inner_text(), "and the rating is kept")
             ward.context.close()
 
             # --- an email as its sender laid it out (6 Oct 2026) -------------

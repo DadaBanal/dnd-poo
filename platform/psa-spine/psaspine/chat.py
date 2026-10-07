@@ -79,7 +79,31 @@ def start(conn: sqlite3.Connection, *, requester: str, board_id: str, subject: s
                        " VALUES (?,?,?,?,?,?)", (board_id, requester, subject, WAITING, _stamp(at), _stamp(at)))
     chat_id = cur.lastrowid
     _line(conn, chat_id, requester, REQUESTER, first, at)
+    _line(conn, chat_id, "desk", SYSTEM, welcome(conn, board_id), at)       # 072: the "please wait" line
     return chat_id, _scan(conn, chat_id, subject + "\n" + first)
+
+
+# 072. Dada, 7 Oct 2026: "a message to the user ... before a ticket gets picked
+# up like please wait ... similar to support chats". Confirmed: in the chat, the
+# desk's words editable per board, and a live place in the queue until picked up.
+DEFAULT_WELCOME = ("Thanks, you are in the queue. Someone from {board} will be with you shortly; please keep this "
+                   "page open. Meanwhile, the ward, the room and the machine help us most.")
+
+
+def welcome(conn: sqlite3.Connection, board_id: str) -> str:
+    row = conn.execute("SELECT display_name, chat_welcome FROM board WHERE board_id = ?", (board_id,)).fetchone()
+    words = (row["chat_welcome"] if row and row["chat_welcome"] else DEFAULT_WELCOME)
+    return words.replace("{board}", row["display_name"] if row else "the helpdesk")
+
+
+def position(conn: sqlite3.Connection, chat_id: int) -> int | None:
+    """Where a waiting chat stands in its board's queue (1 is next); None once picked up."""
+    c = conn.execute("SELECT board_id, status, started_at FROM chat_session WHERE chat_id = ?", (chat_id,)).fetchone()
+    if c is None or c["status"] != WAITING:
+        return None
+    return conn.execute("SELECT COUNT(*) FROM chat_session WHERE board_id = ? AND status = 'WAITING'"
+                        " AND (started_at < ? OR (started_at = ? AND chat_id <= ?))",
+                        (c["board_id"], c["started_at"], c["started_at"], chat_id)).fetchone()[0]
 
 
 def say(conn: sqlite3.Connection, chat_id: int, *, sender: str, kind: str, body: str, at: datetime) -> tuple[int, list]:
@@ -97,7 +121,16 @@ def say(conn: sqlite3.Connection, chat_id: int, *, sender: str, kind: str, body:
     if kind == STAFF and c["status"] == WAITING:           # answering it picks it up
         conn.execute("UPDATE chat_session SET status = ?, picked_by = ?, picked_at = ? WHERE chat_id = ?",
                      (ACTIVE, sender, _stamp(at), chat_id))
+        _line(conn, chat_id, sender, SYSTEM, f"{_name(conn, sender)} has joined the chat", at)
     return mid, findings
+
+
+def _name(conn, member: str) -> str:
+    try:
+        from . import members
+        return members.name_of(conn, member) or member
+    except Exception:                                  # noqa: BLE001 - a name is a nicety, never a failure
+        return member
 
 
 def pick_up(conn: sqlite3.Connection, chat_id: int, *, member: str, at: datetime) -> str:
@@ -111,7 +144,8 @@ def pick_up(conn: sqlite3.Connection, chat_id: int, *, member: str, at: datetime
     was = c["picked_by"]
     conn.execute("UPDATE chat_session SET status = ?, picked_by = ?, picked_at = ? WHERE chat_id = ?",
                  (ACTIVE, member, _stamp(at), chat_id))
-    _line(conn, chat_id, member, SYSTEM, f"{member} has joined the chat" + (f" (from {was})" if was else ""), at)
+    _line(conn, chat_id, member, SYSTEM, f"{_name(conn, member)} has joined the chat"
+          + (f" (from {_name(conn, was)})" if was else ""), at)
     return f"picked up by {member}"
 
 
@@ -181,6 +215,7 @@ def to_ticket(conn: sqlite3.Connection, chat_id: int, *, member: str, summary: s
                               impact=impact, urgency=urgency, requested_by=c["requester"], at=at, actor=member,
                               description=transcript(conn, chat_id), owner=member, source="PORTAL")
     conn.execute("UPDATE chat_session SET work_item_id = ? WHERE chat_id = ?", (wid, chat_id))
+    _files_to_ticket(conn, chat_id, wid, member=member, at=at)
     _line(conn, chat_id, member, SYSTEM, f"Ticket {wid} was raised from this chat", at)
     return wid
 
@@ -199,5 +234,171 @@ def attach(conn: sqlite3.Connection, chat_id: int, work_item_id: str, *, member:
     board.add_note(conn, work_item_id, body=transcript(conn, chat_id), flag="DISCUSSION", actor=member, at=at,
                    notify_requester=False)
     conn.execute("UPDATE chat_session SET work_item_id = ? WHERE chat_id = ?", (work_item_id, chat_id))
+    _files_to_ticket(conn, chat_id, work_item_id, member=member, at=at)
     _line(conn, chat_id, member, SYSTEM, f"This chat was added to ticket {work_item_id}", at)
     return work_item_id
+
+
+# ====================================================== round two (072, 7 Oct 2026)
+# Dada: "can we add reactions and emojis to the chat and also attachments and a
+# survey at the end". Confirmed: Teams-style reactions and an emoji picker;
+# pictures and files through the patient-details review; the requester rates
+# the chat when it ends.
+
+REACTIONS = ("\U0001F44D", "\u2764\ufe0f", "\U0001F604", "\U0001F62E", "\U0001F64F", "\u2705")   # like heart smile wow thanks done
+
+
+def react(conn: sqlite3.Connection, chat_id: int, message_id: int, *, member: str, emoji: str, at: datetime) -> bool:
+    """Put a reaction on a line, or take it off if it is there. Returns whether
+    it is on now. Only the fixed set; a system line takes none."""
+    if emoji not in REACTIONS:
+        raise Refused("That reaction is not one of the set.")
+    row = conn.execute("SELECT sender_kind FROM chat_message WHERE message_id = ? AND chat_id = ?",
+                       (message_id, chat_id)).fetchone()
+    if row is None or row["sender_kind"] == SYSTEM:
+        raise Refused("No such message.")
+    had = conn.execute("SELECT 1 FROM chat_reaction WHERE message_id = ? AND member = ? AND emoji = ?",
+                       (message_id, member, emoji)).fetchone()
+    if had:
+        conn.execute("DELETE FROM chat_reaction WHERE message_id = ? AND member = ? AND emoji = ?",
+                     (message_id, member, emoji))
+    else:
+        conn.execute("INSERT INTO chat_reaction (message_id, member, emoji, reacted_at) VALUES (?,?,?,?)",
+                     (message_id, member, emoji, _stamp(at)))
+    conn.execute("UPDATE chat_session SET last_at = ? WHERE chat_id = ?", (_stamp(at), chat_id))
+    return not had
+
+
+def reactions(conn: sqlite3.Connection, chat_id: int) -> dict:
+    """{message_id: {emoji: [who, ...]}} for every line of the chat."""
+    out: dict = {}
+    for r in conn.execute("SELECT r.message_id, r.emoji, r.member FROM chat_reaction r JOIN chat_message m"
+                          " ON m.message_id = r.message_id WHERE m.chat_id = ? ORDER BY r.reacted_at",
+                          (chat_id,)):
+        out.setdefault(r["message_id"], {}).setdefault(r["emoji"], []).append(r["member"])
+    return out
+
+
+def add_file(conn: sqlite3.Connection, chat_id: int, data: bytes, filename: str, *, sender: str, kind: str,
+             caption: str | None = None, at: datetime) -> int:
+    """A picture or file into the chat, as its own line. Kept in the tickets'
+    store, by its hash, so the store's integrity check counts it as live. A
+    requester's waits for review (PENDING); the desk's is cleared as sent."""
+    import gzip
+    import hashlib
+    import os
+    from . import attachments
+    c = get(conn, chat_id)
+    if c is None:
+        raise Refused("No such chat.")
+    if c["status"] == CLOSED:
+        raise Refused("This chat has ended.")
+    if not data:
+        raise Refused("The file is empty.")
+    if len(data) > attachments.MAX_BYTES:
+        raise Refused(f"Files over {attachments.MAX_BYTES // (1024 * 1024)} MB are not kept.")
+    media_type = attachments.sniff(data, filename)
+    stored, encoding, _how = attachments.prepare(data, media_type)
+    served = gzip.decompress(stored) if encoding == "GZIP" else stored
+    sha = hashlib.sha256(served).hexdigest()
+    path = attachments._path(attachments.store_dir(conn), sha)
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".part")
+        tmp.write_bytes(stored)
+        os.replace(tmp, path)
+    name = attachments.safe_name(filename)
+    words = (caption or "").strip()[:MAX_LINE] or f"sent {name}"
+    mid = _line(conn, chat_id, sender, kind, words, at)
+    staff = kind == STAFF
+    cur = conn.execute(
+        "INSERT INTO chat_file (chat_id, message_id, filename, media_type, size_received, size_stored, sha256,"
+        " encoding, uploaded_by, uploaded_at, review_status, reviewed_by, reviewed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (chat_id, mid, name, media_type, len(data), len(stored), sha, encoding, sender, _stamp(at),
+         "CLEARED" if staff else "PENDING", sender if staff else None, _stamp(at) if staff else None))
+    if caption and kind == REQUESTER:
+        _scan(conn, chat_id, caption)
+    if staff and c["status"] == WAITING:
+        conn.execute("UPDATE chat_session SET status = ?, picked_by = ?, picked_at = ? WHERE chat_id = ?",
+                     (ACTIVE, sender, _stamp(at), chat_id))
+    return cur.lastrowid
+
+
+def files(conn: sqlite3.Connection, chat_id: int) -> dict:
+    """{message_id: file row} for the chat."""
+    return {r["message_id"]: r for r in conn.execute("SELECT * FROM chat_file WHERE chat_id = ?", (chat_id,))}
+
+
+def read_file(conn: sqlite3.Connection, chat_id: int, file_id: int):
+    """(row, bytes as served), checked against their hash."""
+    import gzip
+    import hashlib
+    from . import attachments
+    row = conn.execute("SELECT * FROM chat_file WHERE file_id = ? AND chat_id = ?", (file_id, chat_id)).fetchone()
+    if row is None:
+        raise LookupError("no such file")
+    stored = attachments._path(attachments.store_dir(conn), row["sha256"]).read_bytes()
+    data = gzip.decompress(stored) if row["encoding"] == "GZIP" else stored
+    if hashlib.sha256(data).hexdigest() != row["sha256"]:
+        raise IOError("the file does not match its hash; not served")
+    return row, data
+
+
+def review_file(conn: sqlite3.Connection, chat_id: int, file_id: int, decision: str, *, actor: str, at: datetime) -> str:
+    if decision not in ("CLEARED", "WITHHELD"):
+        raise Refused("Clear it or withhold it.")
+    row = conn.execute("SELECT filename FROM chat_file WHERE file_id = ? AND chat_id = ?", (file_id, chat_id)).fetchone()
+    if row is None:
+        raise Refused("No such file.")
+    conn.execute("UPDATE chat_file SET review_status = ?, reviewed_by = ?, reviewed_at = ? WHERE file_id = ?",
+                 (decision, actor, _stamp(at), file_id))
+    conn.execute("UPDATE chat_session SET last_at = ? WHERE chat_id = ?", (_stamp(at), chat_id))
+    return f"{row['filename']} {'cleared' if decision == 'CLEARED' else 'withheld'}"
+
+
+def _files_to_ticket(conn, chat_id: int, work_item_id: str, *, member: str, at: datetime) -> None:
+    """The chat's files go onto the ticket it became or joined, with the review
+    they already had; a withheld one stays behind."""
+    from . import attachments
+    for r in conn.execute("SELECT * FROM chat_file WHERE chat_id = ? AND review_status <> 'WITHHELD'"
+                          " ORDER BY file_id", (chat_id,)).fetchall():
+        _, data = read_file(conn, chat_id, r["file_id"])
+        out = attachments.add(conn, work_item_id, data, r["filename"], actor=r["uploaded_by"], at=at,
+                              source="PORTAL" if r["review_status"] == "PENDING" else "DESK")
+        if r["review_status"] == "CLEARED":
+            attachments.review(conn, out["attachment_id"], "CLEARED", actor=member, at=at)
+
+
+def answer_survey(conn: sqlite3.Connection, chat_id: int, *, score: int, comment: str | None, by: str,
+                  at: datetime) -> list:
+    """The requester rates an ended chat, once. Returns patient-detail findings
+    on the comment (kept and counted, as every requester text)."""
+    c = get(conn, chat_id)
+    if c is None:
+        raise Refused("No such chat.")
+    if c["status"] != CLOSED:
+        raise Refused("The chat is still going.")
+    if not isinstance(score, int) or not 1 <= score <= 5:
+        raise Refused("A score is one to five.")
+    if conn.execute("SELECT 1 FROM chat_survey WHERE chat_id = ?", (chat_id,)).fetchone():
+        raise Refused("You have rated this chat already. Thank you.")
+    comment = (comment or "").strip()[:1000] or None
+    conn.execute("INSERT INTO chat_survey (chat_id, score, comment, answered_by, answered_at) VALUES (?,?,?,?,?)",
+                 (chat_id, score, comment, by, _stamp(at)))
+    _line(conn, chat_id, by, SYSTEM, f"Rated the chat {score} of 5", at)
+    return _scan(conn, chat_id, comment) if comment else []
+
+
+def survey_of(conn: sqlite3.Connection, chat_id: int):
+    return conn.execute("SELECT * FROM chat_survey WHERE chat_id = ?", (chat_id,)).fetchone()
+
+
+def waiting(conn: sqlite3.Connection, boards) -> list:
+    """The chats waiting for someone on these boards, oldest first (the desk's banner)."""
+    boards = sorted(boards)
+    if not boards:
+        return []
+    return conn.execute(
+        "SELECT c.chat_id, c.subject, c.requester, c.started_at, b.display_name AS board_name FROM chat_session c"
+        f" JOIN board b ON b.board_id = c.board_id WHERE c.status = 'WAITING' AND c.board_id IN ({','.join('?' * len(boards))})"
+        " ORDER BY c.started_at, c.chat_id LIMIT 20", boards).fetchall()

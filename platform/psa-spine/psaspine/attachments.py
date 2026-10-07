@@ -387,6 +387,12 @@ def verify(conn: sqlite3.Connection, *, check_hashes: bool = False,
     root = store_dir(conn)
     live = {r["sha256"]: r["encoding"] for r in conn.execute(
         "SELECT DISTINCT sha256, encoding FROM attachment WHERE purged_at IS NULL")}
+    # 072: a picture sent in a chat is kept in the same store by its hash. It is
+    # live too, so a purge never takes it as an orphan.
+    from . import db as _db
+    if _db.table_exists(conn, "chat_file"):
+        for r in conn.execute("SELECT DISTINCT sha256, encoding FROM chat_file"):
+            live.setdefault(r["sha256"], r["encoding"])
     present = _files_on_disk(root)
     now = time.time() if now is None else now
     orphans, recent = [], 0
@@ -493,6 +499,9 @@ def purge(conn: sqlite3.Connection, *, at: datetime, withheld_days: int, closed_
     still_live = {r[0] for r in conn.execute(
         "SELECT sha256 FROM attachment WHERE purged_at IS NULL AND attachment_id NOT IN (%s)"
         % (",".join("?" * len(due_ids)) or "NULL"), list(due_ids))}
+    from . import db as _db
+    if _db.table_exists(conn, "chat_file"):          # 072: the same bytes kept for a chat stay
+        still_live |= {r[0] for r in conn.execute("SELECT sha256 FROM chat_file")}
     freeable = {r["sha256"]: r["size_stored"] for r in due if r["sha256"] not in still_live}
     plan = {"applied": False, "due": len(due), "by_reason": by_reason, "by_board": by_board,
             "tickets": tickets, "files_to_free": len(freeable),

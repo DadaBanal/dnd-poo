@@ -19,6 +19,7 @@ import urllib.parse
 
 from ... import db, itil
 from ... import intake as _intake
+from ... import chat as chat_mod
 from .. import templates as t
 from . import common
 
@@ -284,6 +285,9 @@ def board_setup(ctx, board_id):
                           "Ask the requester how we did once their ticket is closed (on the portal, one to five)") + "</div>"
             f"<div><label>The survey's question</label><input name=survey_question maxlength=120"
             f" value='{t.esc(b['survey_question'] or '')}' placeholder='How did we do?'></div>"
+            "<div style='grid-column:1/-1'><label>Chat welcome: what a ward reads while its chat waits to be picked "
+            "up ({board} is this board's name)</label><textarea name=chat_welcome rows=2 maxlength=300 placeholder='"
+            + t.esc(chat_mod.DEFAULT_WELCOME) + "'>" + t.esc((b["chat_welcome"] if "chat_welcome" in b.keys() else None) or "") + "</textarea></div>"
             "</div><div style='margin-top:12px'><button type=submit>Save board</button></div></form>"
             + _reply_policy_form(ctx, b) +
             f"<form method=post action='/admin/board/{bid}/calendar' class=row style='margin-top:14px'>"
@@ -956,6 +960,9 @@ def save_settings(ctx, board_id):
         ctx.conn.execute("UPDATE board SET survey_enabled = ?, survey_question = ? WHERE board_id = ?",
                          (1 if f.get("survey_enabled") == "1" else 0,
                           " ".join(f.get("survey_question", "").split())[:120] or None, board_id))
+        if "chat_welcome" in f:                                  # 072: the chat's "please wait" words
+            ctx.conn.execute("UPDATE board SET chat_welcome = ? WHERE board_id = ?",
+                             (" ".join(f.get("chat_welcome", "").split())[:300] or None, board_id))
         _audit(ctx, board_id, "settings saved: " + _changes(before, dict(ctx.conn.execute(
             "SELECT * FROM board WHERE board_id = ?", (board_id,)).fetchone())))
         ctx.conn.commit()
