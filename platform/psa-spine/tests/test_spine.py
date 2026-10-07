@@ -7298,6 +7298,58 @@ class ModulesTest(unittest.TestCase):
         self._call("POST", "/admin/member/alice/chat-operator", cookie=self.root, form={"on": "0"})
         self.assertTrue(self._call("GET", "/chat", cookie=self.alice)[0].startswith("403"))
 
+    def test_chat_the_rest_of_it_goes_on_the_ticket_when_it_ends(self):
+        """Dada, 7 Oct 2026: "also the chat is added on the ticket if ever right?".
+        It was, up to Make a ticket; the chat stays open after that. Confirmed:
+        when it ends, what came after goes on the ticket as one Discussion note,
+        with the files sent in that part; nothing when nothing more was said."""
+        import os
+        from psaspine import chat
+        os.environ["PSA_ATTACHMENT_DIR"] = os.path.join(self.tmp.name, "files")
+        self.addCleanup(os.environ.pop, "PSA_ATTACHMENT_DIR", None)
+        self._chat_desk()
+        nurse = self._cookie_for("nurse")
+        c = self._conn()
+        cid, _ = chat.start(c, requester="nurse", board_id="IT_HELP", subject="Teams phone silent",
+                            first="The Teams phone on ward 7 does not ring.", at=datetime(2026, 9, 17, 9, 30))
+        c.commit()
+        self._call("POST", f"/chat/{cid}/send", cookie=self.alice, form={"body": "Is it plugged in?"})
+        self._call("POST", f"/chat/{cid}/ticket", cookie=self.alice, form={"summary": "Teams phone silent"})
+        wid = self._conn().execute("SELECT work_item_id FROM chat_session WHERE chat_id = ?", (cid,)).fetchone()[0]
+        discussion = lambda: [r[0] for r in self._conn().execute(  # noqa: E731
+            "SELECT detail FROM ticket_event WHERE work_item_id = ? AND note_flag = 'DISCUSSION' ORDER BY ticket_event_id",
+            (wid,))]
+        files = lambda: [r[0] for r in self._conn().execute(  # noqa: E731
+            "SELECT filename FROM attachment WHERE work_item_id = ? ORDER BY attachment_id", (wid,))]
+        before = discussion()
+        # the chat goes on after the ticket is made: a reply, an answer, a picture
+        self._call("POST", f"/chat/{cid}/send", cookie=self.alice, form={"body": "Try restarting the phone."})
+        self._call("POST", f"/my/chat/{cid}/send", cookie=nurse, form={"body": "Working na po, salamat!"})
+        self.assertTrue(self._upload(f"/my/chat/{cid}/send", nurse, body="It shows this now", filename="after.png",
+                                     data=_png(40, 30))[0].startswith("200"))
+        self.assertEqual(discussion(), before)                                    # nothing yet: the chat is going
+        self._call("POST", f"/my/chat/{cid}/end", cookie=nurse)
+        added = discussion()[len(before):]
+        self.assertEqual(len(added), 1)
+        note = added[0]
+        self.assertTrue(note.startswith(f"The rest of the chat with {chat.label(self._conn(), 'nurse', 1)},"), note)
+        for said in ("alice: Try restarting the phone.", "nurse: Working na po, salamat!", "nurse ended the chat"):
+            self.assertIn(said, note)
+        self.assertNotIn("Is it plugged in?", note)                               # already on the ticket
+        self.assertIn("Is it plugged in?", self._call("GET", f"/ticket/{wid}", cookie=self.alice)[2])  # the description
+        self.assertIn("after.png", files())
+        # ended twice: nothing added twice; a chat that said nothing after its ticket adds nothing
+        self._call("POST", f"/chat/{cid}/end", cookie=self.alice)
+        self.assertEqual(len(discussion()), len(before) + 1)
+        c = self._conn()
+        cid2, _ = chat.start(c, requester="nurse", board_id="IT_HELP", subject="Mouse gone", first="No mouse.",
+                             at=datetime(2026, 9, 17, 9, 45))
+        c.commit()
+        self._call("POST", f"/chat/{cid2}/attach", cookie=self.alice, form={"work_item_id": wid})
+        n = len(discussion())
+        self._call("POST", f"/chat/{cid2}/end", cookie=self.alice)
+        self.assertEqual(len(discussion()), n)
+
     def test_projects_phases_predecessors_tickets_and_actual_hours(self):
         from psaspine import projects
         conn = self._conn()

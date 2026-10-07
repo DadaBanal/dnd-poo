@@ -158,7 +158,41 @@ def close(conn: sqlite3.Connection, chat_id: int, *, by: str, at: datetime) -> s
     conn.execute("UPDATE chat_session SET status = ?, closed_at = ?, closed_by = ? WHERE chat_id = ?",
                  (CLOSED, _stamp(at), by, chat_id))
     _line(conn, chat_id, by, SYSTEM, f"{by} ended the chat", at)
+    if c["work_item_id"]:
+        _rest_to_ticket(conn, c, by=by, at=at)
     return "chat ended"
+
+
+def _mark(conn, chat_id: int, work_item_id: str) -> int:
+    """The line where the chat went onto its ticket; what came after it is not
+    on the ticket yet."""
+    row = conn.execute("SELECT MAX(message_id) FROM chat_message WHERE chat_id = ? AND sender_kind = 'SYSTEM'"
+                       " AND (body = ? OR body = ?)",
+                       (chat_id, f"Ticket {work_item_id} was raised from this chat",
+                        f"This chat was added to ticket {work_item_id}")).fetchone()
+    return row[0] or 0
+
+
+def _rest_to_ticket(conn, c, *, by: str, at: datetime) -> None:
+    """Dada, 7 Oct 2026: "also the chat is added on the ticket if ever right?".
+    The chat stays open after it becomes a ticket, so what is said after that
+    was only on the chat. Confirmed: when the chat ends, the rest of it goes on
+    the ticket as one Discussion note (the ward's own words, so the ward may
+    read it; no email), with the files sent in that part. Nothing is added when
+    nothing more was said."""
+    from . import board
+    wid = c["work_item_id"]
+    mark = _mark(conn, c["chat_id"], wid)
+    rows = messages(conn, c["chat_id"], after=mark)
+    if not any(m["sender_kind"] != SYSTEM for m in rows):
+        return
+    nth, _ = counts(conn, c["chat_id"])
+    head = (f"The rest of the chat with {label(conn, c['requester'], nth)},"
+            f" {rows[0]['sent_at'][11:16]}–{rows[-1]['sent_at'][11:16]}:")
+    actor = c["picked_by"] or by
+    board.add_note(conn, wid, body="\n".join([head] + [_said(m) for m in rows]), flag="DISCUSSION",
+                   actor=actor, at=at, notify_requester=False)
+    _files_to_ticket(conn, c["chat_id"], wid, member=actor, at=at, after=mark)
 
 
 def messages(conn: sqlite3.Connection, chat_id: int, *, after: int = 0) -> list:
@@ -171,10 +205,14 @@ def transcript(conn: sqlite3.Connection, chat_id: int) -> str:
     nth, total = counts(conn, chat_id)
     lines = [f"Chat with {_name(conn, c['requester'])} ({c['requester']}), their chat {nth} of {total},"
              f" started {c['started_at']}:"]
-    for m in messages(conn, chat_id):
-        who = "desk" if m["sender_kind"] == SYSTEM else m["sender"]
-        lines.append(f"[{m['sent_at'][11:16]}] {who}: {m['body']}")
+    lines += [_said(m) for m in messages(conn, chat_id)]
     return "\n".join(lines)
+
+
+def _said(m) -> str:
+    """One line of a transcript: when, who (the desk's own notices as "desk"), what."""
+    who = "desk" if m["sender_kind"] == SYSTEM else m["sender"]
+    return f"[{m['sent_at'][11:16]}] {who}: {m['body']}"
 
 
 def queue(conn: sqlite3.Connection, boards, *, now: datetime) -> list:
@@ -358,12 +396,13 @@ def review_file(conn: sqlite3.Connection, chat_id: int, file_id: int, decision: 
     return f"{row['filename']} {'cleared' if decision == 'CLEARED' else 'withheld'}"
 
 
-def _files_to_ticket(conn, chat_id: int, work_item_id: str, *, member: str, at: datetime) -> None:
+def _files_to_ticket(conn, chat_id: int, work_item_id: str, *, member: str, at: datetime, after: int = 0) -> None:
     """The chat's files go onto the ticket it became or joined, with the review
-    they already had; a withheld one stays behind."""
+    they already had; a withheld one stays behind. `after`: only the files sent
+    after that line (the rest of the chat, when it ends)."""
     from . import attachments
     for r in conn.execute("SELECT * FROM chat_file WHERE chat_id = ? AND review_status <> 'WITHHELD'"
-                          " ORDER BY file_id", (chat_id,)).fetchall():
+                          " AND COALESCE(message_id, 0) > ? ORDER BY file_id", (chat_id, after)).fetchall():
         _, data = read_file(conn, chat_id, r["file_id"])
         out = attachments.add(conn, work_item_id, data, r["filename"], actor=r["uploaded_by"], at=at,
                               source="PORTAL" if r["review_status"] == "PENDING" else "DESK")

@@ -2258,6 +2258,13 @@ entry pre-filled for the operator to confirm; a *Chat operator* tick, and only P
   They check it and **Save**, which books it like any other entry, to the quarter hour, on their timesheet. Or they
   correct it first, or **Cancel** it. If they already had a clock on that ticket, the window opens on that one.
 
+- **The rest of the chat goes on the ticket.** Dada: *"also the chat is added on the ticket if ever right?"* It
+  was, up to the moment of *Make a ticket* (the transcript is the description) or *Add to a ticket* (a Discussion note).
+  The chat stays open after that, so what was said next lived only on the chat. Confirmed: when a chat that has a
+  ticket ends, everything after that moment goes on the ticket as one Discussion note, *The rest of the chat with
+  Jun Reyes · chat 3, 09:31–09:44*. The ward may read it, and no email is sent. The files sent in that part are copied
+  with their review. Nothing is added when nothing more was said.
+
 Schema 073 adds two columns, `member.chat_operator` and `board.takes_chats`, both read as 0 until set. The SQL01
 handoff (`HANDOFF-cloud-sql01-WS36-20261007-chat-073.md`) sets PMO Helpdesk and ticks its working members in the same
 transaction, so chat does not go dark at the restart.
