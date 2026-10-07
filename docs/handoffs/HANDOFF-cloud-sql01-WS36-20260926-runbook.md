@@ -2796,3 +2796,22 @@ Ran `HANDOFF-cloud-sql01-WS36-20261007-projects-070.md`. 068 and 069 were alread
 **Nothing live changed meaning,** as §2 promises: no ticket moved, projects on a service board keep their tickets there until someone presses *Move to the project board*, and no status carries *No time*, so no time entry is held by this.
 
 A note for WS36, not a problem: `projects.ensure_vocabulary` is called from `statuses()` and `types()`, so the desk would have seeded these tables itself on first read. Seeding them in the same transaction is still the right order here — `may_book_effort` joins `project_status` and should never meet it empty.
+
+### Part 48: 2026-10-07, ~11:30 +08:00. **Seven of eight projects now sit on the project board; no ticket moved.** MEASURED.
+
+Dada, after Part 47: *"move stuff that needs to be moved"* — the §2/§3 *Move to the project board* action. Measured first, because it can relocate tickets between boards.
+
+**What qualified.** Only one project board exists (`IT_PROJECTS`, kind PROJECT), so the destination was never in doubt. Of eight projects:
+
+| | board before | tickets | |
+|---|---|---|---|
+| PRJ-0002, PRJ-0003, PRJ-0007 | IT_HELP | **0 each** | on a service board — the banner's own case |
+| PRJ-0004 JRBY Onboarding | *(none)* | 6, **already on IT_PROJECTS** | board unset; moved so the project agrees with where its tickets already live |
+| PRJ-0001, PRJ-0006, PRJ-0008 | IT_PROJECTS | — | already right, untouched |
+| PRJ-0005 | *(none)* | 0 | **left alone** — see below |
+
+**Done through the desk's own `projects.move_to_project_board`** as `psa_desk`, never by hand, so each move audits itself. COPY_ONLY backup `PMC_PSA_pre_projectmove_20261007.bak` first; dry run, then applied in one transaction with a gate on the ticket total.
+
+**No ticket changed board.** Counts per board are identical either side — IT_HELP 176, IT_PROJECTS 8, PROCUREMENT 27, UNROUTED 12, **total 223 → 223** — measured inside the transaction. That is the expected result and the reason this was safe: the three service-board projects carried no tickets at all, and PRJ-0004's six were already on IT_PROJECTS. Only the four projects' own `board_id` changed.
+
+**PRJ-0005 "Report Template Development" was deliberately not moved.** It has no board and no tickets, so it is not the banner's case and nothing needs relocating. Choosing its board is a setup decision — it may not belong to IT Projects at all — and that is Dada's, not mine. Until it has one, no ticket can be opened inside it (§3).
