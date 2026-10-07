@@ -2760,3 +2760,19 @@ That is consistent with both causes in §8.6 and tells us something useful about
 **One thing that needs a person, not a fix:** `time_timer` 16 on **PMC-000340** (liezell.caluducan) started **15:53:34** and has **never been stopped** — it is the one running timer on the desk. With this head, Cancel discards a clock and Save books it, so whoever owns it should now do one or the other; left alone it keeps counting. **Not touched here** — a running clock is someone's record of their own work, not mine to stop or discard.
 
 Still outstanding on my side: the search re-measure when `ticket_event` passes 5,000 rows (2,638 at Part 43).
+
+### Part 46: 2026-10-07, ~09:40 +08:00. **251fa2b live; 068 and 069 applied together in one transaction; PSA-Desk restarted.** MEASURED.
+
+Ran `HANDOFF-cloud-sql01-WS36-20261007-projects-068.md`, §2 and §5 in the one sitting as instructed. This restart also carries §8.6 of the 067 handoff, which was pending one.
+
+**Method note, because it matters at this size.** 068 and 069 are five CREATE TABLEs, three indexes and six ALTERs — too much to retype safely. The statements were **extracted from `sqlserver/PMC_PSA_Spine_SqlServer.sql` by line range and executed verbatim**, never transcribed: each guarded block read from its `IF OBJECT_ID`/`IF COL_LENGTH`/`IF NOT EXISTS` line to its terminator. Dry run first (printed every statement, rolled back), then applied. All fourteen in **one transaction** with a verify gate, as sysadmin via pyodbc.
+
+1. **Backup** COPY_ONLY `PMC_PSA_pre068-069_20261007.bak`, VERIFYONLY ok. **Stopped PSA-Desk** before applying — both sections require the schema in before the desk starts (068: the project pages and list read `project_member`, `project_note`, `project_ticket.budget_hours`, `project.entity_id`; 069: **every time entry**, because `board.may_book_effort` now checks project ticket predecessors).
+2. **Applied, committed. Every check the handoff names passes:**
+   - **Five tables, all non-NULL OBJECT_ID and all `COUNT(*) = 0`** — `project_member`, `project_note`, `project_contact`, `project_ticket_dependency`, `project_plan_item`.
+   - **Six columns, all non-NULL COL_LENGTH** — `project_ticket.budget_hours` (5), `project.entity_id` (128), `project.is_template` (4), `project.health` (64), `project_ticket.starts_on` (64), `project_ticket.due_on` (64).
+   - **Three indexes** created: `ix_project_member_member`, `ix_project_note_project`, `ix_project_plan_item_project`.
+   - **Nothing existing moved:** `project_ticket` **6 → 6** and `time_entry` **22 → 22**, measured inside the same transaction either side of all fourteen statements.
+3. **PSA-Desk started:** `:8085` **401 → down → 401 in 2s**, Running.
+
+`init` was not run as a separate step: the schema it would apply is exactly what was just applied and verified, and the desk account remains shut to me, so running it would add nothing and prove nothing. Everything in §3's and §5's "what Dada will see" is behind the Windows sign-in and stays his eye.
