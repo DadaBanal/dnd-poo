@@ -39,6 +39,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import re
+import secrets
 import sqlite3
 from pathlib import Path
 
@@ -589,3 +590,25 @@ def open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
     from . import outbox
     outbox.queue_requester(conn, ticket_id, "OPENED", at=at)
     return ticket_id
+
+
+def portal_key(conn: sqlite3.Connection, work_item_id: str) -> str | None:
+    """The key the requester's email link carries (075): made the first time
+    it is asked for, then the same for the ticket's life. None for no ticket."""
+    row = conn.execute("SELECT portal_key FROM ticket WHERE work_item_id = ?", (work_item_id,)).fetchone()
+    if row is None:
+        return None
+    if row["portal_key"]:
+        return row["portal_key"]
+    key = secrets.token_urlsafe(18)
+    conn.execute("UPDATE ticket SET portal_key = ? WHERE work_item_id = ? AND portal_key IS NULL", (key, work_item_id))
+    return conn.execute("SELECT portal_key FROM ticket WHERE work_item_id = ?", (work_item_id,)).fetchone()[0]
+
+
+def key_opens(conn: sqlite3.Connection, work_item_id: str, key: str | None) -> bool:
+    """Whether this key is the ticket's (a constant-time compare)."""
+    import hmac
+    if not key:
+        return False
+    row = conn.execute("SELECT portal_key FROM ticket WHERE work_item_id = ?", (work_item_id,)).fetchone()
+    return bool(row and row["portal_key"] and hmac.compare_digest(row["portal_key"], key))

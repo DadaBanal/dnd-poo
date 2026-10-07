@@ -13819,6 +13819,62 @@ class PortalIdentityTest(unittest.TestCase):
         self.assertIn("other.person@pmcne.ph", body)       # which address they are, to tell the two apart
         self.assertNotIn("eClaims", body)                  # and nothing of the ticket itself
 
+    def test_the_email_link_opens_the_request_for_whoever_holds_the_email(self):
+        """075. Dada, 8 Oct 2026: "when users click on the see my requests it
+        goes to a 404" (MEASURED: joseph.marcelo, signed in by name, on a
+        request raised from an address the desk could not tie to him).
+        Confirmed: the link carries the ticket's own key."""
+        from psaspine import tickets
+        key = tickets.portal_key(self.conn, self.wid)
+        self.conn.commit()
+        self.assertEqual(key, tickets.portal_key(self.conn, self.wid))                 # the same for the ticket's life
+        other = self._cookie_for("other.person", email="other.person@pmcne.ph", requester=True)
+        self.assertTrue(self._call("GET", f"/my/{self.wid}", query="k=wrong", cookie=other)[0].startswith("404"))
+        status, _, body = self._call("GET", f"/my/{self.wid}", query=f"k={key}", cookie=other)
+        self.assertTrue(status.startswith("200"), status)
+        self.assertIn("eClaims will not upload", body)
+        self.assertIn(f"action='/my/{self.wid}/reply?k={key}'", body)                  # the next click holds
+        self.assertIn("opened on the portal by the email link as other.person@pmcne.ph", self.conn.execute(
+            "SELECT detail FROM audit_event WHERE action = 'PORTAL_LINK' AND subject_id = ?", (self.wid,)).fetchone()[0])
+        status, h, _ = self._call("POST", f"/my/{self.wid}/reply", query=f"k={key}", cookie=other,
+                                  form={"body": "It uploads now, thank you."})
+        self.assertTrue(status.startswith("303"), status)
+        self.assertEqual(dict(h)["Location"], f"/my/{self.wid}?k={key}")
+        self.assertEqual(self.conn.execute("SELECT actor FROM ticket_event WHERE work_item_id = ? AND kind = 'PORTAL_REPLY'",
+                                           (self.wid,)).fetchone()[0], "other.person@pmcne.ph")
+        self.assertTrue(self._call("POST", f"/my/{self.wid}/reply", cookie=other, form={"body": "x"})[0].startswith("404"))
+        # the email carries it
+        from psaspine import outbox
+        self.conn.execute("UPDATE board SET notify_requester = 1 WHERE board_id = 'IT_HELP'")
+        from psaspine import board as engine
+        engine.add_note(self.conn, self.wid, body="Looking at it now.", flag="DISCUSSION", actor="alice", at=self.at)
+        self.conn.commit()
+        due = outbox.pending(self.conn, allowed_domains=("*",), dry_run=True, portal_url="https://help.pmcne.ph")
+        self.assertTrue(due)
+        self.assertIn(f"https://help.pmcne.ph/my/{self.wid}?k={key}", due[0]["body"])
+        self.assertIn(f'href="https://help.pmcne.ph/my/{self.wid}?k={key}"', due[0]["html"])
+
+    def test_a_windows_sign_in_is_its_name_on_the_hospitals_own_domains(self):
+        """075: joseph.marcelo, signed in by name and known to no contact row,
+        is joseph.marcelo@ on the domains the staff are on (INFERRED)."""
+        self.conn.execute("INSERT INTO contact (contact_id, entity_id, display_name, email, upn, sam_account, source,"
+                          " inactive, created_at) VALUES ('C_OTHER','PMC','Other Person','other.person@pmcne.ph',"
+                          "'other.person@pmcne.ph','other.person','AD',0,'2026')")
+        wid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="Barcode scanner dead", impact="I3",
+                                  urgency="U3", requested_by="joseph.marcelo@pmcne.ph", at=self.at, source="EMAIL")
+        self.conn.commit()
+        joseph = self._cookie_for("joseph.marcelo", requester=True)
+        status, _, body = self._call("GET", f"/my/{wid}", cookie=joseph)
+        self.assertTrue(status.startswith("200"), status)
+        self.assertIn("Barcode scanner dead", body)
+        self.assertIn(wid, self._call("GET", "/my", cookie=joseph)[2])
+        # not somebody else's name, and never a public domain
+        self.assertTrue(self._call("GET", f"/my/{wid}", cookie=self._cookie_for("jose.marcelo", requester=True))[0].startswith("404"))
+        other = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="Gmail one", impact="I3", urgency="U3",
+                                    requested_by="joseph.marcelo@gmail.com", at=self.at, source="EMAIL")
+        self.conn.commit()
+        self.assertTrue(self._call("GET", f"/my/{other}", cookie=joseph)[0].startswith("404"))
+
     def test_the_desk_can_say_why_in_one_command(self):
         import contextlib
         import io
@@ -14919,7 +14975,7 @@ class MailCutoverTest(unittest.TestCase):
         # the first name, and the same words laid out as HTML beside the text
         self.assertIn("Hello Jrby,", m["body"])
         self.assertIn(f"Reference {wid}", m["html"])
-        self.assertIn('href="https://help.pmcne.ph/my/' + wid + '"', m["html"])
+        self.assertIn('href="https://help.pmcne.ph/my/' + wid + '?k=', m["html"])     # 075: the ticket's key
         self.assertIn("See your request", m["html"])
         self.assertIn("Premiere Medical Center", m["html"])
         self.assertNotIn("<img", m["html"])

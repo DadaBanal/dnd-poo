@@ -28,6 +28,8 @@ Two things it does that the fulfiller views deliberately do not:
 """
 from __future__ import annotations
 
+import urllib.parse
+
 from ... import itil, numbering, phi, tickets
 from .. import templates as t
 
@@ -110,7 +112,57 @@ def _identities(ctx) -> list[str]:
     # carries the name, not an address.
     if ctx.user.id and ctx.user.id.lower() not in out:
         out.append(ctx.user.id.lower())
+    # 075: a Windows sign-in name is that name on the hospital's own mail
+    # domains too (joseph.marcelo is joseph.marcelo@pmcne.ph). INFERRED: PMC's
+    # mailboxes are named after the account. Own domains are read from the
+    # addresses the desk already holds for staff, never typed in here.
+    name = (ctx.user.id or "").strip().lower()
+    if name and "@" not in name and not any(i.startswith(name + "@") for i in out):
+        for d in _own_domains(ctx):
+            add(f"{name}@{d}")
     return out
+
+
+def _own_domains(ctx) -> list[str]:
+    """The mail domains the hospital's staff are on: those of the AD contacts
+    and the member records, most common first, at most five."""
+    counts: dict[str, int] = {}
+    for sql in ("SELECT email FROM contact WHERE inactive = 0 AND email LIKE '%@%'",
+                "SELECT email FROM member WHERE email LIKE '%@%'"):
+        for (e,) in ctx.conn.execute(sql):
+            d = e.rsplit("@", 1)[1].strip().lower()
+            if d:
+                counts[d] = counts.get(d, 0) + 1
+    return [d for d, _ in sorted(counts.items(), key=lambda x: (-x[1], x[0]))[:5]]
+
+
+def _key(ctx) -> str:
+    """The email link's key, if this request carries one (075)."""
+    return (ctx.request.query.get("k") or "").strip()
+
+
+def _find(ctx, work_item_id: str, select: str):
+    """The ticket, if it is this person's: by their addresses, else by the key
+    the email link carries. Returns (row, by_key). A read by key is written
+    to the audit trail, with who used it."""
+    clause, params = _mine_clause(ctx)
+    row = ctx.conn.execute(select + clause + " AND t.work_item_id = ?", params + [work_item_id]).fetchone()
+    if row is not None:
+        return row, False
+    from ... import db as _db, tickets as _tickets
+    if _tickets.key_opens(ctx.conn, work_item_id, _key(ctx)):
+        row = ctx.conn.execute(select + " WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
+        who = (getattr(ctx.user, "email", None) or ctx.user.id or "").strip()
+        _db.audit(ctx.conn, at=ctx.now.isoformat(sep=" ", timespec="seconds"), actor=who, action="PORTAL_LINK",
+                  subject_kind="ticket", subject_id=work_item_id, detail=f"opened on the portal by the email link as {who}")
+        ctx.conn.commit()
+        return row, True
+    return None, False
+
+
+def _k(ctx, by_key: bool) -> str:
+    """What a link or form on a page opened by key carries, so the next click holds."""
+    return f"?k={urllib.parse.quote(_key(ctx))}" if by_key else ""
 
 
 def _mine_clause(ctx) -> tuple[str, list]:
@@ -230,9 +282,10 @@ def _attach(ctx, work_item_id: str, requester: str) -> list[str]:
     return refused
 
 
-def _visible_files(ctx, work_item_id: str):
-    """Cleared files, and the requester's own; never a withheld one."""
-    ids = _identities(ctx)
+def _visible_files(ctx, work_item_id: str, also: str | None = None):
+    """Cleared files, and the requester's own; never a withheld one. `also`:
+    the requester's address when the page was opened by the email link (075)."""
+    ids = _identities(ctx) + ([also.lower()] if also else [])
     return ctx.conn.execute(
         "SELECT * FROM attachment WHERE work_item_id = ? AND review_status <> 'WITHHELD'"
         " AND purged_at IS NULL"
@@ -265,12 +318,10 @@ def _portal_pictures(ctx, work_item_id: str, shared):
 def file_download(ctx, work_item_id, attachment_id):
     from .. import HttpError
     from . import files
-    clause, params = _mine_clause(ctx)
-    row = ctx.conn.execute("SELECT t.board_id FROM ticket t" + clause + " AND t.work_item_id = ?",
-                           params + [work_item_id]).fetchone()
+    row, by_key = _find(ctx, work_item_id, "SELECT t.board_id, t.requested_by FROM ticket t")
     if row is None:
         raise HttpError("404 Not Found", "No such request.")
-    match = [f for f in _visible_files(ctx, work_item_id)
+    match = [f for f in _visible_files(ctx, work_item_id, also=row["requested_by"] if by_key else None)
              if str(f["attachment_id"]) == attachment_id]
     if not match:
         raise HttpError("404 Not Found", "No such file.")
@@ -298,9 +349,8 @@ def _radio_group(name: str, legend: str, choices, *, required: bool = True) -> s
 
 def detail(ctx, work_item_id):
     from .. import HttpError, Response
-    clause, params = _mine_clause(ctx)
-    row = ctx.conn.execute(
-        MINE + clause + " AND t.work_item_id = ?", params + [work_item_id]).fetchone()
+    row, by_key = _find(ctx, work_item_id, MINE.replace("b.display_name AS board_name", "b.display_name AS board_name, t.requested_by"))
+    k = _k(ctx, by_key)
     if row is None:
         # 404 and not 403: somebody else's ticket is not theirs to learn exists.
         # The words name the address they are signed in as, which is what makes
@@ -332,7 +382,7 @@ def detail(ctx, work_item_id):
             return "You"
         return (f"{t.esc(team)} — resolution" if e["note_flag"] == "RESOLUTION" or e["is_resolution"]
                 else t.esc(team))
-    shared = _visible_files(ctx, work_item_id)
+    shared = _visible_files(ctx, work_item_id, also=row["requested_by"] if by_key else None)
     pictures = _portal_pictures(ctx, work_item_id, shared)
     stream = "".join(
         f"<li class='{'by-req' if who(e) == 'You' else 'by-staff'}'><div class=rtx>{t.note_html(e['detail'], e['body_format'], kind=e['kind'], images=pictures, label='Your email' if who(e) == 'You' else 'Email')}</div>"
@@ -342,7 +392,7 @@ def detail(ctx, work_item_id):
     if shared:
         from . import files as _files
         files_card = ("<div class='card'><h3><svg class=ic aria-hidden=true><use href=#i-paperclip></use></svg>Files</h3><ul class='plain'>" + "".join(
-            "<li>" + _files.file_link(f"/my/{t.esc(work_item_id)}/file/{f['attachment_id']}", f) + "</li>" for f in shared) + "</ul>"
+            "<li>" + _files.file_link(f"/my/{t.esc(work_item_id)}/file/{f['attachment_id']}{t.esc(k)}", f) + "</li>" for f in shared) + "</ul>"
             + (_files.viewer_dialog() if any(_files.view_kind(f["media_type"]) for f in shared) else "") + "</div>")
 
     from ... import approvals as _appr
@@ -356,7 +406,7 @@ def detail(ctx, work_item_id):
         f"<div class='card'><h3><svg class=ic aria-hidden=true><use href=#i-clock></use></svg>What has happened</h3>"
         f"<ul class='stream'>{stream}</ul></div>" + files_card +
         "<div class='card'><h3><svg class=ic aria-hidden=true><use href=#i-note></use></svg>Add something</h3>"
-        f"<form class='stack' method='post' action='/my/{t.esc(work_item_id)}/reply' "
+        f"<form class='stack' method='post' action='/my/{t.esc(work_item_id)}/reply{t.esc(k)}' "
         "style='max-width:none' enctype='multipart/form-data'>"
         "<label>What has happened since, or anything else that helps "
         + _help("what to write", sample="It printed once after a restart and then stopped again; "
@@ -375,7 +425,7 @@ def detail(ctx, work_item_id):
             f"<label><input type=radio name=score value={n} required aria-label='{n} out of 5'>"
             f"{t.icon('star')}</label>" for n in range(1, 6))
         extra = ("<div class='card'><h3>" + t.icon("star") + t.esc(_survey.question(ctx.conn, work_item_id)) + "</h3>"
-                 f"<form class='stack' method='post' action='/my/{t.esc(work_item_id)}/survey' style='max-width:none'>"
+                 f"<form class='stack' method='post' action='/my/{t.esc(work_item_id)}/survey{t.esc(k)}' style='max-width:none'>"
                  f"<div class=stars>{stars}</div>"
                  "<textarea name='comment' placeholder='A sentence if you like: what went well, or what "
                  "we could do better.'></textarea><div><button type='submit'>Send</button></div></form></div>")
@@ -465,12 +515,10 @@ def create(ctx):
 
 def reply(ctx, work_item_id):
     from .. import HttpError, redirect
-    clause, params = _mine_clause(ctx)
-    row = ctx.conn.execute(
-        "SELECT t.work_item_id FROM ticket t" + clause + " AND t.work_item_id = ?",
-        params + [work_item_id]).fetchone()
+    row, by_key = _find(ctx, work_item_id, "SELECT t.work_item_id FROM ticket t")
     if row is None:
         raise HttpError("404 Not Found", "No such request.")
+    k = _k(ctx, by_key)
 
     body = ctx.request.form().get("body", "").strip()
     requester = (ctx.user.email or ctx.user.id or "").lower()
@@ -500,19 +548,18 @@ def reply(ctx, work_item_id):
         return Response("400 Bad Request", t.page(work_item_id, (
             "<h1>Not everything was kept</h1><div class='banner err'>"
             + t.esc(" ".join(refused)) + "</div>"
-            f"<p><a href='/my/{t.esc(work_item_id)}'>Back to your request</a></p>"),
+            f"<p><a href='/my/{t.esc(work_item_id)}{t.esc(k)}'>Back to your request</a></p>"),
             user=ctx.user))
-    return redirect(f"/my/{work_item_id}")
+    return redirect(f"/my/{work_item_id}{k}")
 
 
 def survey_answer(ctx, work_item_id):
     from .. import HttpError, Response, redirect
     from ... import survey as _survey
-    clause, params = _mine_clause(ctx)
-    row = ctx.conn.execute("SELECT t.work_item_id FROM ticket t" + clause + " AND t.work_item_id = ?",
-                           params + [work_item_id]).fetchone()
+    row, by_key = _find(ctx, work_item_id, "SELECT t.work_item_id FROM ticket t")
     if row is None:
         raise HttpError("404 Not Found", "No such request.")
+    k = _k(ctx, by_key)
     f = ctx.request.form()
     score = int(f["score"]) if f.get("score", "").isdigit() else 0
     requester = (ctx.user.email or ctx.user.id or "").lower()
@@ -523,10 +570,10 @@ def survey_answer(ctx, work_item_id):
     except ValueError as exc:
         return Response("400 Bad Request", t.page(work_item_id, (
             f"<h1>Not sent</h1><div class='banner err'>{t.esc(str(exc))}</div>"
-            f"<p><a href='/my/{t.esc(work_item_id)}'>Back to your request</a></p>"), user=ctx.user))
+            f"<p><a href='/my/{t.esc(work_item_id)}{t.esc(k)}'>Back to your request</a></p>"), user=ctx.user))
     if findings:
         return Response(body=t.page(work_item_id, (
             "<h1>Thank you</h1><div class='banner ok'>Your answer is recorded. One tip: a rating "
             "never needs a patient's name or number, so we will tidy this one.</div>"
-            f"<p><a href='/my/{t.esc(work_item_id)}'>Back to your request</a></p>"), user=ctx.user))
-    return redirect(f"/my/{work_item_id}")
+            f"<p><a href='/my/{t.esc(work_item_id)}{t.esc(k)}'>Back to your request</a></p>"), user=ctx.user))
+    return redirect(f"/my/{work_item_id}{k}")

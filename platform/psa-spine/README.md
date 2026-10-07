@@ -2228,6 +2228,29 @@ Teams-style reactions, pictures and files through the patient-details review, th
 
 Schema 072 is additive: `chat_reaction`, `chat_file`, `chat_survey`, and the nullable `board.chat_welcome`.
 
+## The email link opens the request (8 Oct 2026, schema 075)
+
+Dada, 8 Oct 2026: *"when users click on the see my requests it goes to a 404"*. MEASURED from Dada's screenshot:
+`help.pmcne.ph/my/PMC-000391` answered *No such request, or it was not raised by you. You are signed in as
+joseph.marcelo* — a Windows sign-in by name, on a request raised from an email address the desk held no contact row
+for. Confirmed before building: the link carries a key, and a sign-in name matches the same name on the hospital's own
+domains.
+
+- **The key in the link.** *See your request* now points at `/my/PMC-000391?k=…`. The key is the ticket's own, made
+  the first time an email about it goes out and kept for the ticket's life (`ticket.portal_key`). Whoever holds the
+  email opens that one request once signed in to the portal, whatever address they signed in with: a shared mailbox
+  like *Philhealth Encoder*, a name the desk cannot tie to the address, a second address. It opens that request and
+  nothing else, and it is not a sign-in. Every read by key is on the audit trail (`PORTAL_LINK`, with who used it).
+  The page's reply form, survey and file links carry the key on, so the next click holds. A wrong key is the same 404
+  as before.
+- **A Windows name on the hospital's own domains.** `joseph.marcelo` is also `joseph.marcelo@pmcne.ph`, and the same
+  on any other domain the staff's addresses are on. The domains are read from the AD contacts and member records the
+  desk already holds (the five most common), never typed in, and never a public mail domain. INFERRED: PMC's mailboxes
+  are named after the account; a name that is not is still caught by the key. With this, *Your requests* lists
+  Joseph's email-raised requests too, and a plain link works.
+
+Schema 075 adds `ticket.portal_key`, NULL until the first email. Handoff: `HANDOFF-cloud-sql01-WS36-20261008-portal-link-075.md`.
+
 ## Chat, round five: ending a chat, and "how did I do?" (7 Oct 2026, schema 074)
 
 Dada, 7 Oct 2026: *"option to close or end the chat and survey or how i did at the end"*. Confirmed before building:

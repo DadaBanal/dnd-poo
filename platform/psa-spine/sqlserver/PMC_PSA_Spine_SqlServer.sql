@@ -4340,6 +4340,22 @@ ALTER TABLE psa.[board] ADD [takes_chats] INT NULL CONSTRAINT [DF_board_takes_ch
 IF COL_LENGTH(N'psa.[chat_session]', N'ask_rating') IS NULL
 ALTER TABLE psa.[chat_session] ADD [ask_rating] INT NULL CONSTRAINT [DF_chat_session_ask_rating] DEFAULT (1);
 
+-- 075: the key in a requester's email link.
+--
+-- Dada, 8 Oct 2026: "when users click on the see my requests it goes to a
+-- 404" (MEASURED: help.pmcne.ph/my/PMC-000391 answered 404 to joseph.marcelo,
+-- signed in by his Windows name, for a request raised from an email address
+-- the desk could not tie to that name). Confirmed before building: the
+-- "See your request" link carries a key for that one ticket, so whoever holds
+-- the email opens that request once signed in to the portal; and a sign-in
+-- name also matches the same name on the hospital's own mail domains.
+--
+-- One random key per ticket, made the first time an email about it is sent,
+-- kept as it is (the next email must carry the same link). It opens one
+-- request to a signed-in portal user and nothing else; it is not a sign-in.
+IF COL_LENGTH(N'psa.[ticket]', N'portal_key') IS NULL
+ALTER TABLE psa.[ticket] ADD [portal_key] NVARCHAR(64) NULL;
+
 IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
 ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
 

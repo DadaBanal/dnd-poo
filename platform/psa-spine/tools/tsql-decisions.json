@@ -388,6 +388,7 @@
     "sla_target.calendar": "CODE",
     "sla_target.note": "FREE",
     "ticket.work_item_id": "ID",
+    "ticket.portal_key": "HASH",
     "ticket.external_ref": "REF",
     "ticket.board_id": "ID",
     "ticket.catalogue_item_id": "ID",

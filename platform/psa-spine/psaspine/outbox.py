@@ -778,7 +778,11 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
             conn.execute("UPDATE notification SET status = 'NO_SENDER' WHERE notification_id = ?",
                          (n["notification_id"],))
             continue
-        link = (f"{portal_url}/my/{n['work_item_id']}" if portal_url
+        # 075: the link carries the ticket's own key, so the holder of this
+        # email opens this request on the portal whichever address they sign
+        # in with (a shared mailbox, a Windows name the desk cannot tie to it).
+        from . import tickets as _tickets
+        link = (f"{portal_url}/my/{n['work_item_id']}?k={_tickets.portal_key(conn, n['work_item_id']) or ''}" if portal_url
                 else "the PMC Requests portal, under Your requests")
         subject = (n["subject"] or "").replace("{link}", link)
         thread = []

@@ -1,0 +1,14 @@
+-- 075: the key in a requester's email link.
+--
+-- Dada, 8 Oct 2026: "when users click on the see my requests it goes to a
+-- 404" (MEASURED: help.pmcne.ph/my/PMC-000391 answered 404 to joseph.marcelo,
+-- signed in by his Windows name, for a request raised from an email address
+-- the desk could not tie to that name). Confirmed before building: the
+-- "See your request" link carries a key for that one ticket, so whoever holds
+-- the email opens that request once signed in to the portal; and a sign-in
+-- name also matches the same name on the hospital's own mail domains.
+--
+-- One random key per ticket, made the first time an email about it is sent,
+-- kept as it is (the next email must carry the same link). It opens one
+-- request to a signed-in portal user and nothing else; it is not a sign-in.
+ALTER TABLE ticket ADD COLUMN portal_key TEXT;
