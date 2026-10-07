@@ -55,6 +55,22 @@ Dada, 7 Oct: "the project board isnt a service board … load each tab on its ow
    Then check:
    - `SELECT COUNT(*) FROM psa.project_status` returns **5**;
    - `SELECT COUNT(*) FROM psa.project_status WHERE no_time = 1` returns **0**.
+   **If `init` cannot be run** (Part 46: the desk account is still shut to you), run these in the same transaction as step 4 instead. They are guarded, add rows only to empty tables, and are exactly what `init` would write (`projects.SEED_STATUSES`, `projects.ROLES`):
+
+   ```sql
+   IF NOT EXISTS (SELECT 1 FROM psa.project_status)
+   INSERT INTO psa.project_status (status_id, name, indicator, is_default, is_closed, no_time, sort_order) VALUES
+     (N'PLANNED', N'Planned', N'ON_TRACK', 1, 0, 0, 10), (N'ACTIVE', N'Active', N'ON_TRACK', 0, 0, 0, 20),
+     (N'ON_HOLD', N'On hold', N'AT_RISK', 0, 0, 0, 30), (N'DONE', N'Done', N'ON_TRACK', 0, 1, 0, 40),
+     (N'CANCELLED', N'Cancelled', N'ON_TRACK', 0, 1, 0, 50);
+   IF NOT EXISTS (SELECT 1 FROM psa.project_role)
+   INSERT INTO psa.project_role (role_id, name, sort_order) VALUES
+     (N'PROJECT_MANAGER', N'Project manager', 10), (N'TEAM_LEAD', N'Team lead', 20), (N'TEAM_MEMBER', N'Team member', 30),
+     (N'ENGINEER', N'Engineer', 40), (N'CONSULTANT', N'Consultant', 50), (N'STAKEHOLDER', N'Stakeholder', 60);
+   IF NOT EXISTS (SELECT 1 FROM psa.project_type)
+   INSERT INTO psa.project_type (type_id, name, is_default) VALUES (N'GENERAL', N'General', 1);
+   ```
+
 7. Start `PSA-Desk`. Expect `:8085` to answer 401, go down, then answer 401 again.
 
 **Nothing live changes meaning.** No ticket moves on its own. A project still on IT Help keeps its tickets there until someone presses *Move to the project board*. Until then, those tickets stay on the Service Board as they are today. Time is held only on a status an administrator marks *No time*.
