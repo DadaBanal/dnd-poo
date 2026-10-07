@@ -2844,3 +2844,20 @@ WS36 named three handoffs in order — 070, chat-071, project-access-survey — 
 4. **Re-checked that Part 49's work still stands** after this restart: non-project boards without the survey = **0**. Both chat tables present. So the ordered set is complete and consistent: 070 ✓, 071 ✓, survey ✓.
 
 **The live proof is Dada's and has not been done:** a first real chat from a ward PC to the desk. On the desk it is *Service Desk › Chat* (an empty queue until someone starts one); on the portal, *Chat* beside *My requests*. Everything behind the Windows sign-in stays his eye, as always.
+
+### Part 51: 2026-10-07, ~13:20 +08:00. **3e46ba2 live; 072 (chat round two) applied; PSA-Desk restarted. Chat is already in real use.** MEASURED.
+
+Ran `HANDOFF-cloud-sql01-WS36-20261007-chat-072.md`: three tables, one index, one nullable column. Blocking as stated — **every** desk page now polls `/chat/waiting.json` for the banner, and the attachment store's integrity check and purge read `chat_file`, so the schema had to be in before the desk came up.
+
+**Statements extracted from the generated port by line range and run verbatim**, as in Parts 46–47 and 50. COPY_ONLY backup `PMC_PSA_pre072_20261007.bak` (VERIFYONLY ok), desk stopped, dry run, then one transaction with a verify gate as sysadmin via pyodbc.
+
+**Verified, all of §5:**
+- `chat_reaction`, `chat_file`, `chat_survey` all exist, all **`COUNT(*) = 0`**; `ix_chat_file_chat` present.
+- `board.chat_welcome` COL_LENGTH **800**, and **boards with it set = 0** — so every board reads the desk's own words until someone writes its own, which is what the handoff intends.
+- **Nothing existing moved:** `chat_session` **4 → 4**, `chat_message` **32 → 32**, `board` **6 → 6**, measured inside the transaction.
+
+**PSA-Desk started:** `:8085` **401 → down → 401 in 2s**, Running.
+
+**Worth recording: chat is no longer theoretical.** `chat_session` held **4 sessions and 32 messages** before this step, so the live proof left open at Part 50 — a real chat from a ward PC — has been run by Dada. Those sessions carry through 072 untouched; the new tables start empty beside them.
+
+Nothing on the host needed changing for chat files: they go to the existing `PSA_ATTACHMENT_DIR` (`D:\psa\files`), and the retention task and backup are as they were. `attachments-verify` now counts chat files as live, so they are not mistaken for orphans.
