@@ -2228,6 +2228,40 @@ Teams-style reactions, pictures and files through the patient-details review, th
 
 Schema 072 is additive: `chat_reaction`, `chat_file`, `chat_survey`, and the nullable `board.chat_welcome`.
 
+## Chat, round four: a louder ring, chat operators, the operator's time (7 Oct 2026, schema 073)
+
+Dada, 7 Oct 2026: *"change the chat beep to a more audible one ... if the chat is converted into a ticket can it be
+that the operators time be recorded ... a chat operator member access atm make sure only PMO Helpdesk members can use
+the chat"*. Confirmed before building: a louder phone-style ring, again every 30 seconds while a chat waits; the time
+entry pre-filled for the operator to confirm; a *Chat operator* tick, and only PMO Helpdesk takes chats.
+
+- **The ring.** The soft two-note chime is replaced by a desk phone's ring: two tones trilled fast, in two bursts,
+  played twice, through a compressor so it is loud without clipping. It is still made in the page, with no sound file.
+  - A new waiting chat rings at once, and it rings again about every 30 seconds while any chat still waits.
+  - Only one of the person's open tabs rings. The tabs agree through the browser's storage.
+  - The banner is polled in a background tab too, because the ring matters most when the desk is not the page in front.
+  - 🔔 mutes it. ✕ hides the banner and stops the ring until a new chat arrives.
+- **Chat operators.** Two settings decide who answers chats:
+  - a board takes chats (*Setup › Boards*, "Takes chats from the portal");
+  - a member is a *Chat operator* (*Setup › Members*, set by a sysadmin and audited on the member's history).
+
+  The tick is refused to anyone who does not work (WORK or ADMIN) a board that takes chats. Only ticked members see
+  *Chat* in the menu and the banner, and only they can read, pick up, answer or make a ticket from chats on their
+  chat boards. Anyone else gets 403 on `/chat` and 404 on a chat. The portal offers chat only with the boards that take
+  chats, whatever the ward's department. With none, it says chat is not available.
+- **The operator's time.** *Make a ticket* and *Add to a ticket* now land on the ticket with its time entry window
+  open. A clock has been run for the operator, stopped, but not booked:
+  - **Start** is when they picked the chat up, or their first line in it if someone else picked it up.
+  - **End** is now.
+  - The notes read *Chat with Jun Reyes · chat 3*.
+
+  They check it and **Save**, which books it like any other entry, to the quarter hour, on their timesheet. Or they
+  correct it first, or **Cancel** it. If they already had a clock on that ticket, the window opens on that one.
+
+Schema 073 adds two columns, `member.chat_operator` and `board.takes_chats`, both read as 0 until set. The SQL01
+handoff (`HANDOFF-cloud-sql01-WS36-20261007-chat-073.md`) sets PMO Helpdesk and ticks its working members in the same
+transaction, so chat does not go dark at the restart.
+
 ## Chat, round three: chats by name, a quick view, a bigger banner, a Taglish reminder (7 Oct 2026, code only)
 
 Dada, 7 Oct 2026: *"make the banner bigger ... instead of naming it as chat1 so on and so forth can we do the name

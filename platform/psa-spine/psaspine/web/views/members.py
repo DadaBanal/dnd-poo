@@ -173,6 +173,7 @@ def detail(ctx, member):
                    f"<div class=why>{'Yes: runs every Setup page from their normal sign-in.' if m['is_sysadmin'] else 'No.'}</div></div>"
                    f"<div style='flex:0 0 auto;align-self:end'><input type=hidden name=on value='{0 if m['is_sysadmin'] else 1}'>"
                    f"<button class=ghost type=submit>{'Take off' if m['is_sysadmin'] else 'Make sysadmin'}</button></div></form>"
+                   + _chat_operator_form(ctx, ident, p) +
                    f"<dl class=kv style='margin-top:10px'><dt>Break-glass account</dt><dd>{t.esc(account)}</dd>"
                    f"<dt>Calendar</dt><dd><a href='/calendar?{urllib.parse.urlencode({'member': ident})}'>Open their calendar</a>"
                    f"{' · feed on' if members.has_feed(ctx.conn, ident) else ''}</dd></dl></div>")
@@ -193,6 +194,35 @@ def detail(ctx, member):
             + (" <span class='chip sla-bad'>left</span>" if not active else "") + "</h1>"
             + leave + "<div class=grid2>" + record + boards_card + access_card + history + "</div>")
     return Response(body=t.page(m["display_name"], body, user=ctx.user, active="admin"))
+
+
+def _chat_operator_form(ctx, ident: str, p: str) -> str:
+    """073: the Chat operator tick (Dada, 7 Oct 2026: "a chat operator member
+    access ... only PMO Helpdesk members can use the chat")."""
+    from ... import chat
+    if not ctx.conn.execute("SELECT 1 FROM board WHERE takes_chats = 1").fetchone() and not chat.is_operator(ctx.conn, ident):
+        return ""
+    on = chat.is_operator(ctx.conn, ident)
+    names = ", ".join(r["display_name"] for r in chat.chat_boards(ctx.conn)) or "no board"
+    return (f"<form method=post action='{p}/chat-operator' class=row id=chatoperator style='margin-top:10px'><div><label>Chat operator</label>"
+            f"<div class=why>{'Yes: answers chats from the wards on ' + t.esc(names) + '.' if on else 'No. Only someone who works ' + t.esc(names) + ' can be one.'}</div></div>"
+            f"<div style='flex:0 0 auto;align-self:end'><input type=hidden name=on value='{0 if on else 1}'>"
+            f"<button class=ghost type=submit>{'Untick' if on else 'Make chat operator'}</button></div></form>")
+
+
+def chat_operator(ctx, member):
+    from ... import chat
+    common.require_sysadmin(ctx)
+    m = _load(ctx, member)
+    f = ctx.request.form()
+    path = f"/admin/member/{urllib.parse.quote(m['member'])}"
+
+    def go():
+        try:
+            return chat.set_operator(ctx.conn, m["member"], f.get("on") == "1", at=ctx.now, actor=ctx.user.id)
+        except chat.Refused as exc:
+            raise members.Refused(str(exc)) from exc
+    return _try(ctx, path, go, lambda s: s)
 
 
 def _try(ctx, path, fn, ok):

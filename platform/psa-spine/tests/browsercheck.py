@@ -117,6 +117,9 @@ def build(db_path: Path) -> str:
     auth.create_local_account(conn, "nurse7", PASSWORD, at=at)
     chat.start(conn, requester="nurse7", board_id="IT_HELP", subject="Teams phone silent",
                first="The Teams phone on ward 7 does not ring.", at=at)
+    # 073: IT Help takes chats and tech answers them
+    conn.execute("UPDATE board SET takes_chats = 1 WHERE board_id = 'IT_HELP'")
+    chat.set_operator(conn, "tech", True, at=at, actor="tech")
     conn.commit()
     conn.close()
     return wid, mail, noted, prj, ph_b, emailed
@@ -654,8 +657,18 @@ def main() -> int:
 
             # --- chat, live both ways (071; Dada, 7 Oct 2026) -----------------
             cid = 1
+            # 073: count the rings (one compressor per ring), from a clean slate
+            page.add_init_script("(() => { const A = window.AudioContext; if (!A) return; window.__rings = 0;"
+                                 " const f = A.prototype.createDynamicsCompressor;"
+                                 " A.prototype.createDynamicsCompressor = function () { window.__rings++; return f.call(this); }; })()")
+            page.evaluate("() => { try { localStorage.removeItem('psa-chat-rang') } catch (e) {} }")
             page.goto(f"{base}/", wait_until="domcontentloaded")
             page.wait_for_timeout(1500)
+            rings = page.evaluate("() => window.__rings || 0")
+            note(rings >= 1, "a waiting chat rings, the louder phone-style ring", f"{rings} ring(s)")
+            page.reload(wait_until="domcontentloaded")
+            page.wait_for_timeout(1500)
+            note(page.evaluate("() => window.__rings || 0") == 0, "and not again on the next page within 30 seconds")
             tk = page.locator("#chatticker")
             note(tk.is_visible() and "Teams phone silent" in tk.inner_text(),
                  "a waiting chat runs across the top of the desk page")
@@ -740,6 +753,17 @@ def main() -> int:
             ward.wait_for_load_state("domcontentloaded")
             note("You rated this chat" in ward.locator("body").inner_text(), "and the rating is kept")
             ward.context.close()
+            # 073: Make a ticket opens the ticket on the operator's time, ready to confirm
+            page.goto(f"{base}/chat/{cid}", wait_until="domcontentloaded")
+            page.locator("form[action$='/ticket'] button[type=submit]").click()
+            page.wait_for_load_state("domcontentloaded")
+            page.wait_for_timeout(400)
+            te = page.locator("#tedlg")
+            note("/ticket/" in page.url and te.is_visible(), "Make a ticket opens the new ticket's time entry window", page.url)
+            note(te.locator("input[name=start]").input_value() != "" and te.locator("input[name=end]").input_value() != ""
+                 and "Chat with" in te.locator("textarea[name=body]").input_value(),
+                 "with the start, the end and the chat already filled in",
+                 te.locator("input[name=start]").input_value() + "-" + te.locator("input[name=end]").input_value())
 
             # --- an email as its sender laid it out (6 Oct 2026) -------------
             # Dada: "HTML is or emails are not rendering properly on the ticket

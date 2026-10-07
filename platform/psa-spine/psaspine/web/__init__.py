@@ -515,10 +515,16 @@ def _route(conn, request: Request, config: Config, now: datetime) -> Response:
     user.modules = security.levels(conn, user)
     # 072: the live chats on this person's boards, so every desk page draws its
     # banner and quick view already filled (one indexed read; none for a requester).
-    user.live_chats = []
+    # 073: only a chat operator answers chats, and only on a board that takes them.
+    user.live_chats, user.chat_operator = [], False
     if not user.requester and _db.table_exists(conn, "chat_session"):
+        from .. import chat as _chat
         from .views.chat import live_for
-        user.live_chats = live_for(ctx)
+        try:
+            user.chat_operator = _chat.is_operator(conn, user.id)
+        except Exception:                              # noqa: BLE001 - before 073 there is no tick: nobody answers,
+            user.chat_operator = False                 # and every other page still opens
+        user.live_chats = live_for(ctx) if user.chat_operator else []
     conn.commit()
     return router.dispatch(ctx)
 

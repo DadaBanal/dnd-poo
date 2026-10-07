@@ -285,6 +285,9 @@ def board_setup(ctx, board_id):
                           "Ask the requester how we did once their ticket is closed (on the portal, one to five)") + "</div>"
             f"<div><label>The survey's question</label><input name=survey_question maxlength=120"
             f" value='{t.esc(b['survey_question'] or '')}' placeholder='How did we do?'></div>"
+            "<div style='grid-column:1/-1'>" + chk("takes_chats", bool(b["takes_chats"] if "takes_chats" in b.keys() else 0),
+                                                   "Takes chats from the portal: wards chat with this board, and its "
+                                                   "chat operators answer (Setup › Members)") + "</div>"
             "<div style='grid-column:1/-1'><label>Chat welcome: what a ward reads while its chat waits to be picked "
             "up ({board} is this board's name)</label><textarea name=chat_welcome rows=2 maxlength=300 placeholder='"
             + t.esc(chat_mod.DEFAULT_WELCOME) + "'>" + t.esc((b["chat_welcome"] if "chat_welcome" in b.keys() else None) or "") + "</textarea></div>"
@@ -963,6 +966,9 @@ def save_settings(ctx, board_id):
         if "chat_welcome" in f:                                  # 072: the chat's "please wait" words
             ctx.conn.execute("UPDATE board SET chat_welcome = ? WHERE board_id = ?",
                              (" ".join(f.get("chat_welcome", "").split())[:300] or None, board_id))
+        # 073: a tick, read like the survey's: absent from the post is unticked
+        ctx.conn.execute("UPDATE board SET takes_chats = ? WHERE board_id = ?",
+                         (1 if f.get("takes_chats") == "1" else 0, board_id))
         _audit(ctx, board_id, "settings saved: " + _changes(before, dict(ctx.conn.execute(
             "SELECT * FROM board WHERE board_id = ?", (board_id,)).fetchone())))
         ctx.conn.commit()

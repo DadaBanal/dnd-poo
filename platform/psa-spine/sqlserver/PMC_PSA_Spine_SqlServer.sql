@@ -4302,6 +4302,30 @@ ALTER TABLE psa.[project] ADD [project_type_id] NVARCHAR(64) NULL;
 IF COL_LENGTH(N'psa.[board]', N'chat_welcome') IS NULL
 ALTER TABLE psa.[board] ADD [chat_welcome] NVARCHAR(400) NULL;
 
+-- 073: who answers the chat, and which board takes it.
+--
+-- Dada, 7 Oct 2026: "can we add a chat operator member access atm make sure
+-- only PMO Helpdesk members can use the chat". Confirmed before building: a
+-- "Chat operator" tick on the member record, given only to members of a board
+-- that takes chats, and only PMO Helpdesk takes chats for now, so every ward
+-- chat goes there.
+--
+-- Until now any member who could work a board saw its chats and answered
+-- them, and a ward could chat with any board its department may raise to.
+-- After this step the desk side of chat (the banner, the queue, picking up,
+-- replying, making a ticket) is for a ticked member of a board that takes
+-- chats, and the portal offers chat only to those boards.
+--
+-- Both columns follow 062: added NULL by the port, read as 0, so nothing is an
+-- operator and no board takes chats until set. The handoff sets PMO Helpdesk
+-- and ticks its working members in the same transaction.
+IF COL_LENGTH(N'psa.[member]', N'chat_operator') IS NULL
+ALTER TABLE psa.[member] ADD [chat_operator] INT NULL CONSTRAINT [DF_member_chat_operator] DEFAULT (0);
+
+-- NULL reads as 0
+IF COL_LENGTH(N'psa.[board]', N'takes_chats') IS NULL
+ALTER TABLE psa.[board] ADD [takes_chats] INT NULL CONSTRAINT [DF_board_takes_chats] DEFAULT (0);
+
 IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
 ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
 

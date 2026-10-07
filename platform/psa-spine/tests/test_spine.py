@@ -6876,22 +6876,35 @@ class ModulesTest(unittest.TestCase):
         new_pid = dict(h)["Location"].split("/project/")[1].split("?")[0]
         self.assertEqual(self._call("GET", f"/project/{new_pid}", cookie=lea)[0], "200 OK")
 
+    def _chat_desk(self, *operators):
+        """073: IT Help takes chats, and alice (or the members named) answer them."""
+        from psaspine import chat
+        conn = self._conn()
+        conn.execute("UPDATE board SET takes_chats = 1 WHERE board_id = 'IT_HELP'")
+        for m in operators or ("alice",):
+            chat.set_operator(conn, m, True, at=self.at, actor="root")
+        conn.commit()
+
     def test_chat_a_requester_and_the_desk_live(self):
         """071. Dada, 7 Oct 2026: "can we do something to connectwise chat?".
         Confirmed: requester <-> desk, offered on the portal at any time,
         patient details flagged and warned, never blocked."""
         from psaspine import chat
+        self._chat_desk()
         nurse = self._cookie_for("nurse")
-        # the portal: start a chat (no department: it waits on Unrouted, as a request would)
+        # the portal: start a chat; it goes to the board that takes chats (073), whatever the department
         _, h, _ = self._call("POST", "/my/chat/new", cookie=nurse,
-                             form={"subject": "Printer on ward 7", "body": "It prints blank pages since 7am."})
+                             form={"subject": "Scanner on ward 7", "body": "It scans blank pages since 7am."})
         loc = dict(h)["Location"]
         self.assertRegex(loc, r"^/my/chat/\d+$")
-        first = int(loc.rsplit("/", 1)[1])
+        started = int(loc.rsplit("/", 1)[1])
         self.assertEqual(self._conn().execute("SELECT board_id, status FROM chat_session WHERE chat_id = ?",
-                                              (first,)).fetchone()[:], ("UNROUTED", "WAITING"))
-        # one on IT Help, where alice works and carol only reads
+                                              (started,)).fetchone()[:], ("IT_HELP", "WAITING"))
+        self._call("POST", f"/my/chat/{started}/end", cookie=nurse)
+        # one left on Unrouted (before 073), and one on IT Help, where alice works and carol only reads
         conn = self._conn()
+        first, _ = chat.start(conn, requester="nurse", board_id="UNROUTED", subject="Printer on ward 7",
+                              first="It prints blank pages since 7am.", at=self.at)
         cid, _ = chat.start(conn, requester="nurse", board_id="IT_HELP", subject="Teams phone silent",
                             first="The Teams phone on ward 7 does not ring.", at=self.at)
         conn.commit()
@@ -6996,6 +7009,7 @@ class ModulesTest(unittest.TestCase):
         from psaspine import attachments, chat, metrics
         os.environ["PSA_ATTACHMENT_DIR"] = os.path.join(self.tmp.name, "files")
         self.addCleanup(os.environ.pop, "PSA_ATTACHMENT_DIR", None)
+        self._chat_desk()
         nurse = self._cookie_for("nurse")
         conn = self._conn()
         cid, _ = chat.start(conn, requester="nurse", board_id="IT_HELP", subject="Label printer jams",
@@ -7014,7 +7028,7 @@ class ModulesTest(unittest.TestCase):
         self._call("POST", f"/chat/{cid_b}/end", cookie=self.alice)                    # out of the way again
         # a board writes its own words
         self._call("POST", "/admin/board/IT_HELP/settings", cookie=self.alice, form={"display_name": "IT Help",
-                   "chat_welcome": "Hi from {board}! A technician will join you in a moment."})
+                   "takes_chats": "1", "chat_welcome": "Hi from {board}! A technician will join you in a moment."})
         self.assertEqual(chat.welcome(self._conn(), "IT_HELP"), "Hi from IT Help! A technician will join you in a moment.")
         # the banner: on every desk page, never on the portal; waiting.json lists what waits on her boards
         _, _, board_page = self._call("GET", "/", cookie=self.alice)
@@ -7102,6 +7116,7 @@ class ModulesTest(unittest.TestCase):
         panel on the banner, twice the size, a card beside the start form."""
         from psaspine import chat
         from psaspine.web.views import chat as chat_view
+        self._chat_desk()
         nurse = self._cookie_for("nurse")
         c = self._conn()
         one, _ = chat.start(c, requester="nurse", board_id="IT_HELP", subject="Label printer jams",
@@ -7183,6 +7198,105 @@ class ModulesTest(unittest.TestCase):
         self.assertIn(chat_view.PAALALA_PHI, mine)
         self.assertIn("Huwag po ilagay ang detalye ng pasyente", mine)             # and in the box itself
         self.assertNotIn("id=chatpaalala", self._call("GET", "/chat", cookie=self.alice)[2])
+
+    def test_chat_operators_answer_and_their_time_waits_on_the_ticket(self):
+        """073. Dada, 7 Oct 2026: "change the chat beep to a more audible one";
+        "if the chat is converted into a ticket can it be that the operators
+        time be recorded"; "a chat operator member access atm make sure only
+        PMO Helpdesk members can use the chat". Confirmed: a louder phone-style
+        ring, again every 30 s while a chat waits; the time entry pre-filled for
+        the operator to confirm; a Chat operator tick, only for members who work
+        a board that takes chats, and only PMO Helpdesk takes them."""
+        from psaspine import chat, timers
+        from psaspine.web import templates
+        nurse, bob = self._cookie_for("nurse"), self._cookie_for("bob")
+        conn = self._conn()
+        conn.execute("INSERT INTO board_member (board_id, member, access) VALUES ('IT_HELP', 'bob', 'WORK')")
+        conn.commit()
+        # before anything is set: no board takes chats, nobody answers them
+        self.assertEqual(chat.chat_boards(conn), [])
+        self.assertIn("Chat is not available right now", self._call("GET", "/my/chat", cookie=nurse)[2])
+        self.assertTrue(self._call("GET", "/chat", cookie=self.alice)[0].startswith("403"))
+        self.assertNotIn('href="/chat"', self._call("GET", "/", cookie=self.alice)[2])        # not in her menu
+        with self.assertRaises(chat.Refused):
+            chat.set_operator(conn, "alice", True, at=self.at, actor="root")                  # no board takes chats
+        # Setup › Boards: IT Help takes chats; Setup › Members: only those who work it can be ticked
+        self._call("POST", "/admin/board/IT_HELP/settings", cookie=self.alice,
+                   form={"display_name": "IT Help", "takes_chats": "1", "chat_welcome": ""})
+        self.assertEqual([r["board_id"] for r in chat.chat_boards(self._conn())], ["IT_HELP"])
+        with self.assertRaises(chat.Refused):
+            chat.set_operator(self._conn(), "carol", True, at=self.at, actor="root")          # she only reads it
+        _, h, _ = self._call("POST", "/admin/member/alice/chat-operator", cookie=self.root, form={"on": "1"})
+        self.assertIn("now+a+chat+operator", dict(h)["Location"])
+        self.assertTrue(self._call("POST", "/admin/member/alice/chat-operator", cookie=self.alice,
+                                   form={"on": "0"})[0].startswith("403"))                     # a sysadmin's tick
+        c = self._conn()
+        self.assertTrue(chat.is_operator(c, "alice") and not chat.is_operator(c, "bob"))
+        self.assertIn("chat operator ticked", c.execute(
+            "SELECT detail FROM audit_event WHERE action = 'MEMBER' AND subject_id = 'alice' ORDER BY audit_id DESC").fetchone()[0])
+        self.assertIn("id=chatoperator", self._call("GET", "/admin/member/alice", cookie=self.root)[2])
+        # the portal chats only with the board that takes chats
+        self.assertIn("id=chatpaalala", self._call("GET", "/my/chat", cookie=nurse)[2])
+        self.assertTrue(self._call("POST", "/my/chat/new", cookie=nurse, form={
+            "board_id": "UNROUTED", "subject": "x", "body": "y"})[0].startswith("400"))
+        cid, _ = chat.start(c, requester="nurse", board_id="IT_HELP", subject="Teams phone silent",
+                            first="The Teams phone on ward 7 does not ring.", at=datetime(2026, 9, 17, 9, 30))
+        c.commit()
+        # bob works IT Help but is not ticked: no Chat, no banner, no chat to read or answer
+        board_page = self._call("GET", "/", cookie=bob)[2]
+        self.assertNotIn('href="/chat"', board_page)
+        self.assertIn("id=chatticker class=ticker hidden", board_page)
+        self.assertEqual(_json.loads(self._call("GET", "/chat/waiting.json", cookie=bob)[2])["live"], [])
+        self.assertTrue(self._call("GET", f"/chat/{cid}", cookie=bob)[0].startswith("404"))
+        self.assertTrue(self._call("POST", f"/chat/{cid}/send", cookie=bob, form={"body": "x"})[0].startswith("404"))
+        # alice is: the menu, the banner, the chat
+        board_page = self._call("GET", "/", cookie=self.alice)[2]
+        self.assertIn('href="/chat"', board_page)
+        self.assertIn("Live chats (<span class=tn>1</span>)", board_page)
+        # the ring: louder, a phone's two trilled tones, again every 30 s while a chat waits, one tab at a time
+        for piece in ("createDynamicsCompressor", "o.type='square'", "REPEAT=30000", "psa-chat-rang", "ring(true)"):
+            self.assertIn(piece, templates.SCRIPT, piece)
+        # she picks it up at 09:40; making it a ticket at 10:00 opens the ticket on her time, ready to confirm
+        chat.pick_up(c, cid, member="alice", at=datetime(2026, 9, 17, 9, 40))
+        c.commit()
+        _, h, _ = self._call("POST", f"/chat/{cid}/ticket", cookie=self.alice, form={"summary": "Teams phone silent"})
+        loc = dict(h)["Location"]
+        wid = self._conn().execute("SELECT work_item_id FROM chat_session WHERE chat_id = ?", (cid,)).fetchone()[0]
+        self.assertTrue(loc.startswith(f"/ticket/{wid}?") and "te=1" in loc and "check+it+and+save" in loc, loc)
+        run = timers.for_ticket(self._conn(), wid, "alice")
+        self.assertEqual((run["started_at"], run["stopped_at"], run["note"]),
+                         ("2026-09-17 09:40:00", "2026-09-17 10:00:00", "Chat with nurse · chat 1"))
+        self.assertEqual(self._conn().execute("SELECT COUNT(*) FROM time_entry WHERE work_item_id = ?",
+                                              (wid,)).fetchone()[0], 0)                       # nothing booked yet
+        page = self._call("GET", f"/ticket/{wid}", query="te=1", cookie=self.alice)[2]
+        dlg = page[page.index("<dialog id=tedlg"):]
+        dlg = dlg[:dlg.index("</dialog>")]
+        self.assertIn("data-autoopen", dlg)
+        for bit in ("name=start step=60 value='09:40'", "name=end step=60 value='10:00'", "Chat with nurse · chat 1</textarea>",
+                    f"name=timer_id value='{run['timer_id']}'"):
+            self.assertIn(bit, dlg, bit)
+        # she saves it as it came: the span on the ticket, hers, to the quarter hour; the clock spent
+        status, h, _ = self._call("POST", f"/ticket/{wid}/time", cookie=self.alice, form={
+            "timer_id": str(run["timer_id"]), "worked_on": "2026-09-17", "start": "09:40", "end": "10:00",
+            "body": "Chat with nurse · chat 1", "flag": "INTERNAL"})
+        self.assertTrue(status.startswith("303"), status)
+        e = self._conn().execute("SELECT performed_by, time_start, time_end, actual_hours FROM time_entry"
+                                 " WHERE work_item_id = ?", (wid,)).fetchone()
+        self.assertEqual(tuple(e), ("alice", "2026-09-17 09:40", "2026-09-17 10:00", 0.25))   # the desk's quarter hour
+        self.assertIsNone(timers.for_ticket(self._conn(), wid, "alice"))
+        # a second chat added to the same ticket brings its own time to confirm
+        c = self._conn()
+        cid2, _ = chat.start(c, requester="nurse", board_id="IT_HELP", subject="Still silent", first="Same phone.",
+                             at=datetime(2026, 9, 17, 9, 50))
+        chat.say(c, cid2, sender="alice", kind=chat.STAFF, body="Looking now.", at=datetime(2026, 9, 17, 9, 55))
+        c.commit()
+        _, h, _ = self._call("POST", f"/chat/{cid2}/attach", cookie=self.alice, form={"work_item_id": wid})
+        self.assertIn("te=1", dict(h)["Location"])
+        run = timers.for_ticket(self._conn(), wid, "alice")
+        self.assertEqual((run["started_at"], run["note"]), ("2026-09-17 09:55:00", "Chat with nurse · chat 2"))
+        # untick: Chat is gone from her desk again
+        self._call("POST", "/admin/member/alice/chat-operator", cookie=self.root, form={"on": "0"})
+        self.assertTrue(self._call("GET", "/chat", cookie=self.alice)[0].startswith("403"))
 
     def test_projects_phases_predecessors_tickets_and_actual_hours(self):
         from psaspine import projects

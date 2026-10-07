@@ -197,10 +197,17 @@ def _status_words(c, conn=None, *, desk: bool = False) -> str:
 
 # ================================================================= the desk
 
+def _desk_boards(ctx) -> set:
+    """The boards whose chats this person answers (073): a chat operator's
+    boards that take chats; nothing for anyone else."""
+    return chat.operator_boards(ctx.conn, ctx.user.id, common.board_ids_for(ctx))
+
+
 def _load(ctx, chat_id, *, need: str = "READ"):
     from .. import HttpError
     c = chat.get(ctx.conn, int(chat_id)) if str(chat_id).isdigit() else None
-    if c is None or not common.may_access_board(ctx, c["board_id"], need=need):
+    if c is None or c["board_id"] not in _desk_boards(ctx) \
+            or not common.may_access_board(ctx, c["board_id"], need=need):
         raise HttpError("404 Not Found", "No such chat.")
     common.audit_restricted_read(ctx, c["board_id"], subject_id=f"chat {c['chat_id']}")
     return c
@@ -210,9 +217,14 @@ def index(ctx):
     """The queue: chats waiting for someone, then the ones being answered, then
     the last two days' ended ones, on the boards the person is on."""
     from .. import Response
-    seen = common.board_ids_for(ctx)
-    if not seen:                                      # a requester: their own side of it
+    if not common.board_ids_for(ctx):                 # a requester: their own side of it
         return _back("/my/chat")
+    seen = _desk_boards(ctx)
+    if not seen:
+        names = ", ".join(r["display_name"] for r in chat.chat_boards(ctx.conn)) or "no board yet"
+        body = ("<h1>Chat</h1><div class='banner err'>Chat is answered by chat operators on the boards that take chats "
+                f"({t.esc(names)}). Ask a sysadmin to tick <b>Chat operator</b> on your member record in Setup › Members.</div>")
+        return Response("403 Forbidden", t.page("Chat", body, user=ctx.user, active="chat"))
     rows = chat.queue(ctx.conn, seen, now=ctx.now)
     q = ctx.request.query
 
@@ -390,7 +402,7 @@ def file_review(ctx, chat_id, file_id):
 def live_for(ctx) -> list[dict]:
     """The live chats on the person's boards, each marked with whether they may
     pick it up, for the banner and its quick view."""
-    rows = chat.live(ctx.conn, common.board_ids_for(ctx), now=ctx.now)
+    rows = chat.live(ctx.conn, _desk_boards(ctx), now=ctx.now)
     work = {}
     for r in rows:
         if r["board_id"] not in work:
@@ -419,11 +431,38 @@ def end(ctx, chat_id):
                 lambda c, r: _back(f"/chat/{c['chat_id']}", msg="Chat ended."))
 
 
+def _clock_the_chat(ctx, c, wid: str) -> None:
+    """The operator's time on the chat, ready on the ticket for them to confirm
+    (Dada, 7 Oct 2026: "if the chat is converted into a ticket can it be that the
+    operators time be recorded"; confirmed: pre-filled, the operator confirms).
+    A stopped clock from their pick-up to now, with the chat named in its notes:
+    the ticket's own time entry window opens on it, to save, correct or cancel.
+    Nothing is booked until they save. A clock of theirs already on that ticket
+    is left as it is, and the window opens on that one."""
+    from ... import timers
+    me = ctx.user.id
+    if timers.for_ticket(ctx.conn, wid, me) is not None:
+        return
+    nth, _ = chat.counts(ctx.conn, c["chat_id"])
+    since = chat.operator_since(ctx.conn, c["chat_id"], me, now=ctx.now)
+    timer_id = timers.start(ctx.conn, wid, member=me, at=since)
+    timers.note(ctx.conn, timer_id, member=me, text=f"Chat with {chat.label(ctx.conn, c['requester'], nth)}")
+    timers.stop(ctx.conn, timer_id, member=me, at=ctx.now)
+
+
+def _to_ticket_page(c, wid: str, msg: str):
+    return _back(f"/ticket/{wid}", msg=msg, te="1")
+
+
 def make_ticket(ctx, chat_id):
     f = ctx.request.form()
-    return _act(ctx, chat_id, lambda c: chat.to_ticket(ctx.conn, c["chat_id"], member=ctx.user.id,
-                                                       summary=f.get("summary") or None, at=ctx.now),
-                lambda c, wid: _back(f"/chat/{c['chat_id']}", msg=f"Ticket {wid} raised from the chat."))
+
+    def go(c):
+        wid = chat.to_ticket(ctx.conn, c["chat_id"], member=ctx.user.id, summary=f.get("summary") or None, at=ctx.now)
+        _clock_the_chat(ctx, c, wid)
+        return wid
+    return _act(ctx, chat_id, go, lambda c, wid: _to_ticket_page(
+        c, wid, f"Ticket {wid} raised from the chat. Your time on the chat is in the time entry: check it and save."))
 
 
 def attach(ctx, chat_id):
@@ -434,8 +473,11 @@ def attach(ctx, chat_id):
         if tk is None or not common.may_access_board(ctx, tk["board_id"], need="WORK") \
                 or not common.project_ticket_ok(ctx, wid):
             raise chat.Refused(f"No ticket {wid} that you work.")
-        return chat.attach(ctx.conn, c["chat_id"], wid, member=ctx.user.id, at=ctx.now)
-    return _act(ctx, chat_id, go, lambda c, r: _back(f"/chat/{c['chat_id']}", msg=f"Chat added to {r}."))
+        r = chat.attach(ctx.conn, c["chat_id"], wid, member=ctx.user.id, at=ctx.now)
+        _clock_the_chat(ctx, c, wid)
+        return r
+    return _act(ctx, chat_id, go, lambda c, r: _to_ticket_page(
+        c, wid, f"Chat added to {r}. Your time on the chat is in the time entry: check it and save."))
 
 
 # ================================================================ the portal
@@ -476,9 +518,9 @@ def my_index(ctx, *, error: str = ""):
     """The requester's chats and a box to start one. Offered at any time; a chat
     started out of hours waits until someone from the desk is in."""
     from .. import Response
-    from .portal import _identities, _my_boards
+    from .portal import _identities
     rows = chat.of_requester(ctx.conn, _identities(ctx))
-    boards = list(_my_boards(ctx))
+    boards = list(chat.chat_boards(ctx.conn))          # 073: only the boards that take chats (PMO Helpdesk)
     if len(boards) > 1:
         who = ("<label>Who is this for? <select name=board_id required>"
                + "".join(f"<option value='{t.esc(b['board_id'])}'>{t.esc(b['display_name'])}</option>" for b in boards)
@@ -491,39 +533,38 @@ def my_index(ctx, *, error: str = ""):
         f"<tr><td><a href='/my/chat/{r['chat_id']}'>{t.esc(r['subject'])}</a></td><td>{t.esc(r['board_name'])}</td>"
         f"<td>{t.chip({'WAITING': 'Waiting', 'ACTIVE': 'Open', 'CLOSED': 'Ended'}[r['status']])}</td>"
         f"<td class=muted>{t.esc(r['started_at'][:16])}</td></tr>" for r in rows)
+    start = ("<div class=grid2 style='grid-template-columns:minmax(0,3fr) minmax(0,2fr);align-items:start'>"
+             "<div class=card id=chatstart><h3>" + t.icon("note") + "Start a chat</h3>"
+             "<form method=post action='/my/chat/new' class=stack style='max-width:none'>"
+             "<label>What is it about? <input name=subject maxlength=200 placeholder='hal. Printer sa Ward 3, ayaw mag-print'></label>" + who
+             + "<label>Your message <textarea name=body required maxlength=2000 rows=6 placeholder='Saan kayo (ward/office, room), "
+               "anong gamit (PC name o asset tag), ano ang error, at kailan pa. Huwag po ilagay ang detalye ng pasyente.'>"
+               "</textarea></label>"
+               "<div><button type=submit>Start the chat</button></div></form></div>" + _paalala() + "</div>"
+             if boards else "<div class='banner err' id=chatstart>Chat is not available right now. Please raise a request, "
+                            "or ring the desk.</div>")
     body = ((f"<div class='banner err'>{t.esc(error)}</div>" if error else "")
             + "<h1>Chat with the helpdesk</h1><p class='sub'>Type what is wrong and someone from the desk will answer "
               "here. If it needs work, they will raise a request for you.</p>"
-            + "<div class=grid2 style='grid-template-columns:minmax(0,3fr) minmax(0,2fr);align-items:start'>"
-              "<div class=card id=chatstart><h3>" + t.icon("note") + "Start a chat</h3>"
-              "<form method=post action='/my/chat/new' class=stack style='max-width:none'>"
-              "<label>What is it about? <input name=subject maxlength=200 placeholder='hal. Printer sa Ward 3, ayaw mag-print'></label>" + who
-            + "<label>Your message <textarea name=body required maxlength=2000 rows=6 placeholder='Saan kayo (ward/office, room), "
-              "anong gamit (PC name o asset tag), ano ang error, at kailan pa. Huwag po ilagay ang detalye ng pasyente.'>"
-              "</textarea></label>"
-              "<div><button type=submit>Start the chat</button></div></form></div>" + _paalala() + "</div>"
+            + start
             + ("<div class=card><h3>Your chats</h3><div class=tablewrap><table><thead><tr><th>About</th><th>With</th>"
                f"<th>State</th><th>Started</th></tr></thead><tbody>{lis}</tbody></table></div></div>" if rows else ""))
     return Response("400 Bad Request" if error else "200 OK", t.page("Chat", body, user=ctx.user, active="chat"))
 
 
 def my_start(ctx):
-    from .portal import _my_boards
     f = ctx.request.form()
-    boards = {b["board_id"] for b in _my_boards(ctx)}
+    boards = {b["board_id"] for b in chat.chat_boards(ctx.conn)}     # 073: only boards that take chats
     chosen = f.get("board_id", "")
     if chosen and chosen not in boards:
-        return my_index(ctx, error="That is not one of the places your department can chat with.")
+        return my_index(ctx, error="That is not a desk that takes chats.")
     if not chosen:
         if len(boards) == 1:
             chosen = next(iter(boards))
         elif boards:
             return my_index(ctx, error="Tell us who this is for.")
         else:
-            row = ctx.conn.execute("SELECT board_id FROM board WHERE is_unrouted = 1").fetchone()
-            if row is None:
-                return my_index(ctx, error="Chat is not available right now. Please ring the desk.")
-            chosen = row["board_id"]
+            return my_index(ctx, error="Chat is not available right now. Please raise a request, or ring the desk.")
     requester = (getattr(ctx.user, "email", None) or ctx.user.id or "").lower()
     try:
         cid, findings = chat.start(ctx.conn, requester=requester, board_id=chosen, subject=f.get("subject", ""),

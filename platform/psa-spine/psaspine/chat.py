@@ -464,3 +464,83 @@ def live(conn: sqlite3.Connection, boards, *, now: datetime | None = None) -> li
             "last_from": "" if r["restricted"] or not r["last_kind"] else ("desk" if r["last_kind"] == STAFF else "requester"),
         })
     return out
+
+
+# ---------------------------------------------------------------- operators (073)
+# Dada, 7 Oct 2026: "a chat operator member access ... only PMO Helpdesk members
+# can use the chat". A board takes chats (Setup › Boards); a member answers them
+# when ticked Chat operator (Setup › Members) and is on such a board able to work it.
+
+def chat_boards(conn: sqlite3.Connection) -> list:
+    """The boards that take chats from the portal, by name."""
+    return conn.execute("SELECT board_id, display_name FROM board WHERE takes_chats = 1 AND COALESCE(inactive, 0) = 0"
+                        " ORDER BY display_name").fetchall()
+
+
+def is_operator(conn: sqlite3.Connection, member: str | None) -> bool:
+    row = conn.execute("SELECT chat_operator FROM member WHERE LOWER(member) = LOWER(?)", (member or "",)).fetchone()
+    return bool(row and row["chat_operator"])
+
+
+def operator_boards(conn: sqlite3.Connection, member: str | None, boards) -> set:
+    """Of the boards a person can see, the ones whose chats they answer: none
+    unless they are a chat operator, and only boards that take chats."""
+    if not is_operator(conn, member):
+        return set()
+    takes = {r["board_id"] for r in chat_boards(conn)}
+    return {b for b in boards if b in takes}
+
+
+def _working_chat_boards(conn, member: str) -> list[str]:
+    return [r["board_id"] for r in conn.execute(
+        "SELECT bm.board_id FROM board_member bm JOIN board b ON b.board_id = bm.board_id"
+        " WHERE LOWER(bm.member) = LOWER(?) AND bm.access IN ('WORK', 'ADMIN') AND b.takes_chats = 1",
+        (member,)).fetchall()]
+
+
+def set_operator(conn: sqlite3.Connection, member: str, on: bool, *, at: datetime, actor: str) -> str:
+    """Tick or untick Chat operator on a member record, making the record if
+    the person is known only from a membership. Given only to someone who can
+    work a board that takes chats. Audited on the member's history."""
+    from . import members
+    if not members.exists(conn, member):
+        raise Refused("No such member.")
+    ident = next(x for x in members.identifiers(conn) if x.lower() == member.strip().lower())
+    if on and not _working_chat_boards(conn, ident):
+        names = ", ".join(r["display_name"] for r in chat_boards(conn)) or "no board yet"
+        raise Refused(f"Only someone who works a board that takes chats can be a chat operator ({names}). "
+                      "Put them on that board first.")
+    stamp = _stamp(at)
+    row = conn.execute("SELECT member, chat_operator, inactive_from FROM member WHERE LOWER(member) = LOWER(?)",
+                       (ident,)).fetchone()
+    if row is None:
+        conn.execute("INSERT INTO member (member, created_at, created_by, updated_at, updated_by) VALUES (?,?,?,?,?)",
+                     (ident, stamp, actor, stamp, actor))
+        row = conn.execute("SELECT member, chat_operator, inactive_from FROM member WHERE member = ?", (ident,)).fetchone()
+    if on and row["inactive_from"]:
+        raise Refused("They have left; bring them back on the desk first.")
+    if bool(row["chat_operator"]) == bool(on):
+        return f"{ident} is already " + ("a chat operator." if on else "not a chat operator.")
+    conn.execute("UPDATE member SET chat_operator = ?, updated_at = ?, updated_by = ? WHERE member = ?",
+                 (1 if on else 0, stamp, actor, row["member"]))
+    members._audit(conn, at, actor, row["member"], "chat operator " + ("ticked" if on else "unticked"))
+    return f"{ident} is " + ("now a chat operator." if on else "no longer a chat operator.")
+
+
+def operator_since(conn: sqlite3.Connection, chat_id: int, member: str, *, now: datetime) -> datetime:
+    """When this operator's time on the chat began: their pick-up, else their
+    first line in it, else now. What the time entry window starts from when
+    the chat becomes a ticket (Dada, 7 Oct 2026: "the operators time be
+    recorded"; confirmed: pre-filled for the operator to confirm)."""
+    c = get(conn, chat_id)
+    stamps = []
+    if c and c["picked_at"] and (c["picked_by"] or "").lower() == member.lower():
+        stamps.append(c["picked_at"])
+    row = conn.execute("SELECT MIN(sent_at) FROM chat_message WHERE chat_id = ? AND sender_kind = 'STAFF'"
+                       " AND LOWER(sender) = LOWER(?)", (chat_id, member)).fetchone()
+    if row and row[0]:
+        stamps.append(row[0])
+    if not stamps:
+        return now
+    first = datetime.fromisoformat(min(stamps)[:19])
+    return min(first, now.replace(tzinfo=None))

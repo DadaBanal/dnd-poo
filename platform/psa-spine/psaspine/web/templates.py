@@ -1962,9 +1962,20 @@ function paint(){snd.classList.toggle('off',!on());snd.textContent=on()?'🔔':'
 snd.addEventListener('click',function(){try{localStorage.setItem(KEY,on()?'off':'on')}catch(e){}paint();if(on())chime()});
 function ctx(){if(!ac){var A=window.AudioContext||window.webkitAudioContext;if(!A)return null;ac=new A()}if(ac.state==='suspended')ac.resume();return ac}
 document.addEventListener('pointerdown',function(){if(on())ctx()},{once:true});
-function chime(){var a=ctx();if(!a)return;var t=a.currentTime;[[880,0],[1320,.16]].forEach(function(p){var o=a.createOscillator(),g=a.createGain();
- o.type='sine';o.frequency.value=p[0];g.gain.setValueAtTime(0.0001,t+p[1]);g.gain.exponentialRampToValueAtTime(0.25,t+p[1]+.02);
- g.gain.exponentialRampToValueAtTime(0.0001,t+p[1]+.35);o.connect(g);g.connect(a.destination);o.start(t+p[1]);o.stop(t+p[1]+.4)})}
+/* 073 (Dada, 7 Oct 2026: "a more audible one a different beep or alert"; confirmed: a louder phone-style ring,
+   again every 30 s while a chat waits). A desk phone's ring: two tones trilled fast, in two bursts, played twice,
+   through a compressor so it is loud without clipping. Made here, no sound file. */
+function chime(){var a=ctx();if(!a)return;var t=a.currentTime,cmp=a.createDynamicsCompressor(),out=a.createGain();
+ cmp.threshold.value=-12;cmp.ratio.value=4;out.gain.value=0.9;cmp.connect(out);out.connect(a.destination);
+ [0,.55,1.4,1.95].forEach(function(b){var o=a.createOscillator(),g=a.createGain(),s=t+b,i;o.type='square';
+  for(i=0;i<9;i++)o.frequency.setValueAtTime(i%2?1400:1100,s+i*.05);
+  g.gain.setValueAtTime(0.0001,s);g.gain.exponentialRampToValueAtTime(0.55,s+.015);g.gain.setValueAtTime(0.55,s+.42);
+  g.gain.exponentialRampToValueAtTime(0.0001,s+.45);o.connect(g);g.connect(cmp);o.start(s);o.stop(s+.46)})}
+/* one ring across the person's open tabs: whichever tab rings first says so, and the others keep quiet */
+var RANG='psa-chat-rang',REPEAT=30000;
+function rangAgo(){try{return Date.now()-(+localStorage.getItem(RANG)||0)}catch(e){return 1e9}}
+function ring(fresh){if(!on()||tk.hidden)return;if(rangAgo()<(fresh?3000:REPEAT-2000))return;
+ try{localStorage.setItem(RANG,String(Date.now()))}catch(e){}chime()}
 function seen(){try{return JSON.parse(sessionStorage.getItem(SEEN)||'[]')}catch(e){return[]}}
 function remember(ids){try{sessionStorage.setItem(SEEN,JSON.stringify(ids.slice(-200)))}catch(e){}}
 /* the quick view (Dada, 7 Oct 2026: "a quick view of the live chats"): opens over the page, Escape or a click away closes it */
@@ -1998,7 +2009,8 @@ function hidden(){try{return JSON.parse(sessionStorage.getItem(HID)||'[]')}catch
 function ids(){return Array.prototype.map.call(panel.querySelectorAll('.trow[data-id]'),function(r){return +r.dataset.id})}
 tk.querySelector('.tclose').addEventListener('click',function(){open(false);tk.hidden=true;
  try{sessionStorage.setItem(HID,JSON.stringify(ids()))}catch(e){}});
-function look(){if(document.hidden&&!first)return;fetch('/chat/waiting.json',{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null}).then(function(j){
+/* polled in a background tab too: the ring matters most when the desk page is not the one in front */
+function look(){fetch('/chat/waiting.json',{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null}).then(function(j){
  if(!j)return;var lv=j.live||[],cs=j.chats||[];
  var key=JSON.stringify(lv);if(key!==lastL){drawTicker(lv,cs);drawPanel(lv);lastL=key}
  word.textContent='💬 '+(j.word||'');tn.textContent=lv.length;
@@ -2006,7 +2018,7 @@ function look(){if(document.hidden&&!first)return;fetch('/chat/waiting.json',{cr
  var old=seen(),fresh=cs.filter(function(c){return old.indexOf(c.id)<0});
  var hid=hidden();if(lv.every(function(c){return hid.indexOf(c.id)>=0})){tk.hidden=true;remember(old.concat(fresh.map(function(c){return c.id})));first=false;return}
  track.style.setProperty('--tdur',Math.max(12,8+(cs.length||lv.length)*6)+'s');tk.hidden=false;
- if(fresh.length&&on())chime();remember(old.concat(fresh.map(function(c){return c.id})));first=false}).catch(function(){})}
+ if(fresh.length)ring(true);else if(cs.length)ring(false);remember(old.concat(fresh.map(function(c){return c.id})));first=false}).catch(function(){})}
 paint();look();setInterval(look,8000);document.addEventListener('visibilitychange',function(){if(!document.hidden)look()})})();
 """
 
@@ -2246,7 +2258,7 @@ HIGHLIGHTS = (("hl-yellow", "#fff3a3", "Yellow"), ("hl-green", "#c9f2d4", "Green
               ("hl-blue", "#cfe3ff", "Blue"), ("hl-pink", "#ffd6e8", "Pink"))
 
 
-def note_editor(*, placeholder: str, required: bool = True, rows_hint: str = "") -> str:
+def note_editor(*, placeholder: str, required: bool = True, rows_hint: str = "", text: str = "") -> str:
     """The note box the desk writes in, as a Teams reply box is laid out
     (Dada, 6 Oct 2026: "add extra options for fonts add image attachment gif
     just like when u reply to teams"): a style and a size, bold, italic,
@@ -2304,8 +2316,9 @@ def note_editor(*, placeholder: str, required: bool = True, rows_hint: str = "")
         "<span class=grow></span>"
         "<button type=button class='tab on' data-plain=0 title='Write with formatting'>Rich</button>"
         "<button type=button class=tab data-plain=1 title='Write as plain text'>Plain</button></div>"
-        f"<div class=editor contenteditable=true role=textbox aria-multiline=true aria-label='The note' data-ph='{esc(placeholder)}'></div>"
-        f"<textarea name=body{' required' if required else ''} placeholder='{esc(placeholder)}'></textarea>"
+        # `text` starts the box with words already in it, as plain text (073: a chat's time entry).
+        f"<div class=editor contenteditable=true role=textbox aria-multiline=true aria-label='The note' data-ph='{esc(placeholder)}'>{esc(text)}</div>"
+        f"<textarea name=body{' required' if required else ''} placeholder='{esc(placeholder)}'>{esc(text)}</textarea>"
         "<div class=edhint>Paste or drop a screenshot or a GIF straight in. Pictures are kept with the ticket's files and "
         "checked for patient details before a requester sees them." + (f" {esc(rows_hint)}" if rows_hint else "") + "</div>"
         "</div>")
@@ -2728,6 +2741,9 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
             "finance": "FINANCE", "sales": "FINANCE", "time": "TIME", "calendar": "SCHEDULE"}
     groups = [(g, label, [pg for pg in pages if pg[0] not in gate or levels.get(gate[pg[0]], "READ") != "NONE"])
               for g, label, pages in groups]
+    # 073: the desk's Chat is for chat operators (Dada, 7 Oct 2026).
+    if not getattr(user, "chat_operator", False):
+        groups = [(g, label, [pg for pg in pages if pg[0] != "chat"]) for g, label, pages in groups]
     groups = [g for g in groups if g[2]]
     if requester:
         groups = [("my", "My requests", [("my", "/my", "My requests", "")]),

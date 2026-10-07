@@ -976,7 +976,8 @@ def _time_dialog(ctx, tk, run, *, status_pairs, notify_tick: bool) -> str:
            if run is not None and not run["stopped_at"] else "")
         + "<label>Notes</label>"
         + t.note_editor(placeholder="What was done, and what is next. Ticked Discussion, the requester reads it; "
-                                    "a patient never needs naming (§6.1).", required=False)
+                                    "a patient never needs naming (§6.1).", required=False,
+                        text=(run["note"] or "") if run is not None else "")
         + "<div class=teflags><span class=seg>"
           "<label><input type=radio name=flag value=DISCUSSION checked><span>Discussion</span></label>"
           "<label class=int><input type=radio name=flag value=INTERNAL><span>Internal</span></label></span>"

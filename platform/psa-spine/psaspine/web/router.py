@@ -156,6 +156,7 @@ ROUTES = [
     ("POST", "/admin/member/<member>/board", members_view.board),
     ("POST", "/admin/member/<member>/board/remove", members_view.board_remove),
     ("POST", "/admin/member/<member>/sysadmin", members_view.sysadmin),
+    ("POST", "/admin/member/<member>/chat-operator", members_view.chat_operator),
     ("POST", "/admin/member/<member>/role", members_view.role),
     ("POST", "/admin/member/<member>/capacity", members_view.capacity),
     ("POST", "/admin/member/<member>/deactivate", members_view.deactivate),
