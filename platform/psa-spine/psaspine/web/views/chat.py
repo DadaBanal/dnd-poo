@@ -400,14 +400,13 @@ def live_for(ctx) -> list[dict]:
 
 
 def waiting_json(ctx):
-    """The banner every desk page runs: what waits (for the chime), every live
-    chat (for the quick view), and both drawn as the page draws them."""
+    """The banner every desk page runs: what waits (for the chime) and every
+    live chat (for the quick view). The page's script draws them as data."""
     rows = live_for(ctx)
-    word, ticker = t.chat_ticker(rows)
-    keep = ("id", "subject", "who", "name", "nth", "total", "label", "board", "status", "with", "since", "waited")
+    keep = ("id", "subject", "who", "name", "nth", "total", "label", "board", "status", "with", "since", "waited",
+            "last", "last_from", "can")
     return _json({"chats": [{k: r[k] for k in keep} for r in rows if r["status"] == chat.WAITING],
-                  "live": [{k: r[k] for k in keep} for r in rows],
-                  "word": word, "ticker": ticker, "panel": t.chat_panel(rows)})
+                  "live": [{k: r[k] for k in keep} for r in rows], "word": t.chat_ticker(rows)[0]})
 
 
 def pick(ctx, chat_id):

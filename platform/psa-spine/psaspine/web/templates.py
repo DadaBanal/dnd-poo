@@ -1972,15 +1972,35 @@ function open(v){panel.hidden=!v;btn.setAttribute('aria-expanded',v?'true':'fals
 btn.addEventListener('click',function(e){e.stopPropagation();open(panel.hidden)});
 document.addEventListener('click',function(e){if(!panel.hidden&&!panel.contains(e.target)&&!btn.contains(e.target))open(false)});
 document.addEventListener('keydown',function(e){if(e.key==='Escape'&&!panel.hidden){open(false);btn.focus()}});
-var first=true,HID='psa-chat-hidden',lastT=null,lastP=null;
+var first=true,HID='psa-chat-hidden',lastL=null;
+/* drawn from the data with textContent, never from markup (the desk's rule for anything a person typed) */
+function el(tag,cls,txt){var e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e}
+function tip(c){return c.total+' chat'+(c.total!==1?'s':'')+' from '+c.name+' so far'}
+function state(c){return c.status==='WAITING'?(c.waited?'waiting '+c.waited:'since '+c.since):'with '+c['with']}
+function link(c){var a=el('a');a.href='/chat/'+c.id;a.title=tip(c);return a}
+function drawTicker(lv,cs){var shown=cs.length?cs:lv;track.textContent='';
+ shown.forEach(function(c){var a=link(c);a.dataset.id=c.id;a.appendChild(document.createTextNode('💬 '));a.appendChild(el('b',null,c.label));
+  a.appendChild(document.createTextNode(' — '+c.subject+' · '+c.board+' · '+state(c)));track.appendChild(a)});
+ if(cs.length>1){var n=el('a',null,cs.length+' chats waiting');n.href='/chat';track.appendChild(n)}}
+function row(c){var r=el('div','trow'),g=el('div','grow'),a=link(c);r.dataset.id=c.id;a.appendChild(el('b',null,c.label));g.appendChild(a);
+ g.appendChild(document.createTextNode(' '));g.appendChild(el('span','muted',c.subject+' · '+c.board+' · '+state(c)));
+ if(c.last){var l=el('div','tlast');l.appendChild(el('span','muted',(c.last_from==='desk'?'Desk':c.name.split(' ')[0])+':'));
+  l.appendChild(document.createTextNode(' '+c.last));g.appendChild(l)}
+ r.appendChild(g);
+ if(c.status==='WAITING'&&c.can){var f=el('form');f.method='post';f.action='/chat/'+c.id+'/pick';var b=el('button','small','Pick up');b.type='submit';f.appendChild(b);r.appendChild(f)}
+ return r}
+function drawPanel(lv){panel.textContent='';
+ [['Waiting',function(c){return c.status==='WAITING'}],['In progress',function(c){return c.status!=='WAITING'}]].forEach(function(p){
+  var some=lv.filter(p[1]);if(!some.length)return;panel.appendChild(el('h4',null,p[0]+' ('+some.length+')'));some.forEach(function(c){panel.appendChild(row(c))})});
+ if(!lv.length)panel.appendChild(el('p','muted','No live chats.'));
+ var f=el('p','tfoot'),a=el('a',null,'Open the Chat queue');a.href='/chat';f.appendChild(a);panel.appendChild(f)}
 function hidden(){try{return JSON.parse(sessionStorage.getItem(HID)||'[]')}catch(e){return[]}}
 function ids(){return Array.prototype.map.call(panel.querySelectorAll('.trow[data-id]'),function(r){return +r.dataset.id})}
 tk.querySelector('.tclose').addEventListener('click',function(){open(false);tk.hidden=true;
  try{sessionStorage.setItem(HID,JSON.stringify(ids()))}catch(e){}});
 function look(){if(document.hidden&&!first)return;fetch('/chat/waiting.json',{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null}).then(function(j){
  if(!j)return;var lv=j.live||[],cs=j.chats||[];
- if(j.ticker!==lastT){track.innerHTML=j.ticker||'';lastT=j.ticker}
- if(j.panel!==lastP){panel.innerHTML=j.panel||'';lastP=j.panel}
+ var key=JSON.stringify(lv);if(key!==lastL){drawTicker(lv,cs);drawPanel(lv);lastL=key}
  word.textContent='💬 '+(j.word||'');tn.textContent=lv.length;
  if(!lv.length){open(false);tk.hidden=true;first=false;return}
  var old=seen(),fresh=cs.filter(function(c){return old.indexOf(c.id)<0});

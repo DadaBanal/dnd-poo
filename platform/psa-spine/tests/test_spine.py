@@ -7129,15 +7129,19 @@ class ModulesTest(unittest.TestCase):
         self.assertEqual([w["id"] for w in j["chats"]], [two, other])
         self.assertEqual([(r["id"], r["status"]) for r in j["live"]], [(two, "WAITING"), (other, "WAITING"), (one, "ACTIVE")])
         self.assertEqual((j["word"], j["live"][1]["label"]), ("New chat", chat.label(c, "jun.reyes", 1)))
-        self.assertIn("Waiting (2)", j["panel"])
-        self.assertIn("In progress (1)", j["panel"])
-        self.assertEqual(j["panel"].count(">Pick up</button>"), 2)
-        self.assertIn("On my way.", j["panel"])                                   # the last line, not the join notice
-        self.assertIn("No mouse.", j["panel"])
-        self.assertIn(f"<b>{second}</b>", j["ticker"])
-        self.assertNotIn(f"<b>{first}</b>", j["ticker"])                          # the ticker runs what waits
+        self.assertEqual([r["can"] for r in j["live"]], [True, True, True])
+        self.assertEqual((j["live"][2]["last"], j["live"][2]["last_from"]), ("On my way.", "desk"))  # not the join notice
+        self.assertEqual((j["live"][0]["last"], j["live"][0]["last_from"]), ("No mouse.", "requester"))
         # drawn filled on every desk page, twice the size, the quick view closed until asked for
         board_page = self._call("GET", "/", cookie=self.alice)[2]
+        panel = board_page[board_page.index("id=chatlive"):]
+        self.assertIn("Waiting (2)", panel)
+        self.assertIn("In progress (1)", panel)
+        self.assertEqual(panel.count(">Pick up</button>"), 2)
+        self.assertIn("On my way.", panel)
+        ticker = board_page[board_page.index("class=ttrack>"):board_page.index("id=chatlive")]
+        self.assertIn(f"<b>{second}</b>", ticker)
+        self.assertNotIn(f"<b>{first}</b>", ticker)                               # the ticker runs what waits
         self.assertIn("Live chats (<span class=tn>3</span>)", board_page)
         self.assertIn("id=chatlive class=tpanel role=dialog aria-label='Live chats' hidden>", board_page)
         self.assertIn("min-height:56px", board_page)
@@ -7146,7 +7150,9 @@ class ModulesTest(unittest.TestCase):
         conn = self._conn()
         conn.execute("UPDATE board_member SET access = 'READ' WHERE board_id = 'IT_HELP' AND member = 'alice'")
         conn.commit()
-        self.assertNotIn("Pick up", _json.loads(self._call("GET", "/chat/waiting.json", cookie=self.alice)[2])["panel"])
+        self.assertEqual({r["can"] for r in _json.loads(self._call("GET", "/chat/waiting.json", cookie=self.alice)[2])["live"]},
+                         {False})
+        self.assertNotIn(">Pick up</button>", self._call("GET", "/", cookie=self.alice)[2])
         conn.execute("UPDATE board_member SET access = 'ADMIN' WHERE board_id = 'IT_HELP' AND member = 'alice'")
         conn.commit()
         # nothing waiting: the banner carries the chats being answered
@@ -7154,7 +7160,8 @@ class ModulesTest(unittest.TestCase):
             self._call("POST", f"/chat/{cid}/pick", cookie=self.alice)
         j = _json.loads(self._call("GET", "/chat/waiting.json", cookie=self.alice)[2])
         self.assertEqual((j["word"], j["chats"], len(j["live"])), ("Live chats", [], 3))
-        self.assertIn(" · with ", j["ticker"])
+        page = self._call("GET", "/", cookie=self.alice)[2]
+        self.assertIn(" · with ", page[page.index("class=ttrack>"):page.index("id=chatlive")])
         # a restricted board's words stay on its own page, where the read is audited
         conn.execute("UPDATE board SET restricted = 1 WHERE board_id = 'IT_HELP'")
         conn.commit()
@@ -7165,7 +7172,7 @@ class ModulesTest(unittest.TestCase):
         for cid in (one, two, other):
             self._call("POST", f"/chat/{cid}/end", cookie=self.alice)
         j = _json.loads(self._call("GET", "/chat/waiting.json", cookie=self.alice)[2])
-        self.assertEqual((j["live"], j["ticker"]), ([], ""))
+        self.assertEqual(j["live"], [])
         self.assertIn("id=chatticker class=ticker hidden", self._call("GET", "/", cookie=self.alice)[2])
         # the Taglish reminder: beside the start form on the portal, never on the desk
         mine = self._call("GET", "/my/chat", cookie=nurse)[2]
