@@ -2861,3 +2861,26 @@ Ran `HANDOFF-cloud-sql01-WS36-20261007-chat-072.md`: three tables, one index, on
 **Worth recording: chat is no longer theoretical.** `chat_session` held **4 sessions and 32 messages** before this step, so the live proof left open at Part 50 — a real chat from a ward PC — has been run by Dada. Those sessions carry through 072 untouched; the new tables start empty beside them.
 
 Nothing on the host needed changing for chat files: they go to the existing `PSA_ATTACHMENT_DIR` (`D:\psa\files`), and the retention task and backup are as they were. `attachments-verify` now counts chat files as live, so they are not mistaken for orphans.
+
+### Part 52: 2026-10-07, ~14:00 +08:00. **cd83586 live; 073 with its seed and 074 applied in one stop; PSA-Desk restarted.** MEASURED.
+
+073 had not been applied — Part 51 ended at 072 — so both went in together in the one stop, as the 074 handoff allows. COPY_ONLY backup `PMC_PSA_pre073-074_20261007.bak` (VERIFYONLY ok), desk stopped, DDL **extracted from the generated port by line range and run verbatim**, dry run first, then **one transaction** covering 073's two columns, 073's seed and 074's column, with a verify gate over all of it.
+
+**073 step 4, measured before anything changed, as its handoff demands:**
+- `display_name = N'PMO Helpdesk'` returns **exactly one row** — `IT_HELP`. (Had it returned none or several the instruction was to stop and hand back.)
+- **14** distinct members with WORK or ADMIN on that board, and **0** of them without a `psa.member` row.
+- I also checked `member`'s NOT NULL columns that carry no default — `member`, `created_at`, `created_by`, `updated_at`, `updated_by` — and they are exactly the five the seed's INSERT names, so it could not fail on a column nobody mentioned.
+
+**Verified, all of 073 §6 and 074 §6:**
+- `member.chat_operator`, `board.takes_chats`, `chat_session.ask_rating` all non-NULL COL_LENGTH.
+- **Boards with `takes_chats = 1`: 1.** Only PMO Helpdesk takes chats, as intended.
+- **Members with `chat_operator = 1`: 14** — equal to the number measured in step 4.
+- The seed's INSERT wrote **0 rows** (`member` **23 → 23**), because every one of the 14 was already known to the desk. Nobody gained a record, and no name was written over.
+- **`chat_session WHERE ask_rating = 0`: 0.** Existing chats are NULL, which reads as asked, so nothing changes for the eight already held.
+- **Nothing existing moved:** `chat_session` **8 → 8**, `chat_message` **61 → 61**, `chat_survey` **0 → 0**, `board` **6 → 6**, measured inside the transaction.
+
+**PSA-Desk started:** `:8085` **401 → down → 401 in 2s**, Running. The code-only change in the same pull rides it: when a chat with a ticket ends, the rest of the conversation goes onto that ticket as one Discussion note.
+
+**Chat keeps growing on its own:** 8 sessions and 61 messages now, against 4 and 32 at Part 51. It is in daily use.
+
+**Dada's, not mine:** 073 seeds every WORK/ADMIN member of PMO Helpdesk as a chat operator — all 14 — because that keeps today's behaviour. Anyone who should not be answering chats is unticked on their Setup › Members page. Nothing here guesses who that is.
