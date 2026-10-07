@@ -38,7 +38,7 @@ def stamp(ctx):
         parts = (row["board_id"], row["updated_at"], row["board_status_id"], row["owner"], row["priority"],
                  ev[0], ev[1], vis[0], vis[1])
     elif scope in ("board", "schedule"):
-        frag, ids = _in(common.board_ids_for(ctx))
+        frag, ids = _in(common.service_board_ids(ctx) if scope == "board" else common.board_ids_for(ctx))
         tk = conn.execute(f"SELECT COUNT(*), MAX(updated_at) FROM ticket WHERE board_id IN {frag}", ids).fetchone()
         ev = conn.execute(f"SELECT MAX(e.ticket_event_id) FROM ticket_event e JOIN ticket t ON t.work_item_id ="
                           f" e.work_item_id WHERE t.board_id IN {frag}", ids).fetchone()

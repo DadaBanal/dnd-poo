@@ -234,6 +234,13 @@ def may_book_effort(conn: sqlite3.Connection, work_item_id: str) -> tuple[bool, 
     if waiting:
         return False, ("this ticket waits on " + ", ".join(r[0] for r in waiting)
                        + "; time goes on once that is done")
+    # 070: a project whose status allows no time entry takes none on its tickets
+    held = conn.execute(
+        "SELECT ps.name FROM project_ticket pt JOIN project p ON p.project_id = pt.project_id"
+        " JOIN project_status ps ON ps.status_id = COALESCE(p.project_status_id, p.status)"
+        " WHERE pt.work_item_id = ? AND ps.no_time = 1", (work_item_id,)).fetchone()
+    if held:
+        return False, f"the project's status {held[0]!r} does not allow time entry"
     return True, "allowed"
 
 

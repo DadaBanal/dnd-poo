@@ -238,6 +238,10 @@ BEGIN
     PRINT N'    psa.project_contact';
     PRINT N'    psa.project_ticket_dependency';
     PRINT N'    psa.project_plan_item';
+    PRINT N'    psa.project_status';
+    PRINT N'    psa.project_type';
+    PRINT N'    psa.project_role';
+    PRINT N'    psa.project_issue';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -299,13 +303,14 @@ BEGIN
     PRINT N'    psa.ix_project_member_member';
     PRINT N'    psa.ix_project_note_project';
     PRINT N'    psa.ix_project_plan_item_project';
+    PRINT N'    psa.ix_project_issue_project';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  140 tables, 60 indexes, 4 triggers.';
+    PRINT N'  144 tables, 61 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -3616,6 +3621,67 @@ CREATE TABLE psa.[project_plan_item] (
 END;
 
 -- --------------------------------------------------------------------------
+-- project_status   (from schema/070_project_setup.sql)
+IF OBJECT_ID(N'psa.[project_status]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[project_status] (
+    [status_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_project_status] PRIMARY KEY,
+    [name] NVARCHAR(400) NOT NULL,
+    [indicator] NVARCHAR(32) NOT NULL CONSTRAINT [DF_project_status_indicator] DEFAULT ('ON_TRACK') CONSTRAINT [CK_project_status_01] CHECK (indicator IN ('ON_TRACK', 'AT_RISK', 'HIGH_RISK', 'OFF_TRACK')),
+    [is_default] INT NOT NULL CONSTRAINT [DF_project_status_is_default] DEFAULT (0) CONSTRAINT [CK_project_status_02] CHECK (is_default IN (0, 1)),
+    [is_closed] INT NOT NULL CONSTRAINT [DF_project_status_is_closed] DEFAULT (0) CONSTRAINT [CK_project_status_03] CHECK (is_closed IN (0, 1)),
+    [no_time] INT NOT NULL CONSTRAINT [DF_project_status_no_time] DEFAULT (0) CONSTRAINT [CK_project_status_04] CHECK (no_time IN (0, 1)),
+    [inactive] INT NOT NULL CONSTRAINT [DF_project_status_inactive] DEFAULT (0) CONSTRAINT [CK_project_status_05] CHECK (inactive IN (0, 1)),
+    [sort_order] INT NOT NULL CONSTRAINT [DF_project_status_sort_order] DEFAULT (0)
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- project_type   (from schema/070_project_setup.sql)
+IF OBJECT_ID(N'psa.[project_type]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[project_type] (
+    [type_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_project_type] PRIMARY KEY,
+    [name] NVARCHAR(400) NOT NULL,
+    [is_default] INT NOT NULL CONSTRAINT [DF_project_type_is_default] DEFAULT (0) CONSTRAINT [CK_project_type_01] CHECK (is_default IN (0, 1)),
+    [inactive] INT NOT NULL CONSTRAINT [DF_project_type_inactive] DEFAULT (0) CONSTRAINT [CK_project_type_02] CHECK (inactive IN (0, 1))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- project_role   (from schema/070_project_setup.sql)
+IF OBJECT_ID(N'psa.[project_role]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[project_role] (
+    [role_id] NVARCHAR(64) NOT NULL CONSTRAINT [PK_project_role] PRIMARY KEY,
+    [name] NVARCHAR(400) NOT NULL,
+    [inactive] INT NOT NULL CONSTRAINT [DF_project_role_inactive] DEFAULT (0) CONSTRAINT [CK_project_role_01] CHECK (inactive IN (0, 1)),
+    [sort_order] INT NOT NULL CONSTRAINT [DF_project_role_sort_order] DEFAULT (0)
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- project_issue   (from schema/070_project_setup.sql)
+IF OBJECT_ID(N'psa.[project_issue]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[project_issue] (
+    [issue_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_project_issue] PRIMARY KEY,
+    [project_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_project_issue_project_id] REFERENCES psa.[project]([project_id]),
+    [summary] NVARCHAR(400) NOT NULL,
+    [details] NVARCHAR(MAX) NULL,
+    [status] NVARCHAR(32) NOT NULL CONSTRAINT [DF_project_issue_status] DEFAULT ('OPEN') CONSTRAINT [CK_project_issue_01] CHECK (status IN ('OPEN', 'CLOSED')),
+    [assigned_to] NVARCHAR(200) NULL,
+    [raised_by] NVARCHAR(200) NOT NULL,
+    [raised_at] NVARCHAR(64) NOT NULL,
+    [work_item_id] NVARCHAR(64) NULL CONSTRAINT [FK_project_issue_work_item_id] REFERENCES psa.[ticket]([work_item_id]),
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [raised_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [raised_at], 126), CASE WHEN [raised_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [raised_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -4112,6 +4178,12 @@ ALTER TABLE psa.[project_ticket] ADD [starts_on] NVARCHAR(32) NULL;
 IF COL_LENGTH(N'psa.[project_ticket]', N'due_on') IS NULL
 ALTER TABLE psa.[project_ticket] ADD [due_on] NVARCHAR(32) NULL;
 
+IF COL_LENGTH(N'psa.[project]', N'project_status_id') IS NULL
+ALTER TABLE psa.[project] ADD [project_status_id] NVARCHAR(64) NULL;
+
+IF COL_LENGTH(N'psa.[project]', N'project_type_id') IS NULL
+ALTER TABLE psa.[project] ADD [project_type_id] NVARCHAR(64) NULL;
+
 IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
 ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
 
@@ -4314,6 +4386,9 @@ CREATE INDEX [ix_project_note_project] ON psa.[project_note] ([project_id]);
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_project_plan_item_project' AND object_id = OBJECT_ID(N'psa.[project_plan_item]'))
 CREATE INDEX [ix_project_plan_item_project] ON psa.[project_plan_item] ([project_id]);
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_project_issue_project' AND object_id = OBJECT_ID(N'psa.[project_issue]'))
+CREATE INDEX [ix_project_issue_project] ON psa.[project_issue] ([project_id]);
+
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
@@ -4449,10 +4524,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 140 OR @Triggers <> 4 OR @Indexes < 60
+IF @Tables <> 144 OR @Triggers <> 4 OR @Indexes < 61
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 140), %d triggers (expected 4), %d indexes (expected at least 60). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 144), %d triggers (expected 4), %d indexes (expected at least 61). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -4508,6 +4583,10 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[project_issue];
+    DROP TABLE IF EXISTS psa.[project_role];
+    DROP TABLE IF EXISTS psa.[project_type];
+    DROP TABLE IF EXISTS psa.[project_status];
     DROP TABLE IF EXISTS psa.[project_plan_item];
     DROP TABLE IF EXISTS psa.[project_ticket_dependency];
     DROP TABLE IF EXISTS psa.[project_contact];

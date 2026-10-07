@@ -56,10 +56,11 @@ def index(ctx):
                 (" <span class=pill>retired</span>" if b["inactive"] else "") + \
                 (" <span class='pill live'>live</span>"
                  if b["is_live"] else "")
-        rows.append(f"<tr><td><a href='/admin/board/{t.esc(b['board_id'])}'><b>"
-                    f"{t.esc(b['display_name'])}</b></a>{flags}</td><td>{state}</td>"
-                    f"<td>{n}</td><td><a class='btn ghost' href='/admin/board/{t.esc(b['board_id'])}'>"
-                    "Set up</a></td></tr>")
+        rows.append((itil.profile_of(ctx.conn, b["board_id"]) == "PROJECT",
+                     f"<tr><td><a href='/admin/board/{t.esc(b['board_id'])}'><b>"
+                     f"{t.esc(b['display_name'])}</b></a>{flags}</td><td>{state}</td>"
+                     f"<td>{n}</td><td><a class='btn ghost' href='/admin/board/{t.esc(b['board_id'])}'>"
+                     "Set up</a></td></tr>"))
     cards = []
     if ctx.user.is_sysadmin:
         from ... import members as members_engine
@@ -96,6 +97,7 @@ def index(ctx):
             "<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/configuration-types'>Configuration types</a></div>"
             "<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/priorities'>Priorities</a></div>"
             "<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/kb-categories'>Knowledge categories</a></div>"
+            "<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/projects'>Projects</a></div>"
             "<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/companies'>Company status and type</a></div></div>"
             "<p class=why style='margin-top:10px'>The template is Dada's design on the "
             "ITIL model: IT Help as the service board with his Subtype › Item catalogue, plus an "
@@ -156,10 +158,24 @@ def index(ctx):
             "A board template raised on a cadence: the monthly analyser check, the quarterly printer care. The minute "
             "runner raises each on its due day.</p>"
             f"<a class='btn ghost' href='/admin/recurring'>Recurring tickets ({n_rec} active)</a></div>")
-    if rows:
-        cards.append("<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-layers></use></svg>Your boards</h3><div class=tablewrap><table>"
+    service_rows = [r for is_project, r in rows if not is_project]
+    project_rows = [r for is_project, r in rows if is_project]
+    if service_rows:
+        cards.append("<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-layers></use></svg>Your service boards</h3><div class=tablewrap><table>"
                      "<thead><tr><th>Board</th><th>Setup</th><th>Tickets</th><th></th></tr></thead>"
-                     "<tbody>" + "".join(rows) + "</tbody></table></div></div>")
+                     "<tbody>" + "".join(service_rows) + "</tbody></table></div></div>")
+    # Project boards are their own setup table in the reference PSA (7 Oct 2026): the same
+    # tabs as a service board (statuses, types, members, teams) and no SLA clocks, and
+    # their tickets never reach the Service Board.
+    if project_rows or ctx.user.is_sysadmin:
+        cards.append("<div class=card id=project-boards><h3><svg class=ic aria-hidden=true><use href=#i-layers></use></svg>Project boards</h3>"
+                     "<p class=sub>Where project tickets live, apart from the service boards: their own statuses, types and "
+                     "members, no SLA clocks, and worked from Projects, never from the Service Board.</p>"
+                     + ("<div class=tablewrap><table><thead><tr><th>Board</th><th>Setup</th><th>Tickets</th><th></th></tr></thead>"
+                        "<tbody>" + "".join(project_rows) + "</tbody></table></div>" if project_rows else
+                        "<div class=muted>No project board yet.</div>")
+                     + ("<div style='margin-top:10px'><a class=btn href='/admin/board/new?kind=PROJECT'>+ New project board</a></div>"
+                        if ctx.user.is_sysadmin else "") + "</div>")
     if ctx.user.is_sysadmin:
         orphans = ctx.conn.execute(
             "SELECT b.board_id, b.display_name FROM board b"
@@ -845,6 +861,8 @@ def new_board_form(ctx, *, error: str = "", values: dict | None = None):
     from .. import Response
     common.require_sysadmin(ctx)
     v = values or {}
+    if not v and ctx.request.query.get("kind") in itil.PROFILES:      # + New project board
+        v = {"kind": ctx.request.query["kind"]}
     boards = ctx.conn.execute("SELECT board_id, display_name FROM board ORDER BY display_name").fetchall()
     copy_opts = ("<option value='starter'>The starter setup (statuses, calendar, SLA placeholders)</option>"
                  + "".join(f"<option value='{t.esc(b['board_id'])}'>Copy the setup of {t.esc(b['display_name'])}</option>"

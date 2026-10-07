@@ -1129,6 +1129,23 @@
     "project_plan_item.created_at": "TIMESTAMP_TEXT",
     "project.health": "CODE",
     "project_ticket.starts_on": "DATE_TEXT",
-    "project_ticket.due_on": "DATE_TEXT"
+    "project_ticket.due_on": "DATE_TEXT",
+    "project_status.status_id": "ID",
+    "project_status.name": "NAME",
+    "project_status.indicator": "CODE",
+    "project_type.type_id": "ID",
+    "project_type.name": "NAME",
+    "project_role.role_id": "ID",
+    "project_role.name": "NAME",
+    "project_issue.project_id": "ID",
+    "project_issue.summary": "NAME",
+    "project_issue.details": "FREE",
+    "project_issue.status": "CODE",
+    "project_issue.assigned_to": "PERSON",
+    "project_issue.raised_by": "PERSON",
+    "project_issue.raised_at": "TIMESTAMP_TEXT",
+    "project_issue.work_item_id": "ID",
+    "project.project_status_id": "ID",
+    "project.project_type_id": "ID"
   }
 }

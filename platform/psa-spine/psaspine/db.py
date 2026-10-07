@@ -226,6 +226,8 @@ def seed(conn: sqlite3.Connection) -> None:
     move_intake_addresses(conn)
     from . import priorities
     priorities.seed(conn)                     # 060: the four priorities' words and colours, once
+    from . import projects
+    projects.ensure_vocabulary(conn)          # 070: project statuses, roles and a type, into empty tables only
     conn.commit()
 
 

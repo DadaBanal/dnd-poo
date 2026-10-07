@@ -542,7 +542,7 @@ def add_member(conn, project_id: str, member: str, *, role: str = "TEAM_MEMBER",
     member = (member or "").strip()
     if not member:
         raise Refused("Pick a member.")
-    if role not in ROLES:
+    if role not in roles(conn, include_inactive=True):
         raise Refused("No such project role.")
     s, e = _day(starts_on, "Start"), _day(ends_on, "End")
     if s and e and e < s:
@@ -554,7 +554,7 @@ def add_member(conn, project_id: str, member: str, *, role: str = "TEAM_MEMBER",
         conn.execute("INSERT INTO project_member (project_id, member, project_role, starts_on, ends_on, hours,"
                      " added_at, added_by) VALUES (?,?,?,?,?,?,?,?)",
                      (project_id, member, role, s, e, h, _stamp(at), actor))
-        words = f"{member} joined the team as {ROLES[role].lower()}"
+        words = f"{member} joined the team as {roles(conn, include_inactive=True)[role].lower()}"
     else:
         new = {"project_role": role, "starts_on": s, "ends_on": e, "hours": h}
         changed = {k: v for k, v in new.items() if v != before[k]}
@@ -605,7 +605,10 @@ def open_ticket(conn, project_id: str, *, summary: str, phase_id: int | None = N
     if p is None:
         raise Refused("No such project.")
     if not p["board_id"]:
-        raise Refused("Give the project a board first: its tickets are opened on the project's board.")
+        raise Refused("Give the project a project board first: its tickets are opened there.")
+    if not is_project_board(conn, p["board_id"]):
+        raise Refused("This project is on a service board. Move it to a project board first, so its tickets "
+                      "stay off the Service Board.")
     summary = " ".join((summary or "").split())[:200]
     if not summary:
         raise Refused("A ticket needs a summary.")
@@ -705,6 +708,9 @@ def health(conn, project_id: str, *, today: date | None = None, boards=None) -> 
         raise Refused("No such project.")
     if _col(p, "health") in HEALTH:
         return p["health"], "set by a person", True
+    st = status_of(conn, p)                         # 070: a status carries its own indicator
+    if st["indicator"] != "ON_TRACK":
+        return st["indicator"], f"its status is {st['name']}", False
     today = today or date.today()
     actual = actual_hours(conn, project_id, boards=boards)
     pct = percent_complete(conn, project_id, boards=boards)
@@ -1010,3 +1016,325 @@ def copy(conn, source_id: str, *, name: str, manager: str | None = None, board_i
         open_ticket(conn, pid, summary=summary, phase_id=mapping.get(phase_id), budget_hours=budget, at=at, actor=actor)
     _audit(conn, at, actor, pid, f"made from {'template' if is_template(src) else 'project'} {source_id}")
     return pid
+
+
+
+# ===================================================== project boards (7 Oct)
+# Dada, 7 Oct 2026: "the project board isnt a service board ... what will
+# happen in there is that it will be a hodge podge of tickets". A project's
+# tickets live on a project board (board.kind PROJECT): its own statuses, no SLA
+# clocks, and never on the Service Board.
+
+def is_project_board(conn, board_id: str | None) -> bool:
+    if not board_id:
+        return False
+    row = conn.execute("SELECT kind FROM board WHERE board_id = ?", (board_id,)).fetchone()
+    return bool(row) and row["kind"] == "PROJECT"
+
+
+def project_boards(conn) -> list:
+    return conn.execute("SELECT board_id, display_name FROM board WHERE kind = 'PROJECT'"
+                        " AND COALESCE(inactive, 0) = 0 ORDER BY display_name").fetchall()
+
+
+def to_project_board(conn, work_item_id: str, board_id: str, *, at: datetime, actor: str, reason: str) -> None:
+    """Put one ticket on a project board: the board's own status, the Project
+    record type, and its SLA clocks stopped, since a project board runs none.
+    The ticket keeps its number, notes, time and files (board.move)."""
+    from . import board as _board
+    row = conn.execute("SELECT board_id FROM ticket WHERE work_item_id = ?", (work_item_id,)).fetchone()
+    if row is None:
+        raise Refused("No such ticket.")
+    if row["board_id"] != board_id:
+        try:
+            _board.move(conn, work_item_id, board_id, at=at, actor=actor, reason=reason, record_type="PROJECT")
+        except (_board.NotOnThisBoard, LookupError) as exc:
+            raise Refused(str(exc)) from None
+    conn.execute("UPDATE ticket_clock SET stopped_at = ? WHERE work_item_id = ? AND stopped_at IS NULL",
+                 (_stamp(at), work_item_id))
+
+
+def move_to_project_board(conn, project_id: str, board_id: str, *, at: datetime, actor: str) -> str:
+    """A project made before project boards were kept apart, or put on a service
+    board by mistake: the project and every one of its tickets move to a project
+    board in one step. Nothing is lost; each ticket keeps its number and history."""
+    p = get(conn, project_id)
+    if p is None:
+        raise Refused("No such project.")
+    if not is_project_board(conn, board_id):
+        raise Refused("Pick a project board.")
+    n = 0
+    for r in tickets(conn, project_id):
+        if r["board_id"] != board_id:
+            to_project_board(conn, r["work_item_id"], board_id, at=at, actor=actor,
+                             reason=f"project {project_id} moved to its project board")
+            n += 1
+    conn.execute("UPDATE project SET board_id = ? WHERE project_id = ?", (board_id, project_id))
+    words = f"moved to the project board {board_id}" + (f" with {n} ticket(s)" if n else "")
+    _audit(conn, at, actor, project_id, words)
+    return words
+
+
+# ================================================ converting tickets (7 Oct)
+# Dada, 7 Oct 2026: "you can convert a service ticket into a project ticket".
+# The ticket keeps its number, notes, time, files and history; only where it
+# lives and how it is clocked change.
+
+def convert_to_project_ticket(conn, work_item_id: str, project_id: str, *, phase_id: int | None = None,
+                              budget_hours=None, at: datetime, actor: str) -> str:
+    """A service ticket becomes a project ticket: onto the project's board with
+    the Project record type and the board's status, into the phase, its SLA
+    clocks stopped."""
+    p = get(conn, project_id)
+    if p is None:
+        raise Refused("No such project.")
+    if is_template(p):
+        raise Refused("A template holds planned tickets, not tickets.")
+    if not is_project_board(conn, p["board_id"]):
+        raise Refused("That project is not on a project board yet. Move it to one first.")
+    t = conn.execute("SELECT board_id, state FROM ticket WHERE work_item_id = ?", (work_item_id,)).fetchone()
+    if t is None:
+        raise Refused("No such ticket.")
+    if t["board_id"] == p["board_id"] and conn.execute(
+            "SELECT 1 FROM project_ticket WHERE work_item_id = ? AND project_id = ?", (work_item_id, project_id)).fetchone():
+        raise Refused("That ticket is already a project ticket on this project.")
+    if phase_id is not None:
+        ph = _phase(conn, phase_id)
+        if ph is None or ph["project_id"] != project_id:
+            raise Refused("That phase is not on this project.")
+    prev = conn.execute("SELECT project_id FROM project_ticket WHERE work_item_id = ?", (work_item_id,)).fetchone()
+    if prev and prev["project_id"] != project_id:      # its predecessors belonged to the other project
+        conn.execute("DELETE FROM project_ticket_dependency WHERE work_item_id = ? OR depends_on = ?",
+                     (work_item_id, work_item_id))
+    to_project_board(conn, work_item_id, p["board_id"], at=at, actor=actor,
+                     reason=f"converted to a project ticket on {project_id}")
+    link_ticket(conn, work_item_id, project_id, phase_id, at=at, actor=actor)
+    if budget_hours not in (None, ""):
+        conn.execute("UPDATE project_ticket SET budget_hours = ? WHERE work_item_id = ?",
+                     (_hours(budget_hours), work_item_id))
+    words = f"service ticket {work_item_id} converted to a project ticket"
+    _audit(conn, at, actor, project_id, words)
+    return words
+
+
+def convert_to_service_ticket(conn, work_item_id: str, board_id: str, *, record_type: str = "SERVICE_REQUEST",
+                              at: datetime, actor: str) -> str:
+    """A project ticket becomes a service ticket again: off the project, onto a
+    service board as the record type named. Its stopped SLA clocks stay as they
+    were: the time it spent as project work is not counted against a target."""
+    from . import board as _board
+    row = conn.execute("SELECT pt.project_id, t.board_id FROM project_ticket pt JOIN ticket t ON t.work_item_id ="
+                       " pt.work_item_id WHERE pt.work_item_id = ?", (work_item_id,)).fetchone()
+    if row is None:
+        raise Refused("That ticket is not a project ticket.")
+    if is_project_board(conn, board_id) or not conn.execute("SELECT 1 FROM board WHERE board_id = ?", (board_id,)).fetchone():
+        raise Refused("Pick a service board.")
+    try:
+        _board.move(conn, work_item_id, board_id, at=at, actor=actor, record_type=record_type,
+                    reason=f"converted from a project ticket on {row['project_id']}")
+    except (_board.NotOnThisBoard, LookupError) as exc:
+        raise Refused(str(exc)) from None
+    conn.execute("DELETE FROM project_ticket_dependency WHERE work_item_id = ? OR depends_on = ?",
+                 (work_item_id, work_item_id))
+    link_ticket(conn, work_item_id, None, at=at, actor=actor)
+    words = f"project ticket {work_item_id} converted to a service ticket on {board_id}"
+    _audit(conn, at, actor, row["project_id"], words)
+    return words
+
+
+# ================================================== setup tables (070)
+# The reference PSA keeps project statuses, project types and project roles as
+# setup tables. The five statuses a project could hold before are seeded with
+# their old codes as ids, so nothing already stored changes meaning.
+
+# (id, name, indicator, default, closed, no time). No seed holds time: a status that
+# does is an administrator's choice in Setup, never a change that arrives on its own.
+SEED_STATUSES = (("PLANNED", "Planned", "ON_TRACK", 1, 0, 0), ("ACTIVE", "Active", "ON_TRACK", 0, 0, 0),
+                 ("ON_HOLD", "On hold", "AT_RISK", 0, 0, 0), ("DONE", "Done", "ON_TRACK", 0, 1, 0),
+                 ("CANCELLED", "Cancelled", "ON_TRACK", 0, 1, 0))
+
+
+def ensure_vocabulary(conn) -> None:
+    """Seed the setup tables the first time they are read (only into empty tables)."""
+    if not conn.execute("SELECT 1 FROM project_status").fetchone():
+        for i, (sid, name, ind, dflt, closed, no_time) in enumerate(SEED_STATUSES):
+            conn.execute("INSERT INTO project_status (status_id, name, indicator, is_default, is_closed, no_time, sort_order)"
+                         " VALUES (?,?,?,?,?,?,?)", (sid, name, ind, dflt, closed, no_time, (i + 1) * 10))
+    if not conn.execute("SELECT 1 FROM project_role").fetchone():
+        for i, (rid, name) in enumerate(ROLES.items()):
+            conn.execute("INSERT INTO project_role (role_id, name, sort_order) VALUES (?,?,?)", (rid, name, (i + 1) * 10))
+    if not conn.execute("SELECT 1 FROM project_type").fetchone():
+        conn.execute("INSERT INTO project_type (type_id, name, is_default) VALUES ('GENERAL', 'General', 1)")
+
+
+def statuses(conn, *, include_inactive: bool = False) -> list:
+    ensure_vocabulary(conn)
+    return conn.execute("SELECT * FROM project_status" + ("" if include_inactive else " WHERE inactive = 0")
+                        + " ORDER BY sort_order, name").fetchall()
+
+
+def types(conn, *, include_inactive: bool = False) -> list:
+    ensure_vocabulary(conn)
+    return conn.execute("SELECT * FROM project_type" + ("" if include_inactive else " WHERE inactive = 0")
+                        + " ORDER BY name").fetchall()
+
+
+def roles(conn, *, include_inactive: bool = False) -> dict[str, str]:
+    ensure_vocabulary(conn)
+    return {r["role_id"]: r["name"] for r in conn.execute(
+        "SELECT role_id, name FROM project_role" + ("" if include_inactive else " WHERE inactive = 0")
+        + " ORDER BY sort_order, name")}
+
+
+def status_of(conn, p) -> dict:
+    """A project's status row (its setup-table status, else the old code's seed)."""
+    ensure_vocabulary(conn)
+    sid = _col(p, "project_status_id") or p["status"]
+    row = conn.execute("SELECT * FROM project_status WHERE status_id = ?", (sid,)).fetchone()
+    return dict(row) if row else {"status_id": p["status"], "name": STATUSES.get(p["status"], p["status"]),
+                                  "indicator": "ON_TRACK", "is_closed": int(p["status"] in ("DONE", "CANCELLED")),
+                                  "no_time": 0}
+
+
+def set_status(conn, project_id: str, status_id: str, *, at: datetime, actor: str) -> str:
+    """Set a project's status from the setup table. project.status keeps the old
+    code where the status is one of the seeds, else Done for a closed status and
+    Active for an open one, so every older reader still reads it right."""
+    ensure_vocabulary(conn)
+    row = conn.execute("SELECT * FROM project_status WHERE status_id = ?", (status_id,)).fetchone()
+    if row is None:
+        raise Refused("No such project status.")
+    p = get(conn, project_id)
+    if p is None:
+        raise Refused("No such project.")
+    legacy = status_id if status_id in STATUSES else ("DONE" if row["is_closed"] else "ACTIVE")
+    if (_col(p, "project_status_id") or p["status"]) == status_id:
+        return "nothing changed"
+    conn.execute("UPDATE project SET project_status_id = ?, status = ? WHERE project_id = ?", (status_id, legacy, project_id))
+    words = f"status {status_of(conn, p)['name']} -> {row['name']}"
+    _audit(conn, at, actor, project_id, words)
+    return words
+
+
+def save_status(conn, status_id: str | None, *, name: str, indicator: str = "ON_TRACK", is_default: bool = False,
+                is_closed: bool = False, no_time: bool = False, inactive: bool = False, at: datetime, actor: str) -> str:
+    """Add (status_id None) or change a project status in Setup."""
+    ensure_vocabulary(conn)
+    name = " ".join((name or "").split())[:100]
+    if not name:
+        raise Refused("A status needs a name.")
+    if indicator not in HEALTH:
+        raise Refused("No such status indicator.")
+    if status_id is None:
+        base = "".join(ch if ch.isalnum() else "_" for ch in name.upper())[:40].strip("_") or "STATUS"
+        status_id, n = base, 1
+        while conn.execute("SELECT 1 FROM project_status WHERE status_id = ?", (status_id,)).fetchone():
+            n += 1
+            status_id = f"{base}_{n}"
+        order = (conn.execute("SELECT MAX(sort_order) FROM project_status").fetchone()[0] or 0) + 10
+        conn.execute("INSERT INTO project_status (status_id, name, indicator, is_default, is_closed, no_time, inactive, sort_order)"
+                     " VALUES (?,?,?,?,?,?,?,?)", (status_id, name, indicator, int(is_default), int(is_closed), int(no_time),
+                                                   int(inactive), order))
+    else:
+        if conn.execute("SELECT 1 FROM project_status WHERE status_id = ?", (status_id,)).fetchone() is None:
+            raise Refused("No such project status.")
+        conn.execute("UPDATE project_status SET name = ?, indicator = ?, is_default = ?, is_closed = ?, no_time = ?,"
+                     " inactive = ? WHERE status_id = ?", (name, indicator, int(is_default), int(is_closed), int(no_time),
+                                                          int(inactive), status_id))
+    if is_default:
+        conn.execute("UPDATE project_status SET is_default = 0 WHERE status_id <> ?", (status_id,))
+    db.audit(conn, at=_stamp(at), actor=actor, action="PROJECT_SETUP", subject_kind="project_status",
+             subject_id=status_id, detail=f"status {name}")
+    return status_id
+
+
+def save_simple(conn, table: str, key: str | None, *, name: str, inactive: bool = False, is_default: bool | None = None,
+                at: datetime, actor: str) -> str:
+    """Add or change a project type or project role in Setup."""
+    if table not in ("project_type", "project_role"):
+        raise Refused("No such setup table.")
+    ensure_vocabulary(conn)
+    idcol = "type_id" if table == "project_type" else "role_id"
+    name = " ".join((name or "").split())[:100]
+    if not name:
+        raise Refused("It needs a name.")
+    if key is None:
+        base = "".join(ch if ch.isalnum() else "_" for ch in name.upper())[:40].strip("_") or "ROW"
+        key, n = base, 1
+        while conn.execute(f"SELECT 1 FROM {table} WHERE {idcol} = ?", (key,)).fetchone():
+            n += 1
+            key = f"{base}_{n}"
+        conn.execute(f"INSERT INTO {table} ({idcol}, name, inactive) VALUES (?,?,?)", (key, name, int(inactive)))
+    else:
+        if conn.execute(f"SELECT 1 FROM {table} WHERE {idcol} = ?", (key,)).fetchone() is None:
+            raise Refused("No such row.")
+        conn.execute(f"UPDATE {table} SET name = ?, inactive = ? WHERE {idcol} = ?", (name, int(inactive), key))
+    if table == "project_type" and is_default is not None:
+        conn.execute("UPDATE project_type SET is_default = CASE WHEN type_id = ? THEN ? ELSE 0 END",
+                     (key, int(is_default))) if is_default else \
+            conn.execute("UPDATE project_type SET is_default = 0 WHERE type_id = ?", (key,))
+    db.audit(conn, at=_stamp(at), actor=actor, action="PROJECT_SETUP", subject_kind=table, subject_id=key, detail=name)
+    return key
+
+
+def set_type(conn, project_id: str, type_id: str | None, *, at: datetime, actor: str) -> str:
+    p = get(conn, project_id)
+    if p is None:
+        raise Refused("No such project.")
+    type_id = type_id or None
+    if type_id and not conn.execute("SELECT 1 FROM project_type WHERE type_id = ?", (type_id,)).fetchone():
+        raise Refused("No such project type.")
+    if _col(p, "project_type_id") == type_id:
+        return "nothing changed"
+    conn.execute("UPDATE project SET project_type_id = ? WHERE project_id = ?", (type_id, project_id))
+    _audit(conn, at, actor, project_id, f"type {type_id or '-'}")
+    return f"type {type_id or 'none'}"
+
+
+# ------------------------------------------------------------------ issues
+
+def issues(conn, project_id: str) -> list:
+    return conn.execute("SELECT * FROM project_issue WHERE project_id = ? ORDER BY status DESC, issue_id DESC",
+                        (project_id,)).fetchall()
+
+
+def add_issue(conn, project_id: str, *, summary: str, details: str | None = None, assigned_to: str | None = None,
+              at: datetime, actor: str) -> int:
+    if get(conn, project_id) is None:
+        raise Refused("No such project.")
+    summary = " ".join((summary or "").split())[:200]
+    if not summary:
+        raise Refused("An issue needs a summary.")
+    cur = conn.execute("INSERT INTO project_issue (project_id, summary, details, assigned_to, raised_by, raised_at)"
+                       " VALUES (?,?,?,?,?,?)", (project_id, summary, (details or "").strip() or None,
+                                                 (assigned_to or "").strip() or None, actor, _stamp(at)))
+    _audit(conn, at, actor, project_id, f"issue raised: {summary}")
+    return cur.lastrowid
+
+
+def set_issue_status(conn, project_id: str, issue_id: int, closed: bool, *, at: datetime, actor: str) -> str:
+    row = conn.execute("SELECT summary, status FROM project_issue WHERE issue_id = ? AND project_id = ?",
+                       (issue_id, project_id)).fetchone()
+    if row is None:
+        raise Refused("No such issue.")
+    want = "CLOSED" if closed else "OPEN"
+    if row["status"] == want:
+        return "nothing changed"
+    conn.execute("UPDATE project_issue SET status = ? WHERE issue_id = ?", (want, issue_id))
+    words = f"issue {'closed' if closed else 'reopened'}: {row['summary']}"
+    _audit(conn, at, actor, project_id, words)
+    return words
+
+
+def issue_to_ticket(conn, project_id: str, issue_id: int, *, phase_id: int | None = None, at: datetime, actor: str) -> str:
+    """Turn an issue into a project ticket, as the reference PSA converts one; the issue closes and points at it."""
+    row = conn.execute("SELECT * FROM project_issue WHERE issue_id = ? AND project_id = ?", (issue_id, project_id)).fetchone()
+    if row is None:
+        raise Refused("No such issue.")
+    if row["work_item_id"]:
+        raise Refused(f"That issue is already ticket {row['work_item_id']}.")
+    wid = open_ticket(conn, project_id, summary=row["summary"], phase_id=phase_id, owner=row["assigned_to"],
+                      description=row["details"], at=at, actor=actor)
+    conn.execute("UPDATE project_issue SET work_item_id = ?, status = 'CLOSED' WHERE issue_id = ?", (wid, issue_id))
+    _audit(conn, at, actor, project_id, f"issue made ticket {wid}: {row['summary']}")
+    return wid

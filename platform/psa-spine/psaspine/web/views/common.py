@@ -27,6 +27,23 @@ def board_ids_for(ctx) -> set[str]:
         "SELECT board_id FROM board_member WHERE member = ?", (ctx.user.id,))}
 
 
+def project_board_ids(ctx) -> set[str]:
+    """The project boards this person is on. A project board is its own setup
+    table in the reference PSA, apart from service boards: its tickets are
+    worked from Projects, never from the Service Board (Dada, 7 Oct 2026: "the
+    project board isnt a service board")."""
+    ids = board_ids_for(ctx)
+    if not ids:
+        return set()
+    return {r[0] for r in ctx.conn.execute(
+        f"SELECT board_id FROM board WHERE kind = 'PROJECT' AND board_id IN ({','.join('?' * len(ids))})", sorted(ids))}
+
+
+def service_board_ids(ctx) -> set[str]:
+    """The boards the Service Board shows: every board the person is on except project boards."""
+    return board_ids_for(ctx) - project_board_ids(ctx)
+
+
 def may_access_board(ctx, board_id: str, *, need: str = "READ") -> bool:
     rank = {"READ": 0, "WORK": 1, "ADMIN": 2}
     row = ctx.conn.execute(

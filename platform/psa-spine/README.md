@@ -2109,6 +2109,58 @@ hours are in no total, and the projects list counts only what the viewer may see
 + Ticket opens the window with its phase picked, the ticket lands under its phase and on the board, a member is
 added with a role and hours, and the list shows each project's open tickets.
 
+## Project boards apart, a page per tab, converting tickets, project setup (7 Oct 2026, schema 070)
+
+Dada, 7 Oct 2026: *"if u check connectwise the project board isnt a service board ... load each tab on its own
+page u added them on a single page ... what will happen in there is that it will be a hodge podge of tickets /
+you can convert a service ticket into a project ticket / you havent copied its entire setup"*.
+
+**Project boards are not service boards.** A board's kind was already SERVICE, CHANGE or PROJECT (`itil`); a
+PROJECT board runs no SLA clocks and takes only the Project record type. Now:
+
+- The **Service Board** (`/`) and its live stamp show only service (and change) boards
+  (`common.service_board_ids`). A project ticket is never on it. A person on project boards only lands on Projects.
+- **Projects** is laid out as Dada put it: *"the project board holds the projects the projects hold the tickets"*.
+  One card per project board, its projects in it, and each project's open tickets under it. A project not yet on a
+  project board is listed apart, to be moved onto one. There is no flat list of project tickets.
+- **Setup** shows *Your service boards* and *Project boards* as separate cards, with **+ New project board**.
+- New project, and the project's own form, offer **project boards only** (a project already on a service board
+  still reads, marked *(service board)*).
+- A ticket can be opened inside a project only when the project is on a project board. A project made before
+  today on a service board carries a banner and **Move to the project board**: the project and every one of its
+  tickets go across (`projects.move_to_project_board`), numbers, notes, time and history kept.
+
+**Converting a ticket**, as the reference PSA converts a service ticket to a project ticket:
+
+- On the ticket, the **Project** pod offers *project › phase* and **Convert to project ticket**. The ticket moves
+  to the project's board (`board.move`, record type Project, the board's default status), joins the phase, and its
+  running SLA clocks stop (`projects.convert_to_project_ticket`).
+- A project ticket's pod offers **Convert to service ticket** with a service board: it leaves the project, its
+  predecessor links go, and its stopped clocks stay stopped, so project time is never counted against an SLA target.
+- On the Work plan, **Add an existing ticket** converts a service ticket in the same way.
+- Each needs WORK on both boards.
+
+**Each tab is its own page**, as the reference PSA's project screen: `/project/<id>` is the Project tab (dashboard,
+details, contact overview, notes, template and copy), and `/project/<id>/<tab>` is Work plan, Gantt, Tickets
+(the ticket board and list), Issues, Attachments, Team, Contacts, Recap (hours by phase, member and work role),
+Time, Configurations, Audit trail and Finance (BizBox links). Billing is still left out, on Dada's word. Every
+form posts back to the tab it was on.
+
+**Project setup tables** (Setup › Projects, `/admin/projects`):
+
+- **Project statuses**: name, status indicator (On track, At risk, High risk, Off track), default, closed,
+  *No time* (time cannot be booked on the project's tickets) and inactive. A status's indicator is the project's
+  health unless a person sets health by hand. The five statuses a project could hold before are seeded with their
+  old codes as ids and **none of them holds time**, so nothing already live changes; `project.status` keeps its
+  old code (a new open status reads ACTIVE, a new closed one DONE) for every older reader.
+- **Project types**: name, default, inactive; a Project type on the project's form.
+- **Project roles**: the team roles, editable instead of fixed.
+- **Issues** on a project: raised, assigned, closed or reopened, or **Make a ticket** (a project ticket in the
+  phase picked; the issue closes and points at it).
+
+Schema 070 is additive: `project_status`, `project_type`, `project_role`, `project_issue`, and nullable
+`project.project_status_id` / `project.project_type_id`. The vocabulary is seeded by `init` into empty tables.
+
 ## One Save, always reachable (3 Oct 2026)
 
 The ticket's own fields were already one form with one **Save changes** — but it

@@ -6375,6 +6375,17 @@ class ModulesTest(unittest.TestCase):
         self.addCleanup(conn.close)
         return conn
 
+    def _project_board(self, conn) -> str:
+        """070: a project board, kept apart from the service boards; alice works
+        it and carol only reads it, as on IT Help."""
+        from psaspine import setup
+        if not conn.execute("SELECT 1 FROM board WHERE board_id = 'IT_PRJ'").fetchone():
+            setup.create_board(conn, board_id="IT_PRJ", display_name="IT Projects", fulfiller_group="IT", creator="root",
+                               at=self.at, profile="PROJECT")
+            conn.execute("INSERT OR REPLACE INTO board_member (board_id, member, access) VALUES ('IT_PRJ', 'alice', 'ADMIN')")
+            conn.execute("INSERT OR REPLACE INTO board_member (board_id, member, access) VALUES ('IT_PRJ', 'carol', 'READ')")
+        return "IT_PRJ"
+
     # ------------------------------------------------------------ roles
 
     def test_roles_gate_the_modules_and_never_open_a_board(self):
@@ -6484,7 +6495,8 @@ class ModulesTest(unittest.TestCase):
         tickets live", and "make sure it doesnt ... break anything"."""
         from psaspine import projects
         conn = self._conn()
-        pid = projects.create(conn, name="Ward 5 NUC refresh", manager="alice", board_id="IT_HELP",
+        pb = self._project_board(conn)
+        pid = projects.create(conn, name="Ward 5 NUC refresh", manager="alice", board_id=pb,
                               budget_hours=20, at=self.at, actor="alice")
         # the manager is on the team as the reference PSA puts them
         self.assertEqual([(r["member"], r["project_role"]) for r in projects.team(conn, pid)],
@@ -6502,7 +6514,7 @@ class ModulesTest(unittest.TestCase):
                                    owner="mia.santos", budget_hours="2", at=self.at, actor="alice")
         row = conn.execute("SELECT t.board_id, pt.phase_id, pt.budget_hours FROM ticket t JOIN project_ticket pt"
                            " ON pt.work_item_id = t.work_item_id WHERE t.work_item_id = ?", (wid,)).fetchone()
-        self.assertEqual(tuple(row), ("IT_HELP", ph, 2.0), "on the project's board, in its phase, with its budget")
+        self.assertEqual(tuple(row), (pb, ph, 2.0), "on the project's board, in its phase, with its budget")
         self.assertIn("mia.santos", {r["member"] for r in projects.team(conn, pid)}, "whoever has the work joins the team")
         self.assertEqual(projects.percent_complete(conn, pid), 0)
         self.assertEqual(projects.projects_of(conn, "MIA.SANTOS"), {pid})
@@ -6511,11 +6523,14 @@ class ModulesTest(unittest.TestCase):
             projects.open_ticket(conn, unboarded, summary="x", at=self.at, actor="alice")
         conn.commit()
 
-        # the page: a dashboard, the work plan with the ticket under its phase, the board, the team, notes
-        _, _, page = self._call("GET", f"/project/{pid}", cookie=self.alice)
-        for bit in ("id=plan", "id=pboard", "id=team", "id=pnotes", "<dialog id=ptdlg",
-                    f"data-open=ptdlg data-phase='{ph}'", "class=planticket", f"data-live='project:{pid}'"):
-            self.assertIn(bit, page, bit)
+        # the pages (070: each tab its own): a dashboard and notes, the work plan with the
+        # ticket under its phase, the ticket board, the team
+        for tab, bits in (("", ("id=pnotes", "<dialog id=ptdlg", f"data-live='project:{pid}'")),
+                          ("/workplan", ("id=plan", f"data-open=ptdlg data-phase='{ph}'", "class=planticket")),
+                          ("/tickets", ("id=pboard",)), ("/team", ("id=team",))):
+            _, _, page = self._call("GET", f"/project/{pid}{tab}", cookie=self.alice)
+            for bit in bits:
+                self.assertIn(bit, page, f"{tab}: {bit}")
         # a ticket opened from the page, and a team member and a note added there
         _, h, _ = self._call("POST", f"/project/{pid}/ticket/new", cookie=self.alice,
                              form={"summary": "Move the label printer", "phase_id": str(ph), "budget_hours": "1"})
@@ -6560,7 +6575,7 @@ class ModulesTest(unittest.TestCase):
         conn.execute("INSERT INTO contact (contact_id, entity_id, display_name, email, source, created_at)"
                      " VALUES ('C-W5', 'PMC', 'Ward 5 nurse manager', 'w5.manager@example.org', 'MANUAL', '2026-10-07')")
         # a template: phases with a predecessor, planned tickets, and none of it on a board
-        tpl = projects.create(conn, name="NUC refresh", manager="alice", board_id="IT_HELP", starts_on="2026-01-05",
+        tpl = projects.create(conn, name="NUC refresh", manager="alice", board_id=self._project_board(conn), starts_on="2026-01-05",
                               ends_on="2026-01-30", budget_hours=10, at=self.at, actor="alice")
         self.assertEqual(projects.set_template(conn, tpl, True, at=self.at, actor="alice"), "made a template")
         a = projects.add_phase(conn, tpl, name="Survey", starts_on="2026-01-05", ends_on="2026-01-09", at=self.at, actor="alice")
@@ -6599,12 +6614,13 @@ class ModulesTest(unittest.TestCase):
         self.assertEqual(projects.health(conn, pid)[:2], ("AT_RISK", "set by a person"))
         conn.commit()
 
-        # the page draws all of it
-        _, _, page = self._call("GET", f"/project/{pid}", cookie=self.alice)
-        for bit in ("id=pgantt", "class=gbar", "id=pcontacts-card", "Ward 5 nurse manager", "<dialog id=pclose",
-                    "<dialog id=ptplan", f"data-plan='{w1}'", f"waits on <span class='chip sla-warn'>{w1}", "At risk",
-                    "id=pcopy"):
-            self.assertIn(bit, page, bit)
+        # the pages draw all of it, each on its own tab (070)
+        for tab, bits in (("", ("Ward 5 nurse manager", "<dialog id=pclose", "<dialog id=ptplan", "At risk", "id=pcopy")),
+                          ("/gantt", ("id=pgantt", "class=gbar")), ("/contacts", ("id=pcontacts-card", "Ward 5 nurse manager")),
+                          ("/workplan", (f"data-plan='{w1}'", f"waits on <span class='chip sla-warn'>{w1}"))):
+            _, _, page = self._call("GET", f"/project/{pid}{tab}", cookie=self.alice)
+            for bit in bits:
+                self.assertIn(bit, page, f"{tab}: {bit}")
         _, _, tpage = self._call("GET", f"/project/{tpl}", cookie=self.alice)
         self.assertIn("id=ptemplate", tpage)
         self.assertNotIn("<dialog id=ptdlg", tpage, "a template plans tickets instead of opening them")
@@ -6637,12 +6653,119 @@ class ModulesTest(unittest.TestCase):
         self.assertEqual(c.execute("SELECT COUNT(*) FROM project_phase WHERE project_id = ? AND status = 'OPEN'",
                                    (pid,)).fetchone()[0], 0)
         # someone who only reads the board cannot close the project's tickets
-        p2 = projects.create(c, name="Read only", board_id="IT_HELP", at=self.at, actor="alice")
+        p2 = projects.create(c, name="Read only", board_id="IT_PRJ", at=self.at, actor="alice")
         projects.open_ticket(c, p2, summary="Stays open", at=self.at, actor="alice")
         c.commit()
         status, _, _ = self._call("POST", f"/project/{p2}/close", cookie=self._cookie_for("carol"),
                                   form={"status": "DONE", "close_tickets": "1"})
         self.assertFalse(status.startswith("303"), status)
+
+    def test_project_boards_are_apart_tickets_convert_and_projects_have_setup_tables(self):
+        """070. Dada, 7 Oct 2026: "the project board isnt a service board",
+        "load each tab on its own page", "you can convert a service ticket into
+        a project ticket", "you havent copied its entire setup"."""
+        from psaspine import board, projects, tickets
+        conn = self._conn()
+        pb = self._project_board(conn)
+        t2 = tickets.open_ticket(conn, board_id="IT_HELP", summary="Ward 7 access point offline", impact="I3", urgency="U3",
+                                 requested_by=None, at=self.at)
+        legacy = projects.create(conn, name="On a service board", board_id="IT_HELP", at=self.at, actor="alice")
+        projects.link_ticket(conn, t2, legacy, None, at=self.at, actor="alice")      # made before 070
+        with self.assertRaises(projects.Refused):
+            projects.open_ticket(conn, legacy, summary="x", at=self.at, actor="alice")
+        pid = projects.create(conn, name="Ward 7 Wi-Fi", manager="alice", board_id=pb, at=self.at, actor="alice")
+        ph = projects.add_phase(conn, pid, name="Survey", at=self.at, actor="alice")
+        # convert: onto the project board, Project record type, clocks stopped, number kept
+        running = conn.execute("SELECT COUNT(*) FROM ticket_clock WHERE work_item_id = 'ITO-1' AND stopped_at IS NULL").fetchone()[0]
+        self.assertIn("converted to a project ticket",
+                      projects.convert_to_project_ticket(conn, "ITO-1", pid, phase_id=ph, at=self.at, actor="alice"))
+        row = conn.execute("SELECT t.board_id, t.record_type FROM ticket t"
+                           " WHERE t.work_item_id = 'ITO-1'").fetchone()
+        self.assertEqual(tuple(row), (pb, "PROJECT"))
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM ticket_clock WHERE work_item_id = 'ITO-1' AND stopped_at IS NULL"
+                                      ).fetchone()[0], 0, f"{running} running clock(s) stopped")
+        self.assertEqual(projects.of_ticket(conn, "ITO-1")["phase_id"], ph)
+        with self.assertRaises(projects.Refused):
+            projects.convert_to_project_ticket(conn, "ITO-1", pid, at=self.at, actor="alice")
+        with self.assertRaises(projects.Refused):
+            projects.convert_to_project_ticket(conn, t2, legacy, at=self.at, actor="alice")   # not on a project board
+        conn.commit()
+        # the Service Board never shows a project ticket; Project tickets does
+        _, _, sb = self._call("GET", "/", cookie=self.alice)
+        self.assertNotIn("ITO-1", sb)
+        # the project board holds the projects, the projects hold the tickets (Dada, 7 Oct)
+        _, _, pl = self._call("GET", "/projects", cookie=self.alice)
+        card = pl[pl.index(f"data-pboard='{pb}'"):]
+        card = card[:card.index("data-pboard=", 20)] if "data-pboard=" in card[20:] else card
+        self.assertIn("Ward 7 Wi-Fi", card)
+        self.assertIn("ITO-1", card)
+        self.assertIn("data-pboard=''", pl, "a project not on a project board is listed apart")
+        self.assertTrue(self._call("GET", "/projects/tickets", cookie=self.alice)[0].startswith("404"))
+        # the ticket's Project pod converts back to a service ticket
+        _, _, tpage = self._call("GET", "/ticket/ITO-1", cookie=self.alice)
+        self.assertIn("Convert to service ticket", tpage)
+        _, h, _ = self._call("POST", "/ticket/ITO-1/project", cookie=self.alice, form={"convert": "service", "board_id": "IT_HELP"})
+        self.assertIn("converted+to+a+service+ticket", dict(h)["Location"])
+        c = self._conn()
+        self.assertEqual(c.execute("SELECT board_id FROM ticket WHERE work_item_id = 'ITO-1'").fetchone()[0], "IT_HELP")
+        self.assertIsNone(projects.of_ticket(c, "ITO-1"))
+        # and through the pod again, into a phase ("PRJ:phase")
+        _, _, tpage = self._call("GET", "/ticket/ITO-1", cookie=self.alice)
+        self.assertIn("Convert to project ticket", tpage)
+        _, h, _ = self._call("POST", "/ticket/ITO-1/project", cookie=self.alice, form={"project_id": f"{pid}:{ph}"})
+        self.assertNotIn("err=", dict(h)["Location"])
+        c = self._conn()
+        self.assertEqual(c.execute("SELECT board_id FROM ticket WHERE work_item_id = 'ITO-1'").fetchone()[0], pb)
+        # carol only reads the project board: she cannot convert into it
+        _, h, _ = self._call("POST", f"/ticket/{t2}/project", cookie=self._cookie_for("carol"), form={"project_id": pid})
+        self.assertNotEqual(c.execute("SELECT board_id FROM ticket WHERE work_item_id = ?", (t2,)).fetchone()[0], pb)
+        # the legacy project moves to the project board with its ticket
+        _, h, _ = self._call("POST", f"/project/{legacy}/board", cookie=self.alice, form={"board_id": pb})
+        self.assertIn("moved+to+the+project+board", dict(h)["Location"])
+        self.assertEqual(self._conn().execute("SELECT board_id FROM ticket WHERE work_item_id = ?", (t2,)).fetchone()[0], pb)
+        # every tab is its own page; an unknown one is not
+        from psaspine.web.views.projects import TABS
+        for tab, _label in TABS:
+            status, _, page = self._call("GET", f"/project/{pid}" + ("" if tab == "project" else f"/{tab}"), cookie=self.alice)
+            self.assertEqual(status, "200 OK", tab)
+            self.assertIn(f"/{tab}' class=on aria-current=page" if tab != "project" else f"/project/{pid}' class=on", page, tab)
+        self.assertTrue(self._call("GET", f"/project/{pid}/nope", cookie=self.alice)[0].startswith("404"))
+        # issues: raised, made a ticket (which closes the issue), reopened
+        _, h, _ = self._call("POST", f"/project/{pid}/issue", cookie=self.alice,
+                             form={"summary": "Access point delivery slipped", "tab": "issues"})
+        self.assertIn(f"/project/{pid}/issues", dict(h)["Location"])
+        iid = self._conn().execute("SELECT issue_id FROM project_issue WHERE project_id = ?", (pid,)).fetchone()[0]
+        _, h, _ = self._call("POST", f"/project/{pid}/issue/ticket", cookie=self.alice, form={"issue_id": str(iid), "phase_id": str(ph)})
+        self.assertIn("Issue+made+ticket", dict(h)["Location"])
+        c = self._conn()
+        issue = c.execute("SELECT status, work_item_id FROM project_issue WHERE issue_id = ?", (iid,)).fetchone()
+        self.assertEqual(issue["status"], "CLOSED")
+        self.assertEqual(c.execute("SELECT board_id FROM ticket WHERE work_item_id = ?", (issue["work_item_id"],)).fetchone()[0], pb)
+        _, _, ipage = self._call("GET", f"/project/{pid}/issues", cookie=self.alice)
+        self.assertIn("Access point delivery slipped", ipage)
+        # Setup › Projects: a status with No time holds time; indicator drives health; types and roles
+        self.assertTrue(self._call("GET", "/admin/projects", cookie=self.alice)[0].startswith("403"))
+        _, h, _ = self._call("POST", "/admin/projects/status", cookie=self.root,
+                             form={"name": "Waiting on vendor", "indicator": "HIGH_RISK", "no_time": "1"})
+        self.assertIn("msg=", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/admin/projects/type", cookie=self.root, form={"name": "Network refresh"})
+        _, h, _ = self._call("POST", "/admin/projects/role", cookie=self.root, form={"name": "Vendor liaison"})
+        _, _, spage = self._call("GET", "/admin/projects", cookie=self.root)
+        for bit in ("Waiting on vendor", "Network refresh", "Vendor liaison"):
+            self.assertIn(bit, spage)
+        _, h, _ = self._call("POST", f"/project/{pid}/update", cookie=self.alice,
+                             form={"status": "WAITING_ON_VENDOR", "project_type_id": "NETWORK_REFRESH", "manager": "alice"})
+        self.assertNotIn("err=", dict(h)["Location"])
+        c = self._conn()
+        p = projects.get(c, pid)
+        self.assertEqual((p["project_status_id"], p["status"], p["project_type_id"]), ("WAITING_ON_VENDOR", "ACTIVE", "NETWORK_REFRESH"))
+        self.assertEqual(projects.health(c, pid)[0], "HIGH_RISK")
+        ok, why = board.may_book_effort(c, "ITO-1")
+        self.assertFalse(ok, why)
+        self.assertEqual(set(projects.roles(c)) >= {"VENDOR_LIAISON", "PROJECT_MANAGER"}, True)
+        projects.add_member(c, pid, "lea.cruz", role="VENDOR_LIAISON", at=self.at, actor="alice")
+        # the seeds keep their old meaning: nothing live changes
+        self.assertEqual({r["status_id"]: r["no_time"] for r in projects.statuses(c)}["ON_HOLD"], 0)
 
     def test_projects_phases_predecessors_tickets_and_actual_hours(self):
         from psaspine import projects
@@ -6670,7 +6793,7 @@ class ModulesTest(unittest.TestCase):
         self.assertEqual(projects.phases(conn, pid)[0]["actual_hours"], 1.5)
         conn.commit()
         del c
-        _, _, page = self._call("GET", f"/project/{pid}", cookie=self.alice)
+        _, _, page = self._call("GET", f"/project/{pid}/workplan", cookie=self.alice)
         self.assertIn("1.50 of 40.00 h", page)
         # A predecessor is now a chip with a × that takes it off (5 Oct 2026),
         # so "waits on" and the name are no longer one run of characters.
@@ -6687,10 +6810,10 @@ class ModulesTest(unittest.TestCase):
         conn.execute("INSERT INTO time_entry (work_item_id, entity_id, worked_on, band_hours, performed_by, entered_by,"
                      " charge_method, actual_hours) VALUES ('ITO-9','PMC','2026-10-03',8,'alice','alice','INCLUDED_IN_MONTHLY_FEE',7.75)")
         conn.commit()
-        _, _, page = self._call("GET", f"/project/{pid}", cookie=self.alice)                  # on PHI: sees 1.5 + 7.75
+        _, _, page = self._call("GET", f"/project/{pid}/tickets", cookie=self.alice)          # on PHI: sees 1.5 + 7.75
         self.assertIn("9.25 of 40.00 h", page)
         self.assertIn("ITO-9", page)
-        _, _, page = self._call("GET", f"/project/{pid}", cookie=self._cookie_for("carol"))   # not on PHI: neither the ticket nor its hours
+        _, _, page = self._call("GET", f"/project/{pid}/tickets", cookie=self._cookie_for("carol"))   # not on PHI: neither the ticket nor its hours
         self.assertIn("1.50 of 40.00 h", page)
         self.assertNotIn("ITO-9", page)
         _, _, page = self._call("GET", "/projects", cookie=self._cookie_for("carol"))
@@ -6811,18 +6934,21 @@ class ModulesTest(unittest.TestCase):
         projects.link_ticket(conn, "ITO-1", pid, a, at=self.at, actor="alice")
         conn.commit()
 
-        _, _, page = self._call("GET", f"/project/{pid}", cookie=self.alice)
-        self.assertIn(f"/project/{pid}?phase={a}", page)                      # Edit
+        # 070: the phases are on the Work plan tab, the ticket list on Tickets, the details on Project
+        _, _, page = self._call("GET", f"/project/{pid}/workplan", cookie=self.alice)
+        self.assertIn(f"/project/{pid}/workplan?phase={a}", page)             # Edit
         self.assertIn(f"/project/{pid}/phase/move", page)                     # up / down
         self.assertIn(f"/project/{pid}/phase/unwait", page)                   # drop a predecessor
-        self.assertIn(f"/project/{pid}/ticket/unlink", page)                  # unlink a ticket
         self.assertIn("kept: 1 ticket(s) are on it", page)                    # and why Survey has no Remove
+        _, _, page = self._call("GET", f"/project/{pid}/tickets", cookie=self.alice)
+        self.assertIn(f"/project/{pid}/ticket/unlink", page)                  # unlink a ticket
+        _, _, page = self._call("GET", f"/project/{pid}", cookie=self.alice)
         self.assertIn("name=description", page)                               # the description has a field now
         self.assertNotIn(f"action='/project/{pid}/remove'", page)             # it carries work
         self.assertIn("is <b>cancelled</b>, not deleted", page)
 
         # Edit brings that phase's own form up, with its values in it
-        _, _, page = self._call("GET", f"/project/{pid}", query=f"phase={b}", cookie=self.alice)
+        _, _, page = self._call("GET", f"/project/{pid}/workplan", query=f"phase={b}", cookie=self.alice)
         self.assertIn("id=edit-phase", page)
         self.assertIn("Edit Handover", page)
 
@@ -6847,9 +6973,10 @@ class ModulesTest(unittest.TestCase):
                          "Not yours")
 
         # read-only on the module offers none of it
-        _, _, page = self._call("GET", f"/project/{pid}", cookie=self._cookie_for("dave"))
-        for gone in ("/phase/move", "/phase/unwait", "/ticket/unlink", "id=edit-phase"):
-            self.assertNotIn(gone, page, gone)
+        for tab in ("", "/workplan", "/tickets"):
+            _, _, page = self._call("GET", f"/project/{pid}{tab}", cookie=self._cookie_for("dave"))
+            for gone in ("/phase/move", "/phase/unwait", "/ticket/unlink", "id=edit-phase"):
+                self.assertNotIn(gone, page, f"{tab}: {gone}")
 
     # ---------------------------------------------------- report writer
 
@@ -9645,8 +9772,8 @@ class SearchViewsNotesTest(unittest.TestCase):
         pid = projects.create(conn, name="Ward 3 refresh", at=datetime(2026, 9, 29, 10), actor="alice")
         conn.commit()
         conn.close()
-        _, _, page = self._call("GET", f"/project/{pid}", cookie=alice)
-        self.assertIn("data-tickpick", page, "and the project's Link a ticket")
+        _, _, page = self._call("GET", f"/project/{pid}/workplan", cookie=alice)
+        self.assertIn("data-tickpick", page, "and the project's Add an existing ticket")
 
         # It is an input, not a select: with scripting off it is the plain field
         # it always was, so the form posts what it has always posted.

@@ -213,11 +213,15 @@ def _item(r, states) -> dict:
 
 
 def index(ctx):
-    boards = common.board_ids_for(ctx)
+    # The Service Board shows service (and change) boards only: a project board's
+    # tickets are worked from Projects, as the reference PSA keeps them (7 Oct 2026).
+    boards = common.service_board_ids(ctx)
     if not boards:
+        from .. import redirect
+        if common.project_board_ids(ctx):
+            return redirect("/projects")
         # On no board, this person is a requester: their page is their requests.
         # (A fulfiller who is not yet on a board is added on Setup by an admin.)
-        from .. import redirect
         return redirect("/my")
     q = ctx.request.query
     f = {k: q.get(k, "") for k in ("board", "view", "owner", "pri", "src", "type", "q",

@@ -81,12 +81,16 @@ def build(db_path: Path) -> str:
                                 impact="I3", urgency="U3", requested_by="cruz@pmcne.ph", at=at)
     board.add_note(conn, noted, body="The handset flashes amber when a call lands.",
                    flag="DISCUSSION", actor="tech", at=at, notify_requester=False)
-    prj = projects.create(conn, name="Ward 3 refresh", board_id="IT_HELP", at=at, actor="tech")
+    # 070: a project sits on a project board, apart from the Service Board.
+    conn.execute("INSERT OR REPLACE INTO board_member (board_id, member, access) VALUES ('IT_PROJECTS', 'tech', 'ADMIN')")
+    prj = projects.create(conn, name="Ward 3 refresh", board_id="IT_PROJECTS", at=at, actor="tech")
     ph_a = projects.add_phase(conn, prj, name="Survey", at=at, actor="tech")
     ph_b = projects.add_phase(conn, prj, name="Instal", at=at, actor="tech")      # a typo
     ph_c = projects.add_phase(conn, prj, name="Handover", at=at, actor="tech")
     projects.add_dependency(conn, ph_b, ph_c, at=at, actor="tech")                # the wrong way round
-    projects.link_ticket(conn, wid, prj, ph_a, at=at, actor="tech")
+    survey = tickets.open_ticket(conn, board_id="IT_HELP", summary="Survey the Ward 3 network points",
+                                 impact="I3", urgency="U3", requested_by=None, at=at)
+    projects.convert_to_project_ticket(conn, survey, prj, phase_id=ph_a, at=at, actor="tech")   # 070
     # An Outlook reply as it really arrives (6 Oct 2026): a signature laid out
     # in a table, a confidentiality footer, a screenshot pasted inline by
     # Content-ID, the whole quoted thread underneath -- and a script and a
@@ -481,19 +485,35 @@ def main() -> int:
             # --- a project's plan can be corrected --------------------------
             # Dada, 5 Oct 2026: "for projects they cant be deleted edited any
             # elements for the project cant do that".
+            # 070: every tab is its own page (Dada, 7 Oct 2026: "load each tab on its own page").
             page.goto(f"{base}/project/{prj}", wait_until="domcontentloaded")
+            page.wait_for_timeout(400)
+            tabs = page.locator("nav.ptabs a")
+            hrefs = [tabs.nth(i).get_attribute("href") for i in range(tabs.count())]
+            note(len(hrefs) >= 12 and len(set(hrefs)) == len(hrefs), "the project's tabs are links, one page each", str(hrefs))
+            bad = []
+            for h in hrefs:
+                page.goto(base + h, wait_until="domcontentloaded")
+                cur = page.locator("nav.ptabs a[aria-current=page]")
+                if cur.count() != 1 or cur.get_attribute("href") != h or "Traceback" in page.content():
+                    bad.append(h)
+            note(not bad, "and each opens on its own, its tab marked", str(bad))
+            page.goto(f"{base}/project/{prj}", wait_until="domcontentloaded")
+            txt = page.locator("body").inner_text()
+            note(page.locator(f"form[action='/project/{prj}/remove']").count() == 0
+                 and "cancelled" in txt.lower(),
+                 "a project with work on it offers Cancelled, not Remove")
+            page.goto(f"{base}/project/{prj}/workplan", wait_until="domcontentloaded")
             page.wait_for_timeout(400)
             txt = page.locator("body").inner_text()
             note(page.locator("form[action$='/phase/unwait'] button").count() >= 1,
                  "a predecessor set the wrong way round can be taken off")
             note("kept:" in txt, "a phase carrying work says why, instead of a dead Remove button",
                  next((l.strip() for l in txt.splitlines() if "kept:" in l), ""))
+            page.goto(f"{base}/project/{prj}/tickets", wait_until="domcontentloaded")
             note(page.locator("form[action$='/ticket/unlink'] button").count() == 1,
-                 "a linked ticket can be unlinked here")
-            note(page.locator(f"form[action='/project/{prj}/remove']").count() == 0
-                 and "cancelled" in txt.lower(),
-                 "a project with work on it offers Cancelled, not Remove")
-            page.goto(f"{base}/project/{prj}?phase={ph_b}", wait_until="domcontentloaded")
+                 "a project ticket can be unlinked from the Tickets tab")
+            page.goto(f"{base}/project/{prj}/workplan?phase={ph_b}", wait_until="domcontentloaded")
             page.wait_for_timeout(400)
             card = page.locator("#edit-phase")
             note(card.count() == 1, "Edit brings up that phase's own form")
@@ -508,7 +528,7 @@ def main() -> int:
                      "the wrong predecessor comes off, so both phases can finish", page.url)
 
             # --- a project's own tickets and team (068; Dada, 7 Oct 2026) ------
-            page.goto(f"{base}/project/{prj}", wait_until="domcontentloaded")
+            page.goto(f"{base}/project/{prj}/workplan", wait_until="domcontentloaded")
             page.wait_for_timeout(400)
             plus = page.locator(f"button[data-open=ptdlg][data-phase='{ph_b}']")
             note(plus.count() == 1, "each phase offers + Ticket")
@@ -523,11 +543,23 @@ def main() -> int:
                 page.locator("#ptdlg .tefoot button[type=submit]").click()
                 page.wait_for_load_state("domcontentloaded")
                 page.wait_for_timeout(500)
-                plan = page.locator("#plan").inner_text()
-                note("created in the project" in page.locator("body").inner_text()
-                     and "Hand the ward its new PCs" in plan,
-                     "the ticket is created inside the project and sits under its phase in the work plan")
+                note("created in the project" in page.locator("body").inner_text(), "the ticket is created inside the project")
+                page.goto(f"{base}/project/{prj}/workplan", wait_until="domcontentloaded")
+                note("Hand the ward its new PCs" in page.locator("#plan").inner_text(),
+                     "and sits under its phase in the work plan")
+                page.goto(f"{base}/project/{prj}/tickets", wait_until="domcontentloaded")
                 note(page.locator("#pboard .pcard").count() >= 2, "and is on the project's ticket board")
+                page.goto(f"{base}/", wait_until="domcontentloaded")
+                page.wait_for_timeout(400)
+                note("Hand the ward its new PCs" not in page.locator("body").inner_text()
+                     and "Survey the Ward 3 network points" not in page.locator("body").inner_text(),
+                     "project tickets never show on the Service Board")
+                page.goto(f"{base}/projects", wait_until="domcontentloaded")
+                grp = page.locator("[data-pboard=IT_PROJECTS]")
+                note(grp.count() == 1 and "Ward 3 refresh" in grp.inner_text()
+                     and "Hand the ward its new PCs" in grp.inner_text(),
+                     "the project board holds the project, and the project holds its tickets")
+            page.goto(f"{base}/project/{prj}/team", wait_until="domcontentloaded")
             page.locator("#team select[name=member]").select_option(index=0)
             page.locator("#team select[name=role]").select_option("ENGINEER")
             page.locator("#team input[name=hours]").fill("8")
@@ -537,6 +569,7 @@ def main() -> int:
             note("joined the team" in page.locator("body").inner_text() or "on the team" in page.locator("body").inner_text(),
                  "a member is added to the project's team with a role and hours")
             # --- 069: plan a ticket's dates, see it on the Gantt; the close window --
+            page.goto(f"{base}/project/{prj}/workplan", wait_until="domcontentloaded")
             plan = page.locator("button[data-open=ptplan]").first
             note(plan.count() == 1, "each project ticket in the work plan offers Plan")
             if plan.count():
@@ -551,6 +584,7 @@ def main() -> int:
                 page.locator("#ptplan .tefoot button[type=submit]").click()
                 page.wait_for_load_state("domcontentloaded")
                 page.wait_for_timeout(400)
+                page.goto(f"{base}/project/{prj}/gantt", wait_until="domcontentloaded")
                 note(page.locator("#pgantt .grow.ticket .gbar").count() >= 1,
                      "and the dated ticket is drawn on the Gantt")
             close_btn = page.locator("button[data-open=pclose]")
@@ -560,6 +594,19 @@ def main() -> int:
                 page.wait_for_timeout(300)
                 note(page.evaluate("() => document.getElementById('pclose').open"), "which opens the close window")
                 page.locator("#pclose [data-close=pclose]").first.click()
+            # 070: an issue raised on the Issues tab
+            page.goto(f"{base}/project/{prj}/issues", wait_until="domcontentloaded")
+            page.fill("#pissues input[name=summary]", "Switch delivery slipped a week")
+            page.locator("#pissues button[type=submit]").last.click()
+            page.wait_for_load_state("domcontentloaded")
+            note("Issue raised" in page.locator("body").inner_text() and "/issues" in page.url,
+                 "an issue is raised and the Issues tab comes back", page.url)
+            # 070: a service ticket offers Convert to project ticket
+            page.goto(f"{base}/ticket/{ref}", wait_until="domcontentloaded")
+            note(page.locator("[data-pod=project] button", has_text="Convert to project ticket").count() == 1,
+                 "a service ticket's Project pod offers Convert to project ticket")
+            page.goto(f"{base}/admin/projects", wait_until="domcontentloaded")
+            note(page.locator("#pstatuses input[name=name]").count() >= 5, "Setup › Projects lists the project statuses")
             page.goto(f"{base}/projects", wait_until="domcontentloaded")
             page.wait_for_timeout(300)
             note("open ticket(s)" in page.locator("body").inner_text(), "the projects list shows each project's open tickets")
