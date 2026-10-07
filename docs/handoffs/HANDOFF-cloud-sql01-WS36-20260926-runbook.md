@@ -2833,3 +2833,14 @@ Ran `HANDOFF-cloud-sql01-WS36-20261007-project-access-survey.md`. 070 was alread
 3. **PSA-Desk restarted:** `:8085` **401 → down → 401 in 2s**, Running. The project-access rules ride this restart.
 
 Service tickets are untouched by the access change, per §1.
+
+### Part 50: 2026-10-07, ~12:45 +08:00. **dd0b359 live; 071 (chat) applied. All three handoffs in the ordered set are now in.** MEASURED.
+
+WS36 named three handoffs in order — 070, chat-071, project-access-survey — with one restart. **Two of the three were already done and were not redone:** 070 in Part 47 (four tables, two columns, seeds verified against the code) and the survey/project-access step in Part 49 (3 boards updated, verification 0). Only **071** was outstanding, so that is what this part covers.
+
+1. **Schema 071 by the sitting-1 road** (COPY_ONLY `PMC_PSA_pre071_20261007.bak`, VERIFYONLY ok). Statements **extracted from the generated port by line range and run verbatim**, as in Parts 46–47: `chat_session`, `chat_message` and the three indexes. Dry run first, then one transaction with a verify gate, as sysadmin via pyodbc. Desk stopped before applying — the Chat pages, the portal's chat pages and the `chats` live stamp all read these tables.
+2. **Verified:** `chat_session` and `chat_message` both exist with **`COUNT(*) = 0`**, and all three indexes are present — `ix_chat_session_status`, `ix_chat_session_requester`, `ix_chat_message_chat`. **Nothing else moved:** `ticket` **242 → 242** and `time_entry` **56 → 56**, measured inside the transaction. That matches §2's claim that nothing but chat reads these.
+3. **PSA-Desk started:** `:8085` **401 → down → 401 in 2s**, Running.
+4. **Re-checked that Part 49's work still stands** after this restart: non-project boards without the survey = **0**. Both chat tables present. So the ordered set is complete and consistent: 070 ✓, 071 ✓, survey ✓.
+
+**The live proof is Dada's and has not been done:** a first real chat from a ward PC to the desk. On the desk it is *Service Desk › Chat* (an empty queue until someone starts one); on the portal, *Chat* beside *My requests*. Everything behind the Windows sign-in stays his eye, as always.
