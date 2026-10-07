@@ -168,7 +168,9 @@ def messages(conn: sqlite3.Connection, chat_id: int, *, after: int = 0) -> list:
 
 def transcript(conn: sqlite3.Connection, chat_id: int) -> str:
     c = get(conn, chat_id)
-    lines = [f"Chat {chat_id} with {c['requester']}, started {c['started_at']}:"]
+    nth, total = counts(conn, chat_id)
+    lines = [f"Chat with {_name(conn, c['requester'])} ({c['requester']}), their chat {nth} of {total},"
+             f" started {c['started_at']}:"]
     for m in messages(conn, chat_id):
         who = "desk" if m["sender_kind"] == SYSTEM else m["sender"]
         lines.append(f"[{m['sent_at'][11:16]}] {who}: {m['body']}")
@@ -183,7 +185,7 @@ def queue(conn: sqlite3.Connection, boards, *, now: datetime) -> list:
         return []
     marks = ",".join("?" * len(boards))
     return conn.execute(
-        "SELECT c.*, b.display_name AS board_name,"
+        f"SELECT c.*, b.display_name AS board_name, {_COUNTS},"
         " (SELECT COUNT(*) FROM chat_message m WHERE m.chat_id = c.chat_id) AS lines"
         " FROM chat_session c JOIN board b ON b.board_id = c.board_id"
         f" WHERE c.board_id IN ({marks}) AND (c.status <> 'CLOSED' OR c.closed_at >= ?)"
@@ -393,12 +395,72 @@ def survey_of(conn: sqlite3.Connection, chat_id: int):
     return conn.execute("SELECT * FROM chat_survey WHERE chat_id = ?", (chat_id,)).fetchone()
 
 
+# Whose chat, and which of theirs (Dada, 7 Oct 2026: "instead of naming it as chat1 ...
+# the name of the user and number so we know how many this person end user has done").
+# Chat 3 is the person's third; the total is every chat they have started so far.
+_COUNTS = ("(SELECT COUNT(*) FROM chat_session p WHERE p.requester = c.requester AND p.chat_id <= c.chat_id) AS nth,"
+           " (SELECT COUNT(*) FROM chat_session p WHERE p.requester = c.requester) AS total")
+
+
+def counts(conn: sqlite3.Connection, chat_id: int) -> tuple[int, int]:
+    """(nth, total): this is the requester's nth chat of total so far."""
+    row = conn.execute(f"SELECT {_COUNTS} FROM chat_session c WHERE c.chat_id = ?", (chat_id,)).fetchone()
+    return (row["nth"], row["total"]) if row else (0, 0)
+
+
+def label(conn: sqlite3.Connection, requester: str, nth: int) -> str:
+    """'Jun Reyes · chat 3': the name the desk knows the chat by."""
+    return f"{_name(conn, requester)} · chat {nth}"
+
+
 def waiting(conn: sqlite3.Connection, boards) -> list:
-    """The chats waiting for someone on these boards, oldest first (the desk's banner)."""
+    """The chats waiting for someone on these boards, oldest first."""
+    return [c for c in live(conn, boards) if c["status"] == WAITING]
+
+
+def _since(stamp: str, now: datetime | None) -> str:
+    if now is None:
+        return ""
+    try:
+        mins = max(0, int((now.replace(tzinfo=None) - datetime.fromisoformat(stamp[:19])).total_seconds() // 60))
+    except ValueError:
+        return ""
+    if mins < 1:
+        return "just now"
+    if mins < 60:
+        return f"{mins} min"
+    if mins < 24 * 60:
+        return f"{mins // 60} h {mins % 60:02d} min"
+    return f"{mins // (24 * 60)} d {mins // 60 % 24} h"
+
+
+def live(conn: sqlite3.Connection, boards, *, now: datetime | None = None) -> list[dict]:
+    """The live chats on these boards for the banner and its quick view: waiting
+    ones first, oldest first, then the ones being answered. Each carries whose
+    it is and which of theirs, who has it, and its last line (the requester's or
+    the desk's, never the desk's own notices)."""
     boards = sorted(boards)
     if not boards:
         return []
-    return conn.execute(
-        "SELECT c.chat_id, c.subject, c.requester, c.started_at, b.display_name AS board_name FROM chat_session c"
-        f" JOIN board b ON b.board_id = c.board_id WHERE c.status = 'WAITING' AND c.board_id IN ({','.join('?' * len(boards))})"
-        " ORDER BY c.started_at, c.chat_id LIMIT 20", boards).fetchall()
+    rows = conn.execute(
+        "SELECT c.chat_id, c.board_id, c.subject, c.requester, c.status, c.picked_by, c.started_at,"
+        f" b.display_name AS board_name, b.restricted, m.body AS last_body, m.sender_kind AS last_kind, {_COUNTS}"
+        " FROM chat_session c JOIN board b ON b.board_id = c.board_id"
+        " LEFT JOIN chat_message m ON m.message_id = (SELECT MAX(x.message_id) FROM chat_message x"
+        "  WHERE x.chat_id = c.chat_id AND x.sender_kind <> 'SYSTEM')"
+        f" WHERE c.status <> 'CLOSED' AND c.board_id IN ({','.join('?' * len(boards))})"
+        " ORDER BY CASE c.status WHEN 'WAITING' THEN 0 ELSE 1 END, c.started_at, c.chat_id LIMIT 30", boards).fetchall()
+    out = []
+    for r in rows:
+        last = " ".join((r["last_body"] or "").split())
+        out.append({
+            "id": r["chat_id"], "board_id": r["board_id"], "subject": r["subject"], "who": r["requester"],
+            "name": _name(conn, r["requester"]), "nth": r["nth"], "total": r["total"],
+            "label": label(conn, r["requester"], r["nth"]), "board": r["board_name"], "status": r["status"],
+            "with": _name(conn, r["picked_by"]) if r["picked_by"] else "", "since": (r["started_at"] or "")[11:16],
+            "waited": _since(r["started_at"] or "", now),
+            # A restricted board's words stay on its own page, where the read is audited.
+            "last": "" if r["restricted"] else (last[:90] + ("…" if len(last) > 90 else "")),
+            "last_from": "" if r["restricted"] or not r["last_kind"] else ("desk" if r["last_kind"] == STAFF else "requester"),
+        })
+    return out

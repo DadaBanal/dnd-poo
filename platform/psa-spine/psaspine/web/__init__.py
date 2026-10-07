@@ -513,12 +513,12 @@ def _route(conn, request: Request, config: Config, now: datetime) -> Response:
     # only what the person may open and every view asks the same question.
     from .. import security
     user.modules = security.levels(conn, user)
-    # 072: the chats waiting on this person's boards, so every desk page draws
-    # its banner already filled (one indexed read; none for a requester).
-    user.waiting_chats = []
+    # 072: the live chats on this person's boards, so every desk page draws its
+    # banner and quick view already filled (one indexed read; none for a requester).
+    user.live_chats = []
     if not user.requester and _db.table_exists(conn, "chat_session"):
-        from .. import chat as _chat
-        user.waiting_chats = _chat.waiting(conn, common.board_ids_for(ctx))
+        from .views.chat import live_for
+        user.live_chats = live_for(ctx)
     conn.commit()
     return router.dispatch(ctx)
 

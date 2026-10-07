@@ -2228,6 +2228,31 @@ Teams-style reactions, pictures and files through the patient-details review, th
 
 Schema 072 is additive: `chat_reaction`, `chat_file`, `chat_survey`, and the nullable `board.chat_welcome`.
 
+## Chat, round three: chats by name, a quick view, a bigger banner, a Taglish reminder (7 Oct 2026, code only)
+
+Dada, 7 Oct 2026: *"make the banner bigger ... instead of naming it as chat1 so on and so forth can we do the name
+of the user and number so we know how many this person end user has done ... a quick view of the live chats ...
+a reminder what to add to the chats so the user will follow it ... as taglish"*. Confirmed before building: name
+and their Nth chat, a drop-down panel, about twice the size, a card beside the start-a-chat form.
+
+- **Chats go by their person.** The desk no longer shows *Chat 4*. A chat is *Jun Reyes · chat 3*: Jun's third chat.
+  The name comes from the member record or the AD contact, falling back to the sign-in. Hover to see *3 chats from
+  Jun so far*. This applies on the banner, the quick view, the queue's first column, the chat page's heading and title
+  (*their chat 3 of 3*), and the transcript a ticket carries. The chat's number stays in its address.
+- **The quick view.** *Live chats (N) ▾* on the banner opens a panel over the page. It lists the waiting chats first,
+  each with how long it has waited and **Pick up** (for those who may work the board), then the chats in progress
+  and who has them. Each row shows its last line from the ward or the desk. Escape or a click away closes it. On a
+  restricted board the last line is left out, because the chat's own page, where reads are audited, shows it.
+- **The banner.** It is about twice the size (56 px, 18 px type, a bigger bell) and stays up while any chat is live.
+  With chats waiting it reads *New chat* and runs those; with none waiting it reads *Live chats* and runs the ones
+  being answered. Only a new waiting chat chimes. ✕ hides it until a chat it has not shown before.
+- **Paalala.** Beside *Start a chat* on the portal, a card in Taglish lists what to put in the message: saan kayo,
+  anong gamit (PC name o asset tag), ano ang nangyari at ang eksaktong error, kailan pa, ilan ang apektado, paano
+  kayo makokontak, and a picture or screenshot. It ends with *Huwag po ilagay ang pangalan o anumang detalye ng
+  pasyente*. The boxes carry Taglish hints too.
+
+No schema change: the count is read from `chat_session`. SQL01 pulls and restarts; there is no step to apply.
+
 ## Only a project's members see it (7 Oct 2026, code only)
 
 Dada, 7 Oct 2026: *"make sure that they will only have access to projects they are a member of"*. Confirmed before

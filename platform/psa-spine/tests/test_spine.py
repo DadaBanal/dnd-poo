@@ -7094,6 +7094,89 @@ class ModulesTest(unittest.TestCase):
         for bit in ("id=emopick", "type=file name=file", "id=rxpick", "enctype='multipart/form-data'"):
             self.assertIn(bit, page, bit)
 
+    def test_chat_named_by_its_person_with_a_quick_view_and_a_paalala(self):
+        """Dada, 7 Oct 2026: a bigger banner; "instead of naming it as chat1 ...
+        the name of the user and number so we know how many this person end user
+        has done"; "a quick view of the live chats"; and a Taglish reminder of
+        what to put in a chat. Confirmed: name · their Nth chat, a drop-down
+        panel on the banner, twice the size, a card beside the start form."""
+        from psaspine import chat
+        from psaspine.web.views import chat as chat_view
+        nurse = self._cookie_for("nurse")
+        c = self._conn()
+        one, _ = chat.start(c, requester="nurse", board_id="IT_HELP", subject="Label printer jams",
+                            first="The ward 7 printer jams.", at=self.at)
+        two, _ = chat.start(c, requester="nurse", board_id="IT_HELP", subject="Mouse gone", first="No mouse.", at=self.at)
+        other, _ = chat.start(c, requester="jun.reyes", board_id="IT_HELP", subject="Cannot log in", first="Locked out.",
+                              at=self.at)
+        c.commit()
+        self.assertEqual((chat.counts(c, one), chat.counts(c, two), chat.counts(c, other)), ((1, 2), (2, 2), (1, 1)))
+        first, second = chat.label(c, "nurse", 1), chat.label(c, "nurse", 2)
+        self.assertTrue(first.endswith(" · chat 1") and second.endswith(" · chat 2"))
+        # the queue and the chat page say whose it is and which of theirs, not "Chat 4"
+        queue = self._call("GET", "/chat", cookie=self.alice)[2]
+        self.assertIn(f"<b>{first}</b>", queue)
+        self.assertIn(f"<b>{second}</b>", queue)
+        self.assertIn("2 chats from nurse so far", queue)
+        self.assertNotIn(f">Chat {two}<", queue)
+        page = self._call("GET", f"/chat/{two}", cookie=self.alice)[2]
+        self.assertIn(f"<h1>{second} · Mouse gone</h1>", page)
+        self.assertIn("their chat 2 of 2", page)
+        self.assertIn("their chat 2 of 2", chat.transcript(c, two))
+        # the quick view: waiting first with Pick up, then who has the rest, each with its last line
+        self._call("POST", f"/chat/{one}/send", cookie=self.alice, form={"body": "On my way."})
+        j = _json.loads(self._call("GET", "/chat/waiting.json", cookie=self.alice)[2])
+        self.assertEqual([w["id"] for w in j["chats"]], [two, other])
+        self.assertEqual([(r["id"], r["status"]) for r in j["live"]], [(two, "WAITING"), (other, "WAITING"), (one, "ACTIVE")])
+        self.assertEqual((j["word"], j["live"][1]["label"]), ("New chat", chat.label(c, "jun.reyes", 1)))
+        self.assertIn("Waiting (2)", j["panel"])
+        self.assertIn("In progress (1)", j["panel"])
+        self.assertEqual(j["panel"].count(">Pick up</button>"), 2)
+        self.assertIn("On my way.", j["panel"])                                   # the last line, not the join notice
+        self.assertIn("No mouse.", j["panel"])
+        self.assertIn(f"<b>{second}</b>", j["ticker"])
+        self.assertNotIn(f"<b>{first}</b>", j["ticker"])                          # the ticker runs what waits
+        # drawn filled on every desk page, twice the size, the quick view closed until asked for
+        board_page = self._call("GET", "/", cookie=self.alice)[2]
+        self.assertIn("Live chats (<span class=tn>3</span>)", board_page)
+        self.assertIn("id=chatlive class=tpanel role=dialog aria-label='Live chats' hidden>", board_page)
+        self.assertIn("min-height:56px", board_page)
+        self.assertNotIn("id=chatticker", self._call("GET", "/my/chat", cookie=nurse)[2])
+        # a reader may look but not pick up
+        conn = self._conn()
+        conn.execute("UPDATE board_member SET access = 'READ' WHERE board_id = 'IT_HELP' AND member = 'alice'")
+        conn.commit()
+        self.assertNotIn("Pick up", _json.loads(self._call("GET", "/chat/waiting.json", cookie=self.alice)[2])["panel"])
+        conn.execute("UPDATE board_member SET access = 'ADMIN' WHERE board_id = 'IT_HELP' AND member = 'alice'")
+        conn.commit()
+        # nothing waiting: the banner carries the chats being answered
+        for cid in (two, other):
+            self._call("POST", f"/chat/{cid}/pick", cookie=self.alice)
+        j = _json.loads(self._call("GET", "/chat/waiting.json", cookie=self.alice)[2])
+        self.assertEqual((j["word"], j["chats"], len(j["live"])), ("Live chats", [], 3))
+        self.assertIn(" · with ", j["ticker"])
+        # a restricted board's words stay on its own page, where the read is audited
+        conn.execute("UPDATE board SET restricted = 1 WHERE board_id = 'IT_HELP'")
+        conn.commit()
+        self.assertEqual({r["last"] for r in chat.live(self._conn(), {"IT_HELP"})}, {""})
+        conn.execute("UPDATE board SET restricted = 0 WHERE board_id = 'IT_HELP'")
+        conn.commit()
+        # all ended: no banner
+        for cid in (one, two, other):
+            self._call("POST", f"/chat/{cid}/end", cookie=self.alice)
+        j = _json.loads(self._call("GET", "/chat/waiting.json", cookie=self.alice)[2])
+        self.assertEqual((j["live"], j["ticker"]), ([], ""))
+        self.assertIn("id=chatticker class=ticker hidden", self._call("GET", "/", cookie=self.alice)[2])
+        # the Taglish reminder: beside the start form on the portal, never on the desk
+        mine = self._call("GET", "/my/chat", cookie=nurse)[2]
+        self.assertIn("id=chatpaalala", mine)
+        self.assertIn(chat_view.PAALALA_TITLE, mine)
+        for what, _ in chat_view.PAALALA:
+            self.assertIn(f"<b>{what}</b>", mine)
+        self.assertIn(chat_view.PAALALA_PHI, mine)
+        self.assertIn("Huwag po ilagay ang detalye ng pasyente", mine)             # and in the box itself
+        self.assertNotIn("id=chatpaalala", self._call("GET", "/chat", cookie=self.alice)[2])
+
     def test_projects_phases_predecessors_tickets_and_actual_hours(self):
         from psaspine import projects
         conn = self._conn()

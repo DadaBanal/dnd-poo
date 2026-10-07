@@ -222,17 +222,20 @@ def index(ctx):
         tk = (f"<a href='/ticket/{t.esc(r['work_item_id'])}'>{t.esc(r['work_item_id'])}</a>" if r["work_item_id"] else "")
         sv = chat.survey_of(ctx.conn, r["chat_id"])
         tk += (f" <span title='{t.esc(sv['comment'] or '')}'>{'★' * sv['score']}</span>" if sv else "")
-        return (f"<tr{' class=chatwait' if r['status'] == 'WAITING' else ''}><td><a href='/chat/{r['chat_id']}'>Chat {r['chat_id']}</a></td>"
-                f"<td><b>{t.esc(r['subject'])}</b></td><td>{t.esc(r['requester'])}</td><td>{t.esc(r['board_name'])}</td>"
+        name = chat.label(ctx.conn, r["requester"], r["nth"])
+        return (f"<tr{' class=chatwait' if r['status'] == 'WAITING' else ''}><td><a href='/chat/{r['chat_id']}' "
+                f"title='{r['total']} chat{'s' if r['total'] != 1 else ''} from {t.esc(r['requester'])} so far'><b>{t.esc(name)}</b></a>"
+                f"<div class=muted>{t.esc(r['requester'])}</div></td>"
+                f"<td>{t.esc(r['subject'])}</td><td>{t.esc(r['board_name'])}</td>"
                 f"<td>{state}</td><td>{t.esc(r['started_at'][:16])}</td><td class=center>{r['lines']}</td><td>{tk}</td></tr>")
     waiting = sum(1 for r in rows if r["status"] == "WAITING")
     body = ((f"<div class='banner ok'>{t.esc(q.get('msg', ''))}</div>" if q.get("msg") else "")
             + (f"<div class='banner err'>{t.esc(q.get('err', ''))}</div>" if q.get("err") else "")
             + f"<h1>Chat</h1><p class=sub>Ward staff start a chat from the portal. Pick one up to answer it; make it a "
               f"ticket, or add it to one, when it needs work. {waiting} waiting.</p>"
-            + "<div class=card id=chatqueue><div class=tablewrap><table><thead><tr><th>Chat</th><th>About</th><th>Who</th>"
+            + "<div class=card id=chatqueue><div class=tablewrap><table><thead><tr><th>Who · their chat</th><th>About</th>"
               "<th>Board</th><th>State</th><th>Started</th><th>Lines</th><th>Ticket · rating</th></tr></thead><tbody>"
-            + ("".join(row(r) for r in rows) or "<tr><td colspan=8 class=muted>No chats.</td></tr>")
+            + ("".join(row(r) for r in rows) or "<tr><td colspan=7 class=muted>No chats.</td></tr>")
             + "</tbody></table></div></div>")
     return Response(body=t.page("Chat", body, user=ctx.user, active="chat", live="chats"))
 
@@ -264,20 +267,23 @@ def detail(ctx, chat_id):
                        f"<h4 style='margin-top:14px'>Or add it to a ticket</h4><form method=post action='/chat/{cid}/attach' class=row>"
                        f"<div>{t.ticket_pick('work_item_id', 'Search a ticket, or type its number', required=True)}</div>"
                        "<div style='flex:0 0 auto'><button class=ghost type=submit>Add to the ticket</button></div></form></div>")
+    nth, total = chat.counts(ctx.conn, cid)
+    name = chat.label(ctx.conn, c["requester"], nth)
     rated = chat.survey_of(ctx.conn, cid)
     rating = (f" · rated {'★' * rated['score']}{'☆' * (5 - rated['score'])}"
               + (f" “{t.esc(rated['comment'])}”" if rated["comment"] else "") if rated else "")
     body = ((f"<div class='banner ok'>{t.esc(q.get('msg', ''))}</div>" if q.get("msg") else "")
             + (f"<div class='banner err'>{t.esc(q.get('err', ''))}</div>" if q.get("err") else "")
             + "<a class=backbtn href='/chat'>" + t.icon("left") + "<span class=lbl>Back to Chat</span></a>"
-            f"<div class=hdr><div class=grow><h1>Chat {cid} · {t.esc(c['subject'])}</h1>"
-            f"<p class=sub>{t.esc(c['requester'])} · {t.esc(c['board_name'])} · started {t.esc(c['started_at'][:16])} · "
+            f"<div class=hdr><div class=grow><h1>{t.esc(name)} · {t.esc(c['subject'])}</h1>"
+            f"<p class=sub>{t.esc(c['requester'])} · their chat {nth} of {total} · {t.esc(c['board_name'])}"
+            f" · started {t.esc(c['started_at'][:16])} · "
             f"<span id=chatstate>{t.esc(_status_words(c, ctx.conn, desk=True))}</span>{rating}</p></div><div>{acts}</div></div>"
             "<div class=grid2 style='grid-template-columns:minmax(0,2fr) minmax(0,1fr)'>"
             "<div class=card>" + _conversation(ctx, c, rows, me_kind=chat.STAFF, viewer=ctx.user.id, desk=True,
                                                 base=f"/chat/{cid}", can_send=can and c["status"] != chat.CLOSED)
             + "</div><div>" + ticket_card + "</div></div>")
-    return Response(body=t.page(f"Chat {cid}", body, user=ctx.user, active="chat"))
+    return Response(body=t.page(name, body, user=ctx.user, active="chat"))
 
 
 def _poll(ctx, c, *, viewer: str, desk: bool, base: str):
@@ -381,11 +387,27 @@ def file_review(ctx, chat_id, file_id):
                 lambda c, r: _back(f"/chat/{c['chat_id']}", msg=r[:1].upper() + r[1:] + "."))
 
 
+def live_for(ctx) -> list[dict]:
+    """The live chats on the person's boards, each marked with whether they may
+    pick it up, for the banner and its quick view."""
+    rows = chat.live(ctx.conn, common.board_ids_for(ctx), now=ctx.now)
+    work = {}
+    for r in rows:
+        if r["board_id"] not in work:
+            work[r["board_id"]] = common.may_access_board(ctx, r["board_id"], need="WORK")
+        r["can"] = work[r["board_id"]]
+    return rows
+
+
 def waiting_json(ctx):
-    """The chats waiting on the person's boards, for the banner every desk page runs."""
-    rows = chat.waiting(ctx.conn, common.board_ids_for(ctx))
-    return _json({"chats": [{"id": r["chat_id"], "subject": r["subject"], "who": r["requester"],
-                             "board": r["board_name"], "since": r["started_at"][11:16]} for r in rows]})
+    """The banner every desk page runs: what waits (for the chime), every live
+    chat (for the quick view), and both drawn as the page draws them."""
+    rows = live_for(ctx)
+    word, ticker = t.chat_ticker(rows)
+    keep = ("id", "subject", "who", "name", "nth", "total", "label", "board", "status", "with", "since", "waited")
+    return _json({"chats": [{k: r[k] for k in keep} for r in rows if r["status"] == chat.WAITING],
+                  "live": [{k: r[k] for k in keep} for r in rows],
+                  "word": word, "ticker": ticker, "panel": t.chat_panel(rows)})
 
 
 def pick(ctx, chat_id):
@@ -428,6 +450,29 @@ def _mine(ctx, chat_id):
     return c
 
 
+# What to put in a chat, in the words the wards use (Dada, 7 Oct 2026: "a reminder
+# what to add to the chats so the user will follow it ... as taglish"). Confirmed:
+# a card beside the start-a-chat form.
+PAALALA_TITLE = "Paalala bago mag-chat"
+PAALALA_LEAD = "Para mas mabilis namin kayong matulungan, pakilagay po sa message:"
+PAALALA = (
+    ("Saan kayo", "ward o office, at ang room (hal. Ward 3, Nurse Station)"),
+    ("Anong gamit", "PC name o asset tag na nakadikit sa unit, printer, o phone extension"),
+    ("Ano ang nangyari", "ano ang ginagawa ninyo nung nagka-problema, at ang eksaktong error message"),
+    ("Kailan pa", "kanina lang ba, o ilang araw na"),
+    ("Ilan ang apektado", "kayo lang ba, o buong ward o office"),
+    ("Paano kayo makokontak", "local o extension number"),
+    ("Picture o screenshot", "ng error, puwede pong i-attach dito sa chat 📎"),
+)
+PAALALA_PHI = "Huwag po ilagay ang pangalan o anumang detalye ng pasyente."
+
+
+def _paalala() -> str:
+    return (f"<div class='card paalala' id=chatpaalala><h3>📝 {t.esc(PAALALA_TITLE)}</h3><p>{t.esc(PAALALA_LEAD)}</p><ul>"
+            + "".join(f"<li><b>{t.esc(k)}</b> — {t.esc(v)}</li>" for k, v in PAALALA)
+            + f"</ul><p class=paalalawarn>⚠️ <b>{t.esc(PAALALA_PHI)}</b></p></div>")
+
+
 def my_index(ctx, *, error: str = ""):
     """The requester's chats and a box to start one. Offered at any time; a chat
     started out of hours waits until someone from the desk is in."""
@@ -450,12 +495,14 @@ def my_index(ctx, *, error: str = ""):
     body = ((f"<div class='banner err'>{t.esc(error)}</div>" if error else "")
             + "<h1>Chat with the helpdesk</h1><p class='sub'>Type what is wrong and someone from the desk will answer "
               "here. If it needs work, they will raise a request for you.</p>"
-            + "<div class=card id=chatstart><h3>" + t.icon("note") + "Start a chat</h3>"
+            + "<div class=grid2 style='grid-template-columns:minmax(0,3fr) minmax(0,2fr);align-items:start'>"
+              "<div class=card id=chatstart><h3>" + t.icon("note") + "Start a chat</h3>"
               "<form method=post action='/my/chat/new' class=stack style='max-width:none'>"
-              "<label>What is it about? <input name=subject maxlength=200 placeholder='Printer on ward 3'></label>" + who
-            + "<label>Your message <textarea name=body required maxlength=2000 placeholder='The ward or office, the room, "
-              "the machine, and since when. Never a patient&#39;s details.'></textarea></label>"
-              "<div><button type=submit>Start the chat</button></div></form></div>"
+              "<label>What is it about? <input name=subject maxlength=200 placeholder='hal. Printer sa Ward 3, ayaw mag-print'></label>" + who
+            + "<label>Your message <textarea name=body required maxlength=2000 rows=6 placeholder='Saan kayo (ward/office, room), "
+              "anong gamit (PC name o asset tag), ano ang error, at kailan pa. Huwag po ilagay ang detalye ng pasyente.'>"
+              "</textarea></label>"
+              "<div><button type=submit>Start the chat</button></div></form></div>" + _paalala() + "</div>"
             + ("<div class=card><h3>Your chats</h3><div class=tablewrap><table><thead><tr><th>About</th><th>With</th>"
                f"<th>State</th><th>Started</th></tr></thead><tbody>{lis}</tbody></table></div></div>" if rows else ""))
     return Response("400 Bad Request" if error else "200 OK", t.page("Chat", body, user=ctx.user, active="chat"))

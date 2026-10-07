@@ -664,6 +664,20 @@ def main() -> int:
             x1 = page.evaluate("() => new DOMMatrix(getComputedStyle(document.querySelector('#chatticker .ttrack')).transform).m41")
             note(x1 < x0, "moving from right to left", f"{x0:.0f} -> {x1:.0f}px")
             note(tk.locator(".tsound").count() == 1, "with its chime switch beside it")
+            h = tk.bounding_box()["height"] if tk.is_visible() else 0
+            note(h >= 54, "the banner is twice the size it was", f"{h:.0f}px tall")
+            note(" · chat 1" in tk.inner_text(), "the chat goes by its person and which of theirs, not its number",
+                 tk.inner_text()[:120])
+            tk.locator(".tlive").click()
+            page.wait_for_timeout(200)
+            lv = page.locator("#chatlive")
+            note(lv.is_visible() and "Teams phone silent" in lv.inner_text() and lv.locator("button", has_text="Pick up").count() == 1,
+                 "Live chats opens a quick view with the waiting chat and Pick up")
+            if os.environ.get("PSA_SHOTS"):
+                page.screenshot(path=os.path.join(os.environ["PSA_SHOTS"], "chat-quickview.png"))
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(150)
+            note(not lv.is_visible(), "and Escape closes it")
             page.goto(f"{base}/chat", wait_until="domcontentloaded")
             note("Teams phone silent" in page.locator("#chatqueue").inner_text(), "the desk sees the waiting chat")
             page.goto(f"{base}/chat/{cid}", wait_until="domcontentloaded")
@@ -673,6 +687,13 @@ def main() -> int:
             ward.fill("input[name=password]", PASSWORD)
             ward.click("button[type=submit]")
             ward.wait_for_load_state("domcontentloaded")
+            ward.goto(f"{base}/my/chat", wait_until="domcontentloaded")
+            pa = ward.locator("#chatpaalala")
+            pt = pa.inner_text().lower() if pa.count() else ""
+            note(pa.is_visible() and "paalala" in pt and "pasyente" in pt,
+                 "the ward reads the Taglish reminder of what to put in a chat, beside the box", pt[:160] or ward.url)
+            if os.environ.get("PSA_SHOTS"):                    # a look at it by eye, when asked for
+                ward.screenshot(path=os.path.join(os.environ["PSA_SHOTS"], "chat-paalala.png"), full_page=True)
             ward.goto(f"{base}/my/chat/{cid}", wait_until="domcontentloaded")
             note("number 1 in the queue" in ward.locator("#chatstate").inner_text()
                  and "you are in the queue" in ward.locator("#chatlog").inner_text(),
