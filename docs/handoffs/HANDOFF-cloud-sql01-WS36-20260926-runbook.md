@@ -2776,3 +2776,23 @@ Ran `HANDOFF-cloud-sql01-WS36-20261007-projects-068.md`, §2 and §5 in the one 
 3. **PSA-Desk started:** `:8085` **401 → down → 401 in 2s**, Running.
 
 `init` was not run as a separate step: the schema it would apply is exactly what was just applied and verified, and the desk account remains shut to me, so running it would add nothing and prove nothing. Everything in §3's and §5's "what Dada will see" is behind the Windows sign-in and stays his eye.
+
+### Part 47: 2026-10-07, ~11:05 +08:00. **f322767 live; 070 applied with the seed rows `init` would have written; PSA-Desk restarted.** MEASURED.
+
+Ran `HANDOFF-cloud-sql01-WS36-20261007-projects-070.md`. 068 and 069 were already in from Part 46, so this was 070 alone — four tables, one index, two nullable columns — plus §2 step 6's INSERTs, which WS36 supplied **because Part 46 recorded that `init` is shut to me**. Blocking, as the handoff says: `board.may_book_effort` now joins `project_status` for the *No time* flag, so without 070 time entry would fail on **every** ticket, not just project ones.
+
+**Method.** DDL **extracted from the generated port by line range and run verbatim**, as in Part 46. The seed INSERTs are the handoff's, but I did not take them on trust — a seed puts real rows into production. **Checked against the code they are meant to mirror** (`psaspine/projects.py`): `SEED_STATUSES` at line 1152, `ROLES` at 525, the `GENERAL` type, and `ensure_vocabulary`'s `(i + 1) * 10` sort orders. Every value, flag and order matches. Dry run first (printed all ten statements, rolled back), then one transaction with a verify gate.
+
+1. **Backup** COPY_ONLY `PMC_PSA_pre070_20261007.bak`, VERIFYONLY ok. **PSA-Desk stopped** before applying.
+2. **Applied and committed. Every check in §5 and §6 passes:**
+   - **Four tables**, all non-NULL OBJECT_ID — `project_status`, `project_type`, `project_role`, `project_issue`; index `ix_project_issue_project` created.
+   - **Two columns** non-NULL — `project.project_status_id` (128), `project.project_type_id` (128).
+   - **`project` 8 → 8**, and **`project_status_id IS NOT NULL` = 0** — so every existing project still reads its old `status` code and none was silently re-pointed.
+   - **`project_status` = 5**, **`no_time = 1` count = 0**; `project_role` = 6; `project_type` = 1.
+   - **`time_entry` 26 → 26**, measured either side inside the transaction.
+   - The five rows read back as: PLANNED (default), ACTIVE, ON_HOLD (AT_RISK), DONE (closed), CANCELLED (closed) at sort 10–50.
+3. **PSA-Desk started:** `:8085` **401 → down → 401 in 2s**, Running. The ticket tabs and the nine-module menu bar ride this same restart, code only.
+
+**Nothing live changed meaning,** as §2 promises: no ticket moved, projects on a service board keep their tickets there until someone presses *Move to the project board*, and no status carries *No time*, so no time entry is held by this.
+
+A note for WS36, not a problem: `projects.ensure_vocabulary` is called from `statuses()` and `types()`, so the desk would have seeded these tables itself on first read. Seeding them in the same transaction is still the right order here — `may_book_effort` joins `project_status` and should never meet it empty.
