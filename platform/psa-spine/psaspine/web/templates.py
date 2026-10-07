@@ -982,6 +982,19 @@ label b.req{color:var(--bad,#e5484d)}
 .ttabs a{padding:6px 12px;border-radius:999px;color:var(--ink-2);text-decoration:none;font-weight:600;font-size:13.5px}
 .ttabs a:hover{color:var(--ink);background:rgb(34 211 238/.10)}
 tr.cfgoff td{opacity:.55} tr.cfgoff:hover td{opacity:.9}
+/* chat (071): the conversation, its own side on the right, the desk's lines in the desk's blue */
+.chatlog{display:flex;flex-direction:column;gap:8px;max-height:60vh;min-height:220px;overflow-y:auto;padding:4px 2px 10px}
+.chatlog .cl{max-width:78%;align-self:flex-start}
+.chatlog .cl.me{align-self:flex-end}
+.chatlog .cb{padding:8px 12px;border-radius:14px;background:var(--surface-2);color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere}
+.chatlog .cl.staff .cb{background:color-mix(in srgb,var(--accent) 16%,var(--surface-2))}
+.chatlog .cl.me .cb{border-bottom-right-radius:4px} .chatlog .cl:not(.me) .cb{border-bottom-left-radius:4px}
+.chatlog .cm{font-size:11.5px;color:var(--ink-3);margin:2px 6px 0}
+.chatlog .cl.me .cm{text-align:right}
+.chatlog .cl.sys{align-self:center;max-width:none;font-size:12px;color:var(--ink-3)}
+.chatsend{display:flex;gap:8px;align-items:flex-end;border-top:1px solid var(--line);padding-top:10px}
+.chatsend textarea{flex:1;min-height:44px;resize:vertical}
+tr.chatwait td:first-child{border-left:3px solid var(--accent)}
 tr.planticket td{font-size:13.5px;color:var(--ink-2)} tr.planticket td .ic{width:13px;height:13px;vertical-align:-2px;color:var(--neon1,var(--accent))}
 tr.planhead td{padding-top:12px}
 .planess{display:flex;gap:12px;overflow-x:auto;padding-bottom:6px}
@@ -2520,6 +2533,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
             ("dispatch", "/dispatch", "Dispatch", "Who is where today; drag to book"),
             ("schedule", "/schedule", "Schedule", "The week, by person"),
             ("calendar", "/calendar", "Calendar", "Mine or anyone's: day, week, month"),
+            ("chat", "/chat", "Chat", "Ward staff waiting to talk to the desk"),
             ("oncall", "/oncall", "On-call", "Who answers after hours"),
             ("kb", "/kb", "Knowledge", "Articles for the desk and the wards")]),
         ("companies", "Companies", [
@@ -2551,14 +2565,15 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
     groups = [g for g in groups if g[2]]
     if requester:
         groups = [("my", "My requests", [("my", "/my", "My requests", "")]),
+                  ("chat", "Chat", [("chat", "/my/chat", "Chat with the helpdesk", "")]),
                   ("approvals", "Approvals", [("approvals", "/my/approvals", "Approvals", "")]),
                   ("help", "Help", [("help", "/my/help", "Help", "")])]
-        if active not in ("help", "approvals"):
+        if active not in ("help", "approvals", "chat"):
             active = "my"
     nav_items = [(key, href, name) for _, _, pages in groups for key, href, name, _ in pages]   # the phone's quick bar
     icons = {"admin": "setup", "schedule": "grip", "projects": "layers", "kb": "note", "finance": "tag", "sales": "briefcase",
              "help": "note", "time": "clock", "approvals": "check", "service": "ticket", "configurations": "monitor",
-             "cfgnew": "plus", "cfgcsv": "reports", "cfgtypes": "setup", "cfgint": "link"}
+             "chat": "note", "cfgnew": "plus", "cfgcsv": "reports", "cfgtypes": "setup", "cfgint": "link"}
 
     def one(key, href, label, cls="", current=False):
         return (f'<a href="{esc(href)}" title="{esc(label)}" class="{cls}{" on" if current else ""}"'

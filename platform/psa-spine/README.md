@@ -2161,6 +2161,34 @@ form posts back to the tab it was on.
 Schema 070 is additive: `project_status`, `project_type`, `project_role`, `project_issue`, and nullable
 `project.project_status_id` / `project.project_type_id`. The vocabulary is seeded by `init` into empty tables.
 
+## Chat: a requester and the desk, live (7 Oct 2026, schema 071)
+
+Dada, 7 Oct 2026: *"can we do something to connectwise chat?"*. Confirmed before building: requester to desk,
+offered on the portal at any time, patient details flagged and warned about, never blocked. Shaped on the reference
+PSA's Chat as its product pages describe it: a requester starts a chat from the portal, it waits in a queue, a
+technician picks it up, and it becomes a ticket or joins one. That shape is INFERRED; its Chat documentation sits
+behind sign-in, NOT VERIFIED.
+
+- **Portal: Chat with the helpdesk** (`/my/chat`). A subject and a first message start a chat. It goes on a board
+  the requester's department may use (Setup › Departments), else Unrouted, as a request does. The conversation page
+  shows new lines as they arrive. Enter sends. Either side can end it.
+- **Desk: Chat** (Service Desk › Chat, `/chat`). The queue shows chats waiting first, then those being answered, then
+  the last two days' ended ones, on the boards the person is on. It refreshes itself. On a chat:
+  - **Pick it up** or **Take it over**. Replying also picks it up.
+  - **End the chat**.
+  - **Make a ticket**: on the chat's board, for its requester, the transcript as its description, owned by the
+    technician. The chat stays open, and the requester sees the request it became.
+  - **Add to a ticket**: the transcript goes on as a Discussion note, so the requester can read it on the portal.
+- **Patient details** (§6.1): every requester line is scanned. It is kept, the finding counted in `data_quality`
+  for the desk to tidy, and the requester shown a reminder. A line is never refused, because that would send the
+  same words to the telephone, where nothing records them.
+- **Live without a socket**: the open chat polls `…/messages.json?after=<id>` every three seconds and appends new
+  lines, so what someone is typing is never lost to a reload. The queue uses the desk's live stamp
+  (`/live?scope=chats`). Nothing new is opened on the server's network surface.
+- Who may read a chat: someone on its board (WORK to answer); on the portal, only the requester who started it.
+
+Schema 071 is additive: `chat_session` and `chat_message`.
+
 ## Only a project's members see it (7 Oct 2026, code only)
 
 Dada, 7 Oct 2026: *"make sure that they will only have access to projects they are a member of"*. Confirmed before

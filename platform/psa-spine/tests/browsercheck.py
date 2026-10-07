@@ -112,6 +112,11 @@ def build(db_path: Path) -> str:
     board.add_note(conn, emailed, body="LATER-NOTE: checked the handset", flag="INTERNAL", actor="tech",
                    at=datetime(2026, 10, 3, 10, 0))
     auth.create_local_account(conn, "tech", PASSWORD, at=at, is_sysadmin=True)
+    # 071: a ward requester (on no board) with a chat waiting on IT Help
+    from psaspine import chat
+    auth.create_local_account(conn, "nurse7", PASSWORD, at=at)
+    chat.start(conn, requester="nurse7", board_id="IT_HELP", subject="Teams phone silent",
+               first="The Teams phone on ward 7 does not ring.", at=at)
     conn.commit()
     conn.close()
     return wid, mail, noted, prj, ph_b, emailed
@@ -645,6 +650,33 @@ def main() -> int:
                 note(grp.locator("a[href='/configurations#cfgnew']").is_visible(), "and it opens to New configuration")
                 page.keyboard.press("Escape")
                 page.mouse.move(5, 600)                 # leave the pointer off the bar for what follows
+
+            # --- chat, live both ways (071; Dada, 7 Oct 2026) -----------------
+            cid = 1
+            page.goto(f"{base}/chat", wait_until="domcontentloaded")
+            note("Teams phone silent" in page.locator("#chatqueue").inner_text(), "the desk sees the waiting chat")
+            page.goto(f"{base}/chat/{cid}", wait_until="domcontentloaded")
+            ward = browser.new_context().new_page()
+            ward.goto(f"{base}/login", wait_until="domcontentloaded")
+            ward.fill("input[name=username]", "nurse7")
+            ward.fill("input[name=password]", PASSWORD)
+            ward.click("button[type=submit]")
+            ward.wait_for_load_state("domcontentloaded")
+            ward.goto(f"{base}/my/chat/{cid}", wait_until="domcontentloaded")
+            page.fill("#chatsend textarea", "On my way to ward 7.")
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(600)
+            note(page.url.endswith(f"/chat/{cid}") and "On my way to ward 7." in page.locator("#chatlog").inner_text(),
+                 "Enter sends, and the line appears without the page reloading", page.url)
+            ward.wait_for_timeout(4500)
+            note("On my way to ward 7." in ward.locator("#chatlog").inner_text(),
+                 "the requester sees it arrive by itself")
+            ward.fill("#chatsend textarea", "Thank you, I am at the nurses' station.")
+            ward.keyboard.press("Enter")
+            page.wait_for_timeout(4500)
+            note("I am at the nurses' station" in page.locator("#chatlog").inner_text(),
+                 "and the desk sees the reply arrive by itself")
+            ward.context.close()
 
             # --- an email as its sender laid it out (6 Oct 2026) -------------
             # Dada: "HTML is or emails are not rendering properly on the ticket

@@ -6876,6 +6876,84 @@ class ModulesTest(unittest.TestCase):
         new_pid = dict(h)["Location"].split("/project/")[1].split("?")[0]
         self.assertEqual(self._call("GET", f"/project/{new_pid}", cookie=lea)[0], "200 OK")
 
+    def test_chat_a_requester_and_the_desk_live(self):
+        """071. Dada, 7 Oct 2026: "can we do something to connectwise chat?".
+        Confirmed: requester <-> desk, offered on the portal at any time,
+        patient details flagged and warned, never blocked."""
+        from psaspine import chat
+        nurse = self._cookie_for("nurse")
+        # the portal: start a chat (no department: it waits on Unrouted, as a request would)
+        _, h, _ = self._call("POST", "/my/chat/new", cookie=nurse,
+                             form={"subject": "Printer on ward 7", "body": "It prints blank pages since 7am."})
+        loc = dict(h)["Location"]
+        self.assertRegex(loc, r"^/my/chat/\d+$")
+        first = int(loc.rsplit("/", 1)[1])
+        self.assertEqual(self._conn().execute("SELECT board_id, status FROM chat_session WHERE chat_id = ?",
+                                              (first,)).fetchone()[:], ("UNROUTED", "WAITING"))
+        # one on IT Help, where alice works and carol only reads
+        conn = self._conn()
+        cid, _ = chat.start(conn, requester="nurse", board_id="IT_HELP", subject="Teams phone silent",
+                            first="The Teams phone on ward 7 does not ring.", at=self.at)
+        conn.commit()
+        _, _, q = self._call("GET", "/chat", cookie=self.alice)
+        self.assertIn("Teams phone silent", q)
+        self.assertNotIn("Printer on ward 7", q, "a board she is not on")
+        self.assertIn("data-live='chats'", q)
+        self.assertTrue(self._call("GET", "/live", query="scope=chats", cookie=self.alice)[0].startswith("200"))
+        # the desk answers: that picks it up; the line reaches the requester's poll
+        _, h, _ = self._call("POST", f"/chat/{cid}/send", cookie=self.alice, form={"body": "On my way to ward 7."})
+        self.assertEqual(self._conn().execute("SELECT status, picked_by FROM chat_session WHERE chat_id = ?",
+                                              (cid,)).fetchone()[:], ("ACTIVE", "alice"))
+        opener = self._conn().execute("SELECT MIN(message_id) FROM chat_message WHERE chat_id = ?", (cid,)).fetchone()[0]
+        got = _json.loads(self._call("GET", f"/my/chat/{cid}/messages.json", query=f"after={opener}", cookie=nurse)[2])
+        self.assertEqual([m["body"] for m in got["messages"]], ["On my way to ward 7."])
+        self.assertEqual(got["status"], "ACTIVE")
+        # the requester replies in the background (js=1); a patient detail is kept, flagged and warned about
+        reply = _json.loads(self._call("POST", f"/my/chat/{cid}/send", query="js=1", cookie=nurse,
+                                       form={"body": "Patient: Juan, PhilHealth 12-345678901-2 is waiting"})[2])
+        self.assertTrue(reply["warn"])
+        c = self._conn()
+        self.assertEqual(c.execute("SELECT COUNT(*) FROM chat_message WHERE chat_id = ?", (cid,)).fetchone()[0], 3)
+        self.assertGreater(c.execute("SELECT COUNT(*) FROM data_quality WHERE run_id = 'chat' AND subject_id = ?",
+                                     (str(cid),)).fetchone()[0], 0)
+        # a reader cannot answer; someone else's chat and another requester's are not there
+        status, _, _ = self._call("POST", f"/chat/{cid}/send", cookie=self._cookie_for("carol"), form={"body": "x"})
+        self.assertTrue(status.startswith("404"), status)
+        self.assertTrue(self._call("GET", f"/chat/{first}", cookie=self.alice)[0].startswith("404"))
+        self.assertTrue(self._call("GET", f"/my/chat/{cid}", cookie=self._cookie_for("rosa.mendoza"))[0].startswith("404"))
+        # the page draws the conversation with its poll, and a requester's /chat is their own side
+        _, _, page = self._call("GET", f"/chat/{cid}", cookie=self.alice)
+        self.assertIn(f"data-poll='/chat/{cid}/messages.json'", page)
+        self.assertIn("On my way to ward 7.", page)
+        self.assertEqual(dict(self._call("GET", "/chat", cookie=nurse)[1])["Location"], "/my/chat")
+        # make it a ticket: the requester's, the transcript its description, alice's; the chat stays open
+        _, h, _ = self._call("POST", f"/chat/{cid}/ticket", cookie=self.alice, form={"summary": "Teams phone silent, ward 7"})
+        c = self._conn()
+        wid = c.execute("SELECT work_item_id FROM chat_session WHERE chat_id = ?", (cid,)).fetchone()[0]
+        tk = c.execute("SELECT t.board_id, t.requested_by, t.owner, w.name FROM ticket t JOIN work_item w"
+                       " ON w.work_item_id = t.work_item_id WHERE t.work_item_id = ?", (wid,)).fetchone()
+        self.assertEqual(tuple(tk), ("IT_HELP", "nurse", "alice", "Teams phone silent, ward 7"))
+        self.assertIn("On my way to ward 7.", chat.transcript(c, cid))
+        self.assertIn("raised+from+the+chat", dict(h)["Location"])
+        _, _, mine = self._call("GET", f"/my/chat/{cid}", cookie=nurse)
+        self.assertIn(f"/my/{wid}", mine, "the requester sees the request it became")
+        # a second chat joins an existing ticket as a Discussion note
+        conn = self._conn()
+        cid2, _ = chat.start(conn, requester="nurse", board_id="IT_HELP", subject="Still silent", first="Same phone.", at=self.at)
+        conn.commit()
+        notes = lambda: [r[0] for r in self._conn().execute(  # noqa: E731
+            "SELECT detail FROM ticket_event WHERE work_item_id = ? AND note_flag = 'DISCUSSION'", (wid,))]
+        before = notes()
+        _, h, _ = self._call("POST", f"/chat/{cid2}/attach", cookie=self.alice, form={"work_item_id": wid})
+        self.assertIn("Chat+added+to", dict(h)["Location"])
+        after = notes()
+        self.assertEqual(len(after), len(before) + 1)
+        self.assertIn("Same phone.", after[-1])
+        # ending it: no more lines from either side
+        self._call("POST", f"/my/chat/{cid}/end", cookie=nurse)
+        reply = _json.loads(self._call("POST", f"/chat/{cid}/send", query="js=1", cookie=self.alice, form={"body": "x"})[2])
+        self.assertIn("ended", reply["error"])
+
     def test_projects_phases_predecessors_tickets_and_actual_hours(self):
         from psaspine import projects
         conn = self._conn()

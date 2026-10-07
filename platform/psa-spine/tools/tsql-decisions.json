@@ -1146,6 +1146,21 @@
     "project_issue.raised_at": "TIMESTAMP_TEXT",
     "project_issue.work_item_id": "ID",
     "project.project_status_id": "ID",
-    "project.project_type_id": "ID"
+    "project.project_type_id": "ID",
+    "chat_session.board_id": "ID",
+    "chat_session.requester": "PERSON",
+    "chat_session.subject": "NAME",
+    "chat_session.status": "CODE",
+    "chat_session.started_at": "TIMESTAMP_TEXT",
+    "chat_session.picked_by": "PERSON",
+    "chat_session.picked_at": "TIMESTAMP_TEXT",
+    "chat_session.closed_at": "TIMESTAMP_TEXT",
+    "chat_session.closed_by": "PERSON",
+    "chat_session.work_item_id": "ID",
+    "chat_session.last_at": "TIMESTAMP_TEXT",
+    "chat_message.sender": "PERSON",
+    "chat_message.sender_kind": "CODE",
+    "chat_message.body": "FREE",
+    "chat_message.sent_at": "TIMESTAMP_TEXT"
   }
 }

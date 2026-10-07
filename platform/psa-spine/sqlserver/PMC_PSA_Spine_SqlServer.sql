@@ -242,6 +242,8 @@ BEGIN
     PRINT N'    psa.project_type';
     PRINT N'    psa.project_role';
     PRINT N'    psa.project_issue';
+    PRINT N'    psa.chat_session';
+    PRINT N'    psa.chat_message';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -304,13 +306,16 @@ BEGIN
     PRINT N'    psa.ix_project_note_project';
     PRINT N'    psa.ix_project_plan_item_project';
     PRINT N'    psa.ix_project_issue_project';
+    PRINT N'    psa.ix_chat_session_status';
+    PRINT N'    psa.ix_chat_session_requester';
+    PRINT N'    psa.ix_chat_message_chat';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  144 tables, 61 indexes, 4 triggers.';
+    PRINT N'  146 tables, 64 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -3682,6 +3687,51 @@ CREATE TABLE psa.[project_issue] (
 END;
 
 -- --------------------------------------------------------------------------
+-- chat_session   (from schema/071_chat.sql)
+IF OBJECT_ID(N'psa.[chat_session]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[chat_session] (
+    [chat_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_chat_session] PRIMARY KEY,
+    [board_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_chat_session_board_id] REFERENCES psa.[board]([board_id]),
+    [requester] NVARCHAR(200) NOT NULL,
+    [subject] NVARCHAR(400) NOT NULL,
+    [status] NVARCHAR(32) NOT NULL CONSTRAINT [DF_chat_session_status] DEFAULT ('WAITING') CONSTRAINT [CK_chat_session_01] CHECK (status IN ('WAITING', 'ACTIVE', 'CLOSED')),
+    [started_at] NVARCHAR(64) NOT NULL,
+    [picked_by] NVARCHAR(200) NULL,
+    [picked_at] NVARCHAR(64) NULL,
+    [closed_at] NVARCHAR(64) NULL,
+    [closed_by] NVARCHAR(200) NULL,
+    [work_item_id] NVARCHAR(64) NULL CONSTRAINT [FK_chat_session_work_item_id] REFERENCES psa.[ticket]([work_item_id]),
+    [last_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [started_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [started_at], 126), CASE WHEN [started_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [started_at], 112) END)),
+    [picked_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [picked_at], 126), CASE WHEN [picked_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [picked_at], 112) END)),
+    [closed_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [closed_at], 126), CASE WHEN [closed_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [closed_at], 112) END)),
+    [last_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [last_at], 126), CASE WHEN [last_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [last_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- chat_message   (from schema/071_chat.sql)
+IF OBJECT_ID(N'psa.[chat_message]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[chat_message] (
+    [message_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_chat_message] PRIMARY KEY,
+    [chat_id] INT NOT NULL CONSTRAINT [FK_chat_message_chat_id] REFERENCES psa.[chat_session]([chat_id]),
+    [sender] NVARCHAR(200) NOT NULL,
+    [sender_kind] NVARCHAR(32) NOT NULL CONSTRAINT [CK_chat_message_01] CHECK (sender_kind IN ('REQUESTER', 'STAFF', 'SYSTEM')),
+    [body] NVARCHAR(MAX) NOT NULL,
+    [sent_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [sent_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [sent_at], 126), CASE WHEN [sent_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [sent_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -4389,6 +4439,15 @@ CREATE INDEX [ix_project_plan_item_project] ON psa.[project_plan_item] ([project
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_project_issue_project' AND object_id = OBJECT_ID(N'psa.[project_issue]'))
 CREATE INDEX [ix_project_issue_project] ON psa.[project_issue] ([project_id]);
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_chat_session_status' AND object_id = OBJECT_ID(N'psa.[chat_session]'))
+CREATE INDEX [ix_chat_session_status] ON psa.[chat_session] ([status], [board_id]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_chat_session_requester' AND object_id = OBJECT_ID(N'psa.[chat_session]'))
+CREATE INDEX [ix_chat_session_requester] ON psa.[chat_session] ([requester]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_chat_message_chat' AND object_id = OBJECT_ID(N'psa.[chat_message]'))
+CREATE INDEX [ix_chat_message_chat] ON psa.[chat_message] ([chat_id], [message_id]);
+
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
@@ -4524,10 +4583,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 144 OR @Triggers <> 4 OR @Indexes < 61
+IF @Tables <> 146 OR @Triggers <> 4 OR @Indexes < 64
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 144), %d triggers (expected 4), %d indexes (expected at least 61). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 146), %d triggers (expected 4), %d indexes (expected at least 64). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -4583,6 +4642,8 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[chat_message];
+    DROP TABLE IF EXISTS psa.[chat_session];
     DROP TABLE IF EXISTS psa.[project_issue];
     DROP TABLE IF EXISTS psa.[project_role];
     DROP TABLE IF EXISTS psa.[project_type];

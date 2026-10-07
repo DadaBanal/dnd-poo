@@ -78,6 +78,11 @@ def stamp(ctx):
         dt = conn.execute(f"SELECT MAX(COALESCE(starts_on, '') || COALESCE(due_on, '') || COALESCE(budget_hours, ''))"
                           f" FROM project_ticket{w}", arg).fetchone()
         parts = (*tk, *te, *pr, *ph, *tm, nt[0], ct[0], *pl, dp[0], hl[0], dt[0])
+    elif scope == "chats":                                   # 071: the chat queue moves with any chat line
+        frag, ids = _in(common.board_ids_for(ctx))
+        ch = conn.execute(f"SELECT COUNT(*), MAX(last_at), SUM(CASE WHEN status = 'WAITING' THEN 1 ELSE 0 END)"
+                          f" FROM chat_session WHERE board_id IN {frag}", ids).fetchone()
+        parts = tuple(ch)
     else:
         return Response("400 Bad Request", "", content_type="text/plain; charset=utf-8")
     body = "|".join("" if p is None else str(p) for p in parts)

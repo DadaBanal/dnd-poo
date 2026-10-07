@@ -27,6 +27,7 @@ from .views import inout as inout_view
 from .views import live as live_view
 from .views import kb as kb_view
 from .views import projects as projects_view
+from .views import chat as chat_view
 from .views import reportwriter as rw_view
 from .views import (admin, board, companies, configurations, dispatch, files, loop, oncall,
                     portal, reports, rules, search, ticket, uplift)
@@ -233,6 +234,21 @@ ROUTES = [
     ("GET", "/oncall", oncall.index),
     ("POST", "/oncall/add", oncall.add),
     # The requester portal. Ownership, not board membership, is the filter.
+    # 071: chat. The portal's side first, so /my/chat is never read as a ticket number.
+    ("GET", "/my/chat", chat_view.my_index),
+    ("POST", "/my/chat/new", chat_view.my_start),
+    ("GET", "/my/chat/<chat_id>", chat_view.my_detail),
+    ("GET", "/my/chat/<chat_id>/messages.json", chat_view.my_messages_json),
+    ("POST", "/my/chat/<chat_id>/send", chat_view.my_send),
+    ("POST", "/my/chat/<chat_id>/end", chat_view.my_end),
+    ("GET", "/chat", chat_view.index),
+    ("GET", "/chat/<chat_id>", chat_view.detail),
+    ("GET", "/chat/<chat_id>/messages.json", chat_view.messages_json),
+    ("POST", "/chat/<chat_id>/send", chat_view.send),
+    ("POST", "/chat/<chat_id>/pick", chat_view.pick),
+    ("POST", "/chat/<chat_id>/end", chat_view.end),
+    ("POST", "/chat/<chat_id>/ticket", chat_view.make_ticket),
+    ("POST", "/chat/<chat_id>/attach", chat_view.attach),
     ("GET", "/my", portal.index),
     ("GET", "/my/approvals", approvals_view.portal_index),
     ("POST", "/my/approvals/<approval_id>/decide", approvals_view.portal_decide),
