@@ -1372,6 +1372,14 @@ d.addEventListener("click",function(e){var a=e.target.closest&&e.target.closest(
   var id=a.getAttribute("href").split("#")[1],dl=id&&d.getElementById(id);
   if(dl&&dl.tagName==="DIALOG"&&dl.showModal&&a.pathname===location.pathname){e.preventDefault();dl.showModal()}});
 (function(){var id=location.hash.slice(1),dl=id&&d.getElementById(id);if(dl&&dl.tagName==="DIALOG"&&dl.showModal)dl.showModal()})();
+/* Actual hours follows Start and End as they are typed, as the reference PSA's time entry does (Dada, 7 Oct 2026:
+   2 h beside 09:30-11:30 was refused as "not both"); the desk reads the span when both are given. */
+$$(".timefields").forEach(function(tf){var q=function(n){return tf.querySelector("[name$='"+n+"']")};
+  var st=q("start"),en=q("end"),hr=q("hours"),de=q("deduct");if(!st||!en||!hr)return;
+  function fill(){if(!st.value||!en.value)return;var a=st.value.split(":"),b=en.value.split(":");
+    var m=(+b[0]*60+ +b[1])-(+a[0]*60+ +a[1]);if(m<=0)return;
+    var h=m/60-(parseFloat(de&&de.value)||0);hr.value=h>0?String(Math.round(h*100)/100):""}
+  [st,en,de].forEach(function(x){if(x)x.addEventListener("input",fill)});fill()});
 /* Move the window by its title bar; the corner resizes it (CSS resize);
    the square makes it fill the screen and back. */
 (function(){$$("dialog.tedlg").forEach(function(dl){var bar=dl.querySelector("[data-drag]");if(!bar)return;

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from . import clocks, contacts, itil
 
@@ -672,17 +672,26 @@ def _parse_when(value, label: str) -> datetime:
 
 def resolve_hours(*, actual_hours=None, time_start=None, time_end=None,
                   hours_deduct=None) -> dict:
-    """Dada PSA's rule: start and end, OR actual hours, never both. Hours
+    """Hours as the reference PSA takes them. Start and end decide when both
+    are given, and actual hours is then read from them (Dada, 7 Oct 2026: the
+    window refused "not both" when it showed 2 h beside 09:30-11:30); a start
+    with actual hours finds its end; actual hours alone stands alone. Hours
     are end minus start minus the deduction, rounded to the quarter hour, and
     must come out above zero. Returns what to store."""
     deduct = float(hours_deduct or 0)
     if deduct < 0:
         raise EffortRefused("a deduction cannot be negative")
-    has_span = bool(time_start) or bool(time_end)
     has_actual = actual_hours not in (None, "", 0, 0.0) if not isinstance(actual_hours, str) \
         else bool(actual_hours.strip())
-    if has_span and has_actual:
-        raise EffortRefused("enter a start and end time, or the actual hours, not both")
+    if time_start and not time_end and has_actual:
+        try:
+            span = float(actual_hours) + deduct
+        except (TypeError, ValueError):
+            raise EffortRefused("actual hours is a number, e.g. 1.5") from None
+        if span <= 0:
+            raise EffortRefused("the time comes to nothing once the deduction is taken off")
+        time_end = _parse_when(time_start, "start") + timedelta(hours=span)
+    has_span = bool(time_start) or bool(time_end)
     if has_span:
         if not (time_start and time_end):
             raise EffortRefused("a start time needs an end time, and the other way round")

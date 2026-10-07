@@ -521,8 +521,8 @@ def detail(ctx, work_item_id):
         time_block = (
             "<details class=timeblock><summary>Time on this note</summary>"
             + _time_fields(ctx, tk, compact=True)
-            + "<p class=why style='margin:6px 0 0'>Start and end, or the actual hours, not both; "
-              "a deduction comes off. Kept to the quarter hour.</p></details>"
+            + "<p class=why style='margin:6px 0 0'>Start and end fill in the actual hours; a start and the "
+              "actual hours fill in the end. A deduction comes off. Kept to the quarter hour.</p></details>"
             if may else f"<div><label>Time</label><div class=ro>{t.esc(why_not)}</div></div>")
         from ... import canned
         std = canned.notes_for(ctx.conn, tk["board_id"])

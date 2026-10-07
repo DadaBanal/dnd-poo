@@ -2121,9 +2121,19 @@ class TimeEntryTest(unittest.TestCase):
         self.assertEqual((e["work_role_id"], e["work_type_id"], e["billable_option"]),
                          ("TECHNICIAN", "REGULAR", "NO_DEFAULT"))
 
+    def test_start_and_end_decide_and_a_start_with_hours_finds_its_end(self):
+        """Dada, 7 Oct 2026: the window showed 2 h beside 09:30-11:30 and the
+        desk refused "not both". Start and end decide; actual hours is read
+        from them. A start with actual hours finds its end."""
+        v = board.resolve_hours(actual_hours="2", time_start="2026-10-06 09:30", time_end="2026-10-06 11:30")
+        self.assertEqual((v["actual_hours"], v["time_end"]), (2.0, "2026-10-06 11:30"))
+        v = board.resolve_hours(actual_hours="9", time_start="2026-10-06 09:30", time_end="2026-10-06 11:30")
+        self.assertEqual(v["actual_hours"], 2.0, "the span wins over a stale hours box")
+        v = board.resolve_hours(actual_hours="1.5", time_start="2026-10-06 09:30", hours_deduct="0.5")
+        self.assertEqual((v["time_end"], v["actual_hours"]), ("2026-10-06 11:30", 1.5))
+
     def test_connectwises_rules_are_refused_in_a_sentence(self):
         cases = [
-            (dict(actual_hours="2", time_start="2026-09-28 09:00", time_end="2026-09-28 10:00"), "not both"),
             (dict(time_start="2026-09-28 09:00"), "needs an end time"),
             (dict(time_start="2026-09-28 10:00", time_end="2026-09-28 09:00"), "not after the start"),
             (dict(time_start="2026-09-28 09:00", time_end="2026-09-28 09:30", hours_deduct=0.5), "comes to nothing"),
@@ -2586,13 +2596,14 @@ class WebWSGITest(unittest.TestCase):
                      "<td class=num>0.25</td>", "<td>Engineer</td>", "<td>On-site</td>", "<td>Billable</td>",
                      "<td>Included in monthly fee</td>", "<td class=num>4</td>"):
             self.assertIn(cell, page, cell)
-        # both ways at once is Dada PSA's refusal, in a sentence, and nothing is written
+        # both ways at once (the window fills the hours in from the span): the span is
+        # booked, never refused (Dada, 7 Oct 2026)
         status, headers, _ = self._call("POST", "/ticket/ITO-1/time", cookie=alice, form={
-            "worked_on": "2026-09-17", "start": "09:00", "end": "10:00", "hours": "1",
+            "worked_on": "2026-09-17", "start": "09:00", "end": "10:00", "hours": "3",
             "charge": "INCLUDED_IN_MONTHLY_FEE"})
-        self.assertIn("not+both", dict(headers)["Location"])
+        self.assertIn("Time+saved%3A+1+h", dict(headers)["Location"])
         conn = self._db()
-        self.assertEqual(conn.execute("SELECT COUNT(*) FROM time_entry").fetchone()[0], 1)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM time_entry").fetchone()[0], 2)
         conn.close()
         # a reader cannot
         status, _, _ = self._call("POST", "/ticket/ITO-1/time", cookie=self._cookie_for("carol"),
