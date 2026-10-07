@@ -202,7 +202,7 @@ def index(ctx):
     add = ""
     if _may_work(ctx):
         add = (
-            "<div class=card><h3>" + t.icon("plus") + "Add a configuration by hand</h3><p class=sub>A printer, a network "
+            "<div class=card id=cfgnew><h3>" + t.icon("plus") + "Add a configuration by hand</h3><p class=sub>A printer, a network "
             "device, a machine Active Directory does not know. AD's own machines arrive by import and are never typed.</p>"
             "<form method=post action='/configurations/new' class=fields><div class=grid2>"
             "<div><label>Name</label><input name=name required maxlength=100 placeholder='PRN-WARD3-01'></div>"
@@ -222,7 +222,7 @@ def index(ctx):
           "see its tickets and its history, or raise a ticket for it.</p>"
         + f"<div class='tiles' style='grid-template-columns:repeat(auto-fit,minmax(112px,1fr))'>{tiles}</div>"
         + "<div class=card>" + filters + table + shown + "</div>" + add)
-    return Response(body=t.page("Configurations", body, user=ctx.user, active="companies"))
+    return Response(body=t.page("Configurations", body, user=ctx.user, active="configurations"))
 
 
 def create(ctx):
@@ -366,7 +366,7 @@ def detail(ctx, configuration_id: str):
         f"<div class=card><h3>{t.icon('check')}Recently closed</h3>{closed_html}</div>"
         f"<div class=card><h3>{t.icon('clock')}History</h3>{_history(ctx, configuration_id)}</div></div>"
         f"<div><div class=card><h3>{t.icon('monitor')}Configuration</h3><dl class=kv>{facts}</dl></div>{_answers_card(ctx, c)}{person}{edit}</div></div>")
-    return Response(body=t.page(c["name"], body, user=ctx.user, active="companies"))
+    return Response(body=t.page(c["name"], body, user=ctx.user, active="configurations"))
 
 
 def _answers_card(ctx, c) -> str:
@@ -540,6 +540,13 @@ def ticket_card(ctx, tk, *, can_work: bool) -> str:
                "<div class=muted>None attached.</div>") + add + "</div>")
 
 
+def _ticket_back(ctx, work_item_id: str) -> str:
+    """The ticket, or the ticket tab the form came from (7 Oct: ticket tabs)."""
+    base = f"/ticket/{urllib.parse.quote(work_item_id)}"
+    back = (ctx.request.form().get("back") or "").strip()
+    return back if back.startswith(base + "/") and "//" not in back[1:] and "?" not in back else base
+
+
 def attach(ctx, work_item_id: str):
     from .. import HttpError, redirect
     tk = ctx.conn.execute("SELECT board_id FROM ticket WHERE work_item_id = ?",
@@ -566,8 +573,7 @@ def attach(ctx, work_item_id: str):
     except LookupError:
         raise HttpError("404 Not Found", "No such configuration.")
     ctx.conn.commit()
-    return redirect(f"/ticket/{urllib.parse.quote(work_item_id)}?msg="
-                    + urllib.parse.quote("Machine attached"))
+    return redirect(_ticket_back(ctx, work_item_id) + "?msg=" + urllib.parse.quote("Machine attached"))
 
 
 def detach(ctx, work_item_id: str):
@@ -580,7 +586,7 @@ def detach(ctx, work_item_id: str):
     cmdb.detach(ctx.conn, work_item_id, ctx.request.form().get("configuration_id", ""),
                 at=ctx.now, actor=ctx.user.id)
     ctx.conn.commit()
-    return redirect(f"/ticket/{urllib.parse.quote(work_item_id)}")
+    return redirect(_ticket_back(ctx, work_item_id))
 
 
 # ------------------------------------------------- Setup › Integrations

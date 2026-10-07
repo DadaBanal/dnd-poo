@@ -322,6 +322,8 @@ ROUTES = [
     ("POST", "/admin/board/<board_id>/assign", admin.save_auto_assign),
     ("POST", "/admin/board/<board_id>/assign/rule", admin.save_auto_assign_rule),
     ("POST", "/admin/board/<board_id>/assign/rule/remove", admin.remove_auto_assign_rule),
+    # Last, so every literal /ticket/<id>/<page> above wins (7 Oct: ticket tabs).
+    ("GET", "/ticket/<work_item_id>/<tab>", ticket.tab),
 ]
 
 

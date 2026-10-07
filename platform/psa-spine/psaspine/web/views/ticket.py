@@ -59,6 +59,7 @@ def _load(ctx, work_item_id):
     # subject_id names the ticket, so a restricted read is auditable to the
     # patient's ticket and not merely to the board (§6.1 requirement 4).
     common.require_board(ctx, row["board_id"], subject_id=work_item_id)
+    _remember_back(ctx)          # where the form came from (a ticket tab, Dispatch), set afresh each request
     return row
 
 
@@ -718,7 +719,7 @@ def detail(ctx, work_item_id):
                 + finance_views.ticket_card(ctx, tk, can_work=can_work))
     header = header.replace("%%TEBUTTON%%", (" " + te_button) if te_button else "")
     from . import paging as paging_view
-    body = te_dialog + composer + header + strip + paging_view.banner(ctx, tk, can_work=can_work) + pod_dialog + (
+    body = te_dialog + composer + header + _tab_bar(wid, "") + strip + paging_view.banner(ctx, tk, can_work=can_work) + pod_dialog + (
         f"<div class=rail>{left}<div class=pods data-col=right data-order='ticket,time,change,approval,family,"
                              f"schedule,tasks,files,links,configurations,project,knowledge,finance,commercial,details'>{fields}{time_card}{configs}"
                              f"{commercial}{details}</div></div>")
@@ -1827,3 +1828,218 @@ def _template_picker(ctx, selected: str) -> str:
     return ("<form method=get action='/ticket/new' class=row style='float:right;margin-top:4px'>"
             f"<div><select name=template aria-label='Start from a template'>{opts}</select></div>"
             "<div style='flex:0 0 auto'><button class=ghost type=submit>Use template</button></div></form>")
+
+
+# ============================================================ ticket tabs
+# Dada, 7 Oct 2026: "there should be tabs on each ticket similar to
+# connectwise", then "all but billing". The reference PSA's Service Ticket Tabs
+# (MEASURED, docs.connectwise.com ConnectWise_Documentation/060/010/010):
+# Ticket, Tasks, Configurations, Products, Activity, Time, Expenses, Schedule,
+# Attachments, Open Tickets, Finance, Audit Trail, Survey, RMA, Conversions.
+# Products, Expenses, RMA and Conversions are billing and sales, left out on
+# Dada's word. /ticket/<id> stays the Ticket tab exactly as it was; every other
+# tab is its own page at /ticket/<id>/<tab>, and its forms come back to it.
+
+TICKET_TABS = (("", "Ticket"), ("tasks", "Tasks"), ("configurations", "Configurations"), ("activity", "Activity"),
+               ("time", "Time"), ("schedule", "Schedule"), ("attachments", "Attachments"), ("open", "Open tickets"),
+               ("finance", "Finance"), ("audit", "Audit trail"), ("survey", "Survey"))
+
+
+def _tab_bar(wid: str, current: str) -> str:
+    return ("<nav class='tabs ttabs' aria-label='Ticket tabs'>" + "".join(
+        f"<a href='/ticket/{wid}" + (f"/{key}" if key else "") + "'"
+        + (" class=on aria-current=page" if key == current else "") + f">{label}</a>" for key, label in TICKET_TABS)
+        + "</nav>")
+
+
+def tab(ctx, work_item_id, tab):
+    """GET /ticket/<id>/<tab>: one of the reference PSA's ticket tabs, on its own page."""
+    from .. import HttpError, Response
+    pages = {"tasks": _ttab_tasks, "configurations": _ttab_configurations, "activity": _ttab_activity,
+             "time": _ttab_time, "schedule": _ttab_schedule, "attachments": _ttab_attachments, "open": _ttab_open,
+             "finance": _ttab_finance, "audit": _ttab_audit, "survey": _ttab_survey}
+    if tab not in pages:
+        raise HttpError("404 Not Found", "No such tab.")
+    tk = _load(ctx, work_item_id)
+    wid = t.esc(work_item_id)
+    can_work = common.may_access_board(ctx, tk["board_id"], need="WORK")
+    q = ctx.request.query
+    body = pages[tab](ctx, tk, can_work)
+    # every form on the tab comes back to it (`back`, read by _load / _back)
+    body = re.sub(r"(<form method=post action='/ticket/" + re.escape(wid) + r"/[^']*'[^>]*>)",
+                  lambda m: m.group(1) + f"<input type=hidden name=back value='/ticket/{wid}/{tab}'>", body)
+    head = ((f"<div class='banner ok toast'>{t.icon('check')} {t.esc(q.get('msg', ''))}</div>" if q.get("msg") else "")
+            + (f"<div class='banner err toast'>{t.icon('alert')} {t.esc(q.get('err', ''))}</div>" if q.get("err") else "")
+            + "<a class=backbtn data-back href='/' title='Back to the Service Board'>" + t.icon("left")
+            + "<span class=lbl>Back to the Service Board</span></a>"
+            f"<div class=hdr><div class=grow><h1 class=sumline>{wid}<span class=sumtext> · {t.esc(tk['summary'])}</span></h1>"
+            f"<p class=sub>{t.esc(tk['board_name'])} · {t.chip(tk['status_name'] or tk['state'].replace('_', ' ').title())} · "
+            f"{t.badge(tk['priority'])} · {t.esc(tk['entity'] or 'no company')}</p></div></div>" + _tab_bar(wid, tab))
+    label = dict(TICKET_TABS)[tab]
+    return Response(body=t.page(f"{work_item_id} · {label}", head + body, user=ctx.user, active="board",
+                                live=f"ticket:{work_item_id}"))
+
+
+def _ttab_tasks(ctx, tk, can_work) -> str:
+    return _tasks_card(ctx, tk, can_work=can_work)
+
+
+def _ttab_schedule(ctx, tk, can_work) -> str:
+    return _schedule_card(ctx, tk, can_work=can_work)
+
+
+def _ttab_attachments(ctx, tk, can_work) -> str:
+    from . import files as file_views
+    return file_views.ticket_card(ctx, tk, can_work=can_work)
+
+
+def _ttab_finance(ctx, tk, can_work) -> str:
+    from . import finance as finance_views
+    return (finance_views.ticket_card(ctx, tk, can_work=can_work)
+            or "<div class=card><div class=muted>Finance needs the Finance module on your role.</div></div>")
+
+
+def _ttab_configurations(ctx, tk, can_work) -> str:
+    """The reference PSA's Configurations tab: the ticket's configurations, and
+    the company's others greyed beside them, each attachable in one click."""
+    wid = t.esc(tk["work_item_id"])
+    attached = ctx.conn.execute(
+        "SELECT c.*, ct.display_name AS contact_name FROM ticket_configuration tc"
+        " JOIN configuration c ON c.configuration_id = tc.configuration_id"
+        " LEFT JOIN contact ct ON ct.contact_id = c.contact_id WHERE tc.work_item_id = ? ORDER BY c.name",
+        (tk["work_item_id"],)).fetchall()
+    ids = {r["configuration_id"] for r in attached}
+    others = [r for r in ctx.conn.execute(
+        "SELECT c.*, ct.display_name AS contact_name FROM configuration c LEFT JOIN contact ct ON ct.contact_id = c.contact_id"
+        " WHERE c.entity_id = ? AND c.status = 'ACTIVE'"
+        " ORDER BY CASE WHEN c.contact_id = ? THEN 0 ELSE 1 END, c.name LIMIT 500",
+        (tk["entity_id"] or "", tk["contact_id"])).fetchall() if r["configuration_id"] not in ids]
+
+    def row(r, on):
+        act = ""
+        if can_work:
+            act = (f"<form method=post action='/ticket/{wid}/config/{'remove' if on else 'add'}' class=inline>"
+                   f"<input type=hidden name=configuration_id value='{t.esc(r['configuration_id'])}'>"
+                   f"<button class='ghost small' type=submit>{'Detach' if on else 'Attach'}</button></form>")
+        return (f"<tr class='{'' if on else 'cfgoff'}'><td><a href='/configuration/{t.esc(r['configuration_id'])}'>"
+                f"{t.esc(r['name'])}</a></td><td>{t.esc((r['config_type'] or '').title())}</td>"
+                f"<td>{t.esc((r['status'] or '').title())}</td><td>{t.esc(r['contact_name'] or '')}</td>"
+                f"<td>{t.esc(r['serial_number'] or '')}</td><td>{t.esc(r['model'] or '')}</td><td>{act}</td></tr>")
+    trs = "".join(row(r, True) for r in attached) + "".join(row(r, False) for r in others)
+    new = (f"<p style='margin:10px 0 0'><a class='btn ghost' href='/configurations#cfgnew'>" + t.icon("plus")
+           + " New configuration</a></p>" if can_work else "")
+    return ("<div class=card id=tconfigs><h3>" + t.icon("monitor") + f"Configurations · {len(attached)} attached</h3>"
+            "<p class=why style='margin-top:0'>Attached configurations are in full; the company's other machines are "
+            "greyed, the contact's first.</p><div class=tablewrap><table><thead><tr><th>Configuration</th><th>Type</th>"
+            "<th>Status</th><th>Contact</th><th>Serial</th><th>Model</th><th></th></tr></thead><tbody>"
+            + (trs or "<tr><td colspan=7 class=muted>No configurations for this company yet.</td></tr>")
+            + "</tbody></table></div>" + new + "</div>")
+
+
+def _ttab_activity(ctx, tk, can_work) -> str:
+    """Every note and email on the ticket, newest first. (The reference PSA's
+    Activity tab lists CRM activities, which this desk does not keep; its
+    notes and emails are the nearest thing, so they are what is here.)"""
+    rows = ctx.conn.execute(
+        "SELECT occurred_at, kind, actor, note_flag, is_resolution, detail, body_format FROM ticket_event"
+        " WHERE work_item_id = ? AND note_flag IS NOT NULL ORDER BY ticket_event_id DESC", (tk["work_item_id"],)).fetchall()
+    trs = "".join(
+        f"<tr><td>{t.esc(r['occurred_at'])}</td><td>{t.esc(r['actor'] or '')}</td>"
+        f"<td><span class='flag {t.esc(r['note_flag'])}'>{t.esc(FLAG_LABEL.get(r['note_flag'], r['note_flag']))}</span>"
+        + (" <span class='flag RESOLUTION'>Resolution</span>" if r["is_resolution"] and r["note_flag"] != "RESOLUTION" else "")
+        + f"</td><td>{t.esc(r['kind'].replace('_', ' ').lower())}</td>"
+        f"<td>{t.esc(richtext_plain(r['detail'])[:200])}</td></tr>" for r in rows)
+    return ("<div class=card id=tactivity><h3>" + t.icon("rows") + f"Activity · {len(rows)}</h3>"
+            "<div class=tablewrap><table><thead><tr><th>When</th><th>Who</th><th>Note</th><th>How</th><th>What</th></tr></thead>"
+            f"<tbody>{trs or '<tr><td colspan=5 class=muted>No notes yet.</td></tr>'}</tbody></table></div>"
+            f"<p class=why>Read or write the full notes on the <a href='/ticket/{t.esc(tk['work_item_id'])}'>Ticket</a> tab.</p></div>")
+
+
+def richtext_plain(html_text) -> str:
+    """A note's words, without its markup, for one line of a list."""
+    text = re.sub(r"<[^>]+>", " ", html_text or "")
+    import html as _html
+    return " ".join(_html.unescape(text).split())
+
+
+def _ttab_time(ctx, tk, can_work) -> str:
+    wid = t.esc(tk["work_item_id"])
+    rows = ctx.conn.execute(
+        "SELECT te.*, r.name AS role_name, y.name AS type_name FROM time_entry te"
+        " LEFT JOIN work_role r ON r.work_role_id = te.work_role_id"
+        " LEFT JOIN work_type y ON y.work_type_id = te.work_type_id"
+        " WHERE te.work_item_id = ? ORDER BY te.worked_on DESC, te.time_entry_id DESC", (tk["work_item_id"],)).fetchall()
+    hours = lambda r: r["actual_hours"] if r["actual_hours"] is not None else r["band_hours"]  # noqa: E731
+    trs = "".join(
+        f"<tr><td>{t.esc(r['worked_on'])}</td><td>{t.esc(r['performed_by'])}</td>"
+        f"<td>{t.esc((r['time_start'] or '')[11:] + ('–' + r['time_end'][11:] if r['time_end'] else '') or '—')}</td>"
+        f"<td class=num>{hours(r):g}</td><td class=num>{(r['hours_deduct'] or 0):g}</td>"
+        f"<td>{t.esc(r['role_name'] or '—')}</td><td>{t.esc(r['type_name'] or '—')}</td>"
+        f"<td>{t.esc(CHARGE_LABEL.get(r['charge_method'], r['charge_method']))}</td>"
+        f"<td>{t.esc(richtext_plain(r['note'])[:120])}</td></tr>" for r in rows)
+    total = sum(hours(r) for r in rows)
+    return ("<div class=card id=ttime><h3>" + t.icon("clock") + f"Time · {total:g} h</h3><div class=tablewrap><table>"
+            "<thead><tr><th>Date</th><th>Member</th><th>Start–End</th><th>Hours</th><th>Deduct</th><th>Work role</th>"
+            "<th>Work type</th><th>Charged as</th><th>Notes</th></tr></thead>"
+            f"<tbody>{trs or '<tr><td colspan=9 class=muted>No time yet.</td></tr>'}</tbody></table></div>"
+            + (f"<p style='margin:10px 0 0'><a class='btn ghost' href='/ticket/{wid}'>" + t.icon("clock")
+               + " New time entry (on the Ticket tab, with the clock)</a></p>" if can_work else "") + "</div>")
+
+
+def _ttab_open(ctx, tk, can_work) -> str:
+    """Open Tickets: the company's other open tickets (and the contact's), on
+    the boards the viewer may see, as the reference PSA's Open Tickets tab."""
+    seen = common.board_ids_for(ctx)
+    if not seen:
+        return "<div class=card><div class=muted>No boards.</div></div>"
+    marks = ",".join("?" * len(seen))
+    rows = ctx.conn.execute(
+        "SELECT t.work_item_id, w.name AS summary, b.display_name AS board, s.name AS status, t.owner, t.opened_at,"
+        " t.contact_id, t.priority FROM ticket t JOIN work_item w ON w.work_item_id = t.work_item_id"
+        " JOIN board b ON b.board_id = t.board_id LEFT JOIN board_status s ON s.board_status_id = t.board_status_id"
+        f" WHERE t.board_id IN ({marks}) AND t.closed_at IS NULL AND t.merged_into IS NULL AND t.work_item_id <> ?"
+        " AND ((w.entity_id IS NOT NULL AND w.entity_id = ?) OR (t.contact_id IS NOT NULL AND t.contact_id = ?))"
+        " ORDER BY CASE WHEN t.contact_id = ? THEN 0 ELSE 1 END, t.opened_at DESC LIMIT 200",
+        [*sorted(seen), tk["work_item_id"], tk["entity_id"], tk["contact_id"], tk["contact_id"]]).fetchall()
+    trs = "".join(
+        f"<tr><td><a href='/ticket/{t.esc(r['work_item_id'])}'>{t.esc(r['work_item_id'])}</a></td><td>{t.esc(r['summary'])}</td>"
+        f"<td>{t.badge(r['priority'])}</td><td>{t.esc(r['board'])}</td><td>{t.esc(r['status'] or '')}</td>"
+        f"<td>{t.esc(r['owner'] or 'unassigned')}</td><td>{t.esc((r['opened_at'] or '')[:10])}</td>"
+        f"<td>{'this contact' if tk['contact_id'] and r['contact_id'] == tk['contact_id'] else ''}</td></tr>" for r in rows)
+    return ("<div class=card id=topen><h3>" + t.icon("ticket") + f"Open tickets · {t.esc(tk['entity'] or 'this company')} · {len(rows)}</h3>"
+            "<div class=tablewrap><table><thead><tr><th>Ticket</th><th>Summary</th><th>Priority</th><th>Board</th><th>Status</th>"
+            f"<th>Owner</th><th>Opened</th><th></th></tr></thead><tbody>"
+            f"{trs or '<tr><td colspan=8 class=muted>No other open tickets for this company.</td></tr>'}</tbody></table></div></div>")
+
+
+def _ttab_audit(ctx, tk, can_work) -> str:
+    """Audit Trail: every change on the ticket, newest first: its system
+    events, and the audit records naming it."""
+    wid = tk["work_item_id"]
+    rows = [(r["occurred_at"], r["actor"] or "system", _system_line(ctx.conn, r), r["kind"].replace("_", " ").title())
+            for r in ctx.conn.execute(
+                "SELECT ticket_event_id, occurred_at, kind, actor, detail, note_flag FROM ticket_event"
+                " WHERE work_item_id = ? AND note_flag IS NULL", (wid,)).fetchall()]
+    rows += [(r["occurred_at"], r["actor"] or "system", r["detail"] or "", (r["action"] or "").replace("_", " ").title())
+             for r in ctx.conn.execute("SELECT occurred_at, actor, action, detail FROM audit_event"
+                                       " WHERE subject_kind = 'ticket' AND subject_id = ?", (wid,)).fetchall()]
+    rows.sort(key=lambda x: x[0] or "", reverse=True)
+    trs = "".join(f"<tr><td>{t.esc(a)}</td><td>{t.esc(b)}</td><td>{t.esc(d)}</td><td>{t.esc(c)}</td></tr>" for a, b, c, d in rows)
+    return ("<div class=card id=taudit><h3>" + t.icon("setup") + f"Audit trail · {len(rows)}</h3><div class=tablewrap><table>"
+            "<thead><tr><th>When</th><th>Who</th><th>Type</th><th>What</th></tr></thead>"
+            f"<tbody>{trs or '<tr><td colspan=4 class=muted>Nothing yet.</td></tr>'}</tbody></table></div></div>")
+
+
+def _ttab_survey(ctx, tk, can_work) -> str:
+    from ... import survey
+    row = ctx.conn.execute("SELECT * FROM survey_response WHERE work_item_id = ?", (tk["work_item_id"],)).fetchone()
+    q = survey.question(ctx.conn, tk["work_item_id"])
+    if row:
+        body = (f"<dl class=kv><dt>Question</dt><dd>{t.esc(q)}</dd><dt>Score</dt><dd>{'★' * row['score']}{'☆' * (5 - row['score'])}"
+                f" ({row['score']} of 5)</dd><dt>Comment</dt><dd>{t.esc(row['comment'] or '—')}</dd>"
+                f"<dt>Answered</dt><dd>{t.esc(row['answered_by'])} · {t.esc(row['answered_at'])}</dd></dl>")
+    elif survey.pending(ctx.conn, tk["work_item_id"]):
+        body = f"<div class=muted>Waiting for the requester to answer: “{t.esc(q)}”</div>"
+    else:
+        body = "<div class=muted>The survey is offered to the requester once the ticket is closed.</div>"
+    return "<div class=card id=tsurvey><h3>" + t.icon("star") + "Survey</h3>" + body + "</div>"

@@ -411,12 +411,23 @@ def main() -> int:
                     note(False, f"{what}: the page stays where the reader left it",
                          "no pod below the fold to test with")
                     continue
+                # The design (templates.js `hold`): an in-place change keeps the
+                # card itself under the eye, so the page may scroll to hold it
+                # when something above it changes height; a reorder keeps the
+                # page still and lets the card move. Each is measured as promised.
+                card = page.locator(".pods .card[data-pod]").nth(idx)
                 y0 = page.evaluate("window.scrollY")
-                page.locator(".pods .card[data-pod]").nth(idx).locator(btn).click()
+                t0 = card.evaluate("c => c.getBoundingClientRect().top")
+                card.locator(btn).click()
                 page.wait_for_timeout(600)
                 y1 = page.evaluate("window.scrollY")
-                note(abs(y1 - y0) <= 4, f"{what}: the page stays where the reader left it",
-                     f"scrollY {y0} -> {y1}")
+                if what == "move up":
+                    note(abs(y1 - y0) <= 4, f"{what}: the page stays where the reader left it",
+                         f"scrollY {y0} -> {y1}")
+                else:
+                    t1 = card.evaluate("c => c.getBoundingClientRect().top")
+                    note(abs(t1 - t0) <= 4, f"{what}: the card stays where the reader left it",
+                         f"card top {t0:.0f} -> {t1:.0f}px (scrollY {y0} -> {y1})")
             # and the cascade still answers after the pods have been moved about
             ts2 = page.locator("select.cat-type")
             if ts2.count():
@@ -611,6 +622,30 @@ def main() -> int:
             page.wait_for_timeout(300)
             note("open ticket(s)" in page.locator("body").inner_text(), "the projects list shows each project's open tickets")
 
+            # --- the ticket's tabs, each its own page (Dada, 7 Oct 2026) ------
+            page.goto(f"{base}/ticket/{ref}", wait_until="domcontentloaded")
+            tt = page.locator("nav.ttabs a")
+            threfs = [tt.nth(i).get_attribute("href") for i in range(tt.count())]
+            note(len(threfs) == 11, "a ticket shows the reference PSA's tabs, billing left out", str(threfs))
+            bad = []
+            for h in threfs:
+                page.goto(base + h, wait_until="domcontentloaded")
+                cur = page.locator("nav.ttabs a[aria-current=page]")
+                if cur.count() != 1 or cur.get_attribute("href") != h:
+                    bad.append(h)
+            note(not bad, "and each opens on its own page, its tab marked", str(bad))
+            page.goto(f"{base}/ticket/{ref}/configurations", wait_until="domcontentloaded")
+            note(page.locator("#tconfigs").count() == 1, "the Configurations tab is there")
+            page.goto(f"{base}/", wait_until="domcontentloaded")
+            grp = page.locator("nav .grp", has=page.locator("button[title=Configurations]"))
+            note(grp.count() == 1, "Configurations is a menu of its own across the bar")
+            if grp.count():
+                grp.locator("button").click()
+                page.wait_for_timeout(200)
+                note(grp.locator("a[href='/configurations#cfgnew']").is_visible(), "and it opens to New configuration")
+                page.keyboard.press("Escape")
+                page.mouse.move(5, 600)                 # leave the pointer off the bar for what follows
+
             # --- an email as its sender laid it out (6 Oct 2026) -------------
             # Dada: "HTML is or emails are not rendering properly on the ticket
             # viewer", "images are not rendering on the ticket", and "search on
@@ -681,6 +716,12 @@ def main() -> int:
                 after, after_doc = page.evaluate(fit)
                 note(after > before + 40 and abs(after - after_doc) <= 2, "opening the fold grows the frame to fit",
                      f"{before:.0f}px -> {after:.0f}px (email {after_doc}px)")
+                # where the summary is now: opening the fold can nudge the page
+                # (scroll anchoring), and a person clicks the line they see
+                xy = page.evaluate("""() => { const f = document.querySelector('iframe.mail'),
+                    r = f.getBoundingClientRect(),
+                    s = f.contentDocument.querySelector('summary').getBoundingClientRect();
+                    return [r.left + f.clientLeft + s.left + 8, r.top + f.clientTop + s.top + s.height / 2] }""")
                 page.mouse.click(*xy)
                 page.wait_for_timeout(500)
                 shut = page.evaluate(fit)[0]

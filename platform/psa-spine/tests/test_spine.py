@@ -6767,6 +6767,60 @@ class ModulesTest(unittest.TestCase):
         # the seeds keep their old meaning: nothing live changes
         self.assertEqual({r["status_id"]: r["no_time"] for r in projects.statuses(c)}["ON_HOLD"], 0)
 
+    def test_a_ticket_has_the_reference_psas_tabs_each_on_its_own_page(self):
+        """Dada, 7 Oct 2026: "there should be tabs on each ticket similar to
+        connectwise", "all but billing", "there should also be a
+        configurations menu", and the Configurations tab as the reference PSA
+        lays it out (attached in full, the company's others greyed)."""
+        from psaspine.web.views.ticket import TICKET_TABS
+        conn = self._conn()
+        for cid, name in (("CFG-A", "PC-WARD7-01"), ("CFG-B", "PRN-WARD7-01")):
+            conn.execute("INSERT INTO configuration (configuration_id, entity_id, name, config_type, source, created_at)"
+                         " VALUES (?, 'PMC', ?, 'WORKSTATION', 'MANUAL', '2026-10-07')", (cid, name))
+        conn.commit()
+        for key, label in TICKET_TABS:
+            status, _, page = self._call("GET", "/ticket/ITO-1" + (f"/{key}" if key else ""), cookie=self.alice)
+            self.assertEqual(status, "200 OK", key)
+            self.assertIn("nav class='tabs ttabs'", page, key)
+            self.assertIn(f"href='/ticket/ITO-1{'/' + key if key else ''}' class=on aria-current=page>{label}</a>", page, key)
+        for gone in ("products", "expenses", "rma", "nope"):
+            self.assertTrue(self._call("GET", f"/ticket/ITO-1/{gone}", cookie=self.alice)[0].startswith("404"), gone)
+        # restricted: a reader not on PHI cannot open a PHI ticket's tab either
+        self.assertTrue(self._call("GET", "/ticket/ITO-9/audit", cookie=self._cookie_for("carol"))[0].startswith("404"))
+        # Configurations: both greyed, attach one from the tab and come back to the tab
+        _, _, page = self._call("GET", "/ticket/ITO-1/configurations", cookie=self.alice)
+        self.assertEqual(page.count("class='cfgoff'"), 2)
+        self.assertIn("name=back value='/ticket/ITO-1/configurations'", page)
+        _, h, _ = self._call("POST", "/ticket/ITO-1/config/add", cookie=self.alice,
+                             form={"configuration_id": "CFG-A", "back": "/ticket/ITO-1/configurations"})
+        self.assertTrue(dict(h)["Location"].startswith("/ticket/ITO-1/configurations?msg="), dict(h)["Location"])
+        _, _, page = self._call("GET", "/ticket/ITO-1/configurations", cookie=self.alice)
+        self.assertEqual(page.count("class='cfgoff'"), 1)
+        self.assertIn("1 attached", page)
+        # a back that leaves the ticket is not followed
+        _, h, _ = self._call("POST", "/ticket/ITO-1/config/remove", cookie=self.alice,
+                             form={"configuration_id": "CFG-A", "back": "https://example.org/x"})
+        self.assertEqual(dict(h)["Location"], "/ticket/ITO-1")
+        # a task added on the Tasks tab comes back to the Tasks tab
+        _, h, _ = self._call("POST", "/ticket/ITO-1/task/add", cookie=self.alice,
+                             form={"text": "Check the cable", "back": "/ticket/ITO-1/tasks"})
+        self.assertTrue(dict(h)["Location"].startswith("/ticket/ITO-1/tasks"), dict(h)["Location"])
+        # a GET resets it: the next form without a back goes to the ticket
+        _, h, _ = self._call("POST", "/ticket/ITO-1/task/add", cookie=self.alice, form={"text": "Swap the cable"})
+        self.assertTrue(dict(h)["Location"].startswith("/ticket/ITO-1?") or dict(h)["Location"] == "/ticket/ITO-1",
+                        dict(h)["Location"])
+        _, _, audit = self._call("GET", "/ticket/ITO-1/audit", cookie=self.alice)
+        self.assertIn("id=taudit", audit)
+        # the Configurations menu, its own module across the bar
+        _, _, page = self._call("GET", "/configurations", cookie=self.alice)
+        self.assertIn('aria-label="Configurations"', page)
+        self.assertIn('href="/configurations#cfgnew"', page)
+        self.assertNotIn('href="/admin/configuration-types" role=menuitem', page, "setup pages are an administrator's")
+        from psaspine.web import auth as webauth, templates
+        admin = webauth.User(id="alice", name="alice", is_sysadmin=True)
+        page = templates.page("x", "", user=admin, active="configurations")
+        self.assertIn('href="/admin/configuration-types" role=menuitem', page)
+
     def test_projects_phases_predecessors_tickets_and_actual_hours(self):
         from psaspine import projects
         conn = self._conn()

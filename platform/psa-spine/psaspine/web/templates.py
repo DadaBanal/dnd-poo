@@ -968,6 +968,12 @@ label b.req{color:var(--bad,#e5484d)}
   background:var(--l2-bg,var(--surface));box-shadow:var(--l2-shadow,none)}
 .ptabs a{padding:6px 12px;border-radius:999px;color:var(--ink-2);text-decoration:none;font-weight:600;font-size:13.5px}
 .ptabs a:hover{color:var(--ink);background:rgb(34 211 238/.10)}
+/* the ticket's tabs (7 Oct 2026), the project bar's shape, not sticky: the ticket keeps its own sticky save bar */
+.ttabs{display:flex;gap:4px;flex-wrap:wrap;margin:8px 0 12px;padding:6px;border-radius:14px;
+  background:var(--l2-bg,var(--surface));box-shadow:var(--l2-shadow,none)}
+.ttabs a{padding:6px 12px;border-radius:999px;color:var(--ink-2);text-decoration:none;font-weight:600;font-size:13.5px}
+.ttabs a:hover{color:var(--ink);background:rgb(34 211 238/.10)}
+tr.cfgoff td{opacity:.55} tr.cfgoff:hover td{opacity:.9}
 tr.planticket td{font-size:13.5px;color:var(--ink-2)} tr.planticket td .ic{width:13px;height:13px;vertical-align:-2px;color:var(--neon1,var(--accent))}
 tr.planhead td{padding-top:12px}
 .planess{display:flex;gap:12px;overflow-x:auto;padding-bottom:6px}
@@ -2510,8 +2516,16 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
             ("kb", "/kb", "Knowledge", "Articles for the desk and the wards")]),
         ("companies", "Companies", [
             ("companies", "/companies", "Companies", "Departments, suppliers, contacts"),
-            ("configurations", "/configurations", "Configurations", "Machines, and what they are"),
             ("sales", "/sales", "Sales", "Opportunities and quotes")]),
+        # Dada, 7 Oct 2026: "there should also be a configurations menu". Its own
+        # module across the bar, with the pages a technician reaches for.
+        ("configurations", "Configurations", [
+            ("configurations", "/configurations", "Configurations", "Every machine, printer and device, and what they are"),
+            ("cfgnew", "/configurations#cfgnew", "New configuration", "A device Active Directory does not know"),
+            ("cfgcsv", "/configurations/maintenance.csv", "Maintenance record", "Every ticket on every machine, as CSV")]
+         + ([("cfgtypes", "/admin/configuration-types", "Configuration types", "Types, statuses and their questions"),
+             ("cfgint", "/admin/integrations", "Integrations", "Where configurations come from")]
+            if user is not None and getattr(user, "is_sysadmin", False) else [])),
         ("projects", "Projects", [("projects", "/projects", "Projects", "")]),
         ("time", "Time", [("time", "/time", "Time", "")]),
         ("finance", "Finance", [("finance", "/finance", "Finance", "")]),
@@ -2535,7 +2549,8 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
             active = "my"
     nav_items = [(key, href, name) for _, _, pages in groups for key, href, name, _ in pages]   # the phone's quick bar
     icons = {"admin": "setup", "schedule": "grip", "projects": "layers", "kb": "note", "finance": "tag", "sales": "briefcase",
-             "help": "note", "time": "clock", "approvals": "check", "service": "ticket", "configurations": "monitor"}
+             "help": "note", "time": "clock", "approvals": "check", "service": "ticket", "configurations": "monitor",
+             "cfgnew": "plus", "cfgcsv": "reports", "cfgtypes": "setup", "cfgint": "link"}
 
     def one(key, href, label, cls="", current=False):
         return (f'<a href="{esc(href)}" title="{esc(label)}" class="{cls}{" on" if current else ""}"'

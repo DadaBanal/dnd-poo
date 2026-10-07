@@ -2161,6 +2161,39 @@ form posts back to the tab it was on.
 Schema 070 is additive: `project_status`, `project_type`, `project_role`, `project_issue`, and nullable
 `project.project_status_id` / `project.project_type_id`. The vocabulary is seeded by `init` into empty tables.
 
+## The ticket's tabs, and a Configurations menu (7 Oct 2026, code only)
+
+Dada, 7 Oct 2026: *"configurations are not present still and there should be tabs on each ticket similar to
+connectwise"*, *"there should also be a configurations menu"*, *"make sure everything is built as per
+connectwise"*. Confirmed with Dada before building: every tab except billing, the menu as drafted, and the
+Configurations tab in the reference PSA's layout.
+
+**Ticket tabs.** The reference PSA's Service Ticket Tabs (MEASURED, docs.connectwise.com
+`ConnectWise_Documentation/060/010/010`): Ticket, Tasks, Configurations, Products, Activity, Time, Expenses,
+Schedule, Attachments, Open Tickets, Finance, Audit Trail, Survey, RMA, Conversions. Here `/ticket/<id>` is the
+Ticket tab, unchanged, and each other tab is its own page at `/ticket/<id>/<tab>`:
+
+| Tab | What it shows |
+|---|---|
+| Tasks | The ticket's tasks, add and tick off |
+| Configurations | The attached configurations in full, and the company's other machines greyed (the contact's first), each with Attach or Detach; **New configuration** |
+| Activity | Every note and email, newest first. The reference PSA's Activity tab holds CRM activities, which this desk does not keep; the notes are the nearest thing (INFERRED) |
+| Time | Every time entry; a new one opens from the Ticket tab's clock |
+| Schedule | The visits booked, and booking one |
+| Attachments | The files, through the patient-details review |
+| Open tickets | The company's other open tickets (the contact's first), on boards the viewer may see |
+| Finance | The BizBox records linked to the ticket |
+| Audit trail | Every system change and audit record naming the ticket, newest first |
+| Survey | The requester's answer, or that it is awaited |
+
+Products, Expenses, RMA and Conversions are billing and sales, left out on Dada's word. A form on a tab comes back
+to that tab: `ticket._load` takes the form's `back` afresh on every request, which also ends a stale return address
+that could carry from one request to the next.
+
+**Configurations menu.** Configurations is its own module across the bar, no longer inside Companies:
+Configurations, New configuration, Maintenance record (CSV), and for a system administrator Configuration types
+and Integrations.
+
 ## One Save, always reachable (3 Oct 2026)
 
 The ticket's own fields were already one form with one **Save changes** — but it
