@@ -108,7 +108,15 @@ header.top nav::-webkit-scrollbar{display:none}
 /* The menu never runs under the name and sign-out (Dada, 1 Oct): it tightens on
    narrower screens, drops its icons, and what still does not fit scrolls, with a
    fade at the edge so nothing looks cut off. */
-@media (max-width:1700px){header.top nav a{padding:6px 7px;font-size:13.5px}}
+@media (max-width:1700px){header.top nav a{padding:6px 7px;font-size:13.5px}
+  /* nine modules since Configurations got its own (7 Oct 2026): below a wide screen the words stay
+     and their small icons and chevrons go, so the bar never runs under the name beside it */
+  header.top nav.mega>.grp:not(.all)>button.top{padding:6px 7px;font-size:13.5px}
+  header.top nav.mega>.grp:not(.all)>button.top .ic,header.top nav.mega>a.top:not(.newbtn) .ic{display:none}}
+/* narrower still (a 1280 ward PC): the module you are in keeps its word, the others are their icon, named on hover */
+@media (min-width:721px) and (max-width:1360px){
+  header.top nav.mega>.grp:not(.all):not(.on)>button.top .lbl,header.top nav.mega>a.top:not(.newbtn):not(.on) .lbl{display:none}
+  header.top nav.mega>.grp:not(.all):not(.on)>button.top .ic:not(.chev),header.top nav.mega>a.top:not(.newbtn):not(.on) .ic{display:inline-block;margin-right:0}}
 @media (max-width:1000px){header.top nav a.newbtn svg.ic{display:none}}
 header.top nav.more{-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 28px),transparent);
   mask-image:linear-gradient(to right,#000 calc(100% - 28px),transparent)}
