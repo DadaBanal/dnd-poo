@@ -350,6 +350,13 @@ def dispatch(ctx):
             continue
         matched_path = True
         if method == ctx.request.method:
+            # 7 Oct 2026: a project ticket is its project's members' (and its
+            # assignees'). Checked once here for every /ticket/<id>/... page and
+            # form, so no handler can forget it; 404, as a restricted board answers.
+            if "work_item_id" in caps and ctx.request.path.startswith("/ticket/") and ctx.user is not None:
+                from .views import common
+                if not common.project_ticket_ok(ctx, caps["work_item_id"]):
+                    raise HttpError("404 Not Found", "No such ticket.")
             return handler(ctx, **caps)
     if matched_path:
         raise HttpError("405 Method Not Allowed",

@@ -2161,6 +2161,26 @@ form posts back to the tab it was on.
 Schema 070 is additive: `project_status`, `project_type`, `project_role`, `project_issue`, and nullable
 `project.project_status_id` / `project.project_type_id`. The vocabulary is seeded by `init` into empty tables.
 
+## Only a project's members see it (7 Oct 2026, code only)
+
+Dada, 7 Oct 2026: *"make sure that they will only have access to projects they are a member of"*. Confirmed before
+building: the manager, the team and administrators; a non-member opens a project ticket only when it is assigned
+to them. This is the reference PSA's project role set to "My" (MEASURED, its Role setup table).
+
+- `common.may_see_project`: a project is seen by its manager, its Team, a system administrator or the Projects
+  module at Admin. Anyone else gets *No such project* on Projects, the project page and every tab, its live
+  refresh, the ticket's Project picker and the project forms. A template is planning, readable by anyone who may use
+  the module.
+- `common.project_ticket_ok`, checked once in the router for every `/ticket/<id>/...` page and form, so no handler
+  can forget it: a ticket on a project board, on a project, opens for the project's members and for its own owner
+  and resources; anyone else gets 404, as a restricted board answers. Search leaves such tickets out. Service
+  tickets are untouched.
+- Whoever creates or copies a project is put on its team, so it never disappears from the person who made it.
+
+**The survey, live.** The satisfaction survey (032) is asked on the portal once a ticket closes, and the closing
+email points there. Going live is a data step on the live desk (every service board's `survey_enabled` to 1), in
+`docs/handoffs/HANDOFF-cloud-sql01-WS36-20261007-project-access-survey.md`.
+
 ## The ticket's tabs, and a Configurations menu (7 Oct 2026, code only)
 
 Dada, 7 Oct 2026: *"configurations are not present still and there should be tabs on each ticket similar to

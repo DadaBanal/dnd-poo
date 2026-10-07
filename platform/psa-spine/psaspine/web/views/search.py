@@ -123,6 +123,8 @@ def search(ctx):
         where_hit = _why(ctx, r, q, like)
         if where_hit is None:
             continue          # the only hit was markup inside a rich note
+        if not common.project_ticket_ok(ctx, r["work_item_id"]):
+            continue          # 7 Oct 2026: a project ticket is its project's members'
         seen[r["board_id"]] = seen.get(r["board_id"], 0) + 1
         out["tickets"].append({"id": r["work_item_id"], "summary": r["summary"], "who": r["who"],
                                "state": r["state"], "priority": r["priority"], "where": where_hit})

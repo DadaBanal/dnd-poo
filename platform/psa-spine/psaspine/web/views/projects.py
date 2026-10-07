@@ -22,11 +22,13 @@ def _back(path: str, **q):
 
 
 def _visible(ctx, row, seen=None) -> bool:
+    """The project's board (068), and now its people: only its manager, its team
+    and administrators see a project (7 Oct 2026, common.may_see_project)."""
     if row is None:
         return False
-    if row["board_id"] is None:
-        return True
-    return row["board_id"] in (common.board_ids_for(ctx) if seen is None else seen)
+    if row["board_id"] is not None and row["board_id"] not in (common.board_ids_for(ctx) if seen is None else seen):
+        return False
+    return common.may_see_project(ctx, row)
 
 
 def _load(ctx, project_id):
@@ -158,6 +160,13 @@ def _templates_list(tpls) -> str:
             f"tickets come across.</p><ul class=plain>{lis}</ul></div>")
 
 
+def _creator_joins(ctx, pid: str) -> None:
+    """Whoever makes a project is on it (7 Oct 2026: only members see a project),
+    so it never disappears from the person who just made it."""
+    if pid not in projects.projects_of(ctx.conn, ctx.user.id):
+        projects.add_member(ctx.conn, pid, ctx.user.id, role="TEAM_MEMBER", at=ctx.now, actor=ctx.user.id)
+
+
 def create(ctx):
     common.require_module(ctx, "PROJECTS", "WRITE")
     f = ctx.request.form()
@@ -168,6 +177,7 @@ def create(ctx):
                               starts_on=f.get("starts_on"), ends_on=f.get("ends_on"), budget_hours=f.get("budget_hours"),
                               description=f.get("description"), entity_id=f.get("entity_id") or None,
                               at=ctx.now, actor=ctx.user.id)
+        _creator_joins(ctx, pid)
         ctx.conn.commit()
     except projects.Refused as exc:
         ctx.conn.rollback()
@@ -1450,6 +1460,7 @@ def copy_project(ctx, project_id):
     try:
         pid = projects.copy(ctx.conn, project_id, name=f.get("name", ""), manager=f.get("manager") or None,
                             starts_on=f.get("starts_on") or None, at=ctx.now, actor=ctx.user.id)
+        _creator_joins(ctx, pid)
         ctx.conn.commit()
     except (projects.Refused, ValueError, LookupError) as exc:
         ctx.conn.rollback()

@@ -289,3 +289,57 @@ def owner_select(conn, board_ids, current: str | None = None, *, name: str = "ow
     if cur and cur.lower() not in seen:
         opts.append(f"<option value='{t.esc(cur)}' selected>{t.esc(_members.name_of(conn, cur))} (not working this board)</option>")
     return f"<select name={name}{attrs}>" + "".join(opts) + "</select>"
+
+
+# ---------------------------------------------------- project membership (7 Oct 2026)
+# Dada: "make sure that they will only have access to projects they are a member
+# of" (confirmed: manager, team and administrators; a non-member opens a project
+# ticket only when it is assigned to them). The reference PSA's project role set
+# to "My" (MEASURED, docs.connectwise.com 090/020/140/040).
+
+def sees_all_projects(ctx) -> bool:
+    """A system administrator, or the Projects module at ADMIN, sees every
+    project, so somebody can always put people on one."""
+    return bool(getattr(ctx.user, "is_sysadmin", False)) or allows(ctx, "PROJECTS", "ADMIN")
+
+
+def my_project_ids(ctx) -> set:
+    cached = getattr(ctx, "_my_projects", None)
+    if cached is None:
+        from ... import projects
+        cached = projects.projects_of(ctx.conn, ctx.user.id)
+        try:
+            ctx._my_projects = cached
+        except AttributeError:                    # a frozen context: just do not cache
+            pass
+    return cached
+
+
+def may_see_project(ctx, row) -> bool:
+    """Membership, on top of the board rule. A template is planning, not a
+    project with people on it: anyone who may use the Projects module reads it."""
+    if row is None:
+        return False
+    from ... import projects
+    if projects.is_template(row) or sees_all_projects(ctx):
+        return True
+    return row["project_id"] in my_project_ids(ctx)
+
+
+def project_ticket_ok(ctx, work_item_id: str) -> bool:
+    """A ticket on a project board, on a project, is its project's members'
+    (and its own owner's and resources'); every other ticket answers to its
+    board alone, as it always has."""
+    row = ctx.conn.execute(
+        "SELECT pt.project_id, t.owner, b.kind FROM ticket t JOIN board b ON b.board_id = t.board_id"
+        " LEFT JOIN project_ticket pt ON pt.work_item_id = t.work_item_id WHERE t.work_item_id = ?",
+        (work_item_id,)).fetchone()
+    if row is None or row["kind"] != "PROJECT" or not row["project_id"]:
+        return True
+    if sees_all_projects(ctx) or row["project_id"] in my_project_ids(ctx):
+        return True
+    me = (ctx.user.id or "").lower()
+    if (row["owner"] or "").lower() == me:
+        return True
+    from ... import resources
+    return me in {m.lower() for m in resources.everyone(ctx.conn, work_item_id)}

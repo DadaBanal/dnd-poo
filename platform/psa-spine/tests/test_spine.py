@@ -6669,7 +6669,7 @@ class ModulesTest(unittest.TestCase):
         pb = self._project_board(conn)
         t2 = tickets.open_ticket(conn, board_id="IT_HELP", summary="Ward 7 access point offline", impact="I3", urgency="U3",
                                  requested_by=None, at=self.at)
-        legacy = projects.create(conn, name="On a service board", board_id="IT_HELP", at=self.at, actor="alice")
+        legacy = projects.create(conn, name="On a service board", board_id="IT_HELP", manager="alice", at=self.at, actor="alice")
         projects.link_ticket(conn, t2, legacy, None, at=self.at, actor="alice")      # made before 070
         with self.assertRaises(projects.Refused):
             projects.open_ticket(conn, legacy, summary="x", at=self.at, actor="alice")
@@ -6821,6 +6821,61 @@ class ModulesTest(unittest.TestCase):
         page = templates.page("x", "", user=admin, active="configurations")
         self.assertIn('href="/admin/configuration-types" role=menuitem', page)
 
+    def test_only_a_projects_members_see_it_and_its_tickets(self):
+        """Dada, 7 Oct 2026: "make sure that they will only have access to
+        projects they are a member of". Confirmed: the manager, the team and
+        administrators see a project; a non-member opens one of its tickets only
+        when it is assigned to them. The reference PSA's project role at "My"."""
+        from psaspine import projects, resources
+        conn = self._conn()
+        pb = self._project_board(conn)
+        conn.execute("INSERT OR REPLACE INTO board_member (board_id, member, access) VALUES (?, 'lea.cruz', 'WORK')", (pb,))
+        pid = projects.create(conn, name="Ward 7 Wi-Fi", manager="alice", board_id=pb, at=self.at, actor="alice")
+        wid = projects.open_ticket(conn, pid, summary="Mount the access points", at=self.at, actor="alice")
+        other = projects.open_ticket(conn, pid, summary="Survey the ceiling", at=self.at, actor="alice")
+        conn.commit()
+        lea = self._cookie_for("lea.cruz")               # works the project board, not on the team
+        # the project, its tabs, its live stamp and its list entry: not there for her
+        for path in (f"/project/{pid}", f"/project/{pid}/workplan", f"/project/{pid}/team"):
+            self.assertTrue(self._call("GET", path, cookie=lea)[0].startswith("404"), path)
+        self.assertTrue(self._call("GET", "/live", query=f"scope=project:{pid}", cookie=lea)[0].startswith("404"))
+        status, _, _ = self._call("POST", f"/project/{pid}/note", cookie=lea, form={"body": "x"})
+        self.assertFalse(status.startswith("303"), status)
+        _, _, plist = self._call("GET", "/projects", cookie=lea)
+        self.assertNotIn("Ward 7 Wi-Fi", plist)
+        # its tickets: 404 by number, every ticket page and form, and nothing in search
+        for path in (f"/ticket/{wid}", f"/ticket/{wid}/time", f"/ticket/{wid}/configurations"):
+            self.assertTrue(self._call("GET", path, cookie=lea)[0].startswith("404"), path)
+        self.assertTrue(self._call("POST", f"/ticket/{wid}/task/add", cookie=lea, form={"text": "x"})[0].startswith("404"))
+        found = _json.loads(self._call("GET", "/search.json", query="q=access+points", cookie=lea)[2])
+        self.assertEqual(found["tickets"], [])
+        mine = _json.loads(self._call("GET", "/search.json", query="q=access+points", cookie=self.alice)[2])
+        self.assertEqual([x["id"] for x in mine["tickets"]], [wid], "the manager finds it")
+        # assigned to her: that one ticket opens, and nothing else of the project does
+        conn = self._conn()
+        resources.set_(conn, wid, ["lea.cruz"], at=self.at, actor="alice")       # a resource on it, not the owner
+        conn.commit()
+        self.assertEqual(self._call("GET", f"/ticket/{wid}", cookie=lea)[0], "200 OK")
+        self.assertTrue(self._call("GET", f"/ticket/{other}", cookie=lea)[0].startswith("404"))
+        self.assertTrue(self._call("GET", f"/project/{pid}", cookie=lea)[0].startswith("404"))
+        # on the team: all of it
+        conn = self._conn()
+        projects.add_member(conn, pid, "lea.cruz", at=self.at, actor="alice")
+        conn.commit()
+        self.assertEqual(self._call("GET", f"/project/{pid}/workplan", cookie=lea)[0], "200 OK")
+        self.assertEqual(self._call("GET", f"/ticket/{other}", cookie=lea)[0], "200 OK")
+        self.assertIn("Ward 7 Wi-Fi", self._call("GET", "/projects", cookie=lea)[2])
+        # an administrator sees every project; a service ticket is untouched by any of this
+        conn.execute("INSERT OR REPLACE INTO board_member (board_id, member, access) VALUES (?, 'rosa.mendoza', 'WORK')", (pb,))
+        conn.commit()
+        boss = self._cookie_for("rosa.mendoza", is_sysadmin=True)
+        self.assertEqual(self._call("GET", f"/project/{pid}", cookie=boss)[0], "200 OK")
+        self.assertEqual(self._call("GET", "/ticket/ITO-1", cookie=self._cookie_for("carol"))[0], "200 OK")
+        # whoever makes a project is on it, so it never vanishes from them
+        _, h, _ = self._call("POST", "/projects/new", cookie=lea, form={"name": "Lea's own", "board_id": pb, "manager": ""})
+        new_pid = dict(h)["Location"].split("/project/")[1].split("?")[0]
+        self.assertEqual(self._call("GET", f"/project/{new_pid}", cookie=lea)[0], "200 OK")
+
     def test_projects_phases_predecessors_tickets_and_actual_hours(self):
         from psaspine import projects
         conn = self._conn()
@@ -6857,9 +6912,14 @@ class ModulesTest(unittest.TestCase):
         self.assertIn(f"<a href='/project/{pid}'>{pid}</a> Replace ward 3 switches · Survey", ticket)
         _, h, _ = self._call("POST", "/projects/new", cookie=self.alice, form={"name": "Second", "board_id": "NOPE"})
         self.assertIn("err=", dict(h)["Location"])
-        _, h, _ = self._call("POST", f"/project/{pid}/ticket", cookie=self._cookie_for("carol"), form={"work_item_id": "ITO-1"})
-        self.assertIn("err=No+ticket+ITO-1+that+you+work", dict(h)["Location"])
+        # carol is not on the project (7 Oct 2026: members only): the project is not there for her
+        status, _, _ = self._call("POST", f"/project/{pid}/ticket", cookie=self._cookie_for("carol"), form={"work_item_id": "ITO-1"})
+        self.assertTrue(status.startswith("404"), status)
         conn = self._conn()
+        projects.add_member(conn, pid, "carol", at=self.at, actor="alice")                     # on the team now
+        conn.commit()
+        _, h, _ = self._call("POST", f"/project/{pid}/ticket", cookie=self._cookie_for("carol"), form={"work_item_id": "ITO-1"})
+        self.assertIn("err=No+ticket+ITO-1+that+you+work", dict(h)["Location"])               # but reads IT Help only
         projects.link_ticket(conn, "ITO-9", pid, a, at=self.at, actor="alice")                # a PHI ticket joins the project
         conn.execute("INSERT INTO time_entry (work_item_id, entity_id, worked_on, band_hours, performed_by, entered_by,"
                      " charge_method, actual_hours) VALUES ('ITO-9','PMC','2026-10-03',8,'alice','alice','INCLUDED_IN_MONTHLY_FEE',7.75)")
@@ -6981,7 +7041,7 @@ class ModulesTest(unittest.TestCase):
     def test_the_project_page_offers_each_of_those_and_refuses_the_rest(self):
         from psaspine import projects
         conn = self._conn()
-        pid = projects.create(conn, name="Ward 3 refresh", at=self.at, actor="alice")
+        pid = projects.create(conn, name="Ward 3 refresh", manager="alice", at=self.at, actor="alice")
         a = projects.add_phase(conn, pid, name="Survey", at=self.at, actor="alice")
         b = projects.add_phase(conn, pid, name="Handover", at=self.at, actor="alice")
         projects.add_dependency(conn, b, a, at=self.at, actor="alice")
@@ -9823,7 +9883,7 @@ class SearchViewsNotesTest(unittest.TestCase):
 
         from psaspine import projects
         conn = db.connect(self.db_path)
-        pid = projects.create(conn, name="Ward 3 refresh", at=datetime(2026, 9, 29, 10), actor="alice")
+        pid = projects.create(conn, name="Ward 3 refresh", manager="alice", at=datetime(2026, 9, 29, 10), actor="alice")
         conn.commit()
         conn.close()
         _, _, page = self._call("GET", f"/project/{pid}/workplan", cookie=alice)

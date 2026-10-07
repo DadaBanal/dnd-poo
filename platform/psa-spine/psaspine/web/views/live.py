@@ -51,7 +51,9 @@ def stamp(ctx):
         pid = scope[8:] if scope.startswith("project:") else None
         if pid is not None:
             row = conn.execute("SELECT board_id FROM project WHERE project_id = ?", (pid,)).fetchone()
-            if row is None or (row["board_id"] and not common.may_access_board(ctx, row["board_id"])):
+            full = conn.execute("SELECT * FROM project WHERE project_id = ?", (pid,)).fetchone()
+            if row is None or (row["board_id"] and not common.may_access_board(ctx, row["board_id"])) \
+                    or not common.may_see_project(ctx, full):
                 return Response("404 Not Found", "", content_type="text/plain; charset=utf-8")
         frag, ids = _in(common.board_ids_for(ctx))
         one = " AND pt.project_id = ?" if pid else ""
