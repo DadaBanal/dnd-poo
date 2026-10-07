@@ -2815,3 +2815,21 @@ Dada, after Part 47: *"move stuff that needs to be moved"* — the §2/§3 *Move
 **No ticket changed board.** Counts per board are identical either side — IT_HELP 176, IT_PROJECTS 8, PROCUREMENT 27, UNROUTED 12, **total 223 → 223** — measured inside the transaction. That is the expected result and the reason this was safe: the three service-board projects carried no tickets at all, and PRJ-0004's six were already on IT_PROJECTS. Only the four projects' own `board_id` changed.
 
 **PRJ-0005 "Report Template Development" was deliberately not moved.** It has no board and no tickets, so it is not the banner's case and nothing needs relocating. Choosing its board is a setup decision — it may not belong to IT Projects at all — and that is Dada's, not mine. Until it has one, no ticket can be opened inside it (§3).
+
+### Part 49: 2026-10-07, ~12:10 +08:00. **4cf67db live; the survey is on for every service board; project access by team — no project is orphaned.** MEASURED.
+
+Ran `HANDOFF-cloud-sql01-WS36-20261007-project-access-survey.md`. 070 was already in from Part 47, so this was its data step, its read, and the one restart. No schema step; the diff touches no `schema/` or `sqlserver/` file.
+
+1. **§2, the check that mattered — and the answer is good.** After this restart a project with no manager and an empty team is seen only by administrators, and `project_member` was created empty by 068, so this was worth measuring rather than assuming. **Every one of the eight projects has a manager, so none becomes admin-only: 0 of 8.** PRJ-0004 also carries a team of 4. Nothing was changed, as instructed.
+
+   Worth Dada's eye though, because it is a real consequence rather than a fault: **seven of the eight have `team = 0`**, so from now on each is seen by its manager and administrators and *nobody else* — PRJ-0001 and PRJ-0005 (dada.banal), PRJ-0002, PRJ-0003 and PRJ-0006 (rubylyn.martinez), PRJ-0007 (andrei.nakpil), PRJ-0008 (jefferson.simon). If other people are meant to work those projects they need adding on the project's **Team** tab. That is an administrator's action on the page, not mine to guess.
+
+2. **§3, the survey, applied in one transaction.** Read first: IT_HELP and PROCUREMENT already carried `survey_enabled = 1`; IT_CHANGE, UNROUTED and ZZ_SQL01_TEST were NULL; IT_PROJECTS is `kind = PROJECT` and correctly excluded. The handoff's exact `UPDATE` ran — **3 rows** — and the verification query returns **0**, so every non-project board now has the survey on.
+
+   **`notify_requester` was not touched**, as §3 requires, and I gated the transaction on it: boards with `notify_requester = 1` **1 → 1**. So Procurement still sends requesters no email and sees the survey only on the portal; turning requester email on is Dada's separate decision, per board.
+
+   COPY_ONLY backup `PMC_PSA_pre_survey_20261007.bak` taken first.
+
+3. **PSA-Desk restarted:** `:8085` **401 → down → 401 in 2s**, Running. The project-access rules ride this restart.
+
+Service tickets are untouched by the access change, per §1.
