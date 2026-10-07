@@ -1,0 +1,12 @@
+-- 074: whether the ward is asked how the operator did when a chat ends.
+--
+-- Dada, 7 Oct 2026: "option to close or end the chat and survey or how i did
+-- at the end". Confirmed before building: the operator's End the chat opens a
+-- small window with a closing message and "Ask <name> how I did", ticked by
+-- default; unticked, the chat ends with no rating card. The ward rates the
+-- operator by name ("How did Lea Cruz do?"), and each rating counts to the
+-- operator who had the chat (chat_session.picked_by, fixed once it ends).
+--
+-- Added NULL by the port and read as asked (1), so every chat that ended
+-- before this step reads exactly as it did: the ward was asked.
+ALTER TABLE chat_session ADD COLUMN ask_rating INTEGER DEFAULT 1;   -- 0: ended without asking; NULL reads as 1

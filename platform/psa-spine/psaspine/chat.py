@@ -149,14 +149,24 @@ def pick_up(conn: sqlite3.Connection, chat_id: int, *, member: str, at: datetime
     return f"picked up by {member}"
 
 
-def close(conn: sqlite3.Connection, chat_id: int, *, by: str, at: datetime) -> str:
+def close(conn: sqlite3.Connection, chat_id: int, *, by: str, at: datetime, closing: str | None = None,
+          ask: bool = True) -> str:
+    """End the chat. From the desk (074): an optional closing line, said first
+    as the operator, and `ask` False to end it without asking the ward how the
+    operator did. The ward's own End always asks."""
     c = get(conn, chat_id)
     if c is None:
         raise Refused("No such chat.")
     if c["status"] == CLOSED:
         return "nothing changed"
+    closing = _clean(closing) if closing and closing.strip() else ""
+    if closing:
+        say(conn, chat_id, sender=by, kind=STAFF, body=closing, at=at)
+        c = get(conn, chat_id)                         # a closing line on a waiting chat picks it up
     conn.execute("UPDATE chat_session SET status = ?, closed_at = ?, closed_by = ? WHERE chat_id = ?",
                  (CLOSED, _stamp(at), by, chat_id))
+    if not ask:
+        conn.execute("UPDATE chat_session SET ask_rating = 0 WHERE chat_id = ?", (chat_id,))
     _line(conn, chat_id, by, SYSTEM, f"{by} ended the chat", at)
     if c["work_item_id"]:
         _rest_to_ticket(conn, c, by=by, at=at)
@@ -410,6 +420,43 @@ def _files_to_ticket(conn, chat_id: int, work_item_id: str, *, member: str, at: 
             attachments.review(conn, out["attachment_id"], "CLEARED", actor=member, at=at)
 
 
+def asked(c) -> bool:
+    """Whether the ward is asked to rate this chat (074). Before 074 there is no
+    column, and every chat asked."""
+    try:
+        v = c["ask_rating"]
+    except (IndexError, KeyError):
+        return True
+    return v is None or bool(v)
+
+
+def operator_of(c) -> str | None:
+    """Whom the chat's rating counts to: the operator who had it when it ended."""
+    return c["picked_by"] or None
+
+
+def ratings_by_operator(conn: sqlite3.Connection, boards, *, since: str | None = None) -> list:
+    """Each operator's chat rating on these boards: (operator, average, count),
+    best first. A chat nobody picked up counts to nobody."""
+    boards = sorted(boards)
+    if not boards:
+        return []
+    rows = conn.execute(
+        "SELECT c.picked_by AS operator, AVG(CAST(s.score AS REAL)) AS avg, COUNT(*) AS n FROM chat_survey s"
+        " JOIN chat_session c ON c.chat_id = s.chat_id"
+        f" WHERE c.picked_by IS NOT NULL AND c.board_id IN ({','.join('?' * len(boards))})"
+        + (" AND s.answered_at >= ?" if since else "") + " GROUP BY c.picked_by",
+        [*boards, *([since] if since else [])]).fetchall()
+    return sorted(((r["operator"], round(r["avg"], 2), r["n"]) for r in rows), key=lambda x: (-x[1], -x[2], x[0]))
+
+
+def rating_of(conn: sqlite3.Connection, member: str) -> tuple[float | None, int]:
+    """One operator's chat rating, every board: (average, count)."""
+    row = conn.execute("SELECT AVG(CAST(s.score AS REAL)), COUNT(*) FROM chat_survey s JOIN chat_session c"
+                       " ON c.chat_id = s.chat_id WHERE LOWER(c.picked_by) = LOWER(?)", (member,)).fetchone()
+    return (round(row[0], 2) if row and row[1] else None), (row[1] if row else 0)
+
+
 def answer_survey(conn: sqlite3.Connection, chat_id: int, *, score: int, comment: str | None, by: str,
                   at: datetime) -> list:
     """The requester rates an ended chat, once. Returns patient-detail findings
@@ -419,6 +466,8 @@ def answer_survey(conn: sqlite3.Connection, chat_id: int, *, score: int, comment
         raise Refused("No such chat.")
     if c["status"] != CLOSED:
         raise Refused("The chat is still going.")
+    if not asked(c):
+        raise Refused("This chat was ended without a rating.")
     if not isinstance(score, int) or not 1 <= score <= 5:
         raise Refused("A score is one to five.")
     if conn.execute("SELECT 1 FROM chat_survey WHERE chat_id = ?", (chat_id,)).fetchone():
@@ -496,7 +545,8 @@ def live(conn: sqlite3.Connection, boards, *, now: datetime | None = None) -> li
             "id": r["chat_id"], "board_id": r["board_id"], "subject": r["subject"], "who": r["requester"],
             "name": _name(conn, r["requester"]), "nth": r["nth"], "total": r["total"],
             "label": label(conn, r["requester"], r["nth"]), "board": r["board_name"], "status": r["status"],
-            "with": _name(conn, r["picked_by"]) if r["picked_by"] else "", "since": (r["started_at"] or "")[11:16],
+            "with": _name(conn, r["picked_by"]) if r["picked_by"] else "", "picked_by": r["picked_by"] or "",
+            "since": (r["started_at"] or "")[11:16],
             "waited": _since(r["started_at"] or "", now),
             # A restricted board's words stay on its own page, where the read is audited.
             "last": "" if r["restricted"] else (last[:90] + ("…" if len(last) > 90 else "")),

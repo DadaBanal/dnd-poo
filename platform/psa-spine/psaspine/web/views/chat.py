@@ -146,7 +146,11 @@ function poll(){if(busy||document.hidden)return;busy=true;
   box.querySelectorAll('.cl[data-mid]:not(.sys)').forEach(function(el){var b=el.querySelector('.cr');if(b)b.innerHTML=bar(rx[el.dataset.mid])});
   var st=document.getElementById('chatstate');if(st&&j.status_words)st.textContent=j.status_words;
   if(j.status==='CLOSED'){if(form){form.querySelectorAll('textarea,button,input').forEach(function(x){x.disabled=true})}
-   var sv=document.getElementById('chatsurvey');if(sv&&!j.rated)sv.hidden=false}}).catch(function(){busy=false})}
+   var sv=document.getElementById('chatsurvey');if(sv&&!j.rated&&j.ask!==false){sv.hidden=false;
+    var rt=sv.querySelector('.rwho');if(rt&&j.rate_title)rt.textContent=j.rate_title}}}).catch(function(){busy=false})}
+/* 074: the quick view's End opens the chat with its end window up */
+(function(){function up(){var ce=document.getElementById('chatend');if(ce&&ce.hasAttribute('data-autoopen')&&ce.showModal&&!ce.open)ce.showModal()}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',up);else up()})();
 var pick=document.getElementById('rxpick'),target=null;
 box.addEventListener('click',function(e){var b=e.target.closest('.rx');if(!b)return;var el=b.closest('.cl');if(!el)return;
  if(b.classList.contains('add')){target=el.dataset.mid;var r=b.getBoundingClientRect();pick.hidden=false;
@@ -264,8 +268,7 @@ def detail(ctx, chat_id):
         if c["status"] == chat.WAITING or (c["picked_by"] or "").lower() != ctx.user.id.lower():
             acts += (f"<form method=post action='/chat/{cid}/pick' class=inline><button type=submit>"
                      + t.icon("check") + (" Pick it up" if c["status"] == chat.WAITING else " Take it over") + "</button></form> ")
-        acts += (f"<form method=post action='/chat/{cid}/end' class=inline onsubmit=\"return confirm('End this chat?')\">"
-                 "<button class=ghost type=submit>End the chat</button></form>")
+        acts += "<button type=button class=ghost data-open=chatend>End the chat</button>"
     ticket_card = ""
     if c["work_item_id"]:
         ticket_card = (f"<div class=card><h3>{t.icon('ticket')}Ticket</h3><p><a href='/ticket/{t.esc(c['work_item_id'])}'>"
@@ -281,9 +284,11 @@ def detail(ctx, chat_id):
                        "<div style='flex:0 0 auto'><button class=ghost type=submit>Add to the ticket</button></div></form></div>")
     nth, total = chat.counts(ctx.conn, cid)
     name = chat.label(ctx.conn, c["requester"], nth)
+    end_dlg = _end_dialog(ctx, c) if can and c["status"] != chat.CLOSED else ""
     rated = chat.survey_of(ctx.conn, cid)
     rating = (f" · rated {'★' * rated['score']}{'☆' * (5 - rated['score'])}"
-              + (f" “{t.esc(rated['comment'])}”" if rated["comment"] else "") if rated else "")
+              + (f" “{t.esc(rated['comment'])}”" if rated["comment"] else "") if rated
+              else " · ended without a rating" if c["status"] == chat.CLOSED and not chat.asked(c) else "")
     body = ((f"<div class='banner ok'>{t.esc(q.get('msg', ''))}</div>" if q.get("msg") else "")
             + (f"<div class='banner err'>{t.esc(q.get('err', ''))}</div>" if q.get("err") else "")
             + "<a class=backbtn href='/chat'>" + t.icon("left") + "<span class=lbl>Back to Chat</span></a>"
@@ -294,8 +299,41 @@ def detail(ctx, chat_id):
             "<div class=grid2 style='grid-template-columns:minmax(0,2fr) minmax(0,1fr)'>"
             "<div class=card>" + _conversation(ctx, c, rows, me_kind=chat.STAFF, viewer=ctx.user.id, desk=True,
                                                 base=f"/chat/{cid}", can_send=can and c["status"] != chat.CLOSED)
-            + "</div><div>" + ticket_card + "</div></div>")
+            + "</div><div>" + ticket_card + "</div></div>" + end_dlg)
     return Response(body=t.page(name, body, user=ctx.user, active="chat"))
+
+
+def _first(conn, who: str) -> str:
+    n = chat._name(conn, who)
+    return n.split(" ")[0] if " " in n else n
+
+
+def _end_dialog(ctx, c) -> str:
+    """Ending a chat from the desk (Dada, 7 Oct 2026: "option to close or end the
+    chat and survey or how i did at the end"; confirmed: a small window, a
+    closing message if wanted, and "Ask <name> how I did" ticked by default).
+    Opened by End the chat, and by the quick view's End (…?end=1)."""
+    cid = c["chat_id"]
+    who = t.esc(_first(ctx.conn, c["requester"]))
+    nth, _ = chat.counts(ctx.conn, cid)
+    return (f"<dialog id=chatend class='card tedlg'{' data-autoopen' if ctx.request.query.get('end') == '1' else ''}>"
+            f"<form method=post action='/chat/{cid}/end' class=stack style='max-width:none'>"
+            f"<h3 style='margin:0'>{t.icon('note')} End the chat — {t.esc(chat.label(ctx.conn, c['requester'], nth))}</h3>"
+            "<label>Closing message (optional) <textarea name=closing rows=2 maxlength=2000"
+            " placeholder='Salamat po! Message us anytime.'></textarea></label>"
+            f"<label class=tick><input type=checkbox name=ask value=1 checked> Ask {who} how I did (a rating at the end)</label>"
+            "<input type=hidden name=asked value=1>"
+            "<div class=tefoot><span class=grow></span><button type=button class=ghost data-close=chatend>Cancel</button>"
+            "<button type=submit>End the chat</button></div></form></dialog>")
+
+
+def _rate_title(conn, c) -> str:
+    """The ward's rating card asks about the operator by name (074)."""
+    op = chat.operator_of(c)
+    return f"How did {chat._name(conn, op)} do?" if op else "How did we do?"
+
+
+RATE_LEAD = "Paki-rate po ang tulong na natanggap ninyo."
 
 
 def _poll(ctx, c, *, viewer: str, desk: bool, base: str):
@@ -303,7 +341,8 @@ def _poll(ctx, c, *, viewer: str, desk: bool, base: str):
     rows = chat.messages(ctx.conn, c["chat_id"], after=int(after) if after.isdigit() else 0)
     return _json({"status": c["status"], "status_words": _status_words(c, ctx.conn, desk=desk),
                   "messages": _line_dicts(ctx, c, rows, viewer=viewer, desk=desk, base=base),
-                  "reactions": _rx(ctx, c, viewer), "rated": chat.survey_of(ctx.conn, c["chat_id"]) is not None})
+                  "reactions": _rx(ctx, c, viewer), "rated": chat.survey_of(ctx.conn, c["chat_id"]) is not None,
+                  "ask": chat.asked(c), "rate_title": _rate_title(ctx.conn, c)})
 
 
 def messages_json(ctx, chat_id):
@@ -408,6 +447,7 @@ def live_for(ctx) -> list[dict]:
         if r["board_id"] not in work:
             work[r["board_id"]] = common.may_access_board(ctx, r["board_id"], need="WORK")
         r["can"] = work[r["board_id"]]
+        r["mine"] = r["can"] and r["status"] == chat.ACTIVE and r["picked_by"].lower() == ctx.user.id.lower()
     return rows
 
 
@@ -416,7 +456,7 @@ def waiting_json(ctx):
     live chat (for the quick view). The page's script draws them as data."""
     rows = live_for(ctx)
     keep = ("id", "subject", "who", "name", "nth", "total", "label", "board", "status", "with", "since", "waited",
-            "last", "last_from", "can")
+            "last", "last_from", "can", "mine")
     return _json({"chats": [{k: r[k] for k in keep} for r in rows if r["status"] == chat.WAITING],
                   "live": [{k: r[k] for k in keep} for r in rows], "word": t.chat_ticker(rows)[0]})
 
@@ -427,8 +467,13 @@ def pick(ctx, chat_id):
 
 
 def end(ctx, chat_id):
-    return _act(ctx, chat_id, lambda c: chat.close(ctx.conn, c["chat_id"], by=ctx.user.id, at=ctx.now),
-                lambda c, r: _back(f"/chat/{c['chat_id']}", msg="Chat ended."))
+    f = ctx.request.form()
+    # The window posts `asked` with the tick; a bare post (an older page) asks, as before.
+    ask = f.get("ask") == "1" or f.get("asked") != "1"
+    return _act(ctx, chat_id, lambda c: chat.close(ctx.conn, c["chat_id"], by=ctx.user.id, at=ctx.now,
+                                                   closing=f.get("closing"), ask=ask),
+                lambda c, r: _back(f"/chat/{c['chat_id']}", msg="Chat ended." + (
+                    f" {_first(ctx.conn, c['requester'])} is asked how you did." if ask else " No rating was asked.")))
 
 
 def _clock_the_chat(ctx, c, wid: str) -> None:
@@ -588,11 +633,14 @@ def my_detail(ctx, chat_id):
     if rated:
         survey = (f"<div class=card id=chatrated><b>You rated this chat {'★' * rated['score']}{'☆' * (5 - rated['score'])}.</b>"
                   " Thank you.</div>")
+    elif not chat.asked(c):
+        survey = ""
     else:
         # Shown when the chat ends: here at once if it has, else the poll reveals it.
         stars = "".join(f"<label class=star><input type=radio name=score value={n} required><span>{'★' * n}</span></label>"
                         for n in range(5, 0, -1))
-        survey = (f"<div class=card id=chatsurvey{'' if c['status'] == chat.CLOSED else ' hidden'}><h3>{t.icon('star')}How did we do?</h3>"
+        survey = (f"<div class=card id=chatsurvey{'' if c['status'] == chat.CLOSED else ' hidden'}><h3>{t.icon('star')}"
+                  f"<span class=rwho>{t.esc(_rate_title(ctx.conn, c))}</span></h3><p class=why style='margin-top:0'>{t.esc(RATE_LEAD)}</p>"
                   f"<form method=post action='/my/chat/{cid}/survey' class=stack style='max-width:none'>"
                   f"<div class=stars role=radiogroup aria-label='One to five stars'>{stars}</div>"
                   "<label>Anything to add? <textarea name=comment maxlength=1000 rows=2></textarea></label>"

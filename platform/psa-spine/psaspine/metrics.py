@@ -50,7 +50,8 @@ def desk(conn: sqlite3.Connection, boards, *, now: datetime, months: int = 6,
              "median_respond": None, "median_resolve": None,
              "respond_met_total": None, "resolve_met_total": None,
              "by_board": [], "by_type": [], "by_source": [], "by_priority": [],
-             "satisfaction": None, "satisfaction_n": 0, "chat_rating": None, "chat_rating_n": 0}
+             "satisfaction": None, "satisfaction_n": 0, "chat_rating": None, "chat_rating_n": 0,
+             "chat_by_operator": []}
     if not boards:
         return empty
     marks = ",".join("?" * len(boards))
@@ -122,6 +123,9 @@ def desk(conn: sqlite3.Connection, boards, *, now: datetime, months: int = 6,
             f" WHERE c.board_id IN ({marks}) AND s.answered_at >= ?", (*boards, since)).fetchone()
         if row and row[1]:
             out["chat_rating"], out["chat_rating_n"] = round(row[0], 2), row[1]
+        # 074: and each operator's own (Dada, 7 Oct 2026: "how i did")
+        from . import chat as _chat
+        out["chat_by_operator"] = _chat.ratings_by_operator(conn, boards, since=since)
     return out
 
 

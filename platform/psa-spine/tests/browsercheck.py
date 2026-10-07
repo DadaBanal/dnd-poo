@@ -748,6 +748,8 @@ def main() -> int:
             ward.locator("form[action$='/end'] button").click()
             ward.wait_for_load_state("domcontentloaded")
             note(ward.locator("#chatsurvey").is_visible(), "ending the chat asks the requester how we did")
+            rwho = ward.locator("#chatsurvey .rwho").inner_text().lower()
+            note(rwho.startswith("how did ") and "we do" not in rwho, "naming the operator who had it (074)", rwho)
             ward.locator("#chatsurvey .star span").first.click()
             ward.locator("#chatsurvey button[type=submit]").click()
             ward.wait_for_load_state("domcontentloaded")
@@ -764,6 +766,42 @@ def main() -> int:
                  and "Chat with" in te.locator("textarea[name=body]").input_value(),
                  "with the start, the end and the chat already filled in",
                  te.locator("input[name=start]").input_value() + "-" + te.locator("input[name=end]").input_value())
+            # 074: a new chat from the ward, picked up, then ended from the quick view without asking
+            ward = browser.new_context().new_page()
+            ward.goto(f"{base}/login", wait_until="domcontentloaded")
+            ward.fill("input[name=username]", "nurse7")
+            ward.fill("input[name=password]", PASSWORD)
+            ward.click("button[type=submit]")
+            ward.wait_for_load_state("domcontentloaded")
+            ward.goto(f"{base}/my/chat", wait_until="domcontentloaded")
+            ward.fill("#chatstart input[name=subject]", "Mouse not working")
+            ward.fill("#chatstart textarea[name=body]", "Ward 7 nurses' station PC, the mouse stopped.")
+            ward.click("#chatstart button[type=submit]")
+            ward.wait_for_load_state("domcontentloaded")
+            cid2 = ward.url.rstrip("/").rsplit("/", 1)[-1]
+            page.goto(f"{base}/chat/{cid2}", wait_until="domcontentloaded")
+            page.locator(f"main form[action='/chat/{cid2}/pick'] button").click()
+            page.wait_for_load_state("domcontentloaded")
+            page.goto(f"{base}/", wait_until="domcontentloaded")
+            page.locator("#chatticker .tlive").click()
+            page.wait_for_timeout(200)
+            end = page.locator(f"#chatlive a[href='/chat/{cid2}?end=1']")
+            note(end.count() == 1, "the quick view has End beside the chat that is mine")
+            if end.count():
+                end.click()
+                page.wait_for_load_state("domcontentloaded")
+                page.wait_for_timeout(200)
+            dlg = page.locator("#chatend")
+            note(dlg.is_visible() and dlg.locator("input[name=ask]").is_checked(),
+                 "and opens the chat with its end window up, Ask how I did ticked")
+            dlg.locator("textarea[name=closing]").fill("Salamat po! Message us anytime.")
+            dlg.locator("input[name=ask]").uncheck()
+            dlg.locator("button[type=submit]").click()
+            page.wait_for_load_state("domcontentloaded")
+            ward.reload(wait_until="domcontentloaded")
+            note("Salamat po!" in ward.locator("#chatlog").inner_text() and ward.locator("#chatsurvey").count() == 0,
+                 "unticked, the ward reads the closing line and is not asked to rate")
+            ward.context.close()
 
             # --- an email as its sender laid it out (6 Oct 2026) -------------
             # Dada: "HTML is or emails are not rendering properly on the ticket

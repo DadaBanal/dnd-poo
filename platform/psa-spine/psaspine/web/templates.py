@@ -1040,6 +1040,7 @@ tr.chatwait td:first-child{border-left:3px solid var(--accent)}
 .ticker .trow .grow{flex:1;min-width:0}
 .ticker .trow .tlast{margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2)}
 .ticker .tfoot{margin:8px 0 0}
+.ticker .trow .btn.small{padding:1px 10px;line-height:20px;font-size:12px}
 @media (max-width:760px){.ticker{font-size:15px;gap:8px;padding:6px 10px}.ticker .tlabel{display:none}.ticker .topen{display:none}}
 @keyframes tick{from{transform:translateX(0)}to{transform:translateX(-100%)}}
 @media (prefers-reduced-motion:reduce){.ticker .ttrack{animation:none;padding-left:0}}
@@ -1999,6 +2000,7 @@ function row(c){var r=el('div','trow'),g=el('div','grow'),a=link(c);r.dataset.id
   l.appendChild(document.createTextNode(' '+c.last));g.appendChild(l)}
  r.appendChild(g);
  if(c.status==='WAITING'&&c.can){var f=el('form');f.method='post';f.action='/chat/'+c.id+'/pick';var b=el('button','small','Pick up');b.type='submit';f.appendChild(b);r.appendChild(f)}
+ else if(c.mine){var e=el('a','btn ghost small','End');e.href='/chat/'+c.id+'?end=1';r.appendChild(e)}
  return r}
 function drawPanel(lv){panel.textContent='';
  [['Waiting',function(c){return c.status==='WAITING'}],['In progress',function(c){return c.status!=='WAITING'}]].forEach(function(p){
@@ -2656,7 +2658,9 @@ def chat_panel(live) -> str:
     first with Pick up, then who has the rest, each with its last line."""
     def row(c):
         pick = (f"<form method=post action='/chat/{c['id']}/pick'><button type=submit class=small>Pick up</button></form>"
-                if c["status"] == "WAITING" and c.get("can") else "")
+                if c["status"] == "WAITING" and c.get("can") else
+                # 074: End on a chat that is yours opens it with its end window up
+                f"<a class='btn ghost small' href='/chat/{c['id']}?end=1'>End</a>" if c.get("mine") else "")
         state = (f"waiting {c['waited']}" if c["waited"] else f"since {c['since']}") if c["status"] == "WAITING" \
             else f"with {c['with']}"
         last = (f"<div class=tlast><span class=muted>{'Desk' if c['last_from'] == 'desk' else esc(c['name'].split(' ')[0])}:</span>"

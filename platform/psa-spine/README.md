@@ -2228,6 +2228,30 @@ Teams-style reactions, pictures and files through the patient-details review, th
 
 Schema 072 is additive: `chat_reaction`, `chat_file`, `chat_survey`, and the nullable `board.chat_welcome`.
 
+## Chat, round five: ending a chat, and "how did I do?" (7 Oct 2026, schema 074)
+
+Dada, 7 Oct 2026: *"option to close or end the chat and survey or how i did at the end"*. Confirmed before building:
+an end window with a rating tick, a rating per operator, and End from the banner's quick view.
+
+- **The end window.** On the desk, *End the chat* opens a small window. It has a closing message (optional; it is said
+  as the operator's last line, e.g. *Salamat po! Message us anytime.*) and **Ask ‹name› how I did**, ticked by default.
+  Untick it and the chat ends with no rating card for the ward. The chat page then reads *ended without a rating*.
+  The ward's own *End the chat* always asks. A bare post from a page opened before this change also asks.
+- **"How did Lea Cruz do?"** The ward's card names the operator who had the chat when it ended, with *Paki-rate po
+  ang tulong na natanggap ninyo.* above the stars. A chat nobody picked up asks *How did we do?*. The card appears by
+  itself when the chat ends, unless no rating was asked, and a rating that was not asked for is refused.
+- **Per operator.** Each rating counts to the operator who had the chat (`chat_session.picked_by`, fixed once it
+  ends). A chat nobody had counts to the desk's average only.
+  - **Reports:** under the *Chat rating* tile, a table of operators with their average and the number of chats rated
+    in the period.
+  - **Setup › Members:** each person's page says *Rated 4.6 / 5 by the wards over 12 chats* beside the Chat operator
+    tick.
+- **End from the quick view.** In *Live chats*, a chat that is yours has **End** beside it. It opens the chat with
+  the end window already up (`/chat/<id>?end=1`), so you see the conversation as you close it.
+
+Schema 074 adds one column, `chat_session.ask_rating`. It is added NULL by the port and read as asked, so every chat
+that ended before it reads as it did. Handoff: `HANDOFF-cloud-sql01-WS36-20261007-chat-074.md`.
+
 ## Chat, round four: a louder ring, chat operators, the operator's time (7 Oct 2026, schema 073)
 
 Dada, 7 Oct 2026: *"change the chat beep to a more audible one ... if the chat is converted into a ticket can it be

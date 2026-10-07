@@ -7350,6 +7350,85 @@ class ModulesTest(unittest.TestCase):
         self._call("POST", f"/chat/{cid2}/end", cookie=self.alice)
         self.assertEqual(len(discussion()), n)
 
+    def test_chat_ends_with_or_without_asking_how_the_operator_did(self):
+        """074. Dada, 7 Oct 2026: "option to close or end the chat and survey or
+        how i did at the end". Confirmed: End the chat opens a window with a
+        closing message and "Ask <name> how I did", ticked by default; the ward
+        rates the operator by name; each operator's rating in Reports and on
+        their member page; End beside your own chats in the quick view."""
+        from psaspine import chat, metrics
+        from psaspine.web.views import chat as chat_view
+        self._chat_desk()
+        nurse = self._cookie_for("nurse")
+        at = datetime(2026, 9, 17, 9, 30)
+
+        def started(subject, *, pick=True):
+            c = self._conn()
+            cid, _ = chat.start(c, requester="nurse", board_id="IT_HELP", subject=subject, first=subject + ".", at=at)
+            if pick:
+                chat.pick_up(c, cid, member="alice", at=at)
+            c.commit()
+            return cid
+
+        one = started("Teams phone silent")
+        page = self._call("GET", f"/chat/{one}", cookie=self.alice)[2]
+        self.assertIn("data-open=chatend>End the chat</button>", page)
+        dlg = page[page.index("<dialog id=chatend"):]
+        self.assertIn("<input type=checkbox name=ask value=1 checked> Ask nurse how I did", dlg)
+        self.assertNotIn("data-autoopen", dlg[:60])
+        # the quick view: End beside a chat that is hers, opening it with the window up
+        live = _json.loads(self._call("GET", "/chat/waiting.json", cookie=self.alice)[2])["live"]
+        self.assertEqual([(r["id"], r["mine"]) for r in live], [(one, True)])
+        self.assertIn(f"href='/chat/{one}?end=1'>End</a>", self._call("GET", "/", cookie=self.alice)[2])
+        self.assertIn("<dialog id=chatend class='card tedlg' data-autoopen>",
+                      self._call("GET", f"/chat/{one}", query="end=1", cookie=self.alice)[2])
+        # ended with a closing line and without asking: no card for the ward, and no rating taken
+        _, h, _ = self._call("POST", f"/chat/{one}/end", cookie=self.alice,
+                             form={"closing": "Salamat po! Message us anytime.", "asked": "1"})
+        self.assertIn("No+rating+was+asked", dict(h)["Location"])
+        c = self._conn()
+        self.assertFalse(chat.asked(chat.get(c, one)))
+        self.assertEqual(c.execute("SELECT sender_kind, body FROM chat_message WHERE chat_id = ? AND sender_kind <> 'SYSTEM'"
+                                   " ORDER BY message_id DESC", (one,)).fetchone()[:], ("STAFF", "Salamat po! Message us anytime."))
+        mine = self._call("GET", f"/my/chat/{one}", cookie=nurse)[2]
+        self.assertNotIn("id=chatsurvey", mine)
+        self.assertIn("Salamat po! Message us anytime.", mine)
+        self.assertFalse(_json.loads(self._call("GET", f"/my/chat/{one}/messages.json", cookie=nurse)[2])["ask"])
+        self._call("POST", f"/my/chat/{one}/survey", cookie=nurse, form={"score": "5"})
+        self.assertIsNone(chat.survey_of(self._conn(), one))
+        self.assertIn("ended without a rating", self._call("GET", f"/chat/{one}", cookie=self.alice)[2])
+        # ended asking (the tick left on): the ward is asked how alice did, by name, in Taglish
+        two = started("Mouse gone")
+        _, h, _ = self._call("POST", f"/chat/{two}/end", cookie=self.alice, form={"ask": "1", "asked": "1"})
+        self.assertIn("is+asked+how+you+did", dict(h)["Location"])
+        mine = self._call("GET", f"/my/chat/{two}", cookie=nurse)[2]
+        card = mine[mine.index("id=chatsurvey"):]
+        self.assertIn("<span class=rwho>How did alice do?</span>", card)
+        self.assertIn(chat_view.RATE_LEAD, card)
+        polled = _json.loads(self._call("GET", f"/my/chat/{two}/messages.json", cookie=nurse)[2])
+        self.assertEqual((polled["ask"], polled["rate_title"]), (True, "How did alice do?"))
+        self._call("POST", f"/my/chat/{two}/survey", cookie=nurse, form={"score": "5"})
+        # the ward ends one herself: always asked; and an older page's bare End still asks
+        three = started("Printer jams")
+        self._call("POST", f"/my/chat/{three}/end", cookie=nurse)
+        self._call("POST", f"/my/chat/{three}/survey", cookie=nurse, form={"score": "3"})
+        four = started("Scanner", pick=False)
+        self._call("POST", f"/chat/{four}/end", cookie=self.alice)                  # no form fields at all
+        c = self._conn()
+        self.assertTrue(chat.asked(chat.get(c, four)))
+        self.assertIsNone(chat.operator_of(chat.get(c, four)))                      # nobody had it
+        self.assertIn("How did we do?", self._call("GET", f"/my/chat/{four}", cookie=nurse)[2])
+        self._call("POST", f"/my/chat/{four}/survey", cookie=nurse, form={"score": "1"})
+        # each rating counts to the operator who had the chat; one nobody had counts to nobody
+        self.assertEqual(chat.ratings_by_operator(self._conn(), {"IT_HELP"}), [("alice", 4.0, 2)])
+        self.assertEqual(chat.rating_of(self._conn(), "alice"), (4.0, 2))
+        m = metrics.desk(self._conn(), {"IT_HELP"}, now=datetime(2026, 9, 18))
+        self.assertEqual((m["chat_rating"], m["chat_rating_n"], m["chat_by_operator"]), (3.0, 3, [("alice", 4.0, 2)]))
+        self.assertIn("Rated 4.0 / 5 by the wards over 2 chats.", self._call("GET", "/admin/member/alice", cookie=self.root)[2])
+        reports = self._call("GET", "/reports", cookie=self.alice)[2]
+        table = reports[reports.index("<table id=chatbyop>"):]
+        self.assertIn("<td>alice</td><td class=right>4.0 / 5</td><td class=right>2</td>", table[:table.index("</table>")])
+
     def test_projects_phases_predecessors_tickets_and_actual_hours(self):
         from psaspine import projects
         conn = self._conn()

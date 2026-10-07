@@ -203,9 +203,12 @@ def _chat_operator_form(ctx, ident: str, p: str) -> str:
     if not ctx.conn.execute("SELECT 1 FROM board WHERE takes_chats = 1").fetchone() and not chat.is_operator(ctx.conn, ident):
         return ""
     on = chat.is_operator(ctx.conn, ident)
+    avg, n = chat.rating_of(ctx.conn, ident)              # 074: how the wards rated their chats
+    rated = (f" Rated {avg} / 5 by the wards over {n} chat{'s' if n != 1 else ''}." if n else "")
     names = ", ".join(r["display_name"] for r in chat.chat_boards(ctx.conn)) or "no board"
     return (f"<form method=post action='{p}/chat-operator' class=row id=chatoperator style='margin-top:10px'><div><label>Chat operator</label>"
-            f"<div class=why>{'Yes: answers chats from the wards on ' + t.esc(names) + '.' if on else 'No. Only someone who works ' + t.esc(names) + ' can be one.'}</div></div>"
+            f"<div class=why>{'Yes: answers chats from the wards on ' + t.esc(names) + '.' if on else 'No. Only someone who works ' + t.esc(names) + ' can be one.'}"
+            f"<span id=chatoprating>{t.esc(rated)}</span></div></div>"
             f"<div style='flex:0 0 auto;align-self:end'><input type=hidden name=on value='{0 if on else 1}'>"
             f"<button class=ghost type=submit>{'Untick' if on else 'Make chat operator'}</button></div></form>")
 
