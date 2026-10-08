@@ -1700,6 +1700,14 @@ class PortTest(unittest.TestCase):
         self.assertIn("[work_item_id] NVARCHAR(64) NOT NULL", self.tsql)
         self.assertNotIn("NVARCHAR(64) IDENTITY", self.tsql)
 
+    def test_a_key_copied_from_another_table_is_never_identity(self):
+        """8 Oct 2026, MEASURED on PMC_PSA: /my/chat/3/survey answered "A server
+        error occurred". chat_survey.chat_id is its chat's key, and the port had
+        made it IDENTITY, which refuses the explicit value every rating writes."""
+        import re as _re
+        self.assertIn("[chat_id] INT NOT NULL CONSTRAINT [PK_chat_survey] PRIMARY KEY", self.tsql)
+        self.assertEqual(_re.findall(r"\[\w+\] INT IDENTITY\(1,1\) NOT NULL[^,\n]*REFERENCES", self.tsql), [])
+
     def test_nothing_that_reaches_an_invoice_is_a_float(self):
         self.assertNotIn("FLOAT", self.tsql.upper())
         self.assertNotIn("] REAL", self.tsql)

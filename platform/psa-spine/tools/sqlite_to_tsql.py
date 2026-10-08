@@ -257,7 +257,12 @@ def emit_table(table: Table, dec: Decisions, tables: set[str]) -> str:
         # when it is not supplied. IDENTITY is the same bargain in SQL Server --
         # unless a CHECK pins the key (ticket_numbering's id = 1): a checked key
         # is a chosen value, and IDENTITY would refuse the one value allowed.
-        if col.primary_key and col.sqlite_type == "INTEGER" and len(pk_cols) == 1 and not col.checks:
+        # Nor when the key REFERENCES another table: it is that row's key,
+        # copied (chat_survey.chat_id is its chat's), and SQL Server refuses
+        # an explicit value in an IDENTITY column. MEASURED 8 Oct 2026: every
+        # chat rating on PMC_PSA failed that way, as a bare server error.
+        if (col.primary_key and col.sqlite_type == "INTEGER" and len(pk_cols) == 1 and not col.checks
+                and not col.references):
             piece.append("IDENTITY(1,1)")
 
         piece.append("NOT NULL" if (col.not_null or col.primary_key) else "NULL")

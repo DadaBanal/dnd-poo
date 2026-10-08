@@ -3784,7 +3784,7 @@ END;
 IF OBJECT_ID(N'psa.[chat_survey]', N'U') IS NULL
 BEGIN
 CREATE TABLE psa.[chat_survey] (
-    [chat_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_chat_survey] PRIMARY KEY CONSTRAINT [FK_chat_survey_chat_id] REFERENCES psa.[chat_session]([chat_id]),
+    [chat_id] INT NOT NULL CONSTRAINT [PK_chat_survey] PRIMARY KEY CONSTRAINT [FK_chat_survey_chat_id] REFERENCES psa.[chat_session]([chat_id]),
     [score] INT NOT NULL CONSTRAINT [CK_chat_survey_01] CHECK (score BETWEEN 1 AND 5),
     [comment] NVARCHAR(MAX) NULL,
     [answered_by] NVARCHAR(200) NOT NULL,
