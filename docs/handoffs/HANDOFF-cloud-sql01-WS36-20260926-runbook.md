@@ -2943,3 +2943,20 @@ Ran `HANDOFF-cloud-sql01-WS36-20261008-email-link-076.md`, all nine steps in ord
 **076 is already doing its job.** Since the restart, tickets carrying a `portal_key` have gone **2 → 16**, and **one notification now has `portal_link` kept** — so PSA-Notify has sent at least one email since, with the link recorded, which is exactly what 076 adds over 075. Part 54's finding stands and is now moot for new mail: the link used to be composed at send and lost; it is kept from here.
 
 **Chat round six rides the same restart (code only), and is Dada's eye:** a ward with an open chat pressing Start lands back in it; the portal's Chat page reads *n helpdesk staff online now*; typing shows *… is typing* on the other side. **Operators read offline until their next desk page after a restart — expected, not a fault.**
+
+### Part 56: 2026-10-08, ~11:05 +08:00. **14e0b50 live; `psa.chat_survey` repaired — `chat_id` is no longer IDENTITY, and the insert that failed now works.** MEASURED.
+
+Ran `HANDOFF-cloud-sql01-WS36-20261008-chat-survey-repair.md`. This fixes a defect in **what I applied at Part 51 (072)**: the translator made `chat_survey.chat_id` an `INT IDENTITY(1,1)`, but that key is the chat's own, copied from `chat_session`. SQL Server refuses an explicit value into an IDENTITY column, so **every chat rating on PMC_PSA has failed since 072** — which is what Dada's *A server error occurred* on `/my/chat/3/survey` was.
+
+1. **Step 3 preconditions, both measured before anything changed** (the handoff says stop and hand back otherwise):
+   - `COLUMNPROPERTY(..., 'IsIdentity')` = **1** — the defect confirmed present, not assumed.
+   - `chat_survey` **COUNT(*) = 0** — so the drop loses nothing. That it is empty is itself the evidence no rating ever got in.
+   - Noted: `chat_session` **15**, `chat_message` **137**.
+2. COPY_ONLY backup `PMC_PSA_pre_chatsurvey_repair_20261008.bak`, VERIFYONLY ok. PSA-Desk stopped; PSA-Notify left alone, as the handoff says it does not touch this table.
+3. **Dropped and re-created in one transaction.** The `CREATE` was taken **verbatim from the port** with only the `IF OBJECT_ID … BEGIN` / `END;` guard removed, per step 5, and the script asserted the first column reads `[chat_id] INT NOT NULL CONSTRAINT [PK_chat_survey] PRIMARY KEY` before running anything.
+4. **Step 6 verified inside the transaction, all four:** `IsIdentity` **0**; `chat_survey` **COUNT 0**; `FK_chat_survey_chat_id` **present (1)**; `chat_session` **15 → 15** and `chat_message` **137 → 137**.
+5. **PSA-Desk started:** `:8085` **401 → down → 401 in 2s**.
+6. **Proved the fix rather than inferring it.** An insert of exactly the failing shape — an explicit `chat_id` taken from a real `chat_session` row — **succeeded**, where before it would have been *Cannot insert explicit value for identity column*. Rolled back; `chat_survey` is still 0. So the ward's rating will now be kept.
+
+**Worth carrying forward: a claim in earlier handoffs was wrong, and I repeated it.** Several of my Parts recorded "Not run here: the `sql-server` CI job runs on push" because the handoffs said so. WS36 has now measured that this is false — that workflow runs on a push to `main`, a pull request, or a dispatch, and this branch is none of them. The last SQL Server run was 30 Sep, **before chat existed**. That is precisely how an IDENTITY defect reached a live database through a suite that was green: **the tests pass on SQLite, where the insert is legal.** Anything the port does differently on SQL Server is unproven here until that job is dispatched, whatever the local suite says.
+
