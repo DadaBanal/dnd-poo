@@ -2960,3 +2960,23 @@ Ran `HANDOFF-cloud-sql01-WS36-20261008-chat-survey-repair.md`. This fixes a defe
 
 **Worth carrying forward: a claim in earlier handoffs was wrong, and I repeated it.** Several of my Parts recorded "Not run here: the `sql-server` CI job runs on push" because the handoffs said so. WS36 has now measured that this is false — that workflow runs on a push to `main`, a pull request, or a dispatch, and this branch is none of them. The last SQL Server run was 30 Sep, **before chat existed**. That is precisely how an IDENTITY defect reached a live database through a suite that was green: **the tests pass on SQLite, where the insert is legal.** Anything the port does differently on SQL Server is unproven here until that job is dispatched, whatever the local suite says.
 
+
+### Part 57: 2026-10-08, ~11:40 +08:00. **034de80 live; PSA-Desk restarted. Both CI run 75 defects exercised against SQL Server and both are fixed.** MEASURED.
+
+Restart only — no `schema/` or `sqlserver/` file changed since `14e0b50`, so nothing to apply. `:8085` **401 → down → 401 in 2s**.
+
+Rather than only watch a log, I ran **both defects' own code paths against the live SQL Server**, which is where they failed and where SQLite could never have shown them.
+
+**Defect 1 — moving a top-level phase ("IS ? … has no port decided"). FIXED.** The fix spells `parent_id IS NULL` out instead of binding `IS ?`. Exercised on PRJ-0004, which has five top-level phases:
+- `move_phase(6, -1)` → *"User Onboarding moved up"*, order became 6,5,7,8,9;
+- `move_phase(6, +1)` → *"User Onboarding moved down"*, order back to 5,6,7,8,9.
+A **real swap in both directions, no error**. Rolled back, so the live order is untouched. (A first attempt on PRJ-0002 returned "nothing changed" — correct, that project has only one top-level phase and nothing to swap with — so I moved to a project that could actually prove it.)
+
+**Defect 2 — the project live refresh ("Error converting data type nvarchar to numeric"). FIXED.** The fix wraps the numeric columns in `CAST(… AS TEXT)` before concatenating. Ran the three concatenating statements from `web/views/live.py` verbatim, at both scopes:
+- one project (`WHERE project_id = 'PRJ-0004'`): project row stamp, health/template stamp, ticket dates stamp — **all three OK**;
+- all projects (no WHERE, 9 rows): **all three OK**.
+Read-only.
+
+**The log watch, reported for what it is worth and no more.** PSA-Desk's log is **1720 bytes, byte-identical to before the restart** — the startup banner — with no `Error converting`, no `has no port decided`, no traceback, after a minute. But an unchanged log also means **no request traffic was recorded in that minute**, so on its own it is weak evidence. The SQL exercises above are the real proof; the log merely fails to contradict them. The log is also truncated on each start by the task's `*>` redirect, so it holds nothing from before the restart.
+
+Chat 3's ward can now rate it (Part 56).
