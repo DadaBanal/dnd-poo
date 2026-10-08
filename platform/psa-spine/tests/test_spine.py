@@ -1708,6 +1708,17 @@ class PortTest(unittest.TestCase):
         self.assertIn("[chat_id] INT NOT NULL CONSTRAINT [PK_chat_survey] PRIMARY KEY", self.tsql)
         self.assertEqual(_re.findall(r"\[\w+\] INT IDENTITY\(1,1\) NOT NULL[^,\n]*REFERENCES", self.tsql), [])
 
+    def test_no_null_safe_equality_in_the_code(self):
+        """SQL Server has no "IS ?" and the adapter refuses it, so a phase on
+        the live desk could not be moved (MEASURED, CI run 75, 8 Oct 2026).
+        Caught here on SQLite too, before it reaches the host."""
+        import re as _re
+        root = Path(__file__).resolve().parent.parent / "psaspine"
+        hits = [f"{p.relative_to(root)}:{n}" for p in root.rglob("*.py") if p.name != "mssql.py"
+                for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+                if _re.search(r"\bIS (NOT )?\?", line) and not line.lstrip().startswith("#")]
+        self.assertEqual(hits, [])
+
     def test_nothing_that_reaches_an_invoice_is_a_float(self):
         self.assertNotIn("FLOAT", self.tsql.upper())
         self.assertNotIn("] REAL", self.tsql)
@@ -4171,7 +4182,7 @@ class EmailOnTheTicketTest(unittest.TestCase):
     # ------------------------------------------------- 1. the layout itself
 
     def test_an_outlook_reply_keeps_its_layout_and_folds_what_it_quotes(self):
-        self._related(html=self.FIXTURE.read_text())
+        self._related(html=self.FIXTURE.read_text(encoding="utf-8"))
         self.assertEqual(self._import()["new"], 1)
         e = self._intake_event()
         self.assertEqual(e["body_format"], "EMAIL")
@@ -4201,7 +4212,7 @@ class EmailOnTheTicketTest(unittest.TestCase):
     # ---------------------------------------------- the sandbox it is drawn in
 
     def test_the_email_is_drawn_in_a_sandbox_that_runs_nothing_and_fetches_nothing(self):
-        self._related(html=self.FIXTURE.read_text())
+        self._related(html=self.FIXTURE.read_text(encoding="utf-8"))
         self._import()
         e = self._intake_event()
         page = templates.note_html(e["detail"], e["body_format"], kind=e["kind"])
@@ -4285,7 +4296,7 @@ class EmailOnTheTicketTest(unittest.TestCase):
                        flag="DISCUSSION", actor="kyline", at=self.at, body_format="HTML", notify_requester=False)
         # The signature as it really reads, "Junior Philhealth Associate": a
         # job title, which since 6 Oct 2026 no longer holds the reply back.
-        self._related(html=self.FIXTURE.read_text(), subject="RE: Ward 3 phone", in_reply_to=parent)
+        self._related(html=self.FIXTURE.read_text(encoding="utf-8"), subject="RE: Ward 3 phone", in_reply_to=parent)
         self._import()
         thread = outbox.conversation(self.conn, wid)
         for item in thread:
@@ -4307,7 +4318,7 @@ class EmailOnTheTicketTest(unittest.TestCase):
         parent = self._related(html="<p>Hello</p>")
         self._import()
         wid = self._intake_event()["work_item_id"]
-        flagged = self.FIXTURE.read_text().replace(
+        flagged = self.FIXTURE.read_text(encoding="utf-8").replace(
             "Thank you po", "Thank you po, his PhilHealth claim is attached")
         self._related(html=flagged, subject="RE: Ward 3 phone", in_reply_to=parent)
         self._import()
@@ -9392,8 +9403,8 @@ class LayoutEditTest(unittest.TestCase):
     """Dada, 2 Oct 2026: "the pods should remain fixed and just add an edit
     button to move the pods similar to connectwise"."""
 
-    CSS = (Path(__file__).resolve().parent.parent / "psaspine" / "web" / "templates.py").read_text()
-    VIEW = (Path(__file__).resolve().parent.parent / "psaspine" / "web" / "views" / "ticket.py").read_text()
+    CSS = (Path(__file__).resolve().parent.parent / "psaspine" / "web" / "templates.py").read_text(encoding="utf-8")
+    VIEW = (Path(__file__).resolve().parent.parent / "psaspine" / "web" / "views" / "ticket.py").read_text(encoding="utf-8")
 
     def test_a_card_sits_still_until_edit_layout_is_on(self):
         self.assertIn("display:none;gap:2px;opacity:0", self.CSS)          # the controls, at rest
@@ -9424,8 +9435,8 @@ class NoteSelectableTest(unittest.TestCase):
     V = Path(__file__).resolve().parent.parent / "psaspine" / "web" / "views" / "ticket.py"
 
     def setUp(self) -> None:
-        self.css = self.T.read_text()
-        self.view = self.V.read_text()
+        self.css = self.T.read_text(encoding="utf-8")
+        self.view = self.V.read_text(encoding="utf-8")
 
     def test_a_card_is_not_draggable_at_rest(self):
         self.assertIn("c.draggable=false;", self.css)

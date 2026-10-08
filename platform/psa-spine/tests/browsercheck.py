@@ -98,7 +98,7 @@ def build(db_path: Path) -> str:
     from psaspine import attachments, richtext
     sys.path.insert(0, str(ROOT / "tests"))
     from test_spine import _png
-    fixture = (ROOT / "tests" / "fixtures" / "outlook_reply_signature.html").read_text()
+    fixture = (ROOT / "tests" / "fixtures" / "outlook_reply_signature.html").read_text(encoding="utf-8")
     fixture = fixture.replace('<p class=MsoNormal>Thank you po<o:p></o:p></p>',
                               '<p class=MsoNormal>Thank you po, the screen shows this:<o:p></o:p></p>'
                               '<p class=MsoNormal><img width=120 height=120 src="cid:shot1@pmcne.ph"></p>')

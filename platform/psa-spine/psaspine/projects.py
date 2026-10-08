@@ -366,9 +366,14 @@ def move_phase(conn, phase_id: int, direction: int, *, at: datetime, actor: str)
     row = _phase(conn, phase_id)
     if row is None:
         raise Refused("No such phase.")
-    where = "parent_id IS ?" if row["parent_id"] is None else "parent_id = ?"
-    sibs = conn.execute(f"SELECT phase_id, name FROM project_phase WHERE project_id = ? AND {where}"
-                        " ORDER BY sort_order, phase_id", (row["project_id"], row["parent_id"])).fetchall()
+    # IS NULL spelled out, not "IS ?": SQL Server has no null-safe equality,
+    # and the adapter refuses it (MEASURED, CI run 75, 8 Oct 2026).
+    if row["parent_id"] is None:
+        sibs = conn.execute("SELECT phase_id, name FROM project_phase WHERE project_id = ? AND parent_id IS NULL"
+                            " ORDER BY sort_order, phase_id", (row["project_id"],)).fetchall()
+    else:
+        sibs = conn.execute("SELECT phase_id, name FROM project_phase WHERE project_id = ? AND parent_id = ?"
+                            " ORDER BY sort_order, phase_id", (row["project_id"], row["parent_id"])).fetchall()
     ids = [r["phase_id"] for r in sibs]
     i = ids.index(phase_id)
     j = i + (-1 if direction < 0 else 1)

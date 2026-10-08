@@ -64,7 +64,7 @@ def stamp(ctx):
                           f" pt.work_item_id JOIN time_entry te ON te.work_item_id = pt.work_item_id"
                           f" WHERE t.board_id IN {frag}{one}", ids + arg).fetchone()
         w = " WHERE project_id = ?" if pid else ""
-        pr = conn.execute(f"SELECT COUNT(*), MAX(name || status || COALESCE(manager, '') || COALESCE(budget_hours, ''))"
+        pr = conn.execute(f"SELECT COUNT(*), MAX(name || status || COALESCE(manager, '') || COALESCE(CAST(budget_hours AS TEXT), ''))"
                           f" FROM project{w}", arg).fetchone()
         ph = conn.execute(f"SELECT COUNT(*), MAX(phase_id), SUM(CASE WHEN status = 'DONE' THEN 1 ELSE 0 END)"
                           f" FROM project_phase{w}", arg).fetchone()
@@ -74,8 +74,8 @@ def stamp(ctx):
         pl = conn.execute(f"SELECT COUNT(*), MAX(item_id) FROM project_plan_item{w}", arg).fetchone()
         dp = conn.execute(f"SELECT COUNT(*) FROM project_ticket_dependency d JOIN project_ticket pt ON pt.work_item_id ="
                           f" d.work_item_id{' WHERE pt.project_id = ?' if pid else ''}", arg).fetchone()
-        hl = conn.execute(f"SELECT MAX(COALESCE(health, '') || COALESCE(is_template, 0)) FROM project{w}", arg).fetchone()
-        dt = conn.execute(f"SELECT MAX(COALESCE(starts_on, '') || COALESCE(due_on, '') || COALESCE(budget_hours, ''))"
+        hl = conn.execute(f"SELECT MAX(COALESCE(health, '') || COALESCE(CAST(is_template AS TEXT), '')) FROM project{w}", arg).fetchone()
+        dt = conn.execute(f"SELECT MAX(COALESCE(starts_on, '') || COALESCE(due_on, '') || COALESCE(CAST(budget_hours AS TEXT), ''))"
                           f" FROM project_ticket{w}", arg).fetchone()
         parts = (*tk, *te, *pr, *ph, *tm, nt[0], ct[0], *pl, dp[0], hl[0], dt[0])
     elif scope == "chats":                                   # 071: the chat queue moves with any chat line
