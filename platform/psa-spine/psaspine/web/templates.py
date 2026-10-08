@@ -399,6 +399,7 @@ input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px;margin:0;
 .sla-ok{background:var(--ok-bg);color:var(--ok)} .sla-warn{background:var(--warn-bg);color:var(--warn)} .sla-bad{background:var(--bad-bg);color:var(--bad)}
 .pri{font-weight:700} .pri-P1{color:var(--bad)} .pri-P2{color:var(--warn)}
 .muted{color:var(--ink-2)} .why{font-size:12px;color:var(--ink-3)}
+.plink{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin:6px 0 2px} .plink input{flex:1 1 100%;font-size:12px} .plink input[hidden]{display:none}
 .badge{display:inline-block;min-width:28px;text-align:center;border-radius:6px;padding:1px 6px;font-weight:700;font-size:11.5px;color:#fff;letter-spacing:.2px}
 .badge.P1{background:#c62828}.badge.P2{background:#b26a00}.badge.P3{background:var(--accent)}.badge.P4{background:#6b7785}
 .sla3{display:inline-flex;flex-wrap:wrap;gap:3px;white-space:nowrap}
@@ -1815,6 +1816,19 @@ if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.write
 function fallback(){var ta=d.createElement("textarea");ta.value=text;ta.setAttribute("readonly","");
   ta.style.cssText="position:fixed;left:-9999px";d.body.appendChild(ta);ta.select();
   try{d.execCommand("copy");done()}catch(err){}d.body.removeChild(ta)}});
+/* 076: Copy the requester's link -- asked for, copied, and shown selected if the browser will not copy.
+   The page stays: the busy mark and the top bar that every submit starts are put back when it answers. */
+d.addEventListener("submit",function(e){var f=e.target;if(!f.matches||!f.matches("form[data-plink-form]")||e.defaultPrevented)return;
+var box=d.querySelector("[data-plinkbox]");if(!box||!window.fetch)return;e.preventDefault();
+var out=box.querySelector("input"),said=box.querySelector("[data-plinksaid]"),btn=box.querySelector("button");
+function show(t){said.textContent=t}
+function done(){delete f.dataset.sent;if(btn)btn.removeAttribute("aria-busy");var bar=d.getElementById("nprog");if(bar)bar.className=""}
+function pick(){out.hidden=false;out.focus();out.select();show(" Select it and copy.")}
+fetch(f.action,{method:"POST",credentials:"same-origin",headers:{"Accept":"application/json"}})
+.then(function(r){return r.json()}).then(function(j){done();if(!j.link){show(" "+(j.error||"No link."));return}
+  out.value=j.link;out.hidden=false;
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(j.link).then(function(){show(" Copied. Paste it into your reply.")},pick)}else{pick()}})
+.catch(function(){done();f.submit()})});
 /* a button with data-open opens that dialog; data-tick ticks every box in its form, or none */
 d.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest("[data-open]");if(b){var dl=d.getElementById(b.dataset.open);
   /* a phase's + Ticket opens the project ticket window with that phase picked (068) */
@@ -2013,7 +2027,13 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape')close()});
 document.addEventListener('dblclick',function(e){var c=e.target.closest&&e.target.closest('.sch.visit[data-menu]');if(c&&!e.target.closest('a,button,form,.rz'))location.href='/ticket/'+c.dataset.menu.split('|')[0]});
 /* the right edge: half-hour steps, measured against the hour cell the chip starts in */
 var rz=null;function pad(n){return(n<10?'0':'')+n}
+/* a hovered visit is drawn wider to show its words; its handle stays where the visit ends, so the edge
+   does not run from the pointer reaching for it (found by the browser check, 8 Oct 2026) */
+document.addEventListener('mouseover',function(e){if(rz)return;var c=e.target.closest&&e.target.closest('table.schedgrid.dispatch td.hr .sch.visit');if(!c)return;
+ var h=c.querySelector('.rz'),td=c.closest('td'),m=/width:\s*calc\(([\d.]+) \* 100%/.exec(c.getAttribute('style')||'');if(!h||!td||!m)return;
+ h.style.left=Math.max(0,parseFloat(m[1])*td.getBoundingClientRect().width-4-(c.offsetWidth-c.clientWidth)-h.offsetWidth)+'px';h.style.right='auto'});
 document.addEventListener('mousedown',function(e){var h=e.target.closest&&e.target.closest('.sch.visit .rz');if(!h||e.button!==0)return;e.preventDefault();e.stopPropagation();
+ h.style.left='';h.style.right='';
  var c=h.closest('.sch'),td=c.closest('td'),span=(c.dataset.span||'|').split('|'),hourW=td.getBoundingClientRect().width;
  /* its width from its own times, not the box: a hovered chip is drawn wider to show its words */
  var w0=Math.max(0.5,(new Date(span[1])-new Date(span[0]))/3600000)*hourW-4;

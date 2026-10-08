@@ -125,6 +125,81 @@ def build(db_path: Path) -> str:
     return wid, mail, noted, prj, ph_b, emailed
 
 
+def link_checks(browser, db_path: Path, env: dict, ticket: str) -> None:
+    """076: the requester's link, on a desk that knows its portal address. A
+    second desk on the same database, so the checks above run as they always
+    have, without one."""
+    import re as _re
+    port = free_port()
+    proc = subprocess.Popen([sys.executable, "-m", "psaspine", "serve", str(db_path),
+                             "--host", "127.0.0.1", "--port", str(port)],
+                            cwd=ROOT, env=dict(env, PSA_PORTAL_URL="https://help.example"),
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(60):
+        try:
+            socket.create_connection(("127.0.0.1", port), timeout=1).close()
+            break
+        except OSError:
+            time.sleep(0.25)
+    try:
+        ctx = browser.new_context()
+        ctx.grant_permissions(["clipboard-read", "clipboard-write"], origin=base)
+        page = ctx.new_page()
+        errors: list[str] = []
+        page.on("console", lambda m: errors.append(f"{m.type}: {m.text}") if m.type == "error" else None)
+        page.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
+        page.goto(f"{base}/login", wait_until="domcontentloaded")
+        page.fill("input[name=username]", "tech")
+        page.fill("input[name=password]", PASSWORD)
+        page.click("button[type=submit]")
+        page.wait_for_load_state("domcontentloaded")
+        page.goto(f"{base}/ticket/{ticket}", wait_until="domcontentloaded")
+        button = page.locator("button[form=plinkform]")
+        note(button.count() == 1 and button.is_visible(), "the ticket shows Copy the requester's link under Contact")
+        at = page.url
+        button.click()
+        page.wait_for_function("() => document.querySelector('[data-plinksaid]').textContent.trim() !== ''")
+        shown = page.locator(".plink input").input_value()
+        said = page.locator("[data-plinksaid]").inner_text()
+        copied = page.evaluate("() => navigator.clipboard.readText()")
+        note(bool(_re.fullmatch(rf"https://help\.example/my/{ticket}\?k=[A-Za-z0-9_-]{{24}}", shown)),
+             "pressing it shows the keyed link", shown[:48])
+        note("Copied" in said and copied == shown, "and puts it on the clipboard", said)
+        note(page.url == at and page.locator(".banner.err").count() == 0,
+             "without leaving the page or saving the ticket's fields", page.url)
+        idle = page.evaluate("""() => [document.querySelector('button[form=plinkform]').getAttribute('aria-busy'),
+                                        (document.getElementById('nprog') || {}).className || '']""")
+        note(idle == [None, ""], "and the page does not stay busy after it", str(idle))
+        page.evaluate("() => { document.querySelector('[data-plinksaid]').textContent = '' }")
+        button.click()
+        page.wait_for_function("() => document.querySelector('[data-plinksaid]').textContent.trim() !== ''")
+        note(page.locator(".plink input").input_value() == shown, "a second press gives the same link")
+        # a requester on the "No such request" page asks for a fresh one
+        req = browser.new_context().new_page()
+        req.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
+        req.goto(f"{base}/login", wait_until="domcontentloaded")
+        req.fill("input[name=username]", "nurse7")
+        req.fill("input[name=password]", PASSWORD)
+        req.click("button[type=submit]")
+        req.wait_for_load_state("domcontentloaded")
+        req.goto(f"{base}/my/{ticket}", wait_until="domcontentloaded")
+        ask = req.locator("button:has-text('Send a fresh link')")
+        note("No such request" in req.content() and ask.count() == 1,
+             "a request that is not theirs offers a fresh link to its own address")
+        ask.click()
+        req.wait_for_load_state("domcontentloaded")
+        note("a fresh link to it is on its way" in req.content(), "and asking answers without saying whose it is")
+        note(not errors, "no console errors on the link pages", " | ".join(errors[:5]))
+        ctx.close()
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
 def main() -> int:
     from test_spine import _png  # noqa: F401  (a real picture for the chat check)
     from playwright.sync_api import sync_playwright
@@ -1028,6 +1103,7 @@ def main() -> int:
 
             note(not errors, "no console errors anywhere above",
                  " | ".join(errors[:5]) if errors else "")
+            link_checks(browser, db_path, env, noted)
             browser.close()
     finally:
         proc.terminate()

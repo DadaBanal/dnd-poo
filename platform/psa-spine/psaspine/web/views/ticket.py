@@ -619,6 +619,7 @@ def detail(ctx, work_item_id):
         f"<label>Contact</label><input name=requested_by list=contacts-ticket "
         f"value='{t.esc(tk['requested_by'] or '')}'{dis}>"
         + _contact_list(ctx.conn, "contacts-ticket", tk["entity_id"]) + person_line
+        + _portal_link_button(ctx, tk, can_work)
         + f"<label>Cc</label><input name=cc value='{t.esc(', '.join(_cc.of(ctx.conn, work_item_id)))}'"
           f" placeholder='addresses, separated by commas' title='They get the emails the requester gets'{dis}>"
         + _type_select(ctx.conn, tk["board_id"], tk["record_type"], disabled=dis,
@@ -635,7 +636,12 @@ def detail(ctx, work_item_id):
            + "</select><input name=priority_reason maxlength=200 placeholder='why (optional)'"
            f"{dis} style='margin-top:6px'>" if can_work else "")
         + ("<div style='margin-top:12px'><button type=submit><svg class=ic aria-hidden=true><use href=#i-check></use></svg> Save changes</button></div>" if can_work else "")
-        + "</form></div>")
+        + "</form>"
+        # 076: the form the requester's-link button submits, outside the
+        # ticket's own form so the fields are neither checked nor sent.
+        + (f"<form id=plinkform method=post action='/ticket/{wid}/portal-link' data-plink-form></form>"
+           if _portal_link_button(ctx, tk, can_work) else "")
+        + "</div>")
 
     # The Time pod is Dada PSA's Time tab: one row per entry with its date,
     # member, start–end, hours, deduct, work role and type, bill option, the
@@ -731,6 +737,49 @@ def detail(ctx, work_item_id):
                         + ("; Secure" if ctx.config.secure_cookie(ctx.request) else "")))
     return Response(body=t.page(work_item_id, body, user=ctx.user, active="board", quick=_quick_bar(wid, person, can_work), live=f"ticket:{work_item_id}"),
                     headers=headers)
+
+
+def _portal_link_button(ctx, tk, can_work: bool) -> str:
+    """076: under the Contact, for whoever works the ticket, once the desk has
+    a portal address and the ticket has a requester."""
+    if not (can_work and tk["requested_by"] and (ctx.config.portal_url or "").strip()):
+        return ""
+    return ("<div class=plink data-plinkbox><button type=submit form=plinkform class=ghost"
+            " title='The link in the requester&#39;s emails: it opens this request on the portal for whoever holds it,"
+            " once signed in'>" + t.icon("link") + " Copy the requester&#39;s link</button>"
+            "<input readonly hidden aria-label='The requester&#39;s link'><span class=why data-plinksaid></span></div>")
+
+
+def portal_link(ctx, work_item_id):
+    """076: the requester's portal link, the one their emails carry, for a
+    technician to paste into a reply when an older email's link does not open
+    (every email sent before 075 went without the key). Made once per ticket,
+    as the first email would have; each taking of it is audited."""
+    import json
+    from .. import HttpError, Response
+    from ... import db as _db
+    tk = _load(ctx, work_item_id)
+    common.require_board(ctx, tk["board_id"], need="WORK")
+    wants_json = "application/json" in ctx.request.headers.get("accept", "")
+    base = (ctx.config.portal_url or "").strip().rstrip("/")
+    if not base:
+        said = "This desk has no portal address (PSA_PORTAL_URL), so there is no link to give."
+        if wants_json:
+            return Response("409 Conflict", json.dumps({"error": said}), content_type="application/json; charset=utf-8")
+        raise HttpError("409 Conflict", said)
+    link = f"{base}/my/{work_item_id}?k={tickets.portal_key(ctx.conn, work_item_id)}"
+    _db.audit(ctx.conn, at=ctx.now.isoformat(sep=" ", timespec="seconds"), actor=ctx.user.id,
+              action="PORTAL_LINK_COPIED", subject_kind="ticket", subject_id=work_item_id,
+              detail=f"the requester's portal link, taken from the desk by {ctx.user.id}")
+    ctx.conn.commit()
+    if wants_json:
+        return Response(body=json.dumps({"link": link}), content_type="application/json; charset=utf-8")
+    return Response(body=t.page(work_item_id, (
+        f"<h1>The requester&#39;s link to {t.esc(work_item_id)}</h1>"
+        "<p class=sub>The link their emails carry. It opens this request on the portal for whoever holds it, once "
+        "signed in, whichever account they sign in with. Paste it into your reply.</p>"
+        f"<input readonly value='{t.esc(link)}' style='width:100%' onfocus='this.select()' aria-label='The link'>"
+        f"<p><a href='/ticket/{t.esc(work_item_id)}'>Back to the ticket</a></p>"), user=ctx.user))
 
 
 def _back(work_item_id, **q):

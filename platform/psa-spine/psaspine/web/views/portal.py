@@ -28,6 +28,7 @@ Two things it does that the fulfiller views deliberately do not:
 """
 from __future__ import annotations
 
+import re
 import urllib.parse
 
 from ... import itil, numbering, phi, tickets
@@ -348,7 +349,7 @@ def _radio_group(name: str, legend: str, choices, *, required: bool = True) -> s
 
 
 def detail(ctx, work_item_id):
-    from .. import HttpError, Response
+    from .. import Response
     row, by_key = _find(ctx, work_item_id, MINE.replace("b.display_name AS board_name", "b.display_name AS board_name, t.requested_by"))
     k = _k(ctx, by_key)
     if row is None:
@@ -356,12 +357,16 @@ def detail(ctx, work_item_id):
         # The words name the address they are signed in as, which is what makes
         # the difference between "there is no such request" and "it was raised
         # from your other address", and tells them neither (Dada, 2 Oct 2026).
+        # 076: and a way through that also tells them neither: a fresh link,
+        # sent only to the address the request came from.
         who = (getattr(ctx.user, "email", None) or ctx.user.id or "").strip()
-        raise HttpError("404 Not Found",
-                        "No such request, or it was not raised by you. You are signed in as "
-                        + (who or "somebody the desk does not know") +
-                        ". If you raised it from another email address, reply to the desk's email and "
-                        "they will put the two together.")
+        return Response("404 Not Found", t.page("No such request", (
+            "<h1>No such request</h1>"
+            "<p>No such request, or it was not raised by you. You are signed in as "
+            + t.esc(who or "somebody the desk does not know") +
+            ". If you raised it from another email address, reply to the desk's email and "
+            "they will put the two together.</p>" + _fresh_link_card(work_item_id)
+            + "<p><a href='/my'>All your requests</a></p>"), user=ctx.user))
 
     events = ctx.conn.execute(
         "SELECT occurred_at, kind, detail, note_flag, is_resolution, body_format FROM ticket_event"
@@ -437,6 +442,48 @@ def detail(ctx, work_item_id):
     body = body.replace("<p><a href='/my'>All your requests</a></p>",
                         extra + "<p><a href='/my'>All your requests</a></p>")
     return Response(body=t.page(work_item_id, body, user=ctx.user))
+
+
+_REFERENCE = re.compile(r"[A-Za-z]{2,8}-[0-9]{1,8}")
+
+
+def _fresh_link_card(work_item_id: str) -> str:
+    """076: offered on every "No such request" for something shaped like a
+    reference, whether or not it exists, so the page says nothing either way."""
+    if not _REFERENCE.fullmatch(work_item_id or ""):
+        return ""
+    return ("<div class='card'><h3>" + t.icon("mail") + "Is it yours, from an older email?</h3>"
+            "<p>A link in an older email from the desk may not open the request. The desk can send a fresh link to "
+            "the address the request came from; it opens the request once you are signed in, whichever account you "
+            "use.</p>"
+            f"<form method='post' action='/my/{t.esc(work_item_id)}/fresh-link'>"
+            "<button type='submit'>Send a fresh link to the address this request came from</button></form></div>")
+
+
+def fresh_link(ctx, work_item_id):
+    """076: queue the fresh link, if there is anything to queue it for. The
+    answer is the same whether the request exists, whose it is, and whether
+    the email went: what happened is in the audit trail, for the desk."""
+    from .. import HttpError, Response
+    from ... import db as _db, outbox
+    if not _REFERENCE.fullmatch(work_item_id or ""):
+        raise HttpError("404 Not Found", "No such page.")
+    who = (getattr(ctx.user, "email", None) or ctx.user.id or "").strip()
+    try:
+        happened = outbox.queue_fresh_link(ctx.conn, work_item_id, asked_by=who, at=ctx.now)
+    except Exception as exc:                          # noqa: BLE001 - the person asking is told the same either way
+        ctx.conn.rollback()
+        happened = f"not sent: {exc.__class__.__name__}"
+    _db.audit(ctx.conn, at=ctx.now.isoformat(sep=" ", timespec="seconds"), actor=who or "?",
+              action="PORTAL_LINK_REQUEST", subject_kind="ticket", subject_id=work_item_id,
+              detail=f"{happened}; asked for on the portal by {who}")
+    ctx.conn.commit()
+    return Response(body=t.page("A fresh link", (
+        "<h1>Thank you</h1>"
+        f"<p>If {t.esc(work_item_id)} was raised from an address the desk can email, a fresh link to it is on its way "
+        "to that address. It can take a few minutes, and only one is sent in an hour.</p>"
+        "<p>If nothing comes, reply to any email from the desk about it, and keep the reference in the subject.</p>"
+        "<p><a href='/my'>All your requests</a></p>"), user=ctx.user))
 
 
 def create(ctx):

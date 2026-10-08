@@ -13894,6 +13894,175 @@ class PortalIdentityTest(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             main(["who-sees", db_arg, "--ticket", self.wid, "--person", "someone.else@pmcne.ph"])
         self.assertIn("they do NOT see", out.getvalue())
+        # 076: who-sees asks the portal's own rule, so a Windows name on the
+        # hospital's own domains is seen as the portal sees it
+        joseph = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="Scanner", impact="I3", urgency="U3",
+                                     requested_by="joseph.marcelo@premieremedicalcenter.net", at=self.at, source="EMAIL")
+        self.conn.commit()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            main(["who-sees", db_arg, "--ticket", joseph, "--person", "joseph.marcelo"])
+        self.assertIn("they DO see", out.getvalue())
+
+    def test_the_link_each_email_carried_is_kept_on_it(self):
+        """076. SQL01, 8 Oct 2026 (MEASURED): none of 894 notifications held
+        the link, because it is put together at sending. Confirmed: keep it."""
+        from unittest import mock
+        from psaspine import board as engine, outbox
+        self.conn.execute("UPDATE board SET notify_requester = 1 WHERE board_id = 'IT_HELP'")
+        engine.add_note(self.conn, self.wid, body="Looking at it now.", flag="DISCUSSION", actor="alice", at=self.at)
+        self.conn.execute("INSERT INTO notification (work_item_id, recipient, recipient_role, subject, body, created_at,"
+                          " status) VALUES (?, 'alice@pmcne.ph', 'APPROVER', 'Approve it', 'Please decide.', '2026-10-02',"
+                          " 'PENDING')", (self.wid,))
+        self.conn.commit()
+        rows = lambda: {r["recipient_role"]: r["portal_link"] for r in self.conn.execute(
+            "SELECT recipient_role, portal_link FROM notification WHERE work_item_id = ?", (self.wid,))}
+        outbox.pending(self.conn, allowed_domains=("*",), dry_run=True, portal_url="https://help.pmcne.ph")
+        self.conn.rollback()
+        self.assertEqual(rows(), {"REQUESTER": None, "APPROVER": None})                # a dry run keeps nothing
+        with mock.patch.dict(os.environ, {"PSA_PORTAL_URL": ""}):
+            outbox.pending(self.conn, allowed_domains=("*",))
+        self.assertEqual(rows(), {"REQUESTER": None, "APPROVER": None})                # no portal address, no link
+        due = outbox.pending(self.conn, allowed_domains=("*",), portal_url="https://help.pmcne.ph")
+        key = tickets.portal_key(self.conn, self.wid)
+        link = f"https://help.pmcne.ph/my/{self.wid}?k={key}"
+        self.assertEqual(rows(), {"REQUESTER": link, "APPROVER": None})                 # the requester's, as it went
+        self.assertIn(f"See it here: {link}", next(d for d in due if d["to"] != "alice@pmcne.ph")["body"])
+        # a store without 076: the email goes exactly as before, and nothing is written
+        self.conn.execute("UPDATE notification SET portal_link = NULL")
+        self.conn.commit()
+        with mock.patch("psaspine.db.column_exists", return_value=False):
+            due = outbox.pending(self.conn, allowed_domains=("*",), portal_url="https://help.pmcne.ph")
+        self.assertIn(link, next(d for d in due if d["to"] != "alice@pmcne.ph")["body"])
+        self.assertEqual(rows(), {"REQUESTER": None, "APPROVER": None})
+
+    def test_the_host_proves_a_link_without_a_mailbox(self):
+        """076. SQL01 cannot click a link in a requester's mailbox. portal-check
+        asks the portal itself, signed in as the person, and writes nothing."""
+        import contextlib
+        import io
+        from psaspine.__main__ import main
+        from psaspine import board as engine, outbox
+        db_arg = TEST_DB or str(self.db_path)
+
+        def run(*args, ticket=None):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = main(["portal-check", db_arg, "--ticket", ticket or self.wid,
+                           "--portal-url", "https://help.pmcne.ph", *args])
+            return rc, out.getvalue()
+        rc, said = run("--person", "joseph.marcelo")
+        self.assertEqual(rc, 0)
+        self.assertIn("no key yet", said)
+        self.assertIn("as joseph.marcelo, signed in by their Windows name", said)
+        self.assertIn("(the link in an email sent before 075, or typed) -> 404 Not Found", said)
+        self.assertIn("(the email link) -> 200 OK  opens by the link", said)
+        self.assertIn("the same with a wrong key -> 404 Not Found  (as it must)", said)
+        self.assertIn("does not list it", said)
+        self.assertIn("-> the email link opens it for them", said)
+        self.assertIn("Nothing was written", said)
+        self.assertIsNone(self.conn.execute("SELECT portal_key FROM ticket WHERE work_item_id = ?",
+                                            (self.wid,)).fetchone()[0])                    # no key kept
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM audit_event WHERE action LIKE 'PORTAL_LINK%'")
+                         .fetchone()[0], 0)                                                # no read by key recorded
+        rc, said = run()                                                                   # the requester, by default
+        self.assertIn("as via.soriano@premieremedicalcenter.net", said)
+        self.assertIn("lists it", said)
+        self.assertIn("-> they see it, with or without the key.", said)
+        # once an email has gone: the link it carried, with the key cut short
+        self.conn.execute("UPDATE board SET notify_requester = 1 WHERE board_id = 'IT_HELP'")
+        engine.add_note(self.conn, self.wid, body="Looking at it now.", flag="DISCUSSION", actor="alice", at=self.at)
+        self.conn.commit()
+        outbox.pending(self.conn, allowed_domains=("*",), portal_url="https://help.pmcne.ph")
+        self.conn.execute("UPDATE notification SET status = 'SENT' WHERE work_item_id = ?", (self.wid,))
+        self.conn.commit()
+        key = tickets.portal_key(self.conn, self.wid)
+        rc, said = run("--person", "joseph.marcelo")
+        self.assertNotIn("no key yet", said)
+        self.assertIn("requester emails about it: 1 (1 sent", said)
+        self.assertIn(f"SENT 2026-10-02 09:00: https://help.pmcne.ph/my/{self.wid}?k={key[:4]}...  (this ticket's key)", said)
+        self.assertNotIn(key, said)                                                        # never the whole key
+        # refusals
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(main(["portal-check", db_arg, "--ticket", self.wid, "--portal-url", "http://help.pmcne.ph"]), 2)
+        self.assertIn("https", err.getvalue())
+        self.assertEqual(run(ticket="PMC-999999"), (1, "there is no ticket PMC-999999\n"))
+
+    def test_the_desk_hands_a_technician_the_requesters_link(self):
+        """076. For an email sent before 075, whose link carries no key: the
+        technician copies the link that does, and pastes it into a reply."""
+        import json
+        alice, carol = self._cookie_for("alice"), self._cookie_for("carol")
+        self.config.portal_url = None
+        self.assertNotIn("<div class=plink data-plinkbox>", self._call("GET", f"/ticket/{self.wid}", cookie=alice)[2])
+        self.assertTrue(self._call("POST", f"/ticket/{self.wid}/portal-link", cookie=alice)[0].startswith("409"))
+        self.config.portal_url = "https://help.pmcne.ph"
+        page = self._call("GET", f"/ticket/{self.wid}", cookie=alice)[2]
+        self.assertIn("Copy the requester&#39;s link</button>", page)
+        self.assertIn("form=plinkform", page)
+        self.assertIn(f"<form id=plinkform method=post action='/ticket/{self.wid}/portal-link' data-plink-form></form>", page)
+        self.assertNotIn("<div class=plink data-plinkbox>", self._call("GET", f"/ticket/{self.wid}", cookie=carol)[2])   # a reader
+        self.assertTrue(self._call("POST", f"/ticket/{self.wid}/portal-link", cookie=carol)[0].startswith("404"))
+        status, _, out = self._call("POST", f"/ticket/{self.wid}/portal-link", cookie=alice,
+                                    headers={"Accept": "application/json"})
+        self.assertTrue(status.startswith("200"), status)
+        key = tickets.portal_key(self.conn, self.wid)
+        link = f"https://help.pmcne.ph/my/{self.wid}?k={key}"
+        self.assertEqual(json.loads(out), {"link": link})
+        status, _, page = self._call("POST", f"/ticket/{self.wid}/portal-link", cookie=alice)       # no script
+        self.assertIn(f"value='{link}'", page)
+        self.assertEqual(key, tickets.portal_key(self.conn, self.wid))                              # one key, kept
+        self.assertEqual([r[0] for r in self.conn.execute(
+            "SELECT actor FROM audit_event WHERE action = 'PORTAL_LINK_COPIED' AND subject_id = ?", (self.wid,))],
+            ["alice", "alice"])
+        other = self._cookie_for("other.person", email="other.person@pmcne.ph", requester=True)
+        self.assertTrue(self._call("GET", f"/my/{self.wid}", query=f"k={key}", cookie=other)[0].startswith("200"))
+        self.assertIn('form[data-plink-form]', templates.SCRIPT)
+
+    def test_a_fresh_link_goes_only_to_the_address_the_request_came_from(self):
+        """076. A requester on the "No such request" page asks for a fresh
+        link; it goes to the requester the ticket already has, and the page
+        answers the same whether the request exists or the email went."""
+        from psaspine import outbox
+        self.conn.execute("UPDATE board SET notify_requester = 1 WHERE board_id = 'IT_HELP'")
+        self.conn.commit()
+        joseph = self._cookie_for("joseph.marcelo", requester=True)
+        status, _, page = self._call("GET", f"/my/{self.wid}", cookie=joseph)
+        self.assertTrue(status.startswith("404"), status)
+        self.assertIn("No such request, or it was not raised by you. You are signed in as joseph.marcelo", page)
+        self.assertIn(f"<form method='post' action='/my/{self.wid}/fresh-link'>", page)
+        self.assertNotIn("eClaims", page)
+        self.assertIn("/my/PMC-999999/fresh-link", self._call("GET", "/my/PMC-999999", cookie=joseph)[2])
+        self.assertNotIn("fresh-link", self._call("GET", "/my/not-a-reference", cookie=joseph)[2])
+        s1, _, a1 = self._call("POST", f"/my/{self.wid}/fresh-link", cookie=joseph)
+        s2, _, a2 = self._call("POST", "/my/PMC-999999/fresh-link", cookie=joseph)
+        self.assertTrue(s1.startswith("200") and s2.startswith("200"), (s1, s2))
+        said = lambda page, ref: page[page.index("<h1>Thank you"):page.index("All your requests")].replace(ref, "X")
+        self.assertEqual(said(a1, self.wid), said(a2, "PMC-999999"))                       # nothing to learn
+        self.assertTrue(self._call("POST", "/my/not-a-reference/fresh-link", cookie=joseph)[0].startswith("404"))
+        sent = self.conn.execute("SELECT recipient, recipient_role, subject, body FROM notification"
+                                 " WHERE work_item_id = ?", (self.wid,)).fetchall()
+        self.assertEqual(len(sent), 1)
+        self.assertEqual((sent[0]["recipient"], sent[0]["recipient_role"]),
+                         ("via.soriano@premieremedicalcenter.net", "REQUESTER"))             # never the person asking
+        self.assertTrue(sent[0]["subject"].endswith("A fresh link to your request"))
+        self.assertIn("asked for on the portal by joseph.marcelo", sent[0]["body"])
+        due = outbox.pending(self.conn, allowed_domains=("*",), portal_url="https://help.pmcne.ph")
+        key = tickets.portal_key(self.conn, self.wid)
+        self.assertEqual(due[0]["to"], "via.soriano@premieremedicalcenter.net")
+        self.assertIn(f"See it here: https://help.pmcne.ph/my/{self.wid}?k={key}", due[0]["body"])
+        self.conn.execute("UPDATE notification SET status = 'SENT' WHERE work_item_id = ?", (self.wid,))
+        self.conn.commit()
+        self._call("POST", f"/my/{self.wid}/fresh-link", cookie=joseph)                     # again, within the hour
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM notification WHERE work_item_id = ?",
+                                           (self.wid,)).fetchone()[0], 1)
+        said = [r[0] for r in self.conn.execute("SELECT detail FROM audit_event WHERE action = 'PORTAL_LINK_REQUEST'"
+                                                " ORDER BY audit_id")]
+        self.assertEqual([d.split(";")[0] for d in said],
+                         ["queued to the requester", "not sent: no such request", "not sent: one was queued within the hour"])
+        self.assertIn("a fresh link to the request, asked for on the portal by joseph.marcelo", self.conn.execute(
+            "SELECT detail FROM ticket_event WHERE work_item_id = ? AND kind = 'NOTIFY'", (self.wid,)).fetchone()[0])
 
 
 class MembersTest(unittest.TestCase):

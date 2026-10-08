@@ -405,6 +405,52 @@ def queue_requester(conn: sqlite3.Connection, work_item_id: str, reason: str, *,
     return True
 
 
+FRESH_LINK_SUBJECT = "A fresh link to your request"
+
+
+def queue_fresh_link(conn: sqlite3.Connection, work_item_id: str, *, asked_by: str, at: datetime) -> str:
+    """076: one email to the address a request came from, carrying its portal
+    link, because somebody signed in to the portal found that an older link
+    did not open it (every email sent before 075 went without the key).
+
+    It goes only to the requester the ticket already has, never to the person
+    asking, so asking proves nothing and gives nothing away; at most one an
+    hour per request; not while an email about it is already waiting to go
+    (that one carries the link). Returns what happened, for the audit trail:
+    the person asking is told the same thing whatever it is."""
+    from datetime import timedelta
+    from .board import _event
+    from .intake import subject_token
+    row = conn.execute("SELECT t.requested_by, b.notify_requester FROM ticket t JOIN board b ON b.board_id = t.board_id"
+                       " WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
+    if row is None:
+        return "not sent: no such request"
+    if not row["notify_requester"]:
+        return "not sent: its board does not email requesters"
+    if not row["requested_by"] or not address_for(conn, row["requested_by"]):
+        return "not sent: no address the desk can email"
+    since = (at - timedelta(hours=1)).isoformat(sep=" ", timespec="seconds")
+    if conn.execute("SELECT 1 FROM audit_event WHERE action = 'PORTAL_LINK_REQUEST' AND subject_id = ?"
+                    " AND occurred_at >= ? AND detail LIKE 'queued%'", (work_item_id, since)).fetchone():
+        return "not sent: one was queued within the hour"
+    if conn.execute("SELECT 1 FROM notification WHERE work_item_id = ? AND recipient = ? AND recipient_role IN (?, ?)"
+                    " AND status = 'PENDING'", (work_item_id, row["requested_by"], REQUESTER, STATUS)).fetchone():
+        return "not sent: an email about it is waiting to go, and carries the link"
+    stamp = at.isoformat(sep=" ", timespec="minutes")
+    body = ("Here is a fresh link to your request. It opens the request on the PMC Requests portal once you are "
+            "signed in, whichever account you sign in with.\n\n"
+            f"It was asked for on the portal by {asked_by or 'somebody signed in'}. If that was not you, there is "
+            "nothing you need to do.")
+    conn.execute(
+        "INSERT INTO notification (work_item_id, recipient, recipient_role, subject, body,"
+        " created_at, status, from_address) VALUES (?,?,?,?,?,?,'PENDING',?)",
+        (work_item_id, row["requested_by"], REQUESTER, f"{subject_token(work_item_id)} {FRESH_LINK_SUBJECT}",
+         body, stamp, reply_from(conn, work_item_id)))
+    _event(conn, work_item_id, stamp, "NOTIFY", "desk",
+           f"email to the requester queued: a fresh link to the request, asked for on the portal by {asked_by}")
+    return "queued to the requester"
+
+
 # 058: the requester hears as their ticket moves: at each status change,
 # worded per status, and when someone picks the ticket up. Both share one
 # unsent slot per ticket, so the requester reads where it is now.
@@ -768,6 +814,11 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
     # (Dada, 1 Oct 2026: "all other generic emails"). The words are the same
     # for everyone: a reference and a link, never the summary or a note.
     everyone = "*" in allowed
+    # 076: the link a requester email carries is kept on it, so the desk can
+    # say which link a person was sent without opening their mailbox. Only
+    # once the step is in; before it, the email goes exactly as it did.
+    from . import db as _db
+    keep_link = portal_url and not dry_run and _db.column_exists(conn, "notification", "portal_link")
     out = []
     for n in conn.execute("SELECT * FROM notification WHERE status = 'PENDING' AND COALESCE(channel, 'EMAIL') = 'EMAIL'"
                           " ORDER BY notification_id LIMIT ?", (limit,)).fetchall():
@@ -788,6 +839,9 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
         thread = []
         if n["recipient_role"] in (REQUESTER, STATUS):
             where = link
+            if keep_link:
+                conn.execute("UPDATE notification SET portal_link = ? WHERE notification_id = ?",
+                             (link, n["notification_id"]))
             # The exchange so far rides under every requester email, so the
             # reply reads in the mail as it does on the portal; what the body
             # itself already says is not said twice.

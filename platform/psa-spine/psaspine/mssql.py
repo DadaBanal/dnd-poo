@@ -864,6 +864,15 @@ def table_exists(conn: Connection, name: str) -> bool:
         cur.close()
 
 
+def column_exists(conn: Connection, table: str, column: str) -> bool:
+    cur = conn._raw.cursor()
+    try:
+        return cur.execute("SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?"
+                           " AND COLUMN_NAME = ?", (SCHEMA, table, column)).fetchone() is not None
+    finally:
+        cur.close()
+
+
 def wipe(conn: Connection) -> None:
     """Every row out of every table in the schema, identities reseeded. For a
     test to start from nothing; never called by the desk.

@@ -85,6 +85,16 @@ def table_exists(conn, name: str) -> bool:
                         (name,)).fetchone() is not None
 
 
+def column_exists(conn, table: str, column: str) -> bool:
+    """Whether a step that adds a column has been applied to this store. For
+    code that writes a new column and must keep working, unchanged, on a store
+    that has not taken the step yet."""
+    if backend(conn) == "mssql":
+        return mssql.column_exists(conn, table, column)
+    return conn.execute("SELECT 1 FROM pragma_table_info(?) WHERE name = ?",
+                        (table, column)).fetchone() is not None
+
+
 # The tables whose row counts must match between the live database and an escrow
 # copy for the copy to be called good. The commercial record and the desk.
 ESCROW_CHECK_TABLES = ("work_item", "ticket", "ticket_event", "time_entry",

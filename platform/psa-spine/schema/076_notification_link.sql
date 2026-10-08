@@ -1,0 +1,15 @@
+-- 076: the link each requester email carried, kept on the email.
+--
+-- SQL01, 8 Oct 2026 (MEASURED on PMC_PSA): none of the 894 notifications
+-- holds the "See your request" link. It is put together at the moment of
+-- sending, so the desk could not say which link a person was sent, and a
+-- link could only be proved by clicking it in somebody's mailbox. Dada,
+-- 8 Oct: "find a proper solution for this". Confirmed before building: keep
+-- the link on each email as it is sent; a check on the host that opens the
+-- portal as a named person, no mailbox needed; and a way to give a requester
+-- a working link when an old email's link does not open.
+--
+-- Written by the sender (outbox-pending) for requester emails only, the same
+-- text the email carried. Empty for every email sent before this step, and
+-- for any email that went without a portal address.
+ALTER TABLE notification ADD COLUMN portal_link TEXT;

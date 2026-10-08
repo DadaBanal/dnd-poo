@@ -2298,6 +2298,42 @@ domains.
 
 Schema 075 adds `ticket.portal_key`, NULL until the first email. Handoff: `HANDOFF-cloud-sql01-WS36-20261008-portal-link-075.md`.
 
+## Proving the email link, and mending the old ones (8 Oct 2026, schema 076)
+
+SQL01, 8 Oct 2026, MEASURED on `PMC_PSA` after 075 went in: none of the 894 notifications holds the link, because the
+sender puts it together at the moment of sending, so nobody could say which link a person was sent. The only proof of a
+link was clicking it in somebody's mailbox, which the host cannot do. PMC-000391 had no key at all: its six emails all
+went before 075. Dada: *"find a proper solution for this"*. Confirmed before building: all three parts below.
+
+- **The link is kept on each email.** The sender (`outbox-pending`, run by PSA-Notify) writes the link a requester
+  email carries into `notification.portal_link` as it builds it: the same text the person got. Not on a `--dry-run`,
+  not for approver, paging or desk emails, and not before 076 is applied (the email goes exactly as before).
+- **A check on the host, with no mailbox.** `psaspine portal-check <db> --ticket PMC-000397 [--person joseph.marcelo]
+  [--portal-url https://help.pmcne.ph]` signs the person in the way the portal's doors would (a Windows name with their
+  contact's address, or an address as Entra gives it), asks the portal's own router for the request on the portal's
+  address, and reports the answer for the plain link, the email link, a wrong key and *Your requests*, with why. It
+  also lists the last requester emails and the link each one carried. It writes nothing: the key a first email would
+  make is rolled back, a read by key is not put on the audit trail (it is the check, not a person, and a rolled-back
+  insert on SQL Server would still use up a number), and the session is signed with a throwaway secret that never
+  leaves the process. Keys are printed cut to four characters, so the output can be pasted into a handoff.
+  `who-sees` now asks the portal's own rule too (the own-domain match), so the two cannot disagree.
+- **Mending a link that does not open.** Every email sent before 075 carries a link with no key.
+  - On the desk, **Copy the requester's link** under the ticket's Contact gives a technician the link the emails now
+    carry, to paste into a reply. It is for whoever works the ticket's board, makes the key if the ticket has none
+    yet, and is audited (`PORTAL_LINK_COPIED`).
+  - On the portal, the *No such request* page offers **Send a fresh link to the address this request came from**. It
+    goes only to the requester the ticket already has, never to the person asking; at most one an hour per request;
+    not while another requester email is waiting to go (that one carries the link); only on a board that emails its
+    requesters. The page answers the same whether the request exists, whose it is and whether the email went, so
+    asking teaches nothing. Each ask is audited (`PORTAL_LINK_REQUEST`, with what happened), and the ticket's
+    activity says a fresh link was queued and who asked.
+
+What the check does not prove (INFERRED): the path from a ward PC to the portal's address (DNS, the proxy, TLS). A
+browser on the hospital network proves that; 401 from the address proves the desk answers.
+
+Schema 076 adds `notification.portal_link`, NULL for every email sent before it. Handoff:
+`HANDOFF-cloud-sql01-WS36-20261008-email-link-076.md`.
+
 ## Chat, round five: ending a chat, and "how did I do?" (7 Oct 2026, schema 074)
 
 Dada, 7 Oct 2026: *"option to close or end the chat and survey or how i did at the end"*. Confirmed before building:

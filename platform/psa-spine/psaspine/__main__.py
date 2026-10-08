@@ -63,6 +63,13 @@ def main(argv: list[str] | None = None) -> int:
     pwho.add_argument("database", help=DB_HELP)
     pwho.add_argument("--ticket", required=True, help="e.g. PMC-000155")
     pwho.add_argument("--person", help="their sign-in name or any address of theirs, to test against it")
+    pchk = sub.add_parser("portal-check", help="would the email link open this request for this person: asks the"
+                                               " portal itself, signed in as them, with no mailbox and no browser."
+                                               " Writes nothing")
+    pchk.add_argument("database", help=DB_HELP)
+    pchk.add_argument("--ticket", required=True, help="e.g. PMC-000397")
+    pchk.add_argument("--person", help="their Windows name or an address of theirs (default: the requester)")
+    pchk.add_argument("--portal-url", help="the portal's address (default: PSA_PORTAL_URL), e.g. https://help.example")
     phealth = sub.add_parser("mail-health", help="is mail becoming tickets at all: when a message last arrived,"
                                                  " what came of the ones since, and which addresses a board claims")
     phealth.add_argument("database", help=DB_HELP)
@@ -433,26 +440,34 @@ def _run(conn, a) -> int:
         if not a.person:
             print("Add --person <their sign-in name or address> to test whether they would see it.")
             return 0
-        who = a.person.strip().lower()
-        addrs = []
-        for r in conn.execute("SELECT email, upn, sam_account FROM contact WHERE inactive = 0 AND ("
-                              " LOWER(email) = ? OR LOWER(upn) = ? OR LOWER(sam_account) = ?)", (who, who, who)):
-            for v in (r["email"], r["upn"]):
-                if v and v.lower() not in addrs:
-                    addrs.append(v.lower())
-        for r in conn.execute("SELECT email FROM member WHERE LOWER(member) = ? OR LOWER(email) = ?", (who, who)):
-            if r["email"] and r["email"].lower() not in addrs:
-                addrs.append(r["email"].lower())
-        if who not in addrs:
-            addrs.append(who)
+        # The portal's own rule (075), so this cannot say one thing while the
+        # portal does another: their addresses, and their Windows name on the
+        # hospital's own mail domains.
+        from .portal_check import person_user
+        from .web import Config, Ctx
+        from .web.views import portal as _portal
+        user, _door = person_user(conn, a.person)
+        addrs = _portal._identities(Ctx(conn=conn, request=None, user=user, config=Config(), now=datetime.now()))
         print(f"the desk knows these addresses for {a.person}: " + ", ".join(addrs))
         if raised.lower() in addrs:
             print(f"-> they DO see {a.ticket} on the portal.")
             return 0
         print(f"-> they do NOT see {a.ticket}: it was raised from {raised}, which is none of those.")
         print("   Put that address on their contact record (email or upn) and they see it at once,"
-              " or change the ticket's Contact to them.")
+              " or change the ticket's Contact to them. The link in an email sent since 075 opens it for"
+              " them anyway; portal-check proves it.")
         return 0
+
+    if a.cmd == "portal-check":
+        import os
+        from . import portal_check
+        url = (a.portal_url or os.environ.get("PSA_PORTAL_URL") or "").strip()
+        if not url.lower().startswith("https://"):
+            print("refused: give the portal's https address with --portal-url, or set PSA_PORTAL_URL", file=sys.stderr)
+            return 2
+        lines = portal_check.check(conn, a.ticket, person=a.person, portal_url=url)
+        print("\n".join(lines))
+        return 1 if lines[0].startswith("there is no ticket") else 0
 
     if a.cmd == "mail-health":
         from . import intake

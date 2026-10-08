@@ -4356,6 +4356,23 @@ ALTER TABLE psa.[chat_session] ADD [ask_rating] INT NULL CONSTRAINT [DF_chat_ses
 IF COL_LENGTH(N'psa.[ticket]', N'portal_key') IS NULL
 ALTER TABLE psa.[ticket] ADD [portal_key] NVARCHAR(64) NULL;
 
+-- 076: the link each requester email carried, kept on the email.
+--
+-- SQL01, 8 Oct 2026 (MEASURED on PMC_PSA): none of the 894 notifications
+-- holds the "See your request" link. It is put together at the moment of
+-- sending, so the desk could not say which link a person was sent, and a
+-- link could only be proved by clicking it in somebody's mailbox. Dada,
+-- 8 Oct: "find a proper solution for this". Confirmed before building: keep
+-- the link on each email as it is sent; a check on the host that opens the
+-- portal as a named person, no mailbox needed; and a way to give a requester
+-- a working link when an old email's link does not open.
+--
+-- Written by the sender (outbox-pending) for requester emails only, the same
+-- text the email carried. Empty for every email sent before this step, and
+-- for any email that went without a portal address.
+IF COL_LENGTH(N'psa.[notification]', N'portal_link') IS NULL
+ALTER TABLE psa.[notification] ADD [portal_link] NVARCHAR(400) NULL;
+
 IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
 ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
 

@@ -1069,6 +1069,7 @@
     "status_mail.updated_at": "TIMESTAMP_TEXT",
     "status_mail.updated_by": "PERSON",
     "notification.from_address": "PERSON",
+    "notification.portal_link": "REF",
     "ticket_schedule.outlook_event_id": "REF",
     "schedule_block.outlook_event_id": "REF",
     "calendar_sync.kind": "CODE",
