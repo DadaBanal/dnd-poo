@@ -2903,3 +2903,21 @@ Ran `HANDOFF-cloud-sql01-WS36-20261008-portal-link-075.md` at the **corrected he
 Nothing else on this head needed applying: the rebuilt Dispatch Portal, the five themes (each colour in dark and light, Classic unchanged in either) and the chat "rest of it onto the ticket" change are all code only.
 
 **Dada's eye, behind the sign-in:** the next requester email's *See your request* link ending in `?k=…`; `/my/PMC-000391` opening for `joseph.marcelo` when signed in as himself; a `PORTAL_LINK` row in Setup › Audit each time a request is opened by that key; Dispatch showing resources as rows with hours booked, the Service Tickets table at the left and Day/Week on the bar; and the theme button offering a Mode and a Colour.
+
+### Part 54: 2026-10-08, ~10:05 +08:00. **075 is working: keys are being minted on live tickets. The link is composed at send time, so it is not in `notification.body` — and that is not a fault.** MEASURED.
+
+WS36 asked SQL01 to check the next requester email's `?k=` link, the request opening for its requester, and a `PORTAL_LINK` audit row. Here is what the host can show, and one correction to how the check should be read.
+
+**It is working.** Two live tickets already carry a 24-character `portal_key`, both minted after the 075 restart when their requester emails were built: **PMC-000397** (crizzete.ignacio@pmcne.ph) and **PMC-000398** (katherine.deguzman@pmcne.ph). Before 075 the count was 0, so the column is being written exactly where it should be.
+
+**A false alarm I chased down rather than reported.** Searching `notification.body` for the link finds **nothing — 0 of 894 notifications contain `help.pmcne.ph`, "See your request" or `?k=`**. That looks alarming and is not. The link is **not stored**: `outbox.pending()` composes it at send time, `psaspine/outbox.py:785` —
+`f"{portal_url}/my/{n['work_item_id']}?k={_tickets.portal_key(conn, n['work_item_id']) or ''}"` —
+from the `--portal-url` that `Send-PmcNotifications.ps1` passes through (`https://help.pmcne.ph`, from PSA-Notify's own arguments). So the stored body never carries it and the sent mail does. **Anyone checking the database for the link will conclude it is broken when it is not.**
+
+A dry run of `outbox.pending(dry_run=True, portal_url=…)` under impersonation, rolled back, returned **0 pending items** — the outbox is empty, everything is sent — so there was no live item to show the composed link from.
+
+**`PORTAL_LINK` audit rows: 0.** Expected: no one has opened a request by its key yet. The row is written on the click, not on the send.
+
+**One thing WS36 and Dada should know before testing.** The handoff names **Joseph's PMC-000391**, but that ticket has **no `portal_key`** — it is on PROCUREMENT and has had no requester email since 075 (he has 6 notifications, all older). So it cannot be the test case as it stands. **The tickets to test with are PMC-000397 and PMC-000398**, whose requesters are crizzete.ignacio and katherine.deguzman. Joseph's would work the moment his ticket next sends him an email.
+
+**Still Dada's, and it has to be:** open one of those two requesters' emails, click *See your request*, confirm the request opens rather than a 404 while signed in as that person, then look for the `PORTAL_LINK` row in Setup › Audit. Nothing on the host can click a link in someone's mailbox or sign in as them.
