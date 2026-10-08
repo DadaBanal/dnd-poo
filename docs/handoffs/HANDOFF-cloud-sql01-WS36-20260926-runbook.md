@@ -2921,3 +2921,25 @@ A dry run of `outbox.pending(dry_run=True, portal_url=…)` under impersonation,
 **One thing WS36 and Dada should know before testing.** The handoff names **Joseph's PMC-000391**, but that ticket has **no `portal_key`** — it is on PROCUREMENT and has had no requester email since 075 (he has 6 notifications, all older). So it cannot be the test case as it stands. **The tickets to test with are PMC-000397 and PMC-000398**, whose requesters are crizzete.ignacio and katherine.deguzman. Joseph's would work the moment his ticket next sends him an email.
 
 **Still Dada's, and it has to be:** open one of those two requesters' emails, click *See your request*, confirm the request opens rather than a 404 while signed in as that person, then look for the `PORTAL_LINK` row in Setup › Audit. Nothing on the host can click a link in someone's mailbox or sign in as them.
+
+### Part 55: 2026-10-08, ~10:40 +08:00. **97bcf34 live; 076 (`notification.portal_link`) applied; `portal-check` run three times and it proves the link works.** MEASURED.
+
+Ran `HANDOFF-cloud-sql01-WS36-20261008-email-link-076.md`, all nine steps in order. **PSA-Notify was disabled first, before the pull**, as step 1 now says — the correction from Part 53 is in the handoff and was followed.
+
+1. Backup COPY_ONLY `PMC_PSA_pre076_20261008.bak`, VERIFYONLY ok. PSA-Desk stopped.
+2. **Step 5, the count noted before:** `notification` = **928**.
+3. **076 applied** from the statement read verbatim out of the port, one transaction.
+4. **Step 7, verified inside the transaction — all three:** `COL_LENGTH(psa.notification, portal_link)` = **800**; `portal_link IS NOT NULL` = **0**; `notification` **928 → 928**. Nothing to hand back.
+5. PSA-Desk started — `:8085` **401 → down → 401 in 2s** — then **PSA-Notify re-enabled**. Both Running/Ready.
+
+**`portal-check`, three runs.** The CLI opens the desk's own connection, which refuses `dbo`, and the desk account's password is still not held here, so the same `portal_check.check()` was called under `EXECUTE AS psa_desk` — the established route. Each run's connection was rolled back.
+
+**WS36's expectations, against what happened:**
+- **"the email link `-> 200 OK` in all three" — holds.** All three.
+- **"a wrong key `-> 404`" — holds where it is the meaningful test, and should not elsewhere.** Only run 2 (joseph.marcelo on someone else's PMC-000397) gives `404 Not Found`. Runs 1 and 3 give `200 OK` on a wrong key, and the tool says why: *theirs by address anyway* — the person is the requester, so they own it regardless of the key. That is right, not a miss: a wrong key must fail only for someone who does not otherwise own the request. The security case is run 2, and it refuses.
+- **"the last line *Nothing was written*" — holds.** All three.
+- **"391 stays keyless and `PORTAL_LINK` stays 0" — holds, verified after:** PMC-000391's `portal_key` is **still NULL**, `PORTAL_LINK` rows **0**.
+
+**076 is already doing its job.** Since the restart, tickets carrying a `portal_key` have gone **2 → 16**, and **one notification now has `portal_link` kept** — so PSA-Notify has sent at least one email since, with the link recorded, which is exactly what 076 adds over 075. Part 54's finding stands and is now moot for new mail: the link used to be composed at send and lost; it is kept from here.
+
+**Chat round six rides the same restart (code only), and is Dada's eye:** a ward with an open chat pressing Start lands back in it; the portal's Chat page reads *n helpdesk staff online now*; typing shows *… is typing* on the other side. **Operators read offline until their next desk page after a restart — expected, not a fault.**
