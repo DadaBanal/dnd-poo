@@ -2,6 +2,15 @@
 
 **One schema step, 075 (one nullable column), then the usual restart. Apply 073 and 074 first if they are not in.**
 
+> **Correction, 8 Oct 2026 (after SQL01 Part 53, `2e57242`).** This handoff names an `outbox-send` task. No task or
+> command by that name exists: it was my error. The thing that builds and sends requester email is **PSA-Notify**
+> (`scripts/Send-PmcNotifications.ps1`, which calls `psaspine outbox-pending --portal-url …` and then
+> `psaspine outbox-mark`), and that is what SQL01 correctly held. SQL01 also corrected the method: a minute-task that
+> is only *stopped* fires again on its own trigger, so holding it means **disabling** it, then re-enabling it after.
+> Read "the `outbox-send` task" below as "PSA-Notify, disabled". MEASURED from the code: `outbox.pending` commits at the
+> end of every pass that is not `--dry-run` (`psaspine/outbox.py`), so the key an email carries is the key the ticket
+> keeps. The steps below are otherwise as they were applied.
+
 This follows `…-20261007-chat-074.md` and supersedes nothing.
 
 Branch: `claude/psa-ticketing-build`. Pull the head that carries this file.
