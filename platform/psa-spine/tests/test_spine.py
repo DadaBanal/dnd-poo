@@ -10068,7 +10068,8 @@ class DeskLookTest(unittest.TestCase):
                        "aria-current=page",
                        # 8 Oct 2026: peach, purple and pink beside dark and light, a cast over the light theme
                        ":root[data-tint=peach]{", ":root[data-tint=purple]{", ":root[data-tint=pink]{",
-                       "r.dataset.theme='light';r.dataset.tint=t", "aria-haspopup=\"menu\"", ".thememenu"):
+                       ":root[data-theme=dark][data-tint=peach]{", ":root[data-theme=light][data-tint=pink] body{",
+                       "psa-tint", "aria-haspopup=\"menu\"", ".thememenu"):
             self.assertIn(needle, signed, needle)
         self.assertNotIn("onclick", signed)
         _, _, login = self._call("GET", "/login")

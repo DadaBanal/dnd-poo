@@ -855,36 +855,58 @@ def main() -> int:
             if os.environ.get("PSA_SHOTS"):
                 page.screenshot(path=os.path.join(os.environ["PSA_SHOTS"], "dispatch-week.png"))
 
-            # --- the themes (8 Oct 2026): peach, purple and pink beside dark and light
+            # --- the themes (8 Oct 2026): a mode and a colour, each colour in both modes
             page.goto(f"{base}/", wait_until="domcontentloaded")
             page.locator("#theme").click()
             page.wait_for_timeout(150)
             menu = page.locator(".thememenu")
-            note(menu.is_visible() and menu.locator("button").count() == 5, "the theme button opens a menu of five")
+            note(menu.is_visible() and menu.locator("button").count() == 6 and menu.locator("h5").count() == 2,
+                 "the theme button opens a menu: a mode and a colour")
             menu.locator("button[data-theme=peach]").click()
             page.wait_for_timeout(150)
-            peach = page.evaluate("() => [document.documentElement.dataset.theme, document.documentElement.dataset.tint,"
-                                  " getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()]")
-            note(peach[0] == "light" and peach[1] == "peach" and peach[2] == "#d9663a", "Peach is the light theme with a peach cast", str(peach))
+            state = lambda: page.evaluate("() => [document.documentElement.dataset.theme, document.documentElement.dataset.tint || '',"  # noqa: E731
+                                          " getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()]")
+            got = state()
+            note(got[0] == "dark" and got[1] == "peach" and got[2] == "#ffab80", "Peach over dark keeps the dark mode and takes the peach accent", str(got))
             if os.environ.get("PSA_SHOTS"):
-                page.screenshot(path=os.path.join(os.environ["PSA_SHOTS"], "theme-peach.png"))
+                page.screenshot(path=os.path.join(os.environ["PSA_SHOTS"], "theme-peach-dark.png"))
+            menu.locator("button[data-theme=light]").click()
+            page.wait_for_timeout(150)
+            got = state()
+            note(got[0] == "light" and got[1] == "peach" and got[2] == "#d9663a", "Light keeps the colour and takes its light accent", str(got))
+            if os.environ.get("PSA_SHOTS"):
+                page.screenshot(path=os.path.join(os.environ["PSA_SHOTS"], "theme-peach-light.png"))
+            page.keyboard.press("Escape")
             page.reload(wait_until="domcontentloaded")
-            note(page.evaluate("() => document.documentElement.dataset.tint") == "peach", "and it is remembered")
+            got = state()
+            note(got[0] == "light" and got[1] == "peach", "and both are remembered", str(got))
             for tint in ("purple", "pink"):
-                page.locator("#theme").click()
-                page.wait_for_timeout(100)
-                page.locator(f".thememenu button[data-theme={tint}]").click()
-                page.wait_for_timeout(100)
-                if os.environ.get("PSA_SHOTS"):
-                    page.screenshot(path=os.path.join(os.environ["PSA_SHOTS"], f"theme-{tint}.png"))
-            note(page.evaluate("() => document.documentElement.dataset.tint") == "pink", "Purple and Pink follow")
+                for mode in ("dark", "light"):
+                    page.locator("#theme").click()
+                    page.wait_for_timeout(100)
+                    page.locator(f".thememenu button[data-theme={tint}]").click()
+                    page.locator(f".thememenu button[data-theme={mode}]").click()
+                    page.wait_for_timeout(100)
+                    if os.environ.get("PSA_SHOTS"):
+                        page.screenshot(path=os.path.join(os.environ["PSA_SHOTS"], f"theme-{tint}-{mode}.png"))
+                    page.keyboard.press("Escape")
+            # the chrome follows the colour: the active module, a submit button, a table header, a tile
+            hues = page.evaluate("""() => { const c = s => getComputedStyle(s); const q = s => document.querySelector(s);
+                return [c(q('header.top nav .top.on')).backgroundImage, c(q('main button[type=submit]')||q('main .btn')).backgroundImage,
+                        c(q('table.grid thead th')).backgroundImage, c(q('.tile .ic')).color] }""")
+            blue = ("99, 102, 241", "34, 211, 238", "238, 242, 251", "8, 145, 178", "61, 99, 221", "142, 162, 255")
+            note(not any(b in h for h in hues for b in blue) and all("255, 158, 203" in h for h in hues[:2]),
+                 "the active module, buttons, table headers and tiles carry the pink, none the classic blue", str(hues)[:200])
             page.keyboard.press("t")
             page.wait_for_timeout(100)
-            got = page.evaluate("() => [document.documentElement.dataset.theme, document.documentElement.dataset.tint || '']")
-            note(got == ["dark", ""], "t still flips to dark, clearing the cast", str(got))
+            got = state()
+            note(got[0] == "dark" and got[1] == "pink", "t flips the mode and keeps the colour", str(got))
             page.locator("#theme").click()
             page.wait_for_timeout(100)
+            page.locator(".thememenu button[data-theme=classic]").click()
             page.locator(".thememenu button[data-theme=dark]").click()
+            page.keyboard.press("Escape")
+            note(page.evaluate("() => document.documentElement.dataset.tint || ''") == "", "Classic takes the colour off")
 
             # --- an email as its sender laid it out (6 Oct 2026) -------------
             # Dada: "HTML is or emails are not rendering properly on the ticket

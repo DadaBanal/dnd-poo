@@ -2228,16 +2228,25 @@ Teams-style reactions, pictures and files through the patient-details review, th
 
 Schema 072 is additive: `chat_reaction`, `chat_file`, `chat_survey`, and the nullable `board.chat_welcome`.
 
-## Peach, purple and pink (8 Oct 2026, code only)
+## Peach, purple and pink, each in dark and light (8 Oct 2026, code only)
 
-Dada, 8 Oct 2026: *"add a peach mode a purple mode and a pink mode apart from the dark mode and light mode"*.
+Dada, 8 Oct 2026: *"add a peach mode a purple mode and a pink mode apart from the dark mode and light mode"*, then
+*"make sure all the colors for pink peach and purple also has dark versions ... and make sure the rest of the buttons
+the tables and headers match the theme as well ... and make sure it doesnt break anything"*.
 
-The theme button in the bar now opens a menu: **Dark**, **Light**, **Peach**, **Purple**, **Pink**, each with its
-swatch, the current one marked. A tint is the light theme with a colour cast over it (`data-theme=light` plus
-`data-tint=peach|purple|pink`), so every light rule still holds and only the tokens change: the canvas and its glows,
-the cards' edges, the accent, the glass of the bar, the wells of the fields. Ink stays dark, so nothing loses its
-contrast. The choice is remembered per browser, as before. The **t** key still flips between dark and light, and the
-command palette's *Theme* entry does the same.
+The theme button in the bar opens a menu in two parts: **Mode** (Dark, Light) and **Colour** (Classic, Peach, Purple,
+Pink), each with its swatch, the current ones marked. Every colour has both modes. The **t** key flips the mode and
+keeps the colour; the command palette's *Theme* entry does the same. Both are remembered per browser
+(`psa-theme`, `psa-tint`).
+
+How it is built, so that nothing already there changed: every blue and cyan the chrome read as a literal (the glows
+and row hovers, the lit edges of cards in the dark, the edges and bands of the light, the title gradient, the active
+module, the focus ring, the buttons' gradient, the table header's band) now reads a token whose default is exactly
+the literal it replaced. Without a colour chosen, every token holds its old value. MEASURED: a probe that renders the
+old and the new stylesheet over the same chrome and compares the computed styles of 23 elements in classic dark and
+classic light reports **0 differences**. A colour overrides the tokens, in both modes, and gives the canvas, the
+cards, the fields and the table header's band its own cast; ink and the status colours (SLA, priorities, good /
+warn / bad) stay as they are, so nothing loses its contrast or its meaning.
 
 ## The Dispatch Portal, in the reference PSA's shape (8 Oct 2026, code only)
 
