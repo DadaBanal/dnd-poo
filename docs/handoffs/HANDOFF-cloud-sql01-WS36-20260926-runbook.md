@@ -2884,3 +2884,22 @@ Nothing on the host needed changing for chat files: they go to the existing `PSA
 **Chat keeps growing on its own:** 8 sessions and 61 messages now, against 4 and 32 at Part 51. It is in daily use.
 
 **Dada's, not mine:** 073 seeds every WORK/ADMIN member of PMO Helpdesk as a chat operator — all 14 — because that keeps today's behaviour. Anyone who should not be answering chats is unticked on their Setup › Members page. Nothing here guesses who that is.
+
+### Part 53: 2026-10-08, ~09:36 +08:00. **9a9cbc7 live; 075 (`ticket.portal_key`) applied with the sender held; PSA-Desk and PSA-Notify back up.** MEASURED.
+
+Ran `HANDOFF-cloud-sql01-WS36-20261008-portal-link-075.md` at the **corrected head 9a9cbc7**, not 866e471.
+
+**One naming point for WS36, resolved here rather than guessed.** The handoff names an **`outbox-send` task** to stop. **No task or CLI command of that name exists on this host** — I checked the task list and grepped `__main__.py` and `scripts/*.ps1` for `outbox-send`/`outbox_send`, and found neither. The task that actually builds and sends requester email is **`PSA-Notify`**, running `Send-PmcNotifications.ps1` with `-Mailbox helpdesk@ -SendAs support@ -PortalUrl https://help.pmcne.ph`. That is what was held. If WS36 means something else by `outbox-send`, say so and I will re-check.
+
+1. **Backup** COPY_ONLY `PMC_PSA_pre075_20261008.bak`, VERIFYONLY ok.
+2. **Both PSA-Desk and PSA-Notify stopped *and disabled*** before the step, not merely stopped — a minute-task that is only stopped starts again on its own trigger, which is exactly the send the handoff says must not run between the pull and the step.
+3. **075 applied** from the statement **read verbatim out of the generated port**, in one transaction.
+4. **Verified inside the transaction, the three counts asked for:**
+   - `COL_LENGTH(N'psa.ticket', N'portal_key')` = **128** (non-NULL).
+   - `SELECT COUNT(*) FROM psa.ticket WHERE portal_key IS NOT NULL` = **0**.
+   - `ticket` **257 → 257**, unchanged.
+5. **Both tasks re-enabled and PSA-Desk started.** The 401 check, in full: **401 before → −1 while down → 401 again, 2 s after start.** PSA-Notify is Ready and has since run a pass with **last result 0**, so the sender works with the new column in place.
+
+Nothing else on this head needed applying: the rebuilt Dispatch Portal, the five themes (each colour in dark and light, Classic unchanged in either) and the chat "rest of it onto the ticket" change are all code only.
+
+**Dada's eye, behind the sign-in:** the next requester email's *See your request* link ending in `?k=…`; `/my/PMC-000391` opening for `joseph.marcelo` when signed in as himself; a `PORTAL_LINK` row in Setup › Audit each time a request is opened by that key; Dispatch showing resources as rows with hours booked, the Service Tickets table at the left and Day/Week on the bar; and the theme button offering a Mode and a Colour.
