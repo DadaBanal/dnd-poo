@@ -803,6 +803,58 @@ def main() -> int:
                  "unticked, the ward reads the closing line and is not asked to rate")
             ward.context.close()
 
+            # --- the Dispatch Portal (8 Oct 2026) -------------------------------
+            today = datetime.now().date().isoformat()
+            page.goto(f"{base}/dispatch?day={today}", wait_until="domcontentloaded")
+            page.evaluate("() => { try { localStorage.removeItem('psa-dispatch-fold') } catch (e) {} }")
+            page.reload(wait_until="domcontentloaded")
+            rows = page.locator("#stickets table.sttable tbody tr[data-drag]")
+            note(rows.count() >= 1, "Service Tickets lists the open tickets as a table", f"{rows.count()} rows")
+            names = page.locator("table.schedgrid.dispatch th.who .rname").all_inner_texts()
+            note("tech" in [n.strip().lower() for n in names] and all(n == n.strip() and not n.isupper() for n in names),
+                 "resources are rows with their names, as written", str(names))
+            first = rows.first
+            tid = first.get_attribute("data-drag").split("|")[1]
+            first.drag_to(page.locator(f"td[data-slot='tech|{today}|09:00']"))
+            page.wait_for_load_state("domcontentloaded")
+            page.wait_for_timeout(300)
+            chip = page.locator(f"table.schedgrid.dispatch .sch.visit[data-menu^='{tid}|']")
+            note(chip.count() == 1 and "msg=" in page.url, "a ticket dragged onto an hour books a visit", page.url)
+            if os.environ.get("PSA_SHOTS"):
+                page.screenshot(path=os.path.join(os.environ["PSA_SHOTS"], "dispatch-day.png"))
+            chip.click(button="right")
+            page.wait_for_timeout(150)
+            menu = page.locator(".ctxmenu")
+            note(menu.is_visible() and "Mark done" in menu.inner_text() and "Delete the visit" in menu.inner_text(),
+                 "a right-click offers Open, Done and Delete")
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(100)
+            note(page.locator(".ctxmenu").count() == 0, "and Escape closes it")
+            # the right edge dragged one hour to the right: the visit ends an hour later
+            rz = chip.locator(".rz")
+            box, cell = rz.bounding_box(), page.locator(f"td[data-slot='tech|{today}|09:00']").bounding_box()
+            page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+            page.mouse.down()
+            page.mouse.move(box["x"] + box["width"] / 2 + cell["width"], box["y"] + box["height"] / 2, steps=6)
+            page.mouse.up()
+            page.wait_for_load_state("domcontentloaded")
+            page.wait_for_timeout(300)
+            chip = page.locator(f"table.schedgrid.dispatch .sch.visit[data-menu^='{tid}|']")
+            note(chip.count() == 1 and chip.get_attribute("data-span").endswith("T11:00"),
+                 "its right edge dragged changes when it ends", chip.get_attribute("data-span") if chip.count() else page.url)
+            page.locator(".stfold").click()
+            note(page.locator(".dispatchwrap.folded").count() == 1 and not page.locator("#stickets").is_visible(),
+                 "the tickets fold away to give the grid the width")
+            page.locator(".stshow").click()
+            note(page.locator("#stickets").is_visible(), "and come back")
+            page.locator(".schedbar a", has_text="Week").click()
+            page.wait_for_load_state("domcontentloaded")
+            note(page.locator("table.schedgrid.dispatch.week").count() == 1
+                 and page.locator(f"table.schedgrid.dispatch.week .sch.visit[data-menu^='{tid}|']").count() >= 1,
+                 "Week shows the seven days with the visit on its day")
+            if os.environ.get("PSA_SHOTS"):
+                page.screenshot(path=os.path.join(os.environ["PSA_SHOTS"], "dispatch-week.png"))
+
             # --- an email as its sender laid it out (6 Oct 2026) -------------
             # Dada: "HTML is or emails are not rendering properly on the ticket
             # viewer", "images are not rendering on the ticket", and "search on

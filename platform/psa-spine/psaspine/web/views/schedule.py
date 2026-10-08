@@ -325,6 +325,38 @@ def block_remove(ctx):
     return _back(f.get("week", ""), msg="Removed from the schedule")
 
 
+def resize(ctx):
+    """POST /schedule/resize: a visit's right edge dragged on the Dispatch
+    board (8 Oct 2026): a new end, the start and the person as they were."""
+    from .. import redirect
+    f = ctx.request.form()
+    back = f.get("back", "/dispatch")
+    if not back.startswith("/") or back.startswith("//"):
+        back = "/dispatch"
+    sep = "&" if "?" in back else "?"
+
+    def done(msg="", err=""):
+        return redirect(back + sep + urllib.parse.urlencode({k: v for k, v in (("msg", msg), ("err", err)) if v}))
+
+    try:
+        sid = int(f.get("id", ""))
+        ends = schedule.parse_local(f.get("ends_at", ""))
+    except ValueError:
+        return done(err="Not changed: no such visit, or a bad time")
+    row = ctx.conn.execute("SELECT t.board_id FROM ticket_schedule s JOIN ticket t ON t.work_item_id = s.work_item_id"
+                           " WHERE s.schedule_id = ?", (sid,)).fetchone()
+    if row is None or not common.may_access_board(ctx, row["board_id"], need="WORK"):
+        return done(err="Not changed: no such visit that you can work")
+    try:
+        what = schedule.update(ctx.conn, sid, actor=ctx.user.id, at=ctx.now, ends_at=ends,
+                               allow_conflict=f.get("allow_conflict") == "1")
+    except (schedule.Refused, ValueError) as exc:
+        ctx.conn.rollback()
+        return done(err=f"Not changed: {exc}")
+    ctx.conn.commit()
+    return done(msg=f"Visit now until {ends.strftime('%H:%M')}" if what != "nothing changed" else "Nothing changed")
+
+
 def move(ctx):
     """POST /schedule/move: a visit or a block dropped on another person or
     time (Dispatch, the Schedule, a calendar). Keeps its length."""

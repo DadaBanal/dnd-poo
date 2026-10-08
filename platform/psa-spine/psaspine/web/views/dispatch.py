@@ -100,45 +100,70 @@ def index(ctx):
             role_cards.append(f"<div class='card'><h3>{t.esc(board['display_name'])}</h3>"
                               f"<dl class='kv'>{''.join(rows)}</dl></div>")
 
-    # The day board, in the shape of the reference PSA's Dispatch Portal: one
-    # row per person who works the boards you see, one column per hour, every
-    # visit and block in its hour, their Outlook busy time beside it. The
-    # tickets waiting to be scheduled sit to the left; drag one onto a person's
-    # hour and it is booked (the ticket becomes theirs if nobody has it); drag a
-    # visit to another person or hour and it moves. Click an hour to book by
-    # hand. Everything also works by the forms, without a mouse.
+    body = ("<h1>Dispatch</h1><p class='sub'>Who is where today, what still needs a person, and who answers each board.</p>"
+            + _board(ctx, boards, unrouted_rows) + queue + "".join(role_cards))
+    return Response(body=t.page("Dispatch", body, user=ctx.user, active="dispatch", live="schedule"))
+
+
+HOURS = list(range(6, 21))          # the day grid's columns, 06:00 to 20:00
+CAPACITY = 8.0                      # hours a person is booked against, as the reference PSA's capacity
+LANE = 82                           # px per lane of overlapping chips
+
+
+def _board(ctx, boards, unrouted_rows) -> str:
+    """The Dispatch Portal, in the reference PSA's shape (Dada, 8 Oct 2026:
+    "make it look like what connectwise looks like and function like
+    connectwise"; confirmed: the day grid, a Service Tickets table, Day + Week).
+
+    Resources are rows with their name and hours booked; the day's hours run
+    across with half-hour lines; a visit is a block coloured by its status
+    (firm filled, tentative outlined, done green with a tick) naming the
+    ticket, its summary and its company. A ticket dragged from the Service
+    Tickets table onto an hour books it; a visit dragged moves; its right
+    edge dragged changes its end; a right-click offers Open, Done,
+    Acknowledge and Delete; a double-click opens the ticket. Week: the seven
+    days as columns, each day's visits listed. Everything also works by the
+    forms, without a mouse.
+    """
     from ... import calsync, members as _members, schedule
-    from .schedule import slot_dialog
+    from .schedule import OUTLOOK_WORD, slot_dialog
     from datetime import date as _date, timedelta as _td
-    day = ctx.request.query.get("day", "") or ctx.now.date().isoformat()
+    q = ctx.request.query
+    view = "week" if q.get("view") == "week" else "day"
+    day = q.get("day", "") or ctx.now.date().isoformat()
     try:
         d0 = _date.fromisoformat(day)
     except ValueError:
         d0 = ctx.now.date()
         day = d0.isoformat()
-    board_q = ctx.request.query.get("board", "")
+    board_q = q.get("board", "")
     shown_boards = {board_q} if board_q in boards else boards
-    mine = ctx.request.query.get("mine") == "1"
-    lo, hi = f"{day} 00:00", f"{(d0 + _td(days=1)).isoformat()} 00:00"
-    entries = schedule.day(ctx.conn, sorted(shown_boards), day)
+    mine = q.get("mine") == "1"
+    monday = d0 - _td(days=d0.weekday())
+    if view == "week":
+        lo, hi = f"{monday.isoformat()} 00:00", f"{(monday + _td(days=7)).isoformat()} 00:00"
+        data = schedule.week(ctx.conn, sorted(shown_boards), monday)
+        entries = data["visits"]
+    else:
+        lo, hi = f"{day} 00:00", f"{(d0 + _td(days=1)).isoformat()} 00:00"
+        entries = schedule.day(ctx.conn, sorted(shown_boards), day)
     listed: dict[str, int] = {}
     for r in list(unrouted_rows) + list(entries):
         listed[r["board_id"]] = listed.get(r["board_id"], 0) + 1
     for board_id, n in sorted(listed.items()):
         common.audit_restricted_read(
-            ctx, board_id, detail=f"dispatch listed {n} ticket(s) on restricted board "
-                                  f"{board_id} via {ctx.user.via}")
+            ctx, board_id, detail=f"dispatch listed {n} ticket(s) on restricted board {board_id} via {ctx.user.via}")
     people = schedule.members_of(ctx.conn, sorted(shown_boards))
     for e in entries:
         if e["member"].lower() not in {p.lower() for p in people}:
             people.append(e["member"])
     people.sort(key=str.lower)
-    everyone = list(people)                       # the choice the People dialog offers
+    everyone = list(people)
     # 063: whose rows. `who=` in the URL shows a set once; the dispatcher's
     # saved view applies when the URL says nothing; "Only me" beats both.
-    who_q = [w.strip().lower() for w in ctx.request.query.get("who", "").split(",") if w.strip()]
+    who_q = [w.strip().lower() for w in q.get("who", "").split(",") if w.strip()]
     saved = schedule.view_of(ctx.conn, ctx.user.id)
-    chosen = who_q or (saved["people"] if saved and ctx.request.query.get("who") is None else [])
+    chosen = who_q or (saved["people"] if saved and q.get("who") is None else [])
     if chosen:
         people = [p for p in people if p.lower() in chosen] or people
     if mine:
@@ -146,9 +171,51 @@ def index(ctx):
     blocks = schedule.blocks(ctx.conn, people, lo, hi)
     outlook = calsync.busy(ctx.conn, people, lo, hi)
     can_book = any(common.may_access_board(ctx, b, need="WORK") for b in boards)
-    back = f"/dispatch?day={day}" + (f"&board={board_q}" if board_q in boards else "") + ("&mine=1" if mine else "")
-    HOURS = list(range(6, 21))
+    keep = (f"&board={board_q}" if board_q in boards else "") + ("&mine=1" if mine else "") \
+        + (f"&who={t.esc(','.join(who_q))}" if who_q else "")
+    back = f"/dispatch?day={day}" + (f"&view=week" if view == "week" else "") + keep
+    name_of = lambda m: _members.name_of(ctx.conn, m)  # noqa: E731
 
+    def hours_of(items) -> float:
+        total = 0.0
+        for it in items:
+            s_, e_ = max(it["starts_at"], lo), min(it["ends_at"], hi)
+            if e_ > s_:
+                total += (schedule.parse_local(e_) - schedule.parse_local(s_)).total_seconds() / 3600
+        return total
+
+    def who_cell(m, booked: float, capacity: float) -> str:
+        pct = min(100, int(round(booked / capacity * 100))) if capacity else 0
+        cls = "lo" if pct < 50 else ("mid" if pct < 75 else "hi")
+        me = m.lower() == ctx.user.id.lower()
+        return (f"<th class=who><b class=rname>{t.esc(name_of(m))}</b>" + (" <span class=pill>me</span>" if me else "")
+                + f"<span class=utilt title='Booked against {capacity:g} h'>{booked:.1f} / {capacity:.1f} h · {pct}%</span>"
+                f"<span class='util {cls}'><i style='width:{pct}%'></i></span></th>")
+
+    def menu_attrs(e) -> str:
+        """What the right-click menu and a double-click need: the ticket, the
+        visit, whether it is done, whether this person may work it and
+        acknowledge it."""
+        can_ack = not e["acknowledged_at"] and e["member"].lower() == ctx.user.id.lower()
+        return (f" data-menu='{t.esc(e['work_item_id'])}|{e['schedule_id']}|{1 if e['done_at'] else 0}|{1 if can_book else 0}"
+                f"|{1 if can_ack else 0}' data-span='{t.esc(e['starts_at'][:16].replace(' ', 'T'))}|{t.esc(e['ends_at'][:16].replace(' ', 'T'))}'")
+
+    def visit_classes(e) -> str:
+        st = (e["status_id"] or "").lower()
+        clash = e["_clash"] if "_clash" in e.keys() else False          # set by lanes() on the day's copies only
+        return ("sch visit st-" + (st or "firm") + (" tentative" if e["status_id"] == "TENTATIVE" else "")
+                + (" done" if e["done_at"] else "") + (" clash" if clash else ""))
+
+    def visit_words(e, *, long: bool = True) -> str:
+        tail = " · ".join(x for x in (e["entity"] if "entity" in e.keys() and e["entity"] else "", e["status_name"] or "",
+                                     e["location_name"] or "") if x)
+        return (f"<b>{t.esc(e['starts_at'][11:16])}–{t.esc(e['ends_at'][11:16])}</b> "
+                f"<a href='/ticket/{t.esc(e['work_item_id'])}'>{t.esc(e['work_item_id'])}</a>"
+                + (" ★" if e["is_lead"] else "") + (" <span class=pill>ack</span>" if e["acknowledged_at"] else "")
+                + f"<br>{t.esc((e['summary'] or '')[:40 if long else 30])}"
+                + (f"<br><span class=muted>{t.esc(tail)}</span>" if tail else ""))
+
+    # ------------------------------------------------------------- the day
     def hour_of(stamp: str) -> int:
         return max(HOURS[0], min(HOURS[-1], int(stamp[11:13])))
 
@@ -164,16 +231,15 @@ def index(ctx):
             e_hours = min(HOURS[-1] + 1, int(ends_at[11:13]) + (int(ends_at[14:16]) / 60))
         left = s_min / 60
         width = max(0.5, e_hours - s_h - left)
-        return f" style='left:calc({left:.2f} * 100% + 2px);width:calc({width:.2f} * 100% - 4px);top:{lane * 82 + 2}px'"
+        return f" style='left:calc({left:.2f} * 100% + 2px);width:calc({width:.2f} * 100% - 4px);top:{lane * LANE + 2}px'"
 
     def entry_chip(e, lane: int = 0) -> str:
-        cls = ("sch visit" + (" tentative" if e["status_id"] == "TENTATIVE" else "") + (" done" if e["done_at"] else "")
-               + (" clash" if e.get("_clash") else ""))
         drag = f" draggable=true data-drag='visit|{e['schedule_id']}'" if can_book and not e["done_at"] else ""
-        drag += strip(e["starts_at"], e["ends_at"], lane)
+        drag += strip(e["starts_at"], e["ends_at"], lane) + menu_attrs(e)
         acts = ""
         if can_book:
             wid = t.esc(e["work_item_id"])
+
             def act(action, label, title):
                 return (f"<form method=post action='/ticket/{wid}/schedule/{action}' class=inline>"
                         f"<input type=hidden name=schedule_id value='{e['schedule_id']}'><input type=hidden name=back value='{t.esc(back)}'>"
@@ -182,14 +248,9 @@ def index(ctx):
             if not e["acknowledged_at"] and e["member"].lower() == ctx.user.id.lower():
                 acts += act("ack", "👁", "Acknowledge: I have seen this")
             acts += "</span>"
-        return (f"<div class='{cls}'{drag} title='{t.esc(e['note'] or '')}'>"
-                f"<b>{t.esc(e['starts_at'][11:])}–{t.esc(e['ends_at'][11:])}</b> "
-                f"<a href='/ticket/{t.esc(e['work_item_id'])}'>{t.esc(e['work_item_id'])}</a>"
-                + (" ★" if e["is_lead"] else "") + (" <span class=pill>ack</span>" if e["acknowledged_at"] else "")
-                + f"<br>{t.esc((e['summary'] or '')[:40])}"
-                + (f"<br><span class=muted>{t.esc(e['status_name'] or '')}"
-                   f"{' · ' + t.esc(e['location_name']) if e['location_name'] else ''}</span>" if e["status_name"] else "")
-                + acts + "</div>")
+            if not e["done_at"]:
+                acts += "<i class=rz title='Drag to change when it ends'></i>"
+        return (f"<div class='{visit_classes(e)}'{drag} title='{t.esc(e['note'] or '')}'>" + visit_words(e) + acts + "</div>")
 
     def block_chip(b, lane: int = 0) -> str:
         drag = f" draggable=true data-drag='block|{b['block_id']}'" if can_book else ""
@@ -198,8 +259,6 @@ def index(ctx):
         return (f"<div class='sch block {b['kind'].lower()}{' clash' if b.get('_clash') else ''}'{drag}><b>{t.esc(schedule.BLOCK_KINDS[b['kind']])}</b> "
                 f"{t.esc(span)}<br>{t.esc(b['name'])}</div>")
 
-    from .schedule import OUTLOOK_WORD
-    rows_html = []
     def lanes(items):
         """Overlapping chips go on separate lanes, first come first on top,
         and both are marked as a clash (the reference PSA outlines a
@@ -216,92 +275,153 @@ def index(ctx):
                 ends.append(it["ends_at"]); out.append((it, len(ends) - 1))
         return out, len(ends)
 
-    CAPACITY = 8.0                                   # hours a person is booked against, as the reference PSA's schedule capacity
+    def day_grid() -> str:
+        rows_html = []
+        for m in people:
+            mine_b = [b for b in blocks if b["member"].lower() == m.lower()]
+            mine_o = [o for o in outlook if o["member"].lower() == m.lower()]
+            mine_e = [e for e in entries if e["member"].lower() == m.lower()]
+            placed, depth = lanes([dict(b, _k="b") for b in mine_b] + [dict(o, _k="o") for o in mine_o] + [dict(e, _k="e") for e in mine_e])
+            cells = []
+            for h in HOURS:
+                inner = ""
+                for it, lane in placed:
+                    start_h = hour_of(it["starts_at"]) if it["starts_at"] >= lo else HOURS[0]
+                    if start_h != h:
+                        continue
+                    if it["_k"] == "b":
+                        inner += block_chip(it, lane)
+                    elif it["_k"] == "o":
+                        span = (f"{it['starts_at'][11:]}–{it['ends_at'][11:]}" if it["starts_at"][:10] == it["ends_at"][:10] else "all day")
+                        inner += (f"<div class='sch block outlook'{strip(it['starts_at'], it['ends_at'], lane)} title='From their Outlook calendar'>"
+                                  f"<b>Outlook</b> {t.esc(span)}<br>{t.esc(OUTLOOK_WORD[it['show_as']])}</div>")
+                    else:
+                        inner += entry_chip(it, lane)
+                slot = f" data-slot='{t.esc(m)}|{day}|{h:02d}:00'" if can_book else ""
+                now_cls = " now" if d0 == ctx.now.date() and ctx.now.hour == h else ""
+                if now_cls:                              # the reference PSA's red line at the current time
+                    inner += f"<i class=nowline style='left:{ctx.now.minute / 60 * 100:.0f}%' title='Now'></i>"
+                cells.append(f"<td class='hr{now_cls}'{slot}>{inner}</td>")
+            rows_html.append(f"<tr style='height:{(depth * LANE + 4) if depth else 48}px'>"
+                             + who_cell(m, hours_of(mine_b + mine_e), CAPACITY) + "".join(cells) + "</tr>")
+        head = "".join(f"<th>{h:02d}:00</th>" for h in HOURS)
+        return (f"<div class=schedwrap><table class='schedgrid dispatch'><thead><tr><th class=whoh>Resource</th>{head}</tr></thead>"
+                f"<tbody>{''.join(rows_html) or '<tr><td colspan=16 class=muted>Nobody works these boards yet.</td></tr>'}</tbody></table></div>")
 
-    def hours_of(items) -> float:
-        total = 0.0
-        for it in items:
-            s_, e_ = max(it["starts_at"], lo), min(it["ends_at"], hi)
-            if e_ > s_:
-                total += (schedule.parse_local(e_) - schedule.parse_local(s_)).total_seconds() / 3600
-        return total
+    # ------------------------------------------------------------ the week
+    def week_grid() -> str:
+        days = [monday + _td(days=i) for i in range(7)]
 
-    def util_bar(booked: float) -> str:
-        pct = min(100, int(round(booked / CAPACITY * 100)))
-        cls = "lo" if pct < 50 else ("mid" if pct < 75 else "hi")
-        return (f"<span class=utilt title='Booked today against {CAPACITY:g} h'>{booked:.1f}/{CAPACITY:.1f} {pct}%</span>"
-                f"<span class='util {cls}'><i style='width:{pct}%'></i></span>")
+        def cell(m, d):
+            dlo, dhi = f"{d.isoformat()} 00:00", f"{(d + _td(days=1)).isoformat()} 00:00"
+            chips = []
+            for b in blocks:
+                if b["member"].lower() == m.lower() and b["starts_at"] < dhi and b["ends_at"] > dlo:
+                    span = (f"{b['starts_at'][11:]}–{b['ends_at'][11:]}" if b["starts_at"][:10] == b["ends_at"][:10]
+                            else "all day" if b["starts_at"] <= dlo and b["ends_at"] >= dhi else
+                            (f"from {b['starts_at'][11:]}" if b["starts_at"] > dlo else f"until {b['ends_at'][11:]}"))
+                    drag = f" draggable=true data-drag='block|{b['block_id']}'" if can_book else ""
+                    chips.append(f"<div class='sch block {b['kind'].lower()}'{drag}><b>{t.esc(schedule.BLOCK_KINDS[b['kind']])}</b> "
+                                 f"{t.esc(span)}<br>{t.esc(b['name'])}</div>")
+            for e in entries:
+                if e["member"].lower() == m.lower() and e["starts_at"][:10] == d.isoformat():
+                    drag = f" draggable=true data-drag='visit|{e['schedule_id']}'" if can_book and not e["done_at"] else ""
+                    chips.append(f"<div class='{visit_classes(e)}'{drag}{menu_attrs(e)} title='{t.esc(e['note'] or '')}'>"
+                                 + visit_words(e, long=False) + "</div>")
+            for o in outlook:
+                if o["member"].lower() == m.lower() and o["starts_at"] < dhi and o["ends_at"] > dlo:
+                    span = (f"{o['starts_at'][11:]}–{o['ends_at'][11:]}" if o["starts_at"][:10] == o["ends_at"][:10] else "all day")
+                    chips.append(f"<div class='sch block outlook' title='From their Outlook calendar'><b>Outlook</b> {t.esc(span)}"
+                                 f"<br>{t.esc(OUTLOOK_WORD[o['show_as']])}</div>")
+            slot = f" data-slot='{t.esc(m)}|{d.isoformat()}'" if can_book else ""
+            return f"<td class='wk{' today' if d == ctx.now.date() else ''}'{slot}>{''.join(chips)}</td>"
 
-    for m in people:
-        mine_b = [b for b in blocks if b["member"].lower() == m.lower()]
-        mine_o = [o for o in outlook if o["member"].lower() == m.lower()]
-        mine_e = [e for e in entries if e["member"].lower() == m.lower()]
-        placed, depth = lanes([dict(b, _k="b") for b in mine_b] + [dict(o, _k="o") for o in mine_o] + [dict(e, _k="e") for e in mine_e])
-        cells = []
-        for h in HOURS:
-            inner = ""
-            for it, lane in placed:
-                start_h = hour_of(it["starts_at"]) if it["starts_at"] >= lo else HOURS[0]
-                if start_h != h:
-                    continue
-                if it["_k"] == "b":
-                    inner += block_chip(it, lane)
-                elif it["_k"] == "o":
-                    span = (f"{it['starts_at'][11:]}–{it['ends_at'][11:]}" if it["starts_at"][:10] == it["ends_at"][:10] else "all day")
-                    inner += (f"<div class='sch block outlook'{strip(it['starts_at'], it['ends_at'], lane)} title='From their Outlook calendar'>"
-                              f"<b>Outlook</b> {t.esc(span)}<br>{t.esc(OUTLOOK_WORD[it['show_as']])}</div>")
-                else:
-                    inner += entry_chip(it, lane)
-            slot = f" data-slot='{t.esc(m)}|{day}|{h:02d}:00'" if can_book else ""
-            now_cls = " now" if d0 == ctx.now.date() and ctx.now.hour == h else ""
-            if now_cls:                              # the reference PSA's red line at the current time
-                inner += f"<i class=nowline style='left:{ctx.now.minute / 60 * 100:.0f}%' title='Now'></i>"
-            cells.append(f"<td class='hr{now_cls}'{slot}>{inner}</td>")
-        me = m.lower() == ctx.user.id.lower()
-        rows_html.append(f"<tr style='height:{(depth * 82 + 4) if depth else 48}px'><th class=who>{t.esc(_members.name_of(ctx.conn, m))}"
-                         + (" <span class=pill>me</span>" if me else "") + util_bar(hours_of(mine_b + mine_e)) + f"</th>{''.join(cells)}</tr>")
-    head = "".join(f"<th>{h:02d}:00</th>" for h in HOURS)
-    grid = (f"<div class=schedwrap><table class='schedgrid dispatch'><thead><tr><th class=whoh>Who</th>{head}</tr></thead>"
-            f"<tbody>{''.join(rows_html) or '<tr><td colspan=16 class=muted>Nobody works these boards yet.</td></tr>'}</tbody></table></div>")
+        rows_html = "".join(
+            "<tr>" + who_cell(m, hours_of([b for b in blocks if b["member"].lower() == m.lower()]
+                                          + [e for e in entries if e["member"].lower() == m.lower()]), CAPACITY * 5)
+            + "".join(cell(m, d) for d in days) + "</tr>" for m in people)
+        head = "".join(f"<th class='{'today' if d == ctx.now.date() else ''}'>{d.strftime('%a %d %b')}</th>" for d in days)
+        return (f"<div class=schedwrap><table class='schedgrid dispatch week'><thead><tr><th class=whoh>Resource</th>{head}</tr></thead>"
+                f"<tbody>{rows_html or '<tr><td colspan=8 class=muted>Nobody works these boards yet.</td></tr>'}</tbody></table></div>")
 
-    # To schedule: open tickets on the boards you work with no visit on this day, oldest first.
-    todo_rows = []
+    # ------------------------------------------------ the Service Tickets table
+    search = " ".join(q.get("q", "").split())[:80]
+    status_q = q.get("st", "")
+    include_scheduled = q.get("all") == "1"
+    todo_rows, status_names = [], []
     if shown_boards:
-        q = ",".join("?" * len(shown_boards))
-        todo_rows = ctx.conn.execute(
-            "SELECT t.work_item_id, t.priority, t.opened_at, t.owner, t.board_id, w.name AS summary, b.display_name AS board"
-            "  FROM ticket t JOIN work_item w ON w.work_item_id = t.work_item_id JOIN board b ON b.board_id = t.board_id"
-            f" WHERE t.board_id IN ({q}) AND b.is_unrouted = 0 AND t.merged_into IS NULL"
-            "   AND t.state NOT IN ('RESOLVED','CLOSED','CANCELLED')"
-            "   AND NOT EXISTS (SELECT 1 FROM ticket_schedule s WHERE s.work_item_id = t.work_item_id AND s.starts_at < ?"
-            "                   AND s.ends_at > ?)"
-            " ORDER BY t.priority, t.opened_at", (*sorted(shown_boards), hi, lo)).fetchall()
-    todo = "".join(
-        f"<div class='todo' draggable={'true' if can_book else 'false'} data-drag='ticket|{t.esc(r['work_item_id'])}'>"
-        f"{t.badge(r['priority'])} <a href='/ticket/{t.esc(r['work_item_id'])}'>{t.esc(r['work_item_id'])}</a> "
-        f"<span class=muted>{t.esc(common.human_age(r['opened_at'], now=ctx.now))}</span>"
-        f"<div>{t.esc((r['summary'] or '')[:60])}</div>"
-        f"<div class=muted>{t.esc(r['board'])}" + (f" · {t.esc(_members.name_of(ctx.conn, r['owner']))}" if r["owner"] else " · unassigned") + "</div></div>"
-        for r in todo_rows) or "<div class=muted>Nothing waiting to be scheduled on this day.</div>"
+        marks = ",".join("?" * len(shown_boards))
+        status_names = [r[0] for r in ctx.conn.execute(
+            f"SELECT DISTINCT name FROM board_status WHERE board_id IN ({marks}) AND is_closed = 0 ORDER BY name",
+            tuple(sorted(shown_boards)))]
+        sql = ("SELECT t.work_item_id, t.priority, t.opened_at, t.owner, t.board_id, w.name AS summary, b.display_name AS board,"
+               "       e.name AS entity, s.name AS status"
+               "  FROM ticket t JOIN work_item w ON w.work_item_id = t.work_item_id JOIN board b ON b.board_id = t.board_id"
+               "  LEFT JOIN entity e ON e.entity_id = w.entity_id"
+               "  LEFT JOIN board_status s ON s.board_status_id = t.board_status_id"
+               f" WHERE t.board_id IN ({marks}) AND b.is_unrouted = 0 AND t.merged_into IS NULL"
+               "   AND t.state NOT IN ('RESOLVED','CLOSED','CANCELLED')")
+        params: list = [*sorted(shown_boards)]
+        if not include_scheduled:
+            sql += ("   AND NOT EXISTS (SELECT 1 FROM ticket_schedule x WHERE x.work_item_id = t.work_item_id"
+                    "                   AND x.starts_at < ? AND x.ends_at > ?)")
+            params += [hi, lo]
+        if status_q:
+            sql += " AND s.name = ?"
+            params.append(status_q)
+        if search:
+            like = f"%{search.replace('%', '').replace('_', '')}%"
+            sql += " AND (t.work_item_id LIKE ? OR w.name LIKE ? OR e.name LIKE ?)"
+            params += [like, like, like]
+        sql += " ORDER BY t.priority, t.opened_at LIMIT 300"
+        todo_rows = ctx.conn.execute(sql, params).fetchall()
+    rows = "".join(
+        f"<tr draggable={'true' if can_book else 'false'} data-drag='ticket|{t.esc(r['work_item_id'])}' data-q='{t.esc((r['work_item_id'] + ' ' + (r['summary'] or '') + ' ' + (r['entity'] or '')).lower())}'>"
+        f"<td><a href='/ticket/{t.esc(r['work_item_id'])}'>{t.esc(r['work_item_id'])}</a></td>"
+        f"<td class=stsum title='{t.esc(r['summary'] or '')}'>{t.esc((r['summary'] or '')[:70])}</td>"
+        f"<td class=muted>{t.esc(r['entity'] or '—')}</td><td>{t.badge(r['priority'])}</td>"
+        f"<td class=muted>{t.esc(r['status'] or '')}</td>"
+        f"<td class=muted>{t.esc(name_of(r['owner'])) if r['owner'] else 'unassigned'}</td>"
+        f"<td class=muted>{t.esc(common.human_age(r['opened_at'], now=ctx.now))}</td></tr>"
+        for r in todo_rows) or ("<tr><td colspan=7 class=muted>" + ("Nothing matches." if (search or status_q) else
+                                                                   "Nothing waiting to be scheduled on this day.") + "</td></tr>")
+    st_opts = "<option value=''>Any status</option>" + "".join(
+        f"<option{' selected' if n == status_q else ''}>{t.esc(n)}</option>" for n in status_names)
+    hidden = (f"<input type=hidden name=day value='{t.esc(day)}'>" + (f"<input type=hidden name=view value=week>" if view == "week" else "")
+              + (f"<input type=hidden name=board value='{t.esc(board_q)}'>" if board_q in boards else "")
+              + ("<input type=hidden name=mine value=1>" if mine else "")
+              + (f"<input type=hidden name=who value='{t.esc(','.join(who_q))}'>" if who_q else ""))
+    tickets_panel = (
+        "<div class='card stpanel' id=stickets><div class=sthead><h3 style='margin:0'>" + t.icon("inbox")
+        + f"Service Tickets <span class=muted>{len(todo_rows)}</span></h3>"
+        "<button type=button class='iconbtn stfold' title='Hide the tickets' aria-label='Hide the tickets'>‹</button></div>"
+        f"<form method=get action='/dispatch' class='row stfilter'>{hidden}"
+        f"<div><input name=q value='{t.esc(search)}' placeholder='Search ticket, summary, company' aria-label='Search' id=stsearch></div>"
+        f"<div style='flex:0 0 150px'><select name=st aria-label='Status'>{st_opts}</select></div>"
+        f"<div style='flex:0 0 auto'><label class=tick><input type=checkbox name=all value=1{' checked' if include_scheduled else ''}> Include scheduled</label></div>"
+        "<div style='flex:0 0 auto'><button class='ghost small' type=submit>Filter</button></div></form>"
+        "<div class='tablewrap stwrap'><table class=sttable><thead><tr><th>Ticket #</th><th>Summary</th><th>Company</th><th>Pri</th>"
+        f"<th>Status</th><th>Owner</th><th>Age</th></tr></thead><tbody>{rows}</tbody></table></div>"
+        "<p class=why style='margin:8px 0 0'>Drag a row onto a resource's hour to book it, or open the ticket.</p></div>")
+
+    # --------------------------------------------------------------- the bar
     board_opts = "<option value=''>All my boards</option>" + "".join(
         f"<option value='{t.esc(b['board_id'])}'{' selected' if b['board_id'] == board_q else ''}>{t.esc(b['display_name'])}</option>"
         for b in ctx.conn.execute("SELECT board_id, display_name FROM board WHERE COALESCE(inactive, 0) = 0 AND is_unrouted = 0"
                                   " ORDER BY display_name") if b["board_id"] in boards)
-    prev_, next_ = (d0 - _td(days=1)).isoformat(), (d0 + _td(days=1)).isoformat()
-    keep = f"&board={board_q}" if board_q in boards else ""
-    keep += "&mine=1" if mine else ""
-    keep += f"&who={t.esc(','.join(who_q))}" if who_q else ""
-    # The People dialog (063): tick whose rows to show; Show is this once,
-    # Save keeps it as your view, Clear forgets it. Works without a mouse.
+    step = _td(days=7) if view == "week" else _td(days=1)
+    prev_, next_ = (d0 - step).isoformat(), (d0 + step).isoformat()
+    vq = "&view=week" if view == "week" else ""
     ticks = "".join(
         f"<label class=tick><input type=checkbox name=p value='{t.esc(p)}'{' checked' if p.lower() in {x.lower() for x in people} else ''}>"
-        f" {t.esc(_members.name_of(ctx.conn, p))}" + (f" <span class=muted>{t.esc(p)}</span>" if _members.name_of(ctx.conn, p).lower() != p.lower() else "")
+        f" {t.esc(name_of(p))}" + (f" <span class=muted>{t.esc(p)}</span>" if name_of(p).lower() != p.lower() else "")
         + "</label>" for p in everyone)
     showing = (f"{len(people)} of {len(everyone)}" if len(people) != len(everyone) else f"all {len(everyone)}")
     people_dlg = (
         "<dialog id=whodlg class=card style='max-width:560px;width:95%'><form method=dialog class=dlghead><h3 style='margin:0'>"
         + t.icon("users") + "Who is on the board</h3><button type=submit class=iconbtn aria-label=Close>" + t.icon("x") + "</button></form>"
         f"<form method=get action='/dispatch' id=whoform><input type=hidden name=day value='{t.esc(day)}'>"
+        + ("<input type=hidden name=view value=week>" if view == "week" else "")
         + (f"<input type=hidden name=board value='{t.esc(board_q)}'>" if board_q in boards else "")
         + "<p class=why>Tick the people whose rows you want. <b>Show</b> is for now; <b>Save as my view</b> keeps it "
           "whenever you open Dispatch; <b>Clear</b> goes back to everyone on your boards.</p>"
@@ -314,33 +434,36 @@ def index(ctx):
         + "</p></form></dialog>")
     who_btn = (f"<div style='flex:0 0 auto'><button type=button class=ghost data-open=whodlg title='Choose whose rows to show'>"
                + t.icon("users") + f" People <span class=muted>{showing}</span>" + ("" if not saved or who_q else " · saved") + "</button></div>")
+    title = d0.strftime("%A %d %b %Y") if view == "day" else f"Week of {monday.strftime('%d %b')} – {(monday + _td(days=6)).strftime('%d %b %Y')}"
     bar = ("<form method=get action='/dispatch' class='row schedbar'>"
-           f"<div style='flex:0 0 auto'><a class='btn ghost' href='/dispatch?day={prev_}{keep}' title='Previous day'>‹</a></div>"
-           f"<div style='flex:0 0 170px'><input type=date name=day value='{t.esc(day)}' aria-label='Day'></div>"
-           f"<div style='flex:0 0 auto'><a class='btn ghost' href='/dispatch?day={next_}{keep}' title='Next day'>›</a></div>"
+           "<div style='flex:0 0 auto'><span class=seg>"
+           f"<a class='btn{' on' if view == 'day' else ' ghost'}' href='/dispatch?day={day}{keep}'>Day</a>"
+           f"<a class='btn{' on' if view == 'week' else ' ghost'}' href='/dispatch?day={day}&view=week{keep}'>Week</a></span></div>"
+           + ("<input type=hidden name=view value=week>" if view == "week" else "")
+           + f"<div style='flex:0 0 auto'><a class='btn ghost' href='/dispatch?day={prev_}{vq}{keep}' title='Previous'>‹</a></div>"
+           f"<div style='flex:0 0 160px'><input type=date name=day value='{t.esc(day)}' aria-label='Day'></div>"
+           f"<div style='flex:0 0 auto'><a class='btn ghost' href='/dispatch?day={next_}{vq}{keep}' title='Next'>›</a></div>"
+           f"<div style='flex:0 0 auto'><a class='btn ghost' href='/dispatch?day={ctx.now.date().isoformat()}{vq}{keep}'>Today</a></div>"
            f"<div style='flex:0 0 200px'><select name=board aria-label='Board'>{board_opts}</select></div>"
-           f"<div style='flex:0 0 auto'><label><input type=checkbox name=mine value=1{' checked' if mine else ''}> Only me</label></div>"
+           f"<div style='flex:0 0 auto'><label class=tick><input type=checkbox name=mine value=1{' checked' if mine else ''}> Only me</label></div>"
            + (f"<input type=hidden name=who value='{t.esc(','.join(who_q))}'>" if who_q else "") + who_btn +
            "<div style='flex:0 0 auto'><button class=ghost type=submit>Show</button></div>"
-           f"<div style='flex:0 0 auto'><a class='btn ghost' href='/dispatch?day={ctx.now.date().isoformat()}{keep}'>Today</a></div>"
-           f"<div style='flex:0 0 auto'><a class='btn ghost' href='/schedule?week={t.esc(day)}'>Week</a></div></form>")
-    msg, err = ctx.request.query.get("msg", ""), ctx.request.query.get("err", "")
-    day_card = ((f"<div class='banner ok'>{t.esc(msg)}</div>" if msg else "")
-                + (f"<div class='banner err'>{t.esc(err)}</div>" if err else "")
-                + "<div class=dispatchwrap>"
-                "<div class=card><h3>" + t.icon("inbox") + "To schedule</h3><p class=why>Open tickets with no visit on this "
-                "day. Drag one onto a person's hour, or open it.</p><div class=todolist>" + todo + "</div></div>"
-                "<div class=card><h3>" + t.icon("calendar") + f"The day · {d0.strftime('%A %d %b %Y')}</h3>" + bar + grid
-                + "<p class=why style='margin-top:8px'>Drag a ticket onto an hour to book it; drag a visit to move it; "
-                  "click an hour to book by hand. ✓ marks a visit done, 👁 acknowledges your own. Dashed is tentative; "
-                  "grey Outlook chips are what their Outlook calendar says.</p></div></div>")
-    body = (
-        "<h1>Dispatch</h1><p class='sub'>Who is where today, what still needs a person, and who answers each board.</p>"
-        + day_card + queue + "".join(role_cards))
+           "<div style='flex:0 0 auto'><button type=button class='ghost stshow' title='Show the tickets'>" + t.icon("inbox") + " Tickets</button></div>"
+           "</form>")
+    legend = ("<p class='why dlegend' style='margin-top:8px'><span class='sch visit st-firm'>Firm</span>"
+              "<span class='sch visit st-tentative tentative'>Tentative</span><span class='sch visit done'>Done</span>"
+              "<span class='sch block outlook'>Outlook</span> Drag a ticket onto an hour to book it; drag a visit to move it; "
+              "drag its right edge to change when it ends; right-click a visit for Open, Done, Acknowledge and Delete; "
+              "double-click opens the ticket; click an empty hour to book by hand.</p>")
+    msg, err = q.get("msg", ""), q.get("err", "")
+    out = ((f"<div class='banner ok'>{t.esc(msg)}</div>" if msg else "")
+           + (f"<div class='banner err'>{t.esc(err)}</div>" if err else "")
+           + "<div class=dispatchwrap>" + tickets_panel
+           + "<div class='card dgrid'><h3>" + t.icon("calendar") + f"{t.esc(title)}</h3>" + bar
+           + (day_grid() if view == "day" else week_grid()) + legend + "</div></div>")
     if can_book:
-        body += slot_dialog(ctx, people, back=back)
-    body += people_dlg
-    return Response(body=t.page("Dispatch", body, user=ctx.user, active="dispatch", live="schedule"))
+        out += slot_dialog(ctx, people, back=back)
+    return out + people_dlg
 
 
 def assign(ctx):

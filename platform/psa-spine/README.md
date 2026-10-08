@@ -2228,6 +2228,33 @@ Teams-style reactions, pictures and files through the patient-details review, th
 
 Schema 072 is additive: `chat_reaction`, `chat_file`, `chat_survey`, and the nullable `board.chat_welcome`.
 
+## The Dispatch Portal, in the reference PSA's shape (8 Oct 2026, code only)
+
+Dada, 8 Oct 2026: *"we need to fix the dispatch portal and make it look like what connectwise looks like and function
+like connectwise"*. Confirmed before building: the day grid, a Service Tickets table with filters, Day + Week. The
+reference PSA's Dispatch Portal is INFERRED from its product pages and training material (its docs are behind sign-in,
+NOT VERIFIED).
+
+- **The day grid.** Resources are rows, each with their name and the hours booked against the day's capacity
+  (*3.5 / 8.0 h · 44%*, with the bar under it). The hours run across with a half-hour line in every cell and the red
+  line at now. A visit is a block from its start to its end, named by its ticket, its summary and its company, coloured
+  by its status: **firm** filled, **tentative** outlined, **done** green with a tick. Outlook time is striped grey. A
+  clash is outlined red. The legend under the grid says all of this.
+- **The hands.** Drag a row from Service Tickets onto a resource's hour to book it (an hour, the ticket becomes theirs if
+  nobody has it). Drag a visit to another person or hour to move it. Drag its **right edge** to change when it ends, in
+  half hours (`POST /schedule/resize`). **Right-click** a visit for *Open ticket*, *Mark done* / *Reopen*,
+  *Acknowledge* (your own) and *Delete the visit*. **Double-click** opens the ticket. Click an empty hour to book by
+  hand. Every action is one ordinary form post, so the forms still do all of it without a mouse.
+- **Service Tickets.** The left panel is a table, as the reference PSA lists them: Ticket #, Summary, Company,
+  Priority, Status, Owner, Age, the open tickets on the boards shown with no visit on the day. A search box (filters as
+  you type, and on Filter), a status filter, and *Include scheduled* to list the ones already booked. **‹** folds the
+  panel away to give the grid the width, remembered in the browser; *Tickets* on the bar brings it back.
+- **Day and Week.** The bar switches between the day and the week (`?view=week`): the seven days as columns, each
+  day's visits, tasks and Outlook time listed, hours booked against the week (five days' capacity). A visit dragged
+  onto another day keeps its time. *Today*, ‹ ›, the date, the board, *Only me* and *People* apply to both.
+
+No schema change. The Unrouted queue and the board roles stay below the portal.
+
 ## The email link opens the request (8 Oct 2026, schema 075)
 
 Dada, 8 Oct 2026: *"when users click on the see my requests it goes to a 404"*. MEASURED from Dada's screenshot:

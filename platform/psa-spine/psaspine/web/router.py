@@ -228,6 +228,7 @@ ROUTES = [
     ("POST", "/schedule/book", schedule_view.book),
     ("POST", "/schedule/slot", schedule_view.slot),
     ("POST", "/schedule/move", schedule_view.move),
+    ("POST", "/schedule/resize", schedule_view.resize),
     ("POST", "/schedule/block", schedule_view.block_add),
     ("POST", "/schedule/block/remove", schedule_view.block_remove),
     ("POST", "/dispatch/assign", dispatch.assign),

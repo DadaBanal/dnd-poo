@@ -187,9 +187,10 @@ def _visits(conn, boards, first: str, last: str):
     marks = ",".join("?" * len(boards))
     return conn.execute(
         "SELECT s.*, w.name AS summary, t.board_id, t.priority, t.state, st.name AS status_name,"
-        "       l.name AS location_name"
+        "       l.name AS location_name, e.name AS entity"
         "  FROM ticket_schedule s JOIN ticket t ON t.work_item_id = s.work_item_id"
         "  JOIN work_item w ON w.work_item_id = t.work_item_id"
+        "  LEFT JOIN entity e ON e.entity_id = w.entity_id"
         "  LEFT JOIN schedule_status st ON st.status_id = s.status_id"
         "  LEFT JOIN service_location l ON l.location_id = s.location_id"
         f" WHERE s.starts_at < ? AND s.ends_at > ? AND t.board_id IN ({marks})"

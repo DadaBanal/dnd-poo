@@ -16286,6 +16286,69 @@ class ConnectWiseShapeTest(unittest.TestCase):
         self.assertIn("data-slot='alice|2026-09-18|09:00'", page)
         self.assertIn("all 3", page)
 
+    def test_the_dispatch_portal_lists_tickets_books_resizes_and_shows_the_week(self):
+        """Dada, 8 Oct 2026: "fix the dispatch portal and make it look like what
+        connectwise looks like and function like connectwise". Confirmed: the
+        day grid with resources, hours booked, status colours, resize and a
+        right-click menu; a Service Tickets table with filters; Day + Week."""
+        from psaspine import schedule
+        sid = schedule.add(self.conn, "ITO-1", member="bob", starts_at=datetime(2026, 9, 18, 9), ends_at=datetime(2026, 9, 18, 10),
+                           note=None, actor="alice", at=self.at)
+        wid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="Mouse", impact="I3", urgency="U3",
+                                  requested_by=None, at=self.at)
+        self.conn.commit()
+        _, _, page = self._call("GET", "/dispatch", cookie=self.alice, query="day=2026-09-18")
+        # the Service Tickets table: a row a ticket, draggable, with the reference PSA's columns
+        self.assertIn("id=stickets", page)
+        self.assertIn("<th>Ticket #</th><th>Summary</th><th>Company</th><th>Pri</th><th>Status</th><th>Owner</th><th>Age</th>", page)
+        self.assertIn(f"<tr draggable=true data-drag='ticket|{wid}'", page)
+        self.assertNotIn("data-drag='ticket|ITO-1'", page)                         # it has a visit this day
+        # the grid: resources with hours booked; a firm visit, filled, with what the hands need
+        self.assertIn("<th class=whoh>Resource</th>", page)
+        self.assertIn("<b class=rname>Bob</b>", page)                                # the contact's name
+        self.assertIn("1.0 / 8.0 h · 12%", page)
+        self.assertIn("sch visit st-firm'", page)
+        self.assertIn(f"data-menu='ITO-1|{sid}|0|1|0'", page)                      # ticket, visit, not done, may work, not mine to ack
+        self.assertIn("data-span='2026-09-18T09:00|2026-09-18T10:00'", page)
+        self.assertIn("<i class=rz", page)
+        self.assertIn("class='btn on' href='/dispatch?day=2026-09-18'>Day</a>", page)
+        # filters: a search, a status, and scheduled tickets included on request
+        _, _, found = self._call("GET", "/dispatch", cookie=self.alice, query="day=2026-09-18&q=Mouse")
+        self.assertIn(f"data-drag='ticket|{wid}'", found)
+        self.assertNotIn("data-drag='ticket|ITO-2'", found)
+        _, _, every = self._call("GET", "/dispatch", cookie=self.alice, query="day=2026-09-18&all=1")
+        self.assertIn("data-drag='ticket|ITO-1'", every)
+        _, _, none = self._call("GET", "/dispatch", cookie=self.alice, query="day=2026-09-18&st=Resolved")
+        self.assertIn("Nothing matches.", none)
+        # the right edge dragged: a new end, the start and the person as they were
+        where = self._redirect("POST", "/schedule/resize", cookie=self.alice,
+                               form={"id": str(sid), "ends_at": "2026-09-18T11:30", "back": "/dispatch?day=2026-09-18"})
+        self.assertTrue(where.startswith("/dispatch?day=2026-09-18&msg=Visit now until 11:30"), where)
+        row = self.conn.execute("SELECT member, starts_at, ends_at FROM ticket_schedule WHERE schedule_id = ?", (sid,)).fetchone()
+        self.assertEqual(tuple(row), ("bob", "2026-09-18 09:00", "2026-09-18 11:30"))
+        where = self._redirect("POST", "/schedule/resize", cookie=self.alice,
+                               form={"id": str(sid), "ends_at": "2026-09-18T08:00", "back": "/dispatch?day=2026-09-18"})
+        self.assertIn("err=Not changed", where)
+        where = self._redirect("POST", "/schedule/resize", cookie=self._cookie_for("carol"),
+                               form={"id": str(sid), "ends_at": "2026-09-18T12:00", "back": "/dispatch?day=2026-09-18"})
+        self.assertIn("err=Not changed: no such visit that you can work", where)
+        # done: green with a tick, no edge to drag
+        schedule.set_done(self.conn, sid, True, actor="alice", at=self.at)
+        self.conn.commit()
+        _, _, page = self._call("GET", "/dispatch", cookie=self.alice, query="day=2026-09-18")
+        self.assertIn("sch visit st-firm done'", page)
+        self.assertNotIn("<i class=rz", page)
+        # the week: the seven days as columns, each day's visits listed, hours against the week
+        _, _, week = self._call("GET", "/dispatch", cookie=self.alice, query="day=2026-09-18&view=week")
+        self.assertIn("schedgrid dispatch week", week)
+        self.assertIn("Week of 14 Sep – 20 Sep 2026", week)
+        self.assertIn("<th class=''>Mon 14 Sep</th>", week)
+        self.assertIn("data-slot='bob|2026-09-18'", week)
+        self.assertIn("<b>09:00–11:30</b> <a href='/ticket/ITO-1'>ITO-1</a>", week)
+        self.assertIn("2.5 / 40.0 h", week)
+        self.assertIn("class='btn on' href='/dispatch?day=2026-09-18&view=week'>Week</a>", week)
+        self.assertIn("href='/dispatch?day=2026-09-25&view=week'", week)            # next week
+
     def test_the_dispatch_board_is_people_by_hours_and_entries_are_dragged(self):
         from psaspine import schedule
         sid = schedule.add(self.conn, "ITO-1", member="bob", starts_at=datetime(2026, 9, 18, 9), ends_at=datetime(2026, 9, 18, 10),
@@ -16309,14 +16372,14 @@ class ConnectWiseShapeTest(unittest.TestCase):
         _, _, today = self._call("GET", "/dispatch", cookie=self.alice, query="day=2026-09-17")
         self.assertIn("<i class=nowline style='left:0%'", today)                    # the fixture clock is 10:00
         self.assertNotIn("<i class=nowline", page)
-        self.assertIn("1.0/8.0 12%", page)                                           # bob: one hour booked
+        self.assertIn("1.0 / 8.0 h · 12%", page)                                    # bob: one hour booked
         self.assertIn("<span class='util lo'>", page)
         self.assertNotIn("sch visit clash", page)
         schedule.add(self.conn, wid, member="bob", starts_at=datetime(2026, 9, 18, 9, 30), ends_at=datetime(2026, 9, 18, 10, 30),
                      note=None, actor="alice", at=self.at, allow_conflict=True)
         self.conn.commit()
         _, _, page2 = self._call("GET", "/dispatch", cookie=self.alice, query="day=2026-09-18")
-        self.assertEqual(page2.count("sch visit clash"), 2)
+        self.assertEqual(page2.count("sch visit st-firm clash"), 2)
         self.assertIn("left:calc(0.50 * 100% + 2px)", page2)                        # 09:30 starts half way across the 09:00 cell
         self.assertIn("top:84px", page2)                                             # on the second lane
         # a reader drags nothing
