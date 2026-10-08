@@ -6355,6 +6355,19 @@ class SchedulingTest(unittest.TestCase):
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'SCHEDULE_CONFIG'").fetchone()[0], 3)
 
 
+def _chat_from_before_round_six(conn, *, requester, board_id, subject, first, at):
+    """A second open chat for one person, as a store could hold before chat
+    round six (8 Oct 2026) made one at a time the rule. Dada chose to leave
+    those for the desk to end, so the desk is still tested with them."""
+    from psaspine import chat
+    cid = conn.execute("INSERT INTO chat_session (board_id, requester, subject, status, started_at, last_at)"
+                       " VALUES (?,?,?,?,?,?)", (board_id, requester, subject, chat.WAITING, chat._stamp(at),
+                                                 chat._stamp(at))).lastrowid
+    chat._line(conn, cid, requester, chat.REQUESTER, first, at)
+    chat._line(conn, cid, "desk", chat.SYSTEM, chat.welcome(conn, board_id), at)
+    return cid, []
+
+
 class ModulesTest(unittest.TestCase):
     """039-043: the knowledge base, security roles, projects, the report writer
     and the read-only BizBox mirror with its change log."""
@@ -6903,7 +6916,7 @@ class ModulesTest(unittest.TestCase):
         self._call("POST", f"/my/chat/{started}/end", cookie=nurse)
         # one left on Unrouted (before 073), and one on IT Help, where alice works and carol only reads
         conn = self._conn()
-        first, _ = chat.start(conn, requester="nurse", board_id="UNROUTED", subject="Printer on ward 7",
+        first, _ = chat.start(conn, requester="jun.reyes", board_id="UNROUTED", subject="Printer on ward 7",
                               first="It prints blank pages since 7am.", at=self.at)
         cid, _ = chat.start(conn, requester="nurse", board_id="IT_HELP", subject="Teams phone silent",
                             first="The Teams phone on ward 7 does not ring.", at=self.at)
@@ -6955,7 +6968,8 @@ class ModulesTest(unittest.TestCase):
         self.assertIn(f"/my/{wid}", mine, "the requester sees the request it became")
         # a second chat joins an existing ticket as a Discussion note
         conn = self._conn()
-        cid2, _ = chat.start(conn, requester="nurse", board_id="IT_HELP", subject="Still silent", first="Same phone.", at=self.at)
+        cid2, _ = _chat_from_before_round_six(conn, requester="nurse", board_id="IT_HELP", subject="Still silent",
+                                              first="Same phone.", at=self.at)
         conn.commit()
         notes = lambda: [r[0] for r in self._conn().execute(  # noqa: E731
             "SELECT detail FROM ticket_event WHERE work_item_id = ? AND note_flag = 'DISCUSSION'", (wid,))]
@@ -7019,7 +7033,8 @@ class ModulesTest(unittest.TestCase):
         c = self._conn()
         lines = [r[0] for r in c.execute("SELECT body FROM chat_message WHERE chat_id = ? AND sender_kind = 'SYSTEM'", (cid,))]
         self.assertEqual(lines, [chat.DEFAULT_WELCOME.replace("{board}", "IT Help")])
-        cid_b, _ = chat.start(c, requester="nurse", board_id="IT_HELP", subject="Second in line", first="z", at=self.at)
+        cid_b, _ = _chat_from_before_round_six(c, requester="nurse", board_id="IT_HELP", subject="Second in line",
+                                               first="z", at=self.at)
         c.commit()
         self.assertEqual((chat.position(c, cid), chat.position(c, cid_b)), (1, 2))
         self.assertIn("you are number 2 in the queue",
@@ -7121,7 +7136,8 @@ class ModulesTest(unittest.TestCase):
         c = self._conn()
         one, _ = chat.start(c, requester="nurse", board_id="IT_HELP", subject="Label printer jams",
                             first="The ward 7 printer jams.", at=self.at)
-        two, _ = chat.start(c, requester="nurse", board_id="IT_HELP", subject="Mouse gone", first="No mouse.", at=self.at)
+        two, _ = _chat_from_before_round_six(c, requester="nurse", board_id="IT_HELP", subject="Mouse gone",
+                                             first="No mouse.", at=self.at)
         other, _ = chat.start(c, requester="jun.reyes", board_id="IT_HELP", subject="Cannot log in", first="Locked out.",
                               at=self.at)
         c.commit()
@@ -7286,8 +7302,8 @@ class ModulesTest(unittest.TestCase):
         self.assertIsNone(timers.for_ticket(self._conn(), wid, "alice"))
         # a second chat added to the same ticket brings its own time to confirm
         c = self._conn()
-        cid2, _ = chat.start(c, requester="nurse", board_id="IT_HELP", subject="Still silent", first="Same phone.",
-                             at=datetime(2026, 9, 17, 9, 50))
+        cid2, _ = _chat_from_before_round_six(c, requester="nurse", board_id="IT_HELP", subject="Still silent",
+                                              first="Same phone.", at=datetime(2026, 9, 17, 9, 50))
         chat.say(c, cid2, sender="alice", kind=chat.STAFF, body="Looking now.", at=datetime(2026, 9, 17, 9, 55))
         c.commit()
         _, h, _ = self._call("POST", f"/chat/{cid2}/attach", cookie=self.alice, form={"work_item_id": wid})
@@ -7349,6 +7365,113 @@ class ModulesTest(unittest.TestCase):
         n = len(discussion())
         self._call("POST", f"/chat/{cid2}/end", cookie=self.alice)
         self.assertEqual(len(discussion()), n)
+
+    def test_chat_one_at_a_time_typing_and_who_is_on(self):
+        """Chat round six. Dada, 8 Oct 2026: "a user can create a 100 chats at
+        the same time thats not good" and "add a ... is typing for presence and
+        also add to the requests portal and the desk portal presence for the
+        operators". Confirmed: one open chat a person, starting again goes back
+        to it, the button sends once; "... is typing" both ways; an operator is
+        online while a desk page is open, away after five minutes, Busy or Away
+        by hand, the In/Out board's Out wins; the portal shows how many and
+        their first names; the desk shows them in the quick view; and a
+        reminder that the chat stays."""
+        from psaspine import chat, live
+        from psaspine.web.views import chat as chat_view
+        live.reset()
+        self.addCleanup(live.reset)
+        now = [1000.0]
+        real_clock = live.clock
+        live.clock = lambda: now[0]
+        self.addCleanup(setattr, live, "clock", real_clock)
+        self._chat_desk()
+        nurse = self._cookie_for("nurse")
+        # nobody is on yet: the portal says so, and the form sends once
+        page = self._call("GET", "/my/chat", cookie=nurse)[2]
+        self.assertIn("Nobody from the helpdesk is online right now. Your chat waits until someone is in.", page)
+        self.assertIn("<form method=post action='/my/chat/new' data-once", page)
+        self.assertIn('form[data-once]', templates.SCRIPT)
+        # one at a time: the second press goes back to the first chat
+        _, h, _ = self._call("POST", "/my/chat/new", cookie=nurse, form={"subject": "Printer", "body": "Ward 7 printer jams."})
+        first = int(dict(h)["Location"].split("/my/chat/")[1].split("?")[0])
+        for _ in range(3):
+            _, h, _ = self._call("POST", "/my/chat/new", cookie=nurse, form={"subject": "Again", "body": "Again."})
+            self.assertEqual(dict(h)["Location"], f"/my/chat/{first}?already=1")
+        self.assertEqual(self._conn().execute("SELECT COUNT(*) FROM chat_session WHERE requester = 'nurse'").fetchone()[0], 1)
+        c = self._conn()
+        with self.assertRaises(chat.AlreadyOpen) as got:
+            chat.start(c, requester="nurse.other@pmcne.ph", board_id="IT_HELP", subject="x", first="y", at=self.at,
+                       same_person=["nurse"])                                    # the same person by another address
+        self.assertEqual(got.exception.chat_id, first)
+        c.rollback()
+        page = self._call("GET", "/my/chat", cookie=nurse)[2]
+        self.assertIn("You have a chat open", page)
+        self.assertIn(f"<a class=btn href='/my/chat/{first}'>Continue the chat</a>", page)
+        self.assertNotIn("action='/my/chat/new'", page)
+        self.assertIn(templates.esc(chat_view.CHAT_STAYS), page)
+        mine = self._call("GET", f"/my/chat/{first}", query="already=1", cookie=nurse)[2]
+        self.assertIn("You already have a chat open with the desk, so you are back in it.", mine)
+        self.assertIn(templates.esc(chat_view.CHAT_STAYS), mine)
+        self.assertIn(chat_view.CHAT_STAYS_TL, mine)
+        self.assertIn("id=chattyping", mine)
+        # presence: alice opens a desk page and is online; the ward reads her first name
+        self._call("GET", "/", cookie=self.alice)
+        self.assertEqual([(o["member"], o["state"]) for o in live.operators(self._conn())], [("alice", "ONLINE")])
+        poll = lambda: _json.loads(self._call("GET", f"/my/chat/{first}/messages.json", cookie=nurse)[2])  # noqa: E731
+        self.assertEqual(poll()["desk"], {"n": 1, "names": ["alice"], "words": "1 helpdesk staff online now: alice"})
+        self.assertIn("1 helpdesk staff online now: alice", self._call("GET", "/my/chat", cookie=nurse)[2])
+        j = _json.loads(self._call("GET", "/chat/waiting.json", cookie=self.alice)[2])
+        self.assertEqual([(o["first"], o["state"], o["me"]) for o in j["operators"]], [("alice", "ONLINE", True)])
+        self.assertEqual(j["me"], {"state": "ONLINE", "manual": None})
+        self.assertIsNone(_json.loads(self._call("GET", "/chat/waiting.json", cookie=nurse)[2]).get("me"))
+        # Busy and Away by hand, then automatic again
+        _, h, _ = self._call("POST", "/chat/presence", cookie=self.alice, form={"state": "BUSY", "back": "/chat"})
+        self.assertEqual(dict(h)["Location"], "/chat")
+        self.assertEqual(poll()["desk"]["words"], "1 helpdesk staff online now: alice (busy)")
+        self._call("POST", "/chat/presence", cookie=self.alice, form={"state": "AWAY"})
+        self.assertEqual(poll()["desk"]["n"], 0)
+        self._call("POST", "/chat/presence", cookie=self.alice, form={"state": "AUTO"})
+        self.assertEqual(live.state_of("alice"), "ONLINE")
+        self.assertTrue(self._call("POST", "/chat/presence", cookie=self._cookie_for("carol"),
+                                   form={"state": "BUSY"})[0].startswith("403"))
+        queue = self._call("GET", "/chat", cookie=self.alice)[2]
+        self.assertIn("id=chatpresence", queue)
+        self.assertIn("<button type=submit name=state value=BUSY class='ghost small'>Busy</button>", queue)
+        self.assertIn("function drawWho", templates.SCRIPT)
+        # no page for five minutes: away; half an hour: offline; the In/Out board's Out wins
+        now[0] += 6 * 60
+        self.assertEqual(live.state_of("alice"), "AWAY")
+        now[0] += 30 * 60
+        self.assertEqual(live.state_of("alice"), "OFFLINE")
+        self._call("GET", "/", cookie=self.alice)
+        c = self._conn()
+        c.execute("INSERT INTO member_presence (member, state, set_at, set_by) VALUES ('alice', 'OUT', '2026-09-17', 'alice')")
+        c.commit()
+        self.assertEqual([(o["state"], o["word"], o["on"]) for o in live.operators(self._conn())], [("OUT", "Out", False)])
+        c.execute("DELETE FROM member_presence WHERE member = 'alice'")
+        c.commit()
+        # typing, both ways, and gone after a few seconds or once sent
+        self._call("POST", f"/chat/{first}/send", cookie=self.alice, form={"body": "On my way."})
+        desk_poll = lambda: _json.loads(self._call("GET", f"/chat/{first}/messages.json", cookie=self.alice)[2])  # noqa: E731
+        self.assertEqual((poll()["typing"], desk_poll()["typing"]), ("", ""))
+        self._call("POST", f"/my/chat/{first}/typing", cookie=nurse)
+        self.assertEqual(desk_poll()["typing"], "nurse is typing\u2026")
+        self.assertEqual(poll()["typing"], "")                                     # not your own
+        self._call("POST", f"/chat/{first}/typing", cookie=self.alice)
+        self.assertEqual(poll()["typing"], "alice is typing\u2026")
+        self._call("POST", f"/chat/{first}/send", cookie=self.alice, form={"body": "Here now."})
+        self.assertEqual(poll()["typing"], "")                                     # sent: no longer typing
+        self._call("POST", f"/my/chat/{first}/typing", cookie=nurse)
+        now[0] += live.TYPING_SECONDS + 1
+        self.assertEqual(desk_poll()["typing"], "")                                # stopped a while ago
+        self.assertTrue(self._call("POST", f"/chat/{first}/typing", cookie=self._cookie_for("carol"))[0].startswith("404"))
+        self.assertTrue(self._call("POST", f"/my/chat/{first}/typing", cookie=self._cookie_for("rosa.mendoza"))[0]
+                        .startswith("404"))
+        # ended: the reminder goes, and a new chat can start
+        self._call("POST", f"/my/chat/{first}/end", cookie=nurse)
+        self.assertNotIn(templates.esc(chat_view.CHAT_STAYS), self._call("GET", f"/my/chat/{first}", cookie=nurse)[2])
+        _, h, _ = self._call("POST", "/my/chat/new", cookie=nurse, form={"subject": "Mouse", "body": "No mouse."})
+        self.assertNotIn(f"/my/chat/{first}", dict(h)["Location"])
 
     def test_chat_ends_with_or_without_asking_how_the_operator_did(self):
         """074. Dada, 7 Oct 2026: "option to close or end the chat and survey or

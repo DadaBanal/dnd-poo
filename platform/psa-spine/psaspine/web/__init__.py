@@ -395,6 +395,8 @@ def make_app(db_path: str, *, config: Config | None = None, clock=datetime.now):
     """Build the WSGI callable over a database file. `clock` is injectable so a
     test can pin 'now' without patching the module."""
     config = config or Config.from_env()
+    from .. import live
+    live.reset()            # chat round six: typing and presence belong to this app, from empty
 
     def application(environ, start_response):
         conn = db.connect(db_path)
@@ -525,6 +527,9 @@ def _route(conn, request: Request, config: Config, now: datetime) -> Response:
         except Exception:                              # noqa: BLE001 - before 073 there is no tick: nobody answers,
             user.chat_operator = False                 # and every other page still opens
         user.live_chats = live_for(ctx) if user.chat_operator else []
+        if user.chat_operator:                         # chat round six: a desk page of theirs is open
+            from .. import live
+            live.seen(user.id)
     conn.commit()
     return router.dispatch(ctx)
 

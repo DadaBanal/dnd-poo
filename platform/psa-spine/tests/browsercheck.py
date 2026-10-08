@@ -763,11 +763,21 @@ def main() -> int:
                  "Live chats opens a quick view with the waiting chat and Pick up")
             if os.environ.get("PSA_SHOTS"):
                 page.screenshot(path=os.path.join(os.environ["PSA_SHOTS"], "chat-quickview.png"))
+            note("who is on" in lv.inner_text().lower() and "tech (you)" in lv.inner_text().lower()
+                 and lv.locator("form.tme button[value=BUSY]").count() == 1,
+                 "the quick view says who is on, with you among them and your Busy / Away", lv.inner_text()[:120])
             page.keyboard.press("Escape")
             page.wait_for_timeout(150)
             note(not lv.is_visible(), "and Escape closes it")
             page.goto(f"{base}/chat", wait_until="domcontentloaded")
             note("Teams phone silent" in page.locator("#chatqueue").inner_text(), "the desk sees the waiting chat")
+            # chat round six: Busy by hand, from the Chat page, and back to automatic
+            page.locator("#chatpresence button[value=BUSY]").click()
+            page.wait_for_load_state("domcontentloaded")
+            note("Busy" in page.locator("#chatpresence .twho").inner_text()
+                 and page.locator("#chatpresence button.on[value=BUSY]").count() == 1, "an operator can set Busy by hand")
+            page.locator("#chatpresence button[value=AUTO]").click()
+            page.wait_for_load_state("domcontentloaded")
             page.goto(f"{base}/chat/{cid}", wait_until="domcontentloaded")
             ward = browser.new_context().new_page()
             ward.goto(f"{base}/login", wait_until="domcontentloaded")
@@ -782,10 +792,24 @@ def main() -> int:
                  "the ward reads the Taglish reminder of what to put in a chat, beside the box", pt[:160] or ward.url)
             if os.environ.get("PSA_SHOTS"):                    # a look at it by eye, when asked for
                 ward.screenshot(path=os.path.join(os.environ["PSA_SHOTS"], "chat-paalala.png"), full_page=True)
+            note(ward.locator("#chatopen a.btn").count() == 1 and ward.locator("#chatstart form").count() == 0,
+                 "with a chat open, the ward is sent back to it instead of starting another")
+            note("helpdesk staff online now: tech" in ward.locator("#deskon").inner_text().lower(),
+                 "the portal says who from the helpdesk is on", ward.locator("#deskon").inner_text())
             ward.goto(f"{base}/my/chat/{cid}", wait_until="domcontentloaded")
+            note(ward.locator("#chatstays").is_visible() and "Hindi po mawawala" in ward.locator("#chatstays").inner_text(),
+                 "and that the chat stays, to come back to")
             note("number 1 in the queue" in ward.locator("#chatstate").inner_text()
                  and "you are in the queue" in ward.locator("#chatlog").inner_text(),
                  "the ward reads 'please wait' and its place in the queue", ward.locator("#chatstate").inner_text())
+            page.locator("#chatsend textarea").press_sequentially("On my way")
+            try:
+                ward.wait_for_function("() => (document.getElementById('chattyping') || {}).textContent.indexOf('is typing') >= 0",
+                                       timeout=7000)
+                typed = ward.locator("#chattyping").inner_text()
+            except Exception:                                  # noqa: BLE001 - reported below
+                typed = ""
+            note("tech is typing" in typed.lower(), "the ward sees the operator typing", typed)
             page.fill("#chatsend textarea", "On my way to ward 7.")
             page.keyboard.press("Enter")
             page.wait_for_timeout(600)
@@ -796,6 +820,14 @@ def main() -> int:
                  "the requester sees it arrive by itself")
             note("is with you" in ward.locator("#chatstate").inner_text() and "has joined the chat" in
                  ward.locator("#chatlog").inner_text(), "and that someone has joined, without a reload")
+            ward.locator("#chatsend textarea").press_sequentially("Thank you")
+            try:
+                page.wait_for_function("() => (document.getElementById('chattyping') || {}).textContent.indexOf('is typing') >= 0",
+                                       timeout=7000)
+                typed = page.locator("#chattyping").inner_text()
+            except Exception:                                  # noqa: BLE001 - reported below
+                typed = ""
+            note("is typing" in typed, "and the operator sees the ward typing", typed)
             ward.fill("#chatsend textarea", "Thank you, I am at the nurses' station.")
             ward.keyboard.press("Enter")
             page.wait_for_timeout(4500)
@@ -851,9 +883,15 @@ def main() -> int:
             ward.goto(f"{base}/my/chat", wait_until="domcontentloaded")
             ward.fill("#chatstart input[name=subject]", "Mouse not working")
             ward.fill("#chatstart textarea[name=body]", "Ward 7 nurses' station PC, the mouse stopped.")
-            ward.click("#chatstart button[type=submit]")
+            ward.dblclick("#chatstart button[type=submit]")              # chat round six: twice, quickly
             ward.wait_for_load_state("domcontentloaded")
-            cid2 = ward.url.rstrip("/").rsplit("/", 1)[-1]
+            ward.wait_for_timeout(400)
+            cid2 = ward.url.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
+            import sqlite3 as _sq
+            with _sq.connect(str(db_path)) as _c:
+                opened = _c.execute("SELECT COUNT(*) FROM chat_session WHERE requester = 'nurse7'"
+                                    " AND status IN ('WAITING', 'ACTIVE')").fetchone()[0]
+            note(opened == 1, "Start pressed twice makes one chat", f"{opened} open")
             page.goto(f"{base}/chat/{cid2}", wait_until="domcontentloaded")
             page.locator(f"main form[action='/chat/{cid2}/pick'] button").click()
             page.wait_for_load_state("domcontentloaded")

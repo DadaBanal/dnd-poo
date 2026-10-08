@@ -2334,6 +2334,40 @@ browser on the hospital network proves that; 401 from the address proves the des
 Schema 076 adds `notification.portal_link`, NULL for every email sent before it. Handoff:
 `HANDOFF-cloud-sql01-WS36-20261008-email-link-076.md`.
 
+## Chat, round six: one chat at a time, "is typing", who is on (8 Oct 2026, code only)
+
+Dada, 8 Oct 2026: *"a user can create a 100 chats at the same time thats not good"* and *"add a ... is typing for
+presence and also add to the requests portal and the desk portal presence for the operators"*. Each part was confirmed
+before it was built.
+
+- **One open chat a person.** Starting a chat while one is waiting or being answered takes the ward back to the one
+  they have (*You already have a chat open with the desk, so you are back in it*). Every address the portal knows
+  them by counts as the same person. The check sits inside the statement that makes the chat, so a burst of presses
+  makes one. On SQLite that holds even under load; on SQL Server it narrows the gap to one statement (INFERRED). The
+  Start button sends once. Chats a person already had open from before are left for the desk to end, as Dada chose.
+- **The ward's Chat page with a chat open** shows *You have a chat open* with **Continue the chat** in place of the
+  form, the *Paalala* still beside it.
+- **"The chat stays."** On the ward's open chat, and on that card: *Your chat stays here. You can leave this page and
+  come back any time from Chat; the desk's replies will be waiting.* — *Hindi po mawawala ang chat. Balikan lang dito
+  kung may kailangan pa kayo.*
+- **"… is typing".** Both ways: the ward reads *Lea Cruz is typing…* while the operator types, and the operator
+  reads the ward's name the same way. A page sends one small ping every few seconds while words go in. The line goes
+  six seconds after the last key, or as soon as the message is sent.
+- **Who is on.** An operator is *Online* while a desk page of theirs is open (every desk page, and the banner's poll,
+  counts), *Away* after five minutes without one, and *Offline* after half an hour. They can set **Busy** or **Away** by
+  hand, and **Automatic** puts it back. The In/Out board's *Out* or *On leave* shows instead of any of it.
+  - **On the portal**, above the Chat form and on the ward's open chat: *2 helpdesk staff online now: Lea, Jun*, with
+    a busy one marked *(busy)*. With nobody on: *Nobody from the helpdesk is online right now. Your chat waits until
+    someone is in.* It updates with the chat's own poll.
+  - **On the desk**, at the top of the Live chats quick view: each operator with a dot and the word, and your own
+    Automatic / Busy / Away. The same card sits on the Chat page, so it can be set when no chat is live.
+
+Typing, last seen and a hand-set Busy/Away are kept in PSA-Desk's memory (`psaspine/live.py`), not in the database.
+They change every few seconds, mean nothing after a restart, and a table would put a write on every poll. A restart
+clears them: operators read offline until their next page loads, and Busy/Away goes back to Automatic. INFERRED from
+the code: PSA-Desk is one process, so every page reads the same state. The operator list (names, the In/Out board) is
+read at most every 30 seconds; the states themselves are always current.
+
 ## Chat, round five: ending a chat, and "how did I do?" (7 Oct 2026, schema 074)
 
 Dada, 7 Oct 2026: *"option to close or end the chat and survey or how i did at the end"*. Confirmed before building:

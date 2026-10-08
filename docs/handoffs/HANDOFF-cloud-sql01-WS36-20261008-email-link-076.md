@@ -2,6 +2,11 @@
 
 **One schema step, 076 (one nullable column), the usual restart, then a check that needs no mailbox.**
 
+> **Added 8 Oct 2026, before SQL01 applied this.** The head that carries this note also brings **chat round six**
+> (code only, no step of its own): one open chat a person, "… is typing" in a chat, and which chat operators are on,
+> on the portal and in the desk's Live chats quick view. All of it is kept in PSA-Desk's memory, so the restart in
+> step 8 is all it needs. See the README, *Chat, round six*. What to look for is at the end of section 5.
+
 This answers SQL01's report after 075 (Part 53, `2e57242`) and supersedes nothing. 075's handoff stands, with its
 correction note (PSA-Notify, held by disabling).
 
@@ -112,6 +117,12 @@ Once PSA-Notify has sent a requester email (any status change or Discussion note
     exists, so asking teaches nothing. Each ask is in Setup › Audit as `PORTAL_LINK_REQUEST`, with what happened. When
     one is queued, the ticket's activity says so and names who asked.
 - `who-sees` now uses the portal's own rule (with 075's own-domain match), so it cannot disagree with the portal.
+- **Chat round six** (added with the note at the top):
+  - A ward with a chat open who presses Start again lands back in that chat.
+  - The portal's Chat page shows *n helpdesk staff online now* with first names.
+  - An operator who sets **Busy** on the Chat page reads as busy to the wards.
+  - Typing in a chat shows *… is typing* on the other side within a few seconds.
+  - After the restart, every operator reads offline until their next desk page loads. That is expected.
 
 ## 6. Evidence
 

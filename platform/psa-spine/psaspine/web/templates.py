@@ -399,6 +399,13 @@ input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px;margin:0;
 .sla-ok{background:var(--ok-bg);color:var(--ok)} .sla-warn{background:var(--warn-bg);color:var(--warn)} .sla-bad{background:var(--bad-bg);color:var(--bad)}
 .pri{font-weight:700} .pri-P1{color:var(--bad)} .pri-P2{color:var(--warn)}
 .muted{color:var(--ink-2)} .why{font-size:12px;color:var(--ink-3)}
+.pdot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#8a939d;vertical-align:middle;flex:0 0 auto}
+.pdot.p-online{background:#1a7f37}.pdot.p-busy{background:#c62828}.pdot.p-away{background:#c9a400}
+.twho{display:flex;flex-wrap:wrap;gap:4px 14px;padding:2px 0 6px;font-size:12.5px}.twho .tp{white-space:nowrap}
+.tme{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:0 0 8px}.tme button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.deskon{margin:4px 0 10px;font-size:13px;display:flex;gap:6px;align-items:center}
+.chattyping{min-height:18px;font-size:12px;color:var(--ink-3);font-style:italic;padding:2px 6px}
+.chatstays{margin:8px 0 0}
 .plink{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin:6px 0 2px} .plink input{flex:1 1 100%;font-size:12px} .plink input[hidden]{display:none}
 .badge{display:inline-block;min-width:28px;text-align:center;border-radius:6px;padding:1px 6px;font-weight:700;font-size:11.5px;color:#fff;letter-spacing:.2px}
 .badge.P1{background:#c62828}.badge.P2{background:#b26a00}.badge.P3{background:var(--accent)}.badge.P4{background:#6b7785}
@@ -1829,6 +1836,10 @@ fetch(f.action,{method:"POST",credentials:"same-origin",headers:{"Accept":"appli
   out.value=j.link;out.hidden=false;
   if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(j.link).then(function(){show(" Copied. Paste it into your reply.")},pick)}else{pick()}})
 .catch(function(){done();f.submit()})});
+/* chat round six: a form marked data-once sends once; its button is given back if the browser returns to the page */
+d.addEventListener("submit",function(e){var f=e.target;if(!f.matches||!f.matches("form[data-once]")||e.defaultPrevented)return;
+setTimeout(function(){$$("button[type=submit],button:not([type])",f).forEach(function(b){b.disabled=true})},0)});
+addEventListener("pageshow",function(){$$("form[data-once] button").forEach(function(b){b.disabled=false})});
 /* a button with data-open opens that dialog; data-tick ticks every box in its form, or none */
 d.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest("[data-open]");if(b){var dl=d.getElementById(b.dataset.open);
   /* a phase's + Ticket opens the project ticket window with that phase picked (068) */
@@ -2155,7 +2166,16 @@ function row(c){var r=el('div','trow'),g=el('div','grow'),a=link(c);r.dataset.id
  if(c.status==='WAITING'&&c.can){var f=el('form');f.method='post';f.action='/chat/'+c.id+'/pick';var b=el('button','small','Pick up');b.type='submit';f.appendChild(b);r.appendChild(f)}
  else if(c.mine){var e=el('a','btn ghost small','End');e.href='/chat/'+c.id+'?end=1';r.appendChild(e)}
  return r}
-function drawPanel(lv){panel.textContent='';
+/* chat round six: who is on, and your own Busy / Away, at the top of the quick view */
+function drawWho(ops,me){if(!ops||!ops.length)return;var w=el('div','twho');
+ ops.forEach(function(o){var s=el('span','tp');s.title=o.name+' \u00b7 '+o.word;s.appendChild(el('i','pdot p-'+o.state.toLowerCase()));
+  s.appendChild(document.createTextNode(' '+o.first+(o.me?' (you)':'')+' \u00b7 '+o.word));w.appendChild(s)});
+ panel.appendChild(el('h4',null,'Who is on'));panel.appendChild(w);if(!me)return;
+ var f=el('form','tme');f.method='post';f.action='/chat/presence';f.appendChild(el('span','muted','You:'));
+ [['AUTO','Automatic'],['BUSY','Busy'],['AWAY','Away']].forEach(function(p){var b=el('button','ghost small'+((me.manual||'AUTO')===p[0]?' on':''),p[1]);
+  b.type='submit';b.name='state';b.value=p[0];f.appendChild(b)});
+ var bk=el('input');bk.type='hidden';bk.name='back';bk.value=location.pathname+location.search;f.appendChild(bk);panel.appendChild(f)}
+function drawPanel(lv,j){panel.textContent='';drawWho(j&&j.operators,j&&j.me);
  [['Waiting',function(c){return c.status==='WAITING'}],['In progress',function(c){return c.status!=='WAITING'}]].forEach(function(p){
   var some=lv.filter(p[1]);if(!some.length)return;panel.appendChild(el('h4',null,p[0]+' ('+some.length+')'));some.forEach(function(c){panel.appendChild(row(c))})});
  if(!lv.length)panel.appendChild(el('p','muted','No live chats.'));
@@ -2167,7 +2187,7 @@ tk.querySelector('.tclose').addEventListener('click',function(){open(false);tk.h
 /* polled in a background tab too: the ring matters most when the desk page is not the one in front */
 function look(){fetch('/chat/waiting.json',{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null}).then(function(j){
  if(!j)return;var lv=j.live||[],cs=j.chats||[];
- var key=JSON.stringify(lv);if(key!==lastL){drawTicker(lv,cs);drawPanel(lv);lastL=key}
+ var key=JSON.stringify([lv,j.operators,j.me]);if(key!==lastL){drawTicker(lv,cs);drawPanel(lv,j);lastL=key}
  word.textContent='💬 '+(j.word||'');tn.textContent=lv.length;
  if(!lv.length){open(false);tk.hidden=true;first=false;return}
  var old=seen(),fresh=cs.filter(function(c){return old.indexOf(c.id)<0});

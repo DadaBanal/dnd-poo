@@ -62,10 +62,36 @@ def _clean(body: str | None) -> str:
     return body[:MAX_LINE]
 
 
+class AlreadyOpen(Refused):
+    """Chat round six: the person already has a chat open; `chat_id` is it."""
+
+    def __init__(self, chat_id: int):
+        super().__init__("You already have a chat open with the desk. It is still there: carry on in it.")
+        self.chat_id = chat_id
+
+
+def open_chat_of(conn: sqlite3.Connection, identities) -> int | None:
+    """The chat this person has open (waiting or being answered), if any: the
+    oldest, when an older store still holds more than one."""
+    ids = sorted({(i or "").strip().lower() for i in identities if (i or "").strip()})
+    if not ids:
+        return None
+    row = conn.execute("SELECT chat_id FROM chat_session WHERE status IN ('WAITING', 'ACTIVE') AND LOWER(requester) IN"
+                       f" ({','.join('?' * len(ids))}) ORDER BY chat_id", ids).fetchone()
+    return row["chat_id"] if row else None
+
+
 def start(conn: sqlite3.Connection, *, requester: str, board_id: str, subject: str, first: str,
-          at: datetime) -> tuple[int, list]:
+          at: datetime, same_person=()) -> tuple[int, list]:
     """A requester starts a chat. It waits in the board's queue. Returns the
-    chat and the patient-detail findings on what they wrote."""
+    chat and the patient-detail findings on what they wrote.
+
+    One open chat a person (chat round six; Dada, 8 Oct 2026: "a user can create
+    a 100 chats at the same time thats not good"; confirmed: one at a time, and
+    starting again takes them back to the one they have). `same_person` is every
+    address the portal knows them by, so a second sign-in name is the same
+    person. The check is inside the statement that makes the chat, so a burst of
+    presses makes one; anything else raises AlreadyOpen with the chat they have."""
     requester = (requester or "").strip().lower()
     if not requester:
         raise Refused("Sign in to chat with the helpdesk.")
@@ -75,8 +101,13 @@ def start(conn: sqlite3.Connection, *, requester: str, board_id: str, subject: s
     first = _clean(first)
     if not subject:
         subject = " ".join(first.split())[:80]
+    ids = sorted({requester} | {(i or "").strip().lower() for i in same_person if (i or "").strip()})
     cur = conn.execute("INSERT INTO chat_session (board_id, requester, subject, status, started_at, last_at)"
-                       " VALUES (?,?,?,?,?,?)", (board_id, requester, subject, WAITING, _stamp(at), _stamp(at)))
+                       " SELECT ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM chat_session WHERE status IN"
+                       f" ('WAITING', 'ACTIVE') AND LOWER(requester) IN ({','.join('?' * len(ids))}))",
+                       (board_id, requester, subject, WAITING, _stamp(at), _stamp(at), *ids))
+    if cur.rowcount != 1 or not cur.lastrowid:
+        raise AlreadyOpen(open_chat_of(conn, ids))
     chat_id = cur.lastrowid
     _line(conn, chat_id, requester, REQUESTER, first, at)
     _line(conn, chat_id, "desk", SYSTEM, welcome(conn, board_id), at)       # 072: the "please wait" line
@@ -564,6 +595,21 @@ def chat_boards(conn: sqlite3.Connection) -> list:
     """The boards that take chats from the portal, by name."""
     return conn.execute("SELECT board_id, display_name FROM board WHERE takes_chats = 1 AND COALESCE(inactive, 0) = 0"
                         " ORDER BY display_name").fetchall()
+
+
+def operators(conn: sqlite3.Connection, board_id: str | None = None) -> list[str]:
+    """Chat operators who work a board that takes chats (or that one board), and
+    have not left. Empty on a store without 073's columns."""
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT m.member FROM member m JOIN board_member bm ON LOWER(bm.member) = LOWER(m.member)"
+            " JOIN board b ON b.board_id = bm.board_id WHERE m.chat_operator = 1 AND m.inactive_from IS NULL"
+            " AND bm.access IN ('WORK', 'ADMIN') AND b.takes_chats = 1"
+            + (" AND b.board_id = ?" if board_id else "") + " ORDER BY m.member",
+            (board_id,) if board_id else ()).fetchall()
+    except Exception:                                  # noqa: BLE001 - before 073 nobody answers chats
+        return []
+    return [r["member"] for r in rows]
 
 
 def is_operator(conn: sqlite3.Connection, member: str | None) -> bool:

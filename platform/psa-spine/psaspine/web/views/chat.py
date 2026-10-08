@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import urllib.parse
 
-from ... import chat
+from ... import chat, live
 from .. import templates as t
 from . import common
 
@@ -109,6 +109,8 @@ def _conversation(ctx, c, rows, *, me_kind: str, viewer: str, desk: bool, base: 
            f" data-desk='{1 if desk else 0}' data-last='{last}'>"
            + "".join(_bubble(d, me_kind=me_kind, rx=rx.get(str(d["id"]), []), desk=desk, base=base) for d in lines)
            + "</div>")
+    # chat round six: "... is typing", filled by the poll, said aloud to a screen reader
+    typing = f"<div id=chattyping class=chattyping aria-live=polite>{t.esc(_typing_words(c, desk))}</div>"
     picker = ("<div id=rxpick class=rxpick hidden>" + "".join(
         f"<button type=button data-e='{e}'>{e}</button>" for e in chat.REACTIONS) + "</div>")
     send = ""
@@ -122,7 +124,7 @@ def _conversation(ctx, c, rows, *, me_kind: str, viewer: str, desk: bool, base: 
                 "<button type=submit>" + t.icon("arrow") + " Send</button>"
                 "<div id=emopick class=emopick hidden>" + "".join(
                     f"<button type=button>{e}</button>" for e in EMOJIS) + "</div></form>")
-    return log + picker + send + _SCRIPT
+    return log + typing + picker + send + _SCRIPT
 
 
 _SCRIPT = """<script>(function(){
@@ -145,6 +147,9 @@ function poll(){if(busy||document.hidden)return;busy=true;
   var rx=j.reactions||{};(j.messages||[]).forEach(function(m){add(m,rx[m.id])});
   box.querySelectorAll('.cl[data-mid]:not(.sys)').forEach(function(el){var b=el.querySelector('.cr');if(b)b.innerHTML=bar(rx[el.dataset.mid])});
   var st=document.getElementById('chatstate');if(st&&j.status_words)st.textContent=j.status_words;
+  var ty=document.getElementById('chattyping');if(ty)ty.textContent=j.typing||'';
+  var dk=document.getElementById('deskon');if(dk&&j.desk){dk.querySelector('.dtxt').textContent=j.desk.words;
+   dk.querySelector('.pdot').className='pdot '+(j.desk.n?'p-online':'p-offline')}
   if(j.status==='CLOSED'){if(form){form.querySelectorAll('textarea,button,input').forEach(function(x){x.disabled=true})}
    var sv=document.getElementById('chatsurvey');if(sv&&!j.rated&&j.ask!==false){sv.hidden=false;
     var rt=sv.querySelector('.rwho');if(rt&&j.rate_title)rt.textContent=j.rate_title}}}).catch(function(){busy=false})}
@@ -161,7 +166,10 @@ document.addEventListener('click',function(e){if(pick&&!pick.hidden&&!e.target.c
 function react(mid,emo){var fd=new URLSearchParams();fd.set('message_id',mid);fd.set('emoji',emo);
  fetch(base+'/react?js=1',{method:'POST',body:fd,credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded'}}).then(function(){poll()})}
 box.scrollTop=box.scrollHeight;setInterval(poll,""" + str(POLL_MS) + """);
-if(form){var ta=form.querySelector('textarea'),fi=form.querySelector('input[type=file]'),emo=document.getElementById('emopick');
+if(form){var ta=form.querySelector('textarea'),fi=form.querySelector('input[type=file]'),emo=document.getElementById('emopick'),pinged=0;
+ /* chat round six: while words go in, the other side reads "... is typing" (one small ping every few seconds) */
+ ta.addEventListener('input',function(){var n=Date.now();if(!ta.value.trim()||n-pinged<2500)return;pinged=n;
+  fetch(base+'/typing',{method:'POST',credentials:'same-origin'}).catch(function(){})});
  function sendFile(file){var fd=new FormData();fd.append('file',file,file.name||'screenshot.png');fd.append('body',ta.value.trim());ta.value='';
   fetch(form.action+'?js=1',{method:'POST',body:fd,credentials:'same-origin'}).then(function(r){return r.json()}).then(function(j){
    if(j.error)alert(j.error);var w=document.getElementById('chatwarn');if(w&&j.warn)w.hidden=false;poll()})}
@@ -174,7 +182,7 @@ if(form){var ta=form.querySelector('textarea'),fi=form.querySelector('input[type
   ta.value=ta.value.slice(0,s)+b.textContent+ta.value.slice(ta.selectionEnd||s);ta.focus();ta.selectionStart=ta.selectionEnd=s+b.textContent.length});
  ta.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();form.requestSubmit?form.requestSubmit():form.submit()}});
  form.addEventListener('submit',function(e){if(!window.fetch)return;e.preventDefault();var v=ta.value.trim();if(!v)return;emo.hidden=true;
-  var fd=new URLSearchParams();fd.set('body',v);ta.value='';
+  var fd=new URLSearchParams();fd.set('body',v);ta.value='';pinged=0;
   fetch(form.action+'?js=1',{method:'POST',body:fd,credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded'}})
    .then(function(r){return r.json()}).then(function(j){if(j.error){ta.value=v;alert(j.error)}
     var w=document.getElementById('chatwarn');if(w&&j.warn){w.hidden=false}poll()}).catch(function(){ta.value=v})})}
@@ -249,6 +257,7 @@ def index(ctx):
             + (f"<div class='banner err'>{t.esc(q.get('err', ''))}</div>" if q.get("err") else "")
             + f"<h1>Chat</h1><p class=sub>Ward staff start a chat from the portal. Pick one up to answer it; make it a "
               f"ticket, or add it to one, when it needs work. {waiting} waiting.</p>"
+            + _presence_card(ctx)
             + "<div class=card id=chatqueue><div class=tablewrap><table><thead><tr><th>Who · their chat</th><th>About</th>"
               "<th>Board</th><th>State</th><th>Started</th><th>Lines</th><th>Ticket · rating</th></tr></thead><tbody>"
             + ("".join(row(r) for r in rows) or "<tr><td colspan=7 class=muted>No chats.</td></tr>")
@@ -339,10 +348,82 @@ RATE_LEAD = "Paki-rate po ang tulong na natanggap ninyo."
 def _poll(ctx, c, *, viewer: str, desk: bool, base: str):
     after = ctx.request.query.get("after", "0")
     rows = chat.messages(ctx.conn, c["chat_id"], after=int(after) if after.isdigit() else 0)
-    return _json({"status": c["status"], "status_words": _status_words(c, ctx.conn, desk=desk),
-                  "messages": _line_dicts(ctx, c, rows, viewer=viewer, desk=desk, base=base),
-                  "reactions": _rx(ctx, c, viewer), "rated": chat.survey_of(ctx.conn, c["chat_id"]) is not None,
-                  "ask": chat.asked(c), "rate_title": _rate_title(ctx.conn, c)})
+    out = {"status": c["status"], "status_words": _status_words(c, ctx.conn, desk=desk),
+           "messages": _line_dicts(ctx, c, rows, viewer=viewer, desk=desk, base=base),
+           "reactions": _rx(ctx, c, viewer), "rated": chat.survey_of(ctx.conn, c["chat_id"]) is not None,
+           "ask": chat.asked(c), "rate_title": _rate_title(ctx.conn, c), "typing": _typing_words(c, desk)}
+    if not desk:
+        out["desk"] = desk_on(ctx.conn, c["board_id"])
+    return _json(out)
+
+
+def _typing_words(c, desk: bool) -> str:
+    """Chat round six: what the other side is doing, in words; nothing once ended."""
+    if c["status"] == chat.CLOSED:
+        return ""
+    who = live.who_is_typing(c["chat_id"], chat.REQUESTER if desk else chat.STAFF)
+    return f"{who} is typing\u2026" if who else ""
+
+
+def desk_on(conn, board_id: str | None = None) -> dict:
+    """Chat round six, for the portal: how many of the desk's chat operators are
+    on, and their first names (a busy one says so)."""
+    on = [o for o in live.operators(conn, board_id) if o["on"]]
+    names = [o["first"] + (" (busy)" if o["state"] == "BUSY" else "") for o in on]
+    if not on:
+        words = "Nobody from the helpdesk is online right now. Your chat waits until someone is in."
+    else:
+        words = f"{len(on)} helpdesk staff online now: " + ", ".join(names)
+    return {"n": len(on), "names": names, "words": words}
+
+
+def _desk_on_line(conn, board_id: str | None = None) -> str:
+    d = desk_on(conn, board_id)
+    return (f"<p id=deskon class=deskon><span class='pdot {'p-online' if d['n'] else 'p-offline'}' aria-hidden=true></span>"
+            f" <span class=dtxt>{t.esc(d['words'])}</span></p>")
+
+
+def typing(ctx, chat_id):
+    """POST /chat/<id>/typing: the operator is typing in it."""
+    c = _load(ctx, chat_id, need="WORK")
+    if c["status"] != chat.CLOSED:
+        live.typing(c["chat_id"], chat.STAFF, chat._name(ctx.conn, ctx.user.id))
+    return _json({"ok": True})
+
+
+def presence_set(ctx):
+    """POST /chat/presence: an operator sets Busy or Away by hand, or back to
+    automatic. Kept while the desk runs (live.py)."""
+    from .. import HttpError
+    if not chat.is_operator(ctx.conn, ctx.user.id):
+        raise HttpError("403 Forbidden", "Presence is for chat operators.")
+    f = ctx.request.form()
+    live.set_manual(ctx.user.id, f.get("state"))
+    if _wants_json(ctx):
+        return _json({"state": live.state_of(ctx.user.id)})
+    back = f.get("back", "/chat")
+    return _back(back if back.startswith("/") and not back.startswith("//") else "/chat")
+
+
+def _presence_card(ctx) -> str:
+    """Chat round six, on the desk's Chat page: who is on, and your own setting."""
+    ops = live.operators(ctx.conn)
+    if not ops:
+        return ""
+    mine = live.manual_of(ctx.user.id) or "AUTO"
+    dots = "".join(
+        f"<span class=tp title='{t.esc(o['name'])} · {t.esc(o['word'])}'><i class='pdot p-{o['state'].lower()}'></i> "
+        f"{t.esc(o['name'])}{' (you)' if o['member'].lower() == ctx.user.id.lower() else ''}"
+        f" <span class=muted>· {t.esc(o['word'])}</span></span>" for o in ops)
+    me = ""
+    if chat.is_operator(ctx.conn, ctx.user.id):
+        me = ("<form method=post action='/chat/presence' class=tme><span class=muted>You:</span>"
+              + "".join(f"<button type=submit name=state value={k} class='ghost small{' on' if mine == k else ''}'>{w}</button>"
+                        for k, w in (("AUTO", "Automatic"), ("BUSY", "Busy"), ("AWAY", "Away")))
+              + "<input type=hidden name=back value='/chat'></form>"
+              "<p class=why style='margin:4px 0 0'>Automatic is online while a desk page is open, away after five "
+              "minutes without one. The In/Out board's Out or On leave shows instead.</p>")
+    return f"<div class=card id=chatpresence><h3>Who is on</h3><div class=twho>{dots}</div>{me}</div>"
 
 
 def messages_json(ctx, chat_id):
@@ -381,6 +462,7 @@ def send(ctx, chat_id):
     try:
         mid, _ = _say_or_file(ctx, c, sender=ctx.user.id, kind=chat.STAFF)
         ctx.conn.commit()
+        live.stop_typing(c["chat_id"], chat.STAFF)
     except chat.Refused as exc:
         ctx.conn.rollback()
         return _json({"error": str(exc)}) if _wants_json(ctx) else _back(f"/chat/{c['chat_id']}", err=str(exc))
@@ -457,8 +539,13 @@ def waiting_json(ctx):
     rows = live_for(ctx)
     keep = ("id", "subject", "who", "name", "nth", "total", "label", "board", "status", "with", "since", "waited",
             "last", "last_from", "can", "mine")
+    me = ctx.user.id.lower()
+    ops = [{"name": o["name"], "first": o["first"], "state": o["state"], "word": o["word"], "me": o["member"].lower() == me}
+           for o in live.operators(ctx.conn)]
     return _json({"chats": [{k: r[k] for k in keep} for r in rows if r["status"] == chat.WAITING],
-                  "live": [{k: r[k] for k in keep} for r in rows], "word": t.chat_ticker(rows)[0]})
+                  "live": [{k: r[k] for k in keep} for r in rows], "word": t.chat_ticker(rows)[0],
+                  "operators": ops, "me": {"state": live.state_of(ctx.user.id), "manual": live.manual_of(ctx.user.id)}
+                  if chat.is_operator(ctx.conn, ctx.user.id) else None})
 
 
 def pick(ctx, chat_id):
@@ -553,6 +640,17 @@ PAALALA = (
 PAALALA_PHI = "Huwag po ilagay ang pangalan o anumang detalye ng pasyente."
 
 
+# Chat round six. Dada, 8 Oct 2026: "a reminder that the chat stays just come
+# back to this if you need to do anything".
+CHAT_STAYS = ("Your chat stays here. You can leave this page and come back any time from Chat; the desk's replies "
+              "will be waiting.")
+CHAT_STAYS_TL = "Hindi po mawawala ang chat. Balikan lang dito kung may kailangan pa kayo."
+
+
+def _chat_stays() -> str:
+    return f"<p class='why chatstays' id=chatstays>💬 {t.esc(CHAT_STAYS)} <i>{t.esc(CHAT_STAYS_TL)}</i></p>"
+
+
 def _paalala() -> str:
     return (f"<div class='card paalala' id=chatpaalala><h3>📝 {t.esc(PAALALA_TITLE)}</h3><p>{t.esc(PAALALA_LEAD)}</p><ul>"
             + "".join(f"<li><b>{t.esc(k)}</b> — {t.esc(v)}</li>" for k, v in PAALALA)
@@ -564,8 +662,10 @@ def my_index(ctx, *, error: str = ""):
     started out of hours waits until someone from the desk is in."""
     from .. import Response
     from .portal import _identities
-    rows = chat.of_requester(ctx.conn, _identities(ctx))
+    ids = _identities(ctx)
+    rows = chat.of_requester(ctx.conn, ids)
     boards = list(chat.chat_boards(ctx.conn))          # 073: only the boards that take chats (PMO Helpdesk)
+    open_id = chat.open_chat_of(ctx.conn, ids)          # chat round six: one at a time
     if len(boards) > 1:
         who = ("<label>Who is this for? <select name=board_id required>"
                + "".join(f"<option value='{t.esc(b['board_id'])}'>{t.esc(b['display_name'])}</option>" for b in boards)
@@ -588,6 +688,17 @@ def my_index(ctx, *, error: str = ""):
                "<div><button type=submit>Start the chat</button></div></form></div>" + _paalala() + "</div>"
              if boards else "<div class='banner err' id=chatstart>Chat is not available right now. Please raise a request, "
                             "or ring the desk.</div>")
+    start = start.replace("<form method=post action='/my/chat/new'", "<form method=post action='/my/chat/new' data-once")
+    if open_id is not None:
+        oc = chat.get(ctx.conn, open_id)
+        start = ("<div class=grid2 style='grid-template-columns:minmax(0,3fr) minmax(0,2fr);align-items:start'>"
+                 f"<div class=card id=chatopen><h3>{t.icon('note')}You have a chat open</h3>"
+                 f"<p><b>{t.esc(oc['subject'])}</b> · {t.esc(_status_words(oc, ctx.conn))}</p>{_chat_stays()}"
+                 f"<p><a class=btn href='/my/chat/{open_id}'>Continue the chat</a></p>"
+                 "<p class=why style='margin:0'>One chat at a time: when this one ends, you can start another.</p></div>"
+                 + _paalala() + "</div>")
+    if boards:
+        start = _desk_on_line(ctx.conn, boards[0]["board_id"] if len(boards) == 1 else None) + start
     body = ((f"<div class='banner err'>{t.esc(error)}</div>" if error else "")
             + "<h1>Chat with the helpdesk</h1><p class='sub'>Type what is wrong and someone from the desk will answer "
               "here. If it needs work, they will raise a request for you.</p>"
@@ -611,10 +722,16 @@ def my_start(ctx):
         else:
             return my_index(ctx, error="Chat is not available right now. Please raise a request, or ring the desk.")
     requester = (getattr(ctx.user, "email", None) or ctx.user.id or "").lower()
+    from .portal import _identities
     try:
         cid, findings = chat.start(ctx.conn, requester=requester, board_id=chosen, subject=f.get("subject", ""),
-                                   first=f.get("body", ""), at=ctx.now)
+                                   first=f.get("body", ""), at=ctx.now, same_person=_identities(ctx))
         ctx.conn.commit()
+    except chat.AlreadyOpen as exc:                    # chat round six: back to the one they have
+        ctx.conn.rollback()
+        if exc.chat_id is not None:
+            return _back(f"/my/chat/{exc.chat_id}", already="1")
+        return my_index(ctx, error=str(exc))
     except chat.Refused as exc:
         ctx.conn.rollback()
         return my_index(ctx, error=str(exc))
@@ -650,9 +767,14 @@ def my_detail(ctx, chat_id):
     body = ("<a class=backbtn href='/my/chat'>" + t.icon("left") + "<span class=lbl>Your chats</span></a>"
             f"<h1>{t.esc(c['subject'])}</h1><p class='sub'>{t.esc(c['board_name'])} · "
             f"<span id=chatstate class=chatstate>{t.esc(_status_words(c, ctx.conn))}</span></p>"
-            f"<div id=chatwarn class='banner err'{'' if warn else ' hidden'}>{t.esc(WARN)}</div>" + tk
+            + (_desk_on_line(ctx.conn, c["board_id"]) if c["status"] != chat.CLOSED else "")
+            + ("<div class='banner ok' id=chatalready>You already have a chat open with the desk, so you are back in "
+               "it. What you typed on the form was not sent: write it below.</div>"
+               if ctx.request.query.get("already") == "1" and c["status"] != chat.CLOSED else "")
+            + f"<div id=chatwarn class='banner err'{'' if warn else ' hidden'}>{t.esc(WARN)}</div>" + tk
             + "<div class=card>" + _conversation(ctx, c, rows, me_kind=chat.REQUESTER, viewer=c["requester"], desk=False,
                                                   base=f"/my/chat/{cid}", can_send=c["status"] != chat.CLOSED)
+            + (_chat_stays() if c["status"] != chat.CLOSED else "")
             + end_form + "</div>" + survey)
     return Response(body=t.page("Chat", body, user=ctx.user, active="chat"))
 
@@ -667,6 +789,7 @@ def my_send(ctx, chat_id):
     try:
         mid, findings = _say_or_file(ctx, c, sender=c["requester"], kind=chat.REQUESTER)
         ctx.conn.commit()
+        live.stop_typing(c["chat_id"], chat.REQUESTER)
     except chat.Refused as exc:
         ctx.conn.rollback()
         if _wants_json(ctx):
@@ -675,6 +798,14 @@ def my_send(ctx, chat_id):
     if _wants_json(ctx):
         return _json({"id": mid, "warn": bool(findings)})
     return _back(f"/my/chat/{c['chat_id']}", warn="1" if findings else "")
+
+
+def my_typing(ctx, chat_id):
+    """POST /my/chat/<id>/typing: the ward is typing in their chat."""
+    c = _mine(ctx, chat_id)
+    if c["status"] != chat.CLOSED:
+        live.typing(c["chat_id"], chat.REQUESTER, chat._name(ctx.conn, c["requester"]))
+    return _json({"ok": True})
 
 
 def my_end(ctx, chat_id):
