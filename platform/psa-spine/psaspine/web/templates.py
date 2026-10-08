@@ -851,6 +851,48 @@ main button.ghost,main .btn.ghost,.backbtn{
   radial-gradient(1000px 600px at 104% -6%,rgb(34 211 238/.30),transparent 60%),
   radial-gradient(1100px 760px at 60% 125%,rgb(168 85 247/.22),transparent 60%),
   linear-gradient(180deg,#d6ddee,#cdd6ea 60%,#d3d9ec);background-attachment:fixed}
+/* the tints (8 Oct 2026): peach, purple and pink casts over the light theme. The canvas, the cards'
+   edges, the accent and the glows take the colour; ink stays dark so nothing loses its contrast. */
+:root[data-tint=peach]{--accent:#d9663a;--accent-2:#bf5330;--canvas:#f6e6dc;--surface:#fff6f0;--surface-2:#fbeae0;--surface-3:#f3d9c9;
+  --line:#ebcfbf;--line-2:#dbb49e;--teal:#f0a070;--violet:#e07a4f;--neon1:#ffb38a;--neon2:#f0705a;--s1:#d9663a;--s2:#f0a070;
+  --glass-bg:rgb(255 246 240/.80);--glass-line:rgb(200 110 70/.18);--glow:rgb(230 120 70/.32);
+  --l1:linear-gradient(180deg,#fffaf6,#fdf0e8);--l1-edge:linear-gradient(180deg,#fff,rgb(200 110 70/.22) 40%,rgb(200 110 70/.32));
+  --l2-bg:rgb(255 248 243/.88);--well:#fdf1ea;--well-shadow:inset 0 1px 2px rgb(120 60 30/.10),inset 0 0 0 1px rgb(200 110 70/.20)}
+:root[data-tint=peach] body{background:
+  radial-gradient(1100px 650px at 6% -12%,rgb(255 150 100/.40),transparent 60%),
+  radial-gradient(900px 560px at 100% 0%,rgb(255 200 140/.36),transparent 62%),
+  radial-gradient(900px 700px at 60% 120%,rgb(240 120 90/.22),transparent 60%),
+  linear-gradient(180deg,#f9e9df,#f3dccd);background-attachment:fixed}
+:root[data-tint=purple]{--accent:#7c4ddb;--accent-2:#6539bf;--canvas:#ebe4f7;--surface:#f8f5fe;--surface-2:#efe8fa;--surface-3:#e2d8f3;
+  --line:#d8cbee;--line-2:#c2aee3;--teal:#b07ff5;--violet:#7c4ddb;--neon1:#c9a2ff;--neon2:#8b5cf6;--s1:#7c4ddb;--s2:#b07ff5;
+  --glass-bg:rgb(248 245 254/.80);--glass-line:rgb(120 80 200/.18);--glow:rgb(130 90 220/.34);
+  --l1:linear-gradient(180deg,#fdfbff,#f3eefc);--l1-edge:linear-gradient(180deg,#fff,rgb(120 80 200/.22) 40%,rgb(120 80 200/.32));
+  --l2-bg:rgb(250 247 255/.88);--well:#f4effc;--well-shadow:inset 0 1px 2px rgb(60 30 120/.10),inset 0 0 0 1px rgb(120 80 200/.20)}
+:root[data-tint=purple] body{background:
+  radial-gradient(1100px 650px at 6% -12%,rgb(150 100 255/.40),transparent 60%),
+  radial-gradient(900px 560px at 100% 0%,rgb(200 150 255/.34),transparent 62%),
+  radial-gradient(900px 700px at 60% 120%,rgb(110 70 220/.24),transparent 60%),
+  linear-gradient(180deg,#ece4f8,#e2d7f2);background-attachment:fixed}
+:root[data-tint=pink]{--accent:#d8408a;--accent-2:#bb2f74;--canvas:#f8e3ec;--surface:#fff5f9;--surface-2:#fbe8f0;--surface-3:#f3d4e2;
+  --line:#edc9d8;--line-2:#dfa9c2;--teal:#f58ab8;--violet:#d8408a;--neon1:#ff9ecb;--neon2:#f0607a;--s1:#d8408a;--s2:#f58ab8;
+  --glass-bg:rgb(255 245 249/.80);--glass-line:rgb(210 70 140/.18);--glow:rgb(220 80 150/.32);
+  --l1:linear-gradient(180deg,#fffafc,#fdeef4);--l1-edge:linear-gradient(180deg,#fff,rgb(210 70 140/.22) 40%,rgb(210 70 140/.32));
+  --l2-bg:rgb(255 247 251/.88);--well:#fcf0f5;--well-shadow:inset 0 1px 2px rgb(120 30 70/.10),inset 0 0 0 1px rgb(210 70 140/.20)}
+:root[data-tint=pink] body{background:
+  radial-gradient(1100px 650px at 6% -12%,rgb(255 110 170/.40),transparent 60%),
+  radial-gradient(900px 560px at 100% 0%,rgb(255 170 210/.36),transparent 62%),
+  radial-gradient(900px 700px at 60% 120%,rgb(240 90 140/.22),transparent 60%),
+  linear-gradient(180deg,#f9e4ee,#f3d6e3);background-attachment:fixed}
+/* the theme menu */
+.thememenu{position:absolute;z-index:120;min-width:180px;padding:6px;background:var(--card);border:1px solid var(--line);border-radius:12px;
+  box-shadow:0 10px 28px rgba(0,0,0,.25);display:flex;flex-direction:column;gap:2px}
+.thememenu button{display:flex;align-items:center;gap:10px;background:none;border:0;text-align:left;padding:7px 10px;border-radius:8px;font:inherit;
+  font-weight:500;color:var(--ink);cursor:pointer;height:auto;min-width:0;justify-content:flex-start}
+.thememenu button:hover{background:var(--surface-2)}.thememenu button.on{background:var(--accent-bg);font-weight:600}
+.thememenu .sw{width:18px;height:18px;border-radius:50%;border:1px solid rgb(0 0 0/.15);flex:0 0 auto}
+.thememenu .sw.dark{background:linear-gradient(135deg,#0a1022,#3b4a8a)}.thememenu .sw.light{background:linear-gradient(135deg,#ffffff,#c9d4ee)}
+.thememenu .sw.peach{background:linear-gradient(135deg,#ffd9c2,#e8734a)}.thememenu .sw.purple{background:linear-gradient(135deg,#e2d4ff,#7c4ddb)}
+.thememenu .sw.pink{background:linear-gradient(135deg,#ffd6e8,#d8408a)}
 :root[data-theme=light] header.top{box-shadow:var(--l2-shadow)!important}
 :root[data-theme=light] header.top::after{opacity:1}
 :root[data-theme=light] main h1:not(.sumline){background:linear-gradient(92deg,#0f1630 20%,#0891b2 62%,#7c3aed);
@@ -1172,10 +1214,21 @@ var d=document,root=d.documentElement;
 function $(s,c){return (c||d).querySelector(s)}function $$(s,c){return Array.prototype.slice.call((c||d).querySelectorAll(s))}
 function inField(e){var t=e.target;return t&&(/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)||t.isContentEditable)}
 /* theme */
+var TINTS=["peach","purple","pink"];
 function setTheme(t){try{if(t)localStorage.setItem("psa-theme",t);else localStorage.removeItem("psa-theme")}catch(e){}
+  if(TINTS.indexOf(t)>=0){root.dataset.theme="light";root.dataset.tint=t;return}delete root.dataset.tint;
   if(t)root.dataset.theme=t;else delete root.dataset.theme}
-function toggleTheme(){var dark=root.dataset.theme?root.dataset.theme==="dark":matchMedia("(prefers-color-scheme: dark)").matches;setTheme(dark?"light":"dark")}
-var tb=$("#theme");if(tb)tb.addEventListener("click",toggleTheme);
+function curTheme(){return root.dataset.tint||root.dataset.theme||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light")}
+function toggleTheme(){setTheme(curTheme()==="dark"?"light":"dark")}
+/* the theme menu (8 Oct 2026): Dark, Light, Peach, Purple, Pink; Escape or a click away closes it; t still flips dark and light */
+var tb=$("#theme"),tm=null;function closeTheme(){if(tm){tm.remove();tm=null;if(tb)tb.setAttribute("aria-expanded","false")}}
+if(tb)tb.addEventListener("click",function(e){e.stopPropagation();if(tm){closeTheme();return}var m=d.createElement("div");m.className="thememenu";m.setAttribute("role","menu");
+  [["dark","Dark"],["light","Light"],["peach","Peach"],["purple","Purple"],["pink","Pink"]].forEach(function(o){var b=d.createElement("button");b.type="button";b.dataset.theme=o[0];
+    if(curTheme()===o[0])b.className="on";var sw=d.createElement("i");sw.className="sw "+o[0];b.appendChild(sw);b.appendChild(d.createTextNode(o[1]));
+    b.addEventListener("click",function(){setTheme(o[0]);closeTheme()});m.appendChild(b)});
+  var r=tb.getBoundingClientRect();m.style.top=(r.bottom+window.scrollY+6)+"px";m.style.left=Math.max(8,r.right+window.scrollX-190)+"px";
+  d.body.appendChild(m);tm=m;tb.setAttribute("aria-expanded","true");var f=m.querySelector("button.on")||m.querySelector("button");if(f)f.focus()});
+d.addEventListener("click",function(e){if(tm&&!tm.contains(e.target))closeTheme()});d.addEventListener("keydown",function(e){if(e.key==="Escape")closeTheme()});
 var po=$("#pal-open");if(po)po.addEventListener("click",function(){open("")});
 /* busy buttons, no double submit */
 d.addEventListener("submit",function(e){var f=e.target;if(f.dataset.sent){e.preventDefault();return}f.dataset.sent="1";
@@ -2149,8 +2202,13 @@ FAVICON = ("data:image/svg+xml," + "%3Csvg xmlns='http://www.w3.org/2000/svg' vi
 # Dark unless this browser chose light (Dada, 6 Oct 2026: "there are still so
 # much white ... this doesnt look futuristic and modern at all"). The toggle
 # still flips it, and the choice is remembered per browser.
-THEME_BOOT = ("<script>try{var t=localStorage.getItem('psa-theme')||'dark';document.documentElement"
-              ".dataset.theme=t}catch(e){document.documentElement.dataset.theme='dark'}</script>")
+# Dada, 8 Oct 2026: "add a peach mode a purple mode and a pink mode apart from
+# the dark mode and light mode". A tint is the light theme with a colour cast
+# over it (data-tint), so every light rule holds and only the tokens change.
+TINTS = ("peach", "purple", "pink")
+THEME_BOOT = ("<script>try{var t=localStorage.getItem('psa-theme')||'dark',r=document.documentElement;"
+              "if(t==='peach'||t==='purple'||t==='pink'){r.dataset.theme='light';r.dataset.tint=t}else r.dataset.theme=t}"
+              "catch(e){document.documentElement.dataset.theme='dark'}</script>")
 
 
 
@@ -2851,8 +2909,8 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
                f'<span class=sep> · </span><a href="/logout">sign out</a>' + tools +
                f'<button class="iconbtn" id="textsize" type="button" title="Text size"'
                f' aria-label="Text size"><b style="font-size:13px;letter-spacing:-.5px">Aa</b></button>'
-               f'<button class="iconbtn" id="theme" type="button" title="Light / dark (t)"'
-               f' aria-label="Toggle light or dark">{icon("sun")}</button></div>')
+               f'<button class="iconbtn" id="theme" type="button" title="Theme: dark, light, peach, purple, pink (t flips dark and light)"'
+               f' aria-label="Theme" aria-haspopup="menu" aria-expanded="false">{icon("sun")}</button></div>')
     palette = ""
     if user is not None and not requester:
         palette = (

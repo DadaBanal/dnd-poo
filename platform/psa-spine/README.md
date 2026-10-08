@@ -2228,6 +2228,17 @@ Teams-style reactions, pictures and files through the patient-details review, th
 
 Schema 072 is additive: `chat_reaction`, `chat_file`, `chat_survey`, and the nullable `board.chat_welcome`.
 
+## Peach, purple and pink (8 Oct 2026, code only)
+
+Dada, 8 Oct 2026: *"add a peach mode a purple mode and a pink mode apart from the dark mode and light mode"*.
+
+The theme button in the bar now opens a menu: **Dark**, **Light**, **Peach**, **Purple**, **Pink**, each with its
+swatch, the current one marked. A tint is the light theme with a colour cast over it (`data-theme=light` plus
+`data-tint=peach|purple|pink`), so every light rule still holds and only the tokens change: the canvas and its glows,
+the cards' edges, the accent, the glass of the bar, the wells of the fields. Ink stays dark, so nothing loses its
+contrast. The choice is remembered per browser, as before. The **t** key still flips between dark and light, and the
+command palette's *Theme* entry does the same.
+
 ## The Dispatch Portal, in the reference PSA's shape (8 Oct 2026, code only)
 
 Dada, 8 Oct 2026: *"we need to fix the dispatch portal and make it look like what connectwise looks like and function

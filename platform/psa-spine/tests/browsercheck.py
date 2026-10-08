@@ -855,6 +855,37 @@ def main() -> int:
             if os.environ.get("PSA_SHOTS"):
                 page.screenshot(path=os.path.join(os.environ["PSA_SHOTS"], "dispatch-week.png"))
 
+            # --- the themes (8 Oct 2026): peach, purple and pink beside dark and light
+            page.goto(f"{base}/", wait_until="domcontentloaded")
+            page.locator("#theme").click()
+            page.wait_for_timeout(150)
+            menu = page.locator(".thememenu")
+            note(menu.is_visible() and menu.locator("button").count() == 5, "the theme button opens a menu of five")
+            menu.locator("button[data-theme=peach]").click()
+            page.wait_for_timeout(150)
+            peach = page.evaluate("() => [document.documentElement.dataset.theme, document.documentElement.dataset.tint,"
+                                  " getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()]")
+            note(peach[0] == "light" and peach[1] == "peach" and peach[2] == "#d9663a", "Peach is the light theme with a peach cast", str(peach))
+            if os.environ.get("PSA_SHOTS"):
+                page.screenshot(path=os.path.join(os.environ["PSA_SHOTS"], "theme-peach.png"))
+            page.reload(wait_until="domcontentloaded")
+            note(page.evaluate("() => document.documentElement.dataset.tint") == "peach", "and it is remembered")
+            for tint in ("purple", "pink"):
+                page.locator("#theme").click()
+                page.wait_for_timeout(100)
+                page.locator(f".thememenu button[data-theme={tint}]").click()
+                page.wait_for_timeout(100)
+                if os.environ.get("PSA_SHOTS"):
+                    page.screenshot(path=os.path.join(os.environ["PSA_SHOTS"], f"theme-{tint}.png"))
+            note(page.evaluate("() => document.documentElement.dataset.tint") == "pink", "Purple and Pink follow")
+            page.keyboard.press("t")
+            page.wait_for_timeout(100)
+            got = page.evaluate("() => [document.documentElement.dataset.theme, document.documentElement.dataset.tint || '']")
+            note(got == ["dark", ""], "t still flips to dark, clearing the cast", str(got))
+            page.locator("#theme").click()
+            page.wait_for_timeout(100)
+            page.locator(".thememenu button[data-theme=dark]").click()
+
             # --- an email as its sender laid it out (6 Oct 2026) -------------
             # Dada: "HTML is or emails are not rendering properly on the ticket
             # viewer", "images are not rendering on the ticket", and "search on
