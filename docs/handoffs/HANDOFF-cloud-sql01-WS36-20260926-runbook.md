@@ -3439,3 +3439,9 @@ This matters because **AD's lockout threshold is "Never"** (minimum length 7; `n
 - WAF / rate limit on `desk.pmcne.net` — lower priority now nothing unauthenticated reaches the origin.
 - Unused tunnel `pmc-psa` in the `pmcne.ph` account: delete once Dada agrees. Its certificate and the `pmcne.ph` cert remain in the user profile.
 - Email links still say the `.ph` names (Part 69).
+
+### Part 71: 2026-10-09, ~19:15 +08:00. **Unused tunnel `pmc-psa` (the `pmcne.ph` account) deleted, on Dada's yes.** MEASURED.
+
+Checked first: no active connections, never had a DNS record, and not the tunnel the service runs (the service's config names `pmc-psa-net`). `cloudflared tunnel delete pmc-psa`; the `pmcne.ph` account now lists **no tunnels**. `pmc-psa-net` unaffected: still connected, `desk.pmcne.net` still answers 302 to the Access gate.
+
+Left on disk, for Dada to decide: the deleted tunnel's credential file (now useless — deleting a tunnel revokes it) in the user profile and its copy in `C:\ProgramData\cloudflared\`; and the **`pmcne.ph` origin certificate** (`%USERPROFILE%\.cloudflared\cert.pem`), which is still a live credential able to create tunnels and DNS routes in `pmcne.ph`. Nothing running needs it.
