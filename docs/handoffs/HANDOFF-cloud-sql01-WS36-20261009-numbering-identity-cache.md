@@ -70,4 +70,4 @@ would open tickets, prefer the test store.
 | | |
 |---|---|
 | Measurements | SQL01's numbering read, 9 Oct 2026 (gaps, totals, IDENTITY_CACHE = ON, SQL Server 2022 16.0.1190.2, restart log). |
-| Came-from code | Unit suite 803 OK (SQLite). CI `psa-spine` run 81 on `98b30eb`: NOT VERIFIED until it reports. |
+| Came-from code | Unit suite 803 OK (SQLite). CI `psa-spine` run 81 on `98b30eb`: green on all four jobs (Linux 3.11 and 3.14, sql-server, windows). MEASURED, 9 Oct 2026. |
