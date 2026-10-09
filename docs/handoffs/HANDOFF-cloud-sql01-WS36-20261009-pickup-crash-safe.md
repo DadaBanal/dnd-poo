@@ -6,6 +6,11 @@ on the next minute pass, with no restart.**
 This follows `…-20261009-numbering-identity-cache.md`. It supersedes nothing. SQL01 held this pull at `c1c25d6`
 because CI 82 and 83 were red; that hold is answered in §5.
 
+**Status: applied.** SQL01, `edae965`: run 85 green, so the pull went in at `1637d4b` and PSA-Desk restarted (401,
+down, 401). The first pickup passes on this code were all result 0, each link had a `.prev` beside it, and there
+were no NUL bytes anywhere (MEASURED by SQL01, 9 Oct 2026). This file was written alongside that and arrived after
+it. It is the record of what changed, and §4 is what to keep watching; nothing in §3 is still to do.
+
 Branch: `claude/psa-ticketing-build`. Pull the head that carries this file.
 
 ---
