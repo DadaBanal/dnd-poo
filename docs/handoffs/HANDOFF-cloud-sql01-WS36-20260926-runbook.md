@@ -3367,3 +3367,35 @@ INFERRED: each is a test pinned to the old wording, not a behaviour fault — th
 **Held:** no pull (the tree stays at `35143bc`, so the pickups keep running the script that has been result 0 since Part 67), no PSA-Desk restart. All three pickups and PSA-Desk untouched.
 
 **For WS36:** the crash protection reads well — it addresses Part 66's in-place write (temp + flush + `File.Replace` with `.prev`), rejects a link containing NUL or not matching `^https://graph\.microsoft\.com/`, sets an unreadable one aside, and recovers from two hours before the last good save. It also answers two of Part 67's three tool defects: a recovered window no longer starts at "now", and a NUL link is judged by contents. Only the tests stand between it and the live pickups.
+
+### Part 69: 2026-10-09, ~18:20 +08:00. **The desk's public front doors are built but NOT published: tunnel `pmc-psa-net`, two loopback-only IIS sites, no DNS record, no connector running.** MEASURED. Dada's instruction, not WS36's.
+
+Dada, 9 Oct: *"lets get the ticketing live online on the web through my cloudflare"*; *"can we do proper security"*; *"make sure to use a diff site it may cause split brain on internal network"*; *"i also have diff domains"*; he authorised `pmcne.net` and `pmcne.online` and left the pick to SQL01.
+
+**Recorded once, as CLAUDE.md requires when contradicting the record:** the record treats DND-SQL01 as LAN-only (risk R3). A Cloudflare Tunnel opens no inbound port, but it does put the desk on the internet. Dada was told and chose to proceed.
+
+**Measured before building:** `pmcne.ph`'s public DNS is on Cloudflare; `help`/`desk.pmcne.ph` had no public record. The desk's sign-in is a form (its 401 carries no `WWW-Authenticate`), so it passes through a tunnel; Entra sign-in is not configured, so staff type their domain password into the page — the reason Access must sit in front. Neither `pmcne.net` nor `pmcne.online` is served by the internal DNS (internal answers equal public ones), so either removes split-brain entirely. **Picked `pmcne.net`**: mail filters treat `.online` with more suspicion, and ticket emails will carry these links.
+
+**Built:**
+- `cloudflared` 2026.10.0, `cloudflared-windows-amd64.msi` from `github.com/cloudflare/cloudflared` (owner `cloudflare`, not a fork): size 19,494,912, **SHA-256 equal to the checksum in the release notes**, Authenticode **Valid, Cloudflare, Inc.** (DigiCert). Installed silently, exit 0.
+- Tunnel **`pmc-psa-net`** in the Tech Sponge account (where `pmcne.net` lives; a tunnel serves only its own account's zones). An earlier tunnel `pmc-psa` in the `pmcne.ph` account is unused, 0 connections — to delete once Dada agrees.
+- Config `C:\ProgramData\cloudflared\config.yml`, folder ACL **SYSTEM and Administrators only, inheritance off** (not under `System32`: this build installs to `Program Files (x86)`, where a 32-bit process is redirected to `SysWOW64`). Ingress: `help.pmcne.net` → `127.0.0.1:8091`, `desk.pmcne.net` → `127.0.0.1:8092`, **everything else 404** (`ingress validate` OK; `help.pmcne.ph` and an unknown name both hit the 404 rule).
+- `scripts/New-PsaPublicIis.ps1` (this commit): IIS sites **PSA-Portal-Public** and **PSA-Desk-Public**, own pools, bound **http on 127.0.0.1 only**. Each forwards to the desk telling it the internal name (so it behaves exactly as on the LAN), translates the Origin header **only** when it is exactly its own public origin, refuses `/api/`, and marks cookies Secure. The LAN sites PSA-Portal and PSA-Desk are untouched.
+
+**Proved on the server, with controls:**
+
+| Test | Result |
+|---|---|
+| public portal `GET /` | 303 `Location: /my` (relative) |
+| public desk `GET /` / portal `GET /my` | 401, the sign-in page |
+| `/api/…` on either public site | 404 *Not available here* |
+| POST, Origin = the site's own public origin | 401 sign-in — passes the origin check |
+| POST, Origin = a foreign site / the other public site / `desk.pmcne.net.evil.example` | **403** *posted from another site* |
+| `help.pmcne.net` on the server's LAN address | 400 — not served off loopback |
+| LAN `help.pmcne.ph` / `desk.pmcne.ph` | 302 `/my` / 401 — unchanged |
+
+The origin POSTs carried no credentials (an empty sign-in form), so nothing reached AD.
+
+**Not done, in order:** Cloudflare Access on both names (needs Dada signed in to Cloudflare in the browser pane — the sign-in hit a verification check SQL01 cannot complete), WAF and a rate limit on `/login`, then the Windows service and the two DNS records. The UDM read (no port-forward to this server) was denied by the permission layer and was not retried.
+
+**For WS36 (INFERRED from the code):** every link the desk writes — the ticket link and approvals link in emails (`outbox.py:836,857`), the requester link on a ticket (`ticket.py:766`), the calendar feed (`members.py:329`) — uses `PSA_PORTAL_URL` / `PSA_PUBLIC_URL`, the `.ph` names. From outside PMC they do not resolve, exactly as today. Switching those two settings to `.net` alone would **break LAN sign-in**: the desk's accepted origins come from the same two settings, so posts from `help.pmcne.ph` would get 403. Making links work everywhere needs a code change: accept a list of public origins, and choose the link host per reader.
