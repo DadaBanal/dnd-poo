@@ -224,14 +224,23 @@ def import_busy(conn, items: list[dict], *, members_read: list[str], start: str,
                      (m, end, start))
     n = 0
     known = {m.lower(): m for m in members_read}
+    from . import db as _db
+    detail = _db.column_exists(conn, "outlook_busy", "subject")          # 077: the entry itself, for its owner
     for it in items:
         m = known.get(str(it.get("member", "")).lower())
         state = SHOW_AS.get(str(it.get("show_as", "")))
         s, e = str(it.get("start", ""))[:16].replace("T", " "), str(it.get("end", ""))[:16].replace("T", " ")
         if not m or not state or len(s) != 16 or len(e) != 16 or e <= s:
             continue
-        conn.execute("INSERT INTO outlook_busy (member, starts_at, ends_at, show_as, pulled_at) VALUES (?,?,?,?,?)",
-                     (m, s, e, state, _stamp(at)))
+        if detail:
+            private = bool(it.get("private"))
+            subject = None if private else (" ".join(str(it.get("subject") or "").split())[:400] or None)
+            where = None if private else (" ".join(str(it.get("location") or "").split())[:400] or None)
+            conn.execute("INSERT INTO outlook_busy (member, starts_at, ends_at, show_as, pulled_at, subject, location,"
+                         " private) VALUES (?,?,?,?,?,?,?,?)", (m, s, e, state, _stamp(at), subject, where, int(private)))
+        else:
+            conn.execute("INSERT INTO outlook_busy (member, starts_at, ends_at, show_as, pulled_at) VALUES (?,?,?,?,?)",
+                         (m, s, e, state, _stamp(at)))
         n += 1
     conn.commit()
     return n
@@ -243,6 +252,26 @@ def busy(conn, people, lo: str, hi: str) -> list[dict]:
     if not people:
         return []
     q = ",".join("?" * len(people))
+    from . import db as _db
+    extra = (", subject, location, private" if _db.column_exists(conn, "outlook_busy", "subject")
+             else ", NULL AS subject, NULL AS location, 0 AS private")
     return [dict(r) for r in conn.execute(
-        f"SELECT member, starts_at, ends_at, show_as FROM outlook_busy WHERE LOWER(member) IN ({q})"
+        f"SELECT member, starts_at, ends_at, show_as{extra} FROM outlook_busy WHERE LOWER(member) IN ({q})"
         " AND starts_at < ? AND ends_at > ? ORDER BY starts_at", (*[p.lower() for p in people], hi, lo))]
+
+
+SHOWN_AS = {"BUSY": "Busy", "TENTATIVE": "Tentative", "OOF": "Out of office", "WORKING_ELSEWHERE": "Working elsewhere"}
+
+
+def label(o: dict, viewer: str | None) -> str:
+    """What a calendar says for one Outlook entry (077). Its owner reads the
+    entry itself (subject, and where); an entry marked Private reads Private;
+    everyone else reads only how Outlook shows the time."""
+    word = SHOWN_AS.get(o.get("show_as"), "Busy")
+    if (viewer or "").lower() != (o.get("member") or "").lower():
+        return word
+    if o.get("private"):
+        return f"Private · {word}"
+    if o.get("subject"):
+        return o["subject"] + (f" · {o['location']}" if o.get("location") else "")
+    return word

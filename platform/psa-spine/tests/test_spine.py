@@ -16451,7 +16451,7 @@ class OutlookCalendarTest(unittest.TestCase):
         self.assertEqual((w["subject"], w["show_as"]), ("Time off: Leave", "oof"))
         self.assertTrue(bid)
 
-    def test_busy_times_come_back_without_a_subject_and_show_on_the_desk(self):
+    def test_busy_times_come_back_and_show_on_the_desk(self):
         from psaspine import calsync
         self.assertEqual({m["member"]: m["mailbox"] for m in calsync.members(self.conn, allowed_domains=("pmcne.ph",))},
                          {"alice": "alice@pmcne.ph", "bob": "bob@pmcne.ph"})
@@ -16462,13 +16462,37 @@ class OutlookCalendarTest(unittest.TestCase):
             {"member": "mallory", "start": "2026-10-03T08:00", "end": "2026-10-03T09:00", "show_as": "busy"},
         ], members_read=["bob"], start="2026-10-01 00:00", end="2026-10-29 00:00", at=self.at)
         self.assertEqual(n, 2)
-        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(outlook_busy)")] if db.backend(self.conn) != "mssql" else []
-        self.assertNotIn("subject", cols)
         got = calsync.busy(self.conn, ["bob"], "2026-10-02 00:00", "2026-10-04 00:00")
         self.assertEqual([(g["starts_at"], g["show_as"]) for g in got], [("2026-10-02 13:00", "BUSY"), ("2026-10-03 08:00", "OOF")])
         # a second pull replaces the first
         calsync.import_busy(self.conn, [], members_read=["bob"], start="2026-10-01 00:00", end="2026-10-29 00:00", at=self.at)
         self.assertEqual(calsync.busy(self.conn, ["bob"], "2026-10-01 00:00", "2026-10-29 00:00"), [])
+
+    def test_the_owner_reads_their_own_outlook_entries_and_nobody_else_does(self):
+        """077. Dada, 9 Oct 2026: "if owner owns outlook show exact schedule dont
+        just show free busy on the calendars". Confirmed: subject and location as
+        Outlook has them, Private kept private, the owner only."""
+        from psaspine import calsync
+        calsync.import_busy(self.conn, [
+            {"member": "bob", "start": "2026-10-02T13:00", "end": "2026-10-02T14:00", "show_as": "busy",
+             "subject": "Vendor call", "location": "IT office"},
+            {"member": "bob", "start": "2026-10-02T15:00", "end": "2026-10-02T16:00", "show_as": "busy",
+             "subject": "Dentist", "location": "Town", "private": True},
+            {"member": "bob", "start": "2026-10-02T16:00", "end": "2026-10-02T17:00", "show_as": "tentative"},
+        ], members_read=["bob"], start="2026-10-01 00:00", end="2026-10-29 00:00", at=self.at)
+        got = calsync.busy(self.conn, ["bob"], "2026-10-02 00:00", "2026-10-03 00:00")
+        self.assertEqual([(g["subject"], g["private"]) for g in got], [("Vendor call", 0), (None, 1), (None, 0)])
+        self.assertEqual([calsync.label(g, "bob") for g in got], ["Vendor call · IT office", "Private · Busy", "Tentative"])
+        self.assertEqual([calsync.label(g, "BOB") for g in got][0], "Vendor call · IT office")
+        self.assertEqual([calsync.label(g, "alice") for g in got], ["Busy", "Busy", "Tentative"])
+        # a store without 077 takes the same pull and keeps busy times only
+        from unittest import mock
+        with mock.patch("psaspine.db.column_exists", return_value=False):
+            calsync.import_busy(self.conn, [{"member": "bob", "start": "2026-10-02T13:00", "end": "2026-10-02T14:00",
+                                             "show_as": "busy", "subject": "x"}],
+                                members_read=["bob"], start="2026-10-01 00:00", end="2026-10-29 00:00", at=self.at)
+            self.assertEqual([calsync.label(g, "bob") for g in calsync.busy(self.conn, ["bob"], "2026-10-02 00:00",
+                                                                          "2026-10-03 00:00")], ["Busy"])
 
     def test_backfill_queues_what_was_booked_before_the_sync(self):
         from psaspine import calsync, schedule
@@ -16600,6 +16624,80 @@ class ConnectWiseShapeTest(unittest.TestCase):
         _, _, page = self._call("GET", "/dispatch", cookie=self.alice, query="day=2026-09-18")
         self.assertIn("data-slot='alice|2026-09-18|09:00'", page)
         self.assertIn("all 3", page)
+
+    def test_a_visit_or_a_block_is_edited_in_place_and_rescheduled(self):
+        """Dada, 9 Oct 2026: "u can dispatch but when changing a schedule there is
+        no modify on calendars and dispatch portal". Confirmed: an Edit window
+        (right-click > Edit, or a double-click) on Dispatch, the Schedule and the
+        calendars; another day; blocks too; the technician told; Outlook follows."""
+        import json
+        from psaspine import calsync, schedule
+        sid = schedule.add(self.conn, "ITO-1", member="bob", starts_at=datetime(2026, 9, 18, 9),
+                           ends_at=datetime(2026, 9, 18, 10), note=None, actor="alice", at=self.at)
+        schedule.acknowledge(self.conn, sid, member="bob", at=self.at)
+        bid = schedule.add_block(self.conn, member="bob", kind="MEETING", name="Vendor", starts_at=datetime(2026, 9, 18, 14),
+                                 ends_at=datetime(2026, 9, 18, 15), actor="bob", at=self.at)
+        self.conn.execute("DELETE FROM calendar_sync")
+        self.conn.commit()
+        # what the window fills itself with
+        j = json.loads(self._call("GET", "/schedule/item.json", cookie=self.alice, query=f"kind=visit&id={sid}")[2])
+        self.assertEqual((j["ticket"], j["member"], j["starts_at"], j["ends_at"]), ("ITO-1", "bob", "2026-09-18T09:00", "2026-09-18T10:00"))
+        self.assertIn(["bob", "Bob"], j["choices"]["members"])
+        self.assertTrue(j["choices"]["statuses"])
+        jb = json.loads(self._call("GET", "/schedule/item.json", cookie=self.alice, query=f"kind=block&id={bid}")[2])
+        self.assertEqual((jb["block_kind"], jb["name"]), ("MEETING", "Vendor"))
+        self.assertTrue(self._call("GET", "/schedule/item.json", cookie=self._cookie_for("carol"),
+                                   query=f"kind=visit&id={sid}")[0].startswith("404"))      # not on the board
+        # rescheduled to another day, another time, a note: the technician sees it again, Outlook follows
+        where = self._redirect("POST", "/schedule/edit", cookie=self.alice, form={
+            "id": str(sid), "member": "bob", "starts_at": "2026-09-21T13:00", "ends_at": "2026-09-21T14:30",
+            "status_id": j["status_id"], "location_id": "", "note": "bring the toner key", "back": "/dispatch?day=2026-09-21"})
+        self.assertIn("msg=Visit changed", where)
+        self.assertTrue(where.startswith("/dispatch?day=2026-09-21"))
+        r = self.conn.execute("SELECT starts_at, ends_at, note, acknowledged_at FROM ticket_schedule WHERE schedule_id = ?",
+                              (sid,)).fetchone()
+        self.assertEqual(tuple(r), ("2026-09-21 13:00", "2026-09-21 14:30", "bring the toner key", None))
+        self.assertTrue(self.conn.execute("SELECT 1 FROM calendar_sync WHERE kind = 'VISIT' AND ref_id = ?", (sid,)).fetchone())
+        self.assertIn("visit changed", self.conn.execute("SELECT detail FROM ticket_event WHERE work_item_id = 'ITO-1'"
+                                                         " AND kind = 'SCHEDULE' ORDER BY ticket_event_id DESC").fetchone()[0])
+        # a bad span is refused in words, nothing changes
+        where = self._redirect("POST", "/schedule/edit", cookie=self.alice, form={
+            "id": str(sid), "starts_at": "2026-09-21T15:00", "ends_at": "2026-09-21T14:00", "back": "/dispatch"})
+        self.assertIn("err=Not changed", where)
+        # a block: another day, longer, another kind; Outlook follows
+        where = self._redirect("POST", "/schedule/block/edit", cookie=self.alice, form={
+            "id": str(bid), "member": "bob", "block_kind": "TIME_OFF", "name": "Leave",
+            "starts_at": "2026-09-22T08:00", "ends_at": "2026-09-22T17:00", "back": "/schedule"})
+        self.assertIn("msg=Changed", where)
+        b = self.conn.execute("SELECT kind, name, starts_at, ends_at FROM schedule_block WHERE block_id = ?", (bid,)).fetchone()
+        self.assertEqual(tuple(b), ("TIME_OFF", "Leave", "2026-09-22 08:00", "2026-09-22 17:00"))
+        self.assertTrue(self.conn.execute("SELECT 1 FROM calendar_sync WHERE kind = 'BLOCK' AND ref_id = ?", (bid,)).fetchone())
+        self.assertIn("nothing changed", schedule.update_block(self.conn, bid, actor="alice", at=self.at))
+        # Move to tomorrow is the move the drag already makes, by day
+        where = self._redirect("POST", "/schedule/move", cookie=self.alice,
+                               form={"kind": "visit", "id": str(sid), "day": "2026-09-22", "back": "/dispatch"})
+        self.assertIn("err=Not moved", where)                                      # bob is on leave that day
+        self._redirect("POST", "/schedule/move", cookie=self.alice,
+                       form={"kind": "visit", "id": str(sid), "day": "2026-09-23", "back": "/dispatch"})
+        self.assertEqual(self.conn.execute("SELECT starts_at FROM ticket_schedule WHERE schedule_id = ?", (sid,)).fetchone()[0],
+                         "2026-09-23 13:00")
+        # the hands are on every page that draws visits and blocks
+        self.assertIn("function openEdit", templates.SCRIPT)
+        self.assertIn("Move to tomorrow", templates.SCRIPT)
+        self.assertIn(".sch.visit[data-menu],.sch[data-drag]", templates.SCRIPT)
+        # the owner reads their own Outlook entry on Dispatch; someone else reads Busy
+        calsync.import_busy(self.conn, [{"member": "alice", "start": "2026-09-22T10:00", "end": "2026-09-22T11:00",
+                                         "show_as": "busy", "subject": "Budget review"}],
+                            members_read=["alice"], start="2026-09-01 00:00", end="2026-10-01 00:00", at=self.at)
+        self.conn.execute("INSERT OR REPLACE INTO board_member (board_id, member, access) VALUES ('IT_HELP', 'alice', 'ADMIN')")
+        self.conn.commit()
+        mine = self._call("GET", "/dispatch", cookie=self.alice, query="day=2026-09-22")[2]
+        theirs = self._call("GET", "/dispatch", cookie=self._cookie_for("bob"), query="day=2026-09-22")[2]
+        self.assertIn("Budget review", mine)
+        self.assertNotIn("Budget review", theirs)
+        self.assertIn("Budget review", self._call("GET", "/calendar", cookie=self.alice, query="view=day&date=2026-09-22")[2])
+        self.assertNotIn("Budget review", self._call("GET", "/calendar", cookie=self._cookie_for("bob"),
+                                                    query="view=day&date=2026-09-22&member=alice")[2])
 
     def test_the_dispatch_portal_lists_tickets_books_resizes_and_shows_the_week(self):
         """Dada, 8 Oct 2026: "fix the dispatch portal and make it look like what

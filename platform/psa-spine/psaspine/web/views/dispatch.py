@@ -294,7 +294,7 @@ def _board(ctx, boards, unrouted_rows) -> str:
                     elif it["_k"] == "o":
                         span = (f"{it['starts_at'][11:]}–{it['ends_at'][11:]}" if it["starts_at"][:10] == it["ends_at"][:10] else "all day")
                         inner += (f"<div class='sch block outlook'{strip(it['starts_at'], it['ends_at'], lane)} title='From their Outlook calendar'>"
-                                  f"<b>Outlook</b> {t.esc(span)}<br>{t.esc(OUTLOOK_WORD[it['show_as']])}</div>")
+                                  f"<b>Outlook</b> {t.esc(span)}<br>{t.esc(calsync.label(it, ctx.user.id))}</div>")
                     else:
                         inner += entry_chip(it, lane)
                 slot = f" data-slot='{t.esc(m)}|{day}|{h:02d}:00'" if can_book else ""
@@ -332,7 +332,7 @@ def _board(ctx, boards, unrouted_rows) -> str:
                 if o["member"].lower() == m.lower() and o["starts_at"] < dhi and o["ends_at"] > dlo:
                     span = (f"{o['starts_at'][11:]}–{o['ends_at'][11:]}" if o["starts_at"][:10] == o["ends_at"][:10] else "all day")
                     chips.append(f"<div class='sch block outlook' title='From their Outlook calendar'><b>Outlook</b> {t.esc(span)}"
-                                 f"<br>{t.esc(OUTLOOK_WORD[o['show_as']])}</div>")
+                                 f"<br>{t.esc(calsync.label(o, ctx.user.id))}</div>")
             slot = f" data-slot='{t.esc(m)}|{d.isoformat()}'" if can_book else ""
             return f"<td class='wk{' today' if d == ctx.now.date() else ''}'{slot}>{''.join(chips)}</td>"
 

@@ -208,7 +208,7 @@ function Write-One($Item) {
 function Read-Busy($Member, $FromText, $ToText) {
     $mbx = [Uri]::EscapeDataString($Member.mailbox)
     $uri = "$Graph/users/$mbx/calendarView?startDateTime=$FromText&endDateTime=$ToText" +
-           '&$select=start,end,showAs,categories,isCancelled&$top=200'
+           '&$select=start,end,showAs,categories,isCancelled,subject,location,sensitivity&$top=200'
     $more = @{ Prefer = ('outlook.timezone="' + $TimeZone + '"') }
     $out = @()
     while ($uri) {
@@ -217,8 +217,13 @@ function Read-Busy($Member, $FromText, $ToText) {
             if ($e.isCancelled) { continue }
             if (@($e.categories) -contains $Category) { continue }
             if (@('busy', 'tentative', 'oof', 'workingElsewhere') -notcontains [string]$e.showAs) { continue }
+            # 077 (Dada, 9 Oct 2026): the entry itself, shown to its owner only. A
+            # private or confidential entry sends neither subject nor location.
+            $private = @('private', 'confidential') -contains [string]$e.sensitivity
             $out += @{ member = $Member.member; start = [string]$e.start.dateTime; end = [string]$e.end.dateTime
-                       show_as = [string]$e.showAs }
+                       show_as = [string]$e.showAs; private = $private
+                       subject = $(if ($private) { '' } else { [string]$e.subject })
+                       location = $(if ($private -or -not $e.location) { '' } else { [string]$e.location.displayName }) }
         }
         $next = $page.PSObject.Properties['@odata.nextLink']
         if ($next) { $uri = $next.Value } else { $uri = $null }

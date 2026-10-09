@@ -4373,6 +4373,25 @@ ALTER TABLE psa.[ticket] ADD [portal_key] NVARCHAR(64) NULL;
 IF COL_LENGTH(N'psa.[notification]', N'portal_link') IS NULL
 ALTER TABLE psa.[notification] ADD [portal_link] NVARCHAR(400) NULL;
 
+-- 077: the Outlook entry itself, for its owner.
+--
+-- 059 kept Outlook busy times only, "never a subject, an attendee or a body".
+-- Dada, 9 Oct 2026, reversing that for one reader: "if owner owns outlook show
+-- exact schedule dont just show free busy on the calendars". Confirmed before
+-- building: the subject and location are kept as Outlook has them, with no
+-- patient-detail check (Dada's choice); an entry marked Private or
+-- Confidential in Outlook keeps neither; and only the person whose calendar it
+-- is sees them. Everyone else still reads Busy, Tentative, Out of office or
+-- Working elsewhere. Attendees and the body are still never kept.
+IF COL_LENGTH(N'psa.[outlook_busy]', N'subject') IS NULL
+ALTER TABLE psa.[outlook_busy] ADD [subject] NVARCHAR(400) NULL;
+
+IF COL_LENGTH(N'psa.[outlook_busy]', N'location') IS NULL
+ALTER TABLE psa.[outlook_busy] ADD [location] NVARCHAR(400) NULL;
+
+IF COL_LENGTH(N'psa.[outlook_busy]', N'private') IS NULL
+ALTER TABLE psa.[outlook_busy] ADD [private] INT NULL CONSTRAINT [DF_outlook_busy_private] DEFAULT (0);
+
 IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
 ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
 

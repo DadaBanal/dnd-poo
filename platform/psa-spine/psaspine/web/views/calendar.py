@@ -43,7 +43,7 @@ def _span(view: str, on: date) -> tuple[date, date]:
     return start, end
 
 
-def _items(conn, member: str, boards, first: date, end: date) -> list[dict]:
+def _items(conn, member: str, boards, first: date, end: date, viewer: str | None = None) -> list[dict]:
     """Visits, blocks and on-call slots for one person in [first, end)."""
     lo, hi = f"{first.isoformat()} 00:00", f"{end.isoformat()} 00:00"
     out = []
@@ -62,7 +62,8 @@ def _items(conn, member: str, boards, first: date, end: date) -> list[dict]:
                     "board_id": s["board_id"], "board_name": s["board_name"]})
     from ... import calsync
     for o in calsync.busy(conn, [member], lo, hi):
-        out.append({"kind": "outlook", "starts_at": o["starts_at"], "ends_at": o["ends_at"], "show_as": o["show_as"]})
+        out.append({"kind": "outlook", "starts_at": o["starts_at"], "ends_at": o["ends_at"], "show_as": o["show_as"],
+                    "label": calsync.label(o, viewer)})                    # 077: the entry itself, to its owner
     out.sort(key=lambda x: x["starts_at"])
     return out
 
@@ -97,7 +98,7 @@ def _chip(it: dict, *, day_of: str, drag: bool = False) -> str:
     if it["kind"] == "outlook":
         from .schedule import OUTLOOK_WORD
         return (f"<div class='sch block outlook' title='From their Outlook calendar'><b>Outlook</b> {t.esc(span())}"
-                f"<br>{t.esc(OUTLOOK_WORD[it['show_as']])}</div>")
+                f"<br>{t.esc(it.get('label') or OUTLOOK_WORD[it['show_as']])}</div>")
     word = "On call" if it["role"] == "ON_CALL" else "Duty manager"
     return f"<div class='sch block oncall'><b>{t.esc(word)}</b> {t.esc(span())}<br>{t.esc(it['board_name'])}</div>"
 
@@ -122,7 +123,7 @@ def index(ctx):
             raise HttpError("404 Not Found", "No such calendar.")
     who = match
     first, end = _span(view, on)
-    items = _items(ctx.conn, who, boards, first, end)
+    items = _items(ctx.conn, who, boards, first, end, viewer=ctx.user.id)
     listed: dict[str, int] = {}
     for it in items:
         if it["kind"] == "visit":

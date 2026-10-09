@@ -89,7 +89,7 @@ def index(ctx):
             if o["member"].lower() == member.lower() and o["starts_at"] < hi and o["ends_at"] > lo:
                 span = (f"{o['starts_at'][11:]}–{o['ends_at'][11:]}" if o["starts_at"][:10] == o["ends_at"][:10] else "all day")
                 chips.append(f"<div class='sch block outlook' title='From their Outlook calendar'><b>Outlook</b> {t.esc(span)}"
-                             f"<br>{t.esc(OUTLOOK_WORD[o['show_as']])}</div>")
+                             f"<br>{t.esc(calsync.label(o, ctx.user.id))}</div>")
         slot = f" data-slot='{t.esc(member)}|{d.isoformat()}'" if can_book else ""
         return f"<td class='{'today' if d == ctx.now.date() else ''}'{slot}>{''.join(chips)}</td>"
 
@@ -396,3 +396,120 @@ def move(ctx):
         ctx.conn.rollback()
         return done(err=f"Not moved: {exc}")
     return done(msg=f"Moved: {what}" if what != "nothing changed" else "Nothing changed")
+
+
+# ------------------------------------------------------------- edit in place
+# Dada, 9 Oct 2026: "u can dispatch but when changing a schedule there is no
+# modify on calendars and dispatch portal". Confirmed: an Edit window like the
+# reference PSA's (right-click > Edit, or a double-click) on Dispatch, the
+# Schedule and the calendars; rescheduling to another day; blocks too; the
+# technician told; Outlook follows (schedule.update and update_block).
+
+def _visit_for_edit(ctx, ref_id: int):
+    row = ctx.conn.execute("SELECT s.*, t.board_id, w.name AS summary FROM ticket_schedule s"
+                           " JOIN ticket t ON t.work_item_id = s.work_item_id"
+                           " JOIN work_item w ON w.work_item_id = s.work_item_id WHERE s.schedule_id = ?",
+                           (ref_id,)).fetchone()
+    if row is None or not common.may_access_board(ctx, row["board_id"], need="WORK"):
+        return None
+    return row
+
+
+def _may_edit_blocks(ctx) -> bool:
+    return any(common.may_access_board(ctx, b, need="WORK") for b in common.board_ids_for(ctx))
+
+
+def item_json(ctx):
+    """GET /schedule/item.json?kind=visit|block&id=N: what the Edit window
+    fills itself with, and the choices it offers."""
+    import json
+    from .. import Response
+    q = ctx.request.query
+    kind = "visit" if q.get("kind") == "visit" else "block"
+    try:
+        ref_id = int(q.get("id", ""))
+    except ValueError:
+        ref_id = -1
+    people = schedule.members_of(ctx.conn, sorted(common.board_ids_for(ctx)))
+    if kind == "visit":
+        r = _visit_for_edit(ctx, ref_id)
+        if r is None:
+            return Response("404 Not Found", json.dumps({"error": "No such visit that you can work."}),
+                            content_type="application/json; charset=utf-8")
+        item = {"kind": "visit", "id": r["schedule_id"], "ticket": r["work_item_id"], "summary": r["summary"] or "",
+                "member": r["member"], "starts_at": r["starts_at"][:16].replace(" ", "T"),
+                "ends_at": r["ends_at"][:16].replace(" ", "T"), "status_id": r["status_id"] or "",
+                "location_id": r["location_id"] or "", "note": r["note"] or "", "done": bool(r["done_at"])}
+    else:
+        r = ctx.conn.execute("SELECT * FROM schedule_block WHERE block_id = ?", (ref_id,)).fetchone()
+        if r is None or not _may_edit_blocks(ctx):
+            return Response("404 Not Found", json.dumps({"error": "No such block."}),
+                            content_type="application/json; charset=utf-8")
+        item = {"kind": "block", "id": r["block_id"], "member": r["member"], "block_kind": r["kind"],
+                "name": r["name"] or "", "starts_at": r["starts_at"][:16].replace(" ", "T"),
+                "ends_at": r["ends_at"][:16].replace(" ", "T")}
+    if item["member"].lower() not in {p.lower() for p in people}:
+        people = [item["member"]] + people
+    from ... import members as _members
+    item["choices"] = {
+        "members": [[p, _members.name_of(ctx.conn, p)] for p in people],
+        "statuses": [[r["status_id"], r["name"]] for r in schedule.statuses(ctx.conn)],
+        "locations": [[r["location_id"], r["name"]] for r in schedule.locations(ctx.conn)],
+        "kinds": [[k, v] for k, v in schedule.BLOCK_KINDS.items()]}
+    return Response(body=json.dumps(item), content_type="application/json; charset=utf-8",
+                    headers=[("Cache-Control", "no-store")])
+
+
+def _edit_done(f):
+    from .. import redirect
+    back = f.get("back", "/dispatch")
+    if not back.startswith("/") or back.startswith("//"):
+        back = "/dispatch"
+    sep = "&" if "?" in back else "?"
+    return lambda msg="", err="": redirect(back + sep + urllib.parse.urlencode(
+        {k: v for k, v in (("msg", msg), ("err", err)) if v}))
+
+
+def edit(ctx):
+    """POST /schedule/edit: the Edit window's Save for a visit."""
+    f = ctx.request.form()
+    done = _edit_done(f)
+    try:
+        ref_id = int(f.get("id", ""))
+        starts, ends = schedule.parse_local(f.get("starts_at", "")), schedule.parse_local(f.get("ends_at", ""))
+    except ValueError:
+        return done(err="Not changed: no such visit, or a bad date or time")
+    if _visit_for_edit(ctx, ref_id) is None:
+        return done(err="Not changed: no such visit that you can work")
+    try:
+        what = schedule.update(ctx.conn, ref_id, actor=ctx.user.id, at=ctx.now, member=f.get("member") or None,
+                               starts_at=starts, ends_at=ends, status_id=f.get("status_id") or None,
+                               location_id=f.get("location_id", ""), note=f.get("note", ""),
+                               allow_conflict=f.get("allow_conflict") == "1")
+        ctx.conn.commit()
+    except (schedule.Refused, ValueError) as exc:
+        ctx.conn.rollback()
+        return done(err=f"Not changed: {exc}")
+    return done(msg="Visit changed: " + what if what != "nothing changed" else "Nothing changed")
+
+
+def block_edit(ctx):
+    """POST /schedule/block/edit: the Edit window's Save for a block."""
+    f = ctx.request.form()
+    done = _edit_done(f)
+    if not _may_edit_blocks(ctx):
+        return done(err="Not changed: you do not work a board")
+    try:
+        ref_id = int(f.get("id", ""))
+        starts, ends = schedule.parse_local(f.get("starts_at", "")), schedule.parse_local(f.get("ends_at", ""))
+    except ValueError:
+        return done(err="Not changed: no such entry, or a bad date or time")
+    try:
+        what = schedule.update_block(ctx.conn, ref_id, actor=ctx.user.id, at=ctx.now, member=f.get("member") or None,
+                                     kind=f.get("block_kind") or None, name=f.get("name"), starts_at=starts,
+                                     ends_at=ends, allow_conflict=f.get("allow_conflict") == "1")
+        ctx.conn.commit()
+    except (schedule.Refused, ValueError) as exc:
+        ctx.conn.rollback()
+        return done(err=f"Not changed: {exc}")
+    return done(msg="Changed: " + what if what != "nothing changed" else "Nothing changed")

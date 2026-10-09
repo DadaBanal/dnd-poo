@@ -955,6 +955,31 @@ def main() -> int:
             chip = page.locator(f"table.schedgrid.dispatch .sch.visit[data-menu^='{tid}|']")
             note(chip.count() == 1 and chip.get_attribute("data-span").endswith("T11:00"),
                  "its right edge dragged changes when it ends", chip.get_attribute("data-span") if chip.count() else page.url)
+            # 9 Oct 2026: right-click > Edit opens the Edit window; a new time saves in place
+            page.mouse.move(5, 5)
+            chip.click(button="right")
+            page.wait_for_timeout(150)
+            page.locator(".ctxmenu button", has_text="Edit").click()
+            dlg = page.locator("dialog#schedit")
+            dlg.wait_for(state="visible", timeout=5000)
+            note(dlg.locator("input[name=starts_at]").input_value().endswith("T09:00")
+                 and dlg.locator("select[name=member]").input_value() == "tech",
+                 "right-click > Edit opens the Edit window, filled in")
+            dlg.locator("input[name=starts_at]").fill(f"{today}T16:00")
+            dlg.locator("input[name=ends_at]").fill(f"{today}T17:30")
+            dlg.locator("button[type=submit]").click()
+            page.wait_for_load_state("domcontentloaded")
+            page.wait_for_timeout(300)
+            chip = page.locator(f"table.schedgrid.dispatch .sch.visit[data-menu^='{tid}|']")
+            note(chip.count() == 1 and chip.get_attribute("data-span") == f"{today}T16:00|{today}T17:30" and "msg=" in page.url,
+                 "Save moves it to the new time, on the same page",
+                 (chip.get_attribute("data-span") if chip.count() else "") + " " + page.url)
+            page.mouse.move(5, 5)
+            chip.dblclick(position={"x": 6, "y": 70})              # off the ticket link
+            page.wait_for_timeout(600)
+            note(page.locator("dialog#schedit").is_visible() and not page.locator("dialog#slotdlg").is_visible(),
+                 "and a double-click opens the same window, not the Add one under it")
+            page.keyboard.press("Escape")
             page.locator(".stfold").click()
             note(page.locator(".dispatchwrap.folded").count() == 1 and not page.locator("#stickets").is_visible(),
                  "the tickets fold away to give the grid the width")

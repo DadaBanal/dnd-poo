@@ -2025,9 +2025,43 @@ Object.keys(fields).forEach(function(k){var i=document.createElement('input');i.
 document.body.appendChild(f);f.submit()}
 function close(){if(menu){menu.remove();menu=null}}
 function back(){var dlg=document.getElementById('slotdlg'),b=dlg&&dlg.querySelector('input[name=back]');return(b&&b.value)||(location.pathname+location.search)}
-document.addEventListener('contextmenu',function(e){var c=e.target.closest&&e.target.closest('.sch.visit[data-menu]');if(!c)return;e.preventDefault();close();
- var p=c.dataset.menu.split('|'),m=document.createElement('div');m.className='ctxmenu';m.setAttribute('role','menu');
+/* 9 Oct 2026 (Dada: "when changing a schedule there is no modify"): the Edit window, the same on Dispatch, the
+   Schedule and the calendars. Filled from /schedule/item.json and drawn with textContent; Save is a plain post. */
+function ref(c){if(c.dataset.menu){var p=c.dataset.menu.split('|');return p[3]==='1'&&p[2]!=='1'?['visit',p[1]]:null}
+ var d=(c.dataset.drag||'').split('|');return(d[0]==='visit'||d[0]==='block')&&d[1]?[d[0],d[1]]:null}
+function el(tag,attrs,txt){var x=document.createElement(tag);Object.keys(attrs||{}).forEach(function(k){x.setAttribute(k,attrs[k])});if(txt!=null)x.textContent=txt;return x}
+function field(form,label,input){var l=el('label',null,label+' ');l.appendChild(input);form.appendChild(l);return input}
+function pick(name,options,value,blank){var s=el('select',{name:name});if(blank!=null)s.appendChild(el('option',{value:''},blank));
+ options.forEach(function(o){var op=el('option',{value:o[0]},o[1]);if(o[0]===value)op.selected=true;s.appendChild(op)});return s}
+function fetchItem(r,then){fetch('/schedule/item.json?kind='+r[0]+'&id='+encodeURIComponent(r[1]),{credentials:'same-origin'})
+ .then(function(x){return x.json()}).then(function(j){if(j.error){alert(j.error);return}then(j)})}
+function openEdit(r){fetchItem(r,function(j){var old=document.getElementById('schedit');if(old)old.remove();
+ var dl=el('dialog',{id:'schedit','class':'card',style:'max-width:520px;width:95%'}),
+     f=el('form',{method:'post',action:j.kind==='visit'?'/schedule/edit':'/schedule/block/edit','class':'stack'});f.style.maxWidth='none';
+ dl.appendChild(el('h3',null,j.kind==='visit'?'Edit the visit \u00b7 '+j.ticket:'Edit \u00b7 '+(j.name||'')));
+ if(j.kind==='visit'&&j.summary)f.appendChild(el('p',{'class':'why'},j.summary));
+ f.appendChild(el('input',{type:'hidden',name:'id',value:String(j.id)}));f.appendChild(el('input',{type:'hidden',name:'back',value:back()}));
+ field(f,j.kind==='visit'?'Technician':'Person',pick('member',j.choices.members,j.member));
+ if(j.kind==='block'){field(f,'Kind',pick('block_kind',j.choices.kinds,j.block_kind));field(f,'What',el('input',{name:'name',maxlength:'120',value:j.name}))}
+ field(f,'Starts',el('input',{type:'datetime-local',name:'starts_at',value:j.starts_at,required:'',step:'900'}));
+ field(f,'Ends',el('input',{type:'datetime-local',name:'ends_at',value:j.ends_at,required:'',step:'900'}));
+ if(j.kind==='visit'){field(f,'Status',pick('status_id',j.choices.statuses,j.status_id));
+  field(f,'Where',pick('location_id',j.choices.locations,j.location_id,'\u2014'));
+  var n=el('textarea',{name:'note',rows:'2',maxlength:'400'});n.value=j.note;field(f,'Notes',n)}
+ var ok=el('label',null,' Allow a double booking');ok.insertBefore(el('input',{type:'checkbox',name:'allow_conflict',value:'1'}),ok.firstChild);f.appendChild(ok);
+ var row=el('div',{'class':'row'});row.style.gap='8px';var sv=el('button',{type:'submit'},'Save');var cn=el('button',{type:'button','class':'ghost'},'Cancel');
+ cn.addEventListener('click',function(){dl.close();dl.remove()});row.appendChild(sv);row.appendChild(cn);f.appendChild(row);
+ dl.appendChild(f);document.body.appendChild(dl);dl.showModal();var first=f.querySelector('select,input:not([type=hidden])');if(first)first.focus()})}
+function tomorrow(r){fetchItem(r,function(j){var d=new Date(j.starts_at.slice(0,10)+'T12:00');d.setDate(d.getDate()+1);
+ post('/schedule/move',{kind:j.kind,id:j.id,day:d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()),back:back()})})}
+document.addEventListener('contextmenu',function(e){var c=e.target.closest&&e.target.closest('.sch.visit[data-menu],.sch[data-drag]');if(!c)return;
+ var r=ref(c);if(!c.dataset.menu&&!r)return;e.preventDefault();close();
+ var m=document.createElement('div');m.className='ctxmenu';m.setAttribute('role','menu');
  function item(label,fn,cls){var b=document.createElement('button');b.type='button';b.textContent=label;if(cls)b.className=cls;b.addEventListener('click',function(){close();fn()});m.appendChild(b)}
+ if(r){item('Edit\u2026',function(){openEdit(r)});item('Move to tomorrow',function(){tomorrow(r)})}
+ if(!c.dataset.menu){m.style.left=Math.min(e.pageX,window.scrollX+document.documentElement.clientWidth-210)+'px';m.style.top=e.pageY+'px';
+  document.body.appendChild(m);menu=m;var f0=m.querySelector('button');if(f0)f0.focus();return}
+ var p=c.dataset.menu.split('|');
  item('Open ticket '+p[0],function(){location.href='/ticket/'+p[0]});
  if(p[3]==='1'){item(p[2]==='1'?'Reopen the visit':'Mark done',function(){post('/ticket/'+p[0]+'/schedule/done',{schedule_id:p[1],back:back()})});
   if(p[4]==='1')item('Acknowledge',function(){post('/ticket/'+p[0]+'/schedule/ack',{schedule_id:p[1],back:back()})});
@@ -2035,7 +2069,9 @@ document.addEventListener('contextmenu',function(e){var c=e.target.closest&&e.ta
  m.style.left=Math.min(e.pageX,window.scrollX+document.documentElement.clientWidth-210)+'px';m.style.top=e.pageY+'px';document.body.appendChild(m);menu=m;var f=m.querySelector('button');if(f)f.focus()});
 document.addEventListener('click',function(e){if(menu&&!menu.contains(e.target))close()});
 document.addEventListener('keydown',function(e){if(e.key==='Escape')close()});
-document.addEventListener('dblclick',function(e){var c=e.target.closest&&e.target.closest('.sch.visit[data-menu]');if(c&&!e.target.closest('a,button,form,.rz'))location.href='/ticket/'+c.dataset.menu.split('|')[0]});
+document.addEventListener('dblclick',function(e){var c=e.target.closest&&e.target.closest('.sch.visit[data-menu],.sch[data-drag]');
+ if(!c||e.target.closest('a,button,form,.rz'))return;var r=ref(c);if(r){openEdit(r);return}
+ if(c.dataset.menu)location.href='/ticket/'+c.dataset.menu.split('|')[0]});
 /* the right edge: half-hour steps, measured against the hour cell the chip starts in */
 var rz=null;function pad(n){return(n<10?'0':'')+n}
 /* a hovered visit is drawn wider to show its words; its handle stays where the visit ends, so the edge
@@ -2064,7 +2100,9 @@ var wrap=document.querySelector('.dispatchwrap');if(wrap){var KEY='psa-dispatch-
   wrap.querySelectorAll('table.sttable tbody tr[data-q]').forEach(function(tr){tr.hidden=!!v&&tr.dataset.q.indexOf(v)<0})})}})();
 // Click a time: a cell marked data-slot="member|YYYY-MM-DD[|HH:MM]" opens the
 // add dialog with the person and the time filled in. A click on a chip, a
-// link or a button inside the cell does what it always did.
+// link or a button inside the cell does what it always did. (9 Oct 2026: a
+// chip's own body is left alone too, so a double-click on a visit opens its
+// Edit window instead of the Add one underneath; found by the browser check.)
 (function(){var d=document.getElementById('slotdlg');if(!d||!d.showModal)return;var f=d.querySelector('form');
 function pad(n){return(n<10?'0':'')+n}
 function show(){var w=(f.querySelector('input[name=what]:checked')||{}).value||'visit';
@@ -2076,7 +2114,7 @@ if(e.target.name==='starts_at'){var a=f.starts_at.value,b=f.ends_at.value;if(a&&
 f.ends_at.value=x.getFullYear()+'-'+pad(x.getMonth()+1)+'-'+pad(x.getDate())+'T'+pad(x.getHours())+':'+pad(x.getMinutes())}}});
 d.querySelector('[data-close]').addEventListener('click',function(){d.close()});
 document.addEventListener('click',function(e){var c=e.target.closest&&e.target.closest('[data-slot]');if(!c)return;
-if(e.target.closest('a,button,form,input,select,label'))return;var p=c.getAttribute('data-slot').split('|'),tm=p[2]||'09:00';
+if(e.target.closest('a,button,form,input,select,label,.sch'))return;var p=c.getAttribute('data-slot').split('|'),tm=p[2]||'09:00';
 var sel=f.querySelector('select[name=member]');if(sel){var o=[].find.call(sel.options,function(x){return x.value.toLowerCase()===p[0].toLowerCase()});if(o)sel.value=o.value}
 var h=parseInt(tm.slice(0,2),10),e2=pad(Math.min(h+1,23))+tm.slice(2);f.starts_at.value=p[1]+'T'+tm;f.ends_at.value=p[1]+'T'+e2;
 var ti=d.querySelector('[data-slot-title]');if(ti)ti.textContent='Add on '+p[1]+' at '+tm;show();d.showModal()});

@@ -436,16 +436,20 @@ def update(conn, schedule_id: int, *, actor: str, at: datetime, member: str | No
         changed.append("note changed")
     if not changed:
         return "nothing changed"
+    # 9 Oct 2026, confirmed with Dada: a change someone else makes to your
+    # visit is yours to see again (the acknowledgement goes), and a new time
+    # is emailed as a new booking is.
+    by_other = (actor or "").lower() != new_member.lower()
     conn.execute(
         "UPDATE ticket_schedule SET member = ?, starts_at = ?, ends_at = ?, status_id = ?, location_id = ?,"
         " note = ?, conflict_allowed = ?, acknowledged_at = ? WHERE schedule_id = ?",
         (new_member, _stamp(s), _stamp(e), status_id or r["status_id"],
          (location_id or None) if location_id is not None else r["location_id"],
          ((note or "").strip()[:400] or None) if note is not None else r["note"], int(allowed),
-         None if moved else r["acknowledged_at"], schedule_id))
+         None if (moved or by_other) else r["acknowledged_at"], schedule_id))
     _event(conn, r["work_item_id"], _stamp(at), "SCHEDULE", actor, "visit changed: " + "; ".join(changed))
     touch(conn, r["work_item_id"], at)
-    if moved and new_member.lower() != r["member"].lower():
+    if moved and (new_member.lower() != r["member"].lower() or by_other):
         from . import outbox
         outbox.queue_scheduled(conn, schedule_id, at=at, actor=actor)
     from . import calsync
@@ -541,6 +545,49 @@ def remove_block(conn, block_id: int, *, actor: str, at: datetime) -> bool:
            detail=f"{BLOCK_KINDS[row['kind']].lower()} removed: {row['member']}, {row['starts_at']} to "
                   f"{row['ends_at']}, {row['name']}")
     return True
+
+
+def update_block(conn, block_id: int, *, actor: str, at: datetime, member: str | None = None,
+                 kind: str | None = None, name: str | None = None, starts_at: datetime | None = None,
+                 ends_at: datetime | None = None, allow_conflict: bool = False) -> str:
+    """Change a time off, meeting or activity in place (9 Oct 2026: "when
+    changing a schedule there is no modify"): its person, kind, words, start
+    and end. Same rules as adding one; Outlook follows, as for a move."""
+    r = conn.execute("SELECT * FROM schedule_block WHERE block_id = ?", (block_id,)).fetchone()
+    if r is None:
+        raise Refused("no such block")
+    who = (member or "").strip() or r["member"]
+    k = kind or r["kind"]
+    if k not in BLOCK_KINDS:
+        raise Refused("a block is a meeting, an activity or time off")
+    words = " ".join((name if name is not None else r["name"] or "").split())[:120] or BLOCK_KINDS[k]
+    s1, e1 = starts_at or parse_local(r["starts_at"]), ends_at or parse_local(r["ends_at"])
+    if e1 <= s1:
+        raise Refused("a block ends after it starts")
+    if (e1 - s1).days > MAX_BLOCK_DAYS:
+        raise Refused(f"a block is at most {MAX_BLOCK_DAYS} days; add another")
+    changed = []
+    if who.lower() != r["member"].lower():
+        changed.append(f"{r['member']} -> {who}")
+    if k != r["kind"]:
+        changed.append(f"{BLOCK_KINDS[r['kind']].lower()} -> {BLOCK_KINDS[k].lower()}")
+    if words != (r["name"] or ""):
+        changed.append("words changed")
+    if _stamp(s1) != r["starts_at"] or _stamp(e1) != r["ends_at"]:
+        changed.append(f"{r['starts_at']} to {r['ends_at']} -> {_stamp(s1)} to {_stamp(e1)}")
+    if not changed:
+        return "nothing changed"
+    allowed = _check(conn, who, s1, e1, allow=allow_conflict, time_off_blocks=k != "TIME_OFF", skip_block=block_id)
+    conn.execute("UPDATE schedule_block SET member = ?, kind = ?, name = ?, starts_at = ?, ends_at = ? WHERE block_id = ?",
+                 (who, k, words, _stamp(s1), _stamp(e1), block_id))
+    _audit(conn, at=at, actor=actor, action="SCHEDULE_BLOCK", kind="schedule_block", subject=str(block_id),
+           detail=f"{BLOCK_KINDS[k].lower()} changed: " + "; ".join(changed) + (", over a booking (allowed)" if allowed else ""))
+    from . import calsync
+    if who.lower() != r["member"].lower():
+        calsync.queue(conn, "BLOCK", block_id, "DELETE", member=r["member"], at=at, event_id=r["outlook_event_id"])
+        conn.execute("UPDATE schedule_block SET outlook_event_id = NULL WHERE block_id = ?", (block_id,))
+    calsync.queue(conn, "BLOCK", block_id, "UPSERT", member=who, at=at)
+    return "; ".join(changed)
 
 
 # ---------------------------------------------------------------- drag and drop

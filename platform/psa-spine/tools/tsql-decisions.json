@@ -1070,6 +1070,8 @@
     "status_mail.updated_by": "PERSON",
     "notification.from_address": "PERSON",
     "notification.portal_link": "REF",
+    "outlook_busy.subject": "NAME",
+    "outlook_busy.location": "NAME",
     "ticket_schedule.outlook_event_id": "REF",
     "schedule_block.outlook_event_id": "REF",
     "calendar_sync.kind": "CODE",

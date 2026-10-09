@@ -2263,7 +2263,8 @@ NOT VERIFIED).
 - **The hands.** Drag a row from Service Tickets onto a resource's hour to book it (an hour, the ticket becomes theirs if
   nobody has it). Drag a visit to another person or hour to move it. Drag its **right edge** to change when it ends, in
   half hours (`POST /schedule/resize`). **Right-click** a visit for *Open ticket*, *Mark done* / *Reopen*,
-  *Acknowledge* (your own) and *Delete the visit*. **Double-click** opens the ticket. Click an empty hour to book by
+  *Acknowledge* (your own) and *Delete the visit*. **Double-click** opens the ticket (since 9 Oct, the Edit window: see
+  *Changing a booking in place*). Click an empty hour to book by
   hand. Every action is one ordinary form post, so the forms still do all of it without a mouse.
 - **Service Tickets.** The left panel is a table, as the reference PSA lists them: Ticket #, Summary, Company,
   Priority, Status, Owner, Age, the open tickets on the boards shown with no visit on the day. A search box (filters as
@@ -2367,6 +2368,46 @@ They change every few seconds, mean nothing after a restart, and a table would p
 clears them: operators read offline until their next page loads, and Busy/Away goes back to Automatic. INFERRED from
 the code: PSA-Desk is one process, so every page reads the same state. The operator list (names, the In/Out board) is
 read at most every 30 seconds; the states themselves are always current.
+
+## Changing a booking in place, and your own Outlook entries (9 Oct 2026, schema 077)
+
+Dada, 9 Oct 2026: *"u can dispatch but when changing a schedule there is no modify on calendars and dispatch portal"*,
+then *"outlook too"*, then *"if owner owns outlook show exact schedule dont just show free busy on the calendars"*.
+Each part was confirmed before building.
+
+- **The Edit window.** Right-click a visit, a time off, a meeting or an activity for **Edit…**, or double-click it.
+  It works the same on Dispatch (day and week), the Schedule and the calendars. A visit's window holds the
+  technician, the start and end (any day, so it reschedules too), the status, where, and the notes. A block's window
+  holds the person, the kind, the words, and the start and end. **Save** is one ordinary form post
+  (`POST /schedule/edit`, `POST /schedule/block/edit`) and lands back on the same page with what changed. The window
+  fills itself from `GET /schedule/item.json`, which answers only for a visit on a board the person works.
+- **Move to tomorrow** on the same right-click moves the entry a day on, at the same time and the same length
+  (`/schedule/move`).
+- **The same rules as booking.** A clash with another visit, or with time off, is refused, with the reason on the
+  page. **Allow a double booking** in the window lets it through, and the history says so. A block is at most
+  31 days long (`MAX_BLOCK_DAYS`).
+- **The technician is told.** When someone else changes your visit, its acknowledgement is cleared, so it reads as
+  new to you again. A new time made by someone else is emailed as a new booking is (PSA-Notify), on a board that
+  emails its owners. The ticket's
+  activity records every change (`visit changed: …`). A block's change is in Setup › Audit (`SCHEDULE_BLOCK`).
+- **Outlook follows.** The event is rewritten at its new time. A block or a visit given to another person is taken
+  off the first person's calendar and written to the new one's (`calsync.queue`, then `Sync-PsaCalendars.ps1`).
+- **A click on a booking no longer opens Add.** A single click on the body of a visit or a block used to fall through
+  to the empty hour under it and open the *Add on …* window. The browser check found it, because it blocked the
+  double-click. An empty hour still opens Add.
+- **Your own Outlook entries, by name (077).** Schema 059 kept busy times only, *"never a subject, an attendee or a
+  body"*. Dada reversed that on 9 Oct for one reader: the person whose calendar it is.
+  - `Sync-PsaCalendars.ps1` now reads each entry's subject, location and sensitivity as well, and the desk keeps the
+    subject and location as Outlook has them. By Dada's choice they get no patient-detail check.
+  - An entry marked **Private** or **Confidential** in Outlook keeps neither, and reads *Private · Busy* to its owner.
+  - The owner sees *subject · location* on Dispatch, the Schedule and their calendar. **Everyone else** still reads
+    only *Busy*, *Tentative*, *Out of office* or *Working elsewhere*. Attendees and the body are never read.
+  - The `.ics` feed carries no Outlook entries, as before.
+  - A store without 077 keeps working: the sync stores busy times only and every page shows the Outlook word, as
+    before.
+
+Schema 077 adds `outlook_busy.subject`, `location` and `private`. The busy times already pulled have none of them until
+the next sync pass replaces them. Handoff: `HANDOFF-cloud-sql01-WS36-20261009-schedule-edit-outlook-077.md`.
 
 ## Chat, round five: ending a chat, and "how did I do?" (7 Oct 2026, schema 074)
 
