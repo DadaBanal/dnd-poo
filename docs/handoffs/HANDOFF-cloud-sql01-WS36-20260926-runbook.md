@@ -3470,3 +3470,13 @@ Dada, 9 Oct: *"lets mark this for next week"*, after SQL01 laid out what Entra s
 **Separate and bigger, for WS36:** the desk's own Entra sign-in (`PSA_ENTRA_TENANT` / `PSA_ENTRA_CLIENT`, built but off) would take domain passwords out of the desk entirely, LAN included, while AD lockout stays "Never".
 
 Still open from Part 72: Dada to delete the `pmcne.ph` origin certificate; yes/no on *remove inactive users from seats* (30 days suggested).
+
+### Part 74: 2026-10-09, ~19:40 +08:00. **`encoder@premieremedicalcenter.net` could never receive mail; the gate and the desk now use her working alias `encoder@pmcne.ph`.** MEASURED.
+
+Dada: *"check encoder@premieremedicalcenter.net she didnt receive any emails"*, then, with a screenshot of the M365 admin centre: *"its set as this so it needs to be updated on ad can we work it like this for now"*.
+
+- **Cause.** The M365 user *Philhealth Encoder* (UPN `encoder@pmcne.ph`, synced from on-prem AD) has primary SMTP **`encoder@premieremedicalcenter.net`**. That domain has **no MX and no A record** (control: `pmcne.ph` MX → Exchange Online). Mail from outside — Cloudflare's one-time PINs included — has nowhere to go. Mail inside the tenant may still route internally (INFERRED), which is why it went unnoticed.
+- **Her aliases** (Dada's screenshot): `encoder@premieremedicalcenter.onmicrosoft.com` and **`encoder@pmcne.ph`** — the second receives mail through `pmcne.ph`'s MX.
+- **Cloudflare Access** policy *PMO Helpdesk members only*: `encoder@premieremedicalcenter.net` removed, `encoder@pmcne.ph` added. Read back: **14 addresses**, last updated 19:36.
+- **Desk**: member `encoder` email → `encoder@pmcne.ph`, through `members.save` under `psa_desk` (audited, actor `sql01 for dada.banal`); preview rolled back, then applied. `for_sign_in` maps both addresses to `encoder`, so sign-in, boards and tickets are unchanged. She was the only member on that domain.
+- **Left for Dada:** make `encoder@pmcne.ph` her primary address in **on-prem AD** (the M365 page is read-only for synced users), then Entra Connect carries it up.
