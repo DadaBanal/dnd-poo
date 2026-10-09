@@ -8543,7 +8543,7 @@ class MailPickupScriptTest(unittest.TestCase):
         self.assertNotIn("Set-Content -Path $DeltaFile", self.text)
         # written whole to a .tmp and flushed, then swapped in: the file read
         # next is the old link or the new one, never a half-written one
-        body = self.text[self.text.index("function Save-DeltaLink"):]
+        body = self.text[self.text.index("function Save-DeltaLink"):].replace("\r\n", "\n")  # a Windows checkout is CRLF
         body = body[:body.index("\n}\n")]
         self.assertIn("[IO.FileOptions]::WriteThrough", body)
         self.assertIn("[IO.File]::Replace($tmp, $DeltaFile, \"$DeltaFile.prev\")", body)
