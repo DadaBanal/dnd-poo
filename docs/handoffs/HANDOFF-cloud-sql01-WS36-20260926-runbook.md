@@ -3507,3 +3507,13 @@ Dada: *"on one and 2 give me one sctipt ill run kt"*. Step 1 is the Part 75 away
 - **Not touched:** the dead `pmc-psa` tunnel's credential files (useless since the tunnel was deleted, Part 71).
 
 **Waiting on Dada:** run it. SQL01 then checks the next PSA-Notify and PSA-Teams passes are result 0.
+
+**Part 76, update (06:42 +08:00): step 1 done by Dada. MEASURED.** Dada ran `Set-PsaDeskAwayLinks.ps1 -Apply` directly:
+- **Both tasks:** `DONE`, "only the new arguments added: True", "logon unchanged: True".
+- **Backups:** `PSA-Notify-task-before-20261010-064026.xml` and `PSA-Teams-task-before-20261010-064029.xml`.
+
+Next passes:
+- **PSA-Notify:** result 0. Log line *0 due: 0 sent, 0 failed*.
+- **PSA-Teams:** result 0, error lines 0. "Nothing posted" because it has been in PREVIEW since Part 22 by design. The backup confirms there was no `-Apply` before, so that is unchanged.
+
+**Still open:** the certificate (step 2). Re-running `Invoke-DadaAwayLinksAndCert.ps1` is safe: step 1 now prints `SKIP … already has -DeskAwayUrl` without asking for a password, and step 2 runs. The walk-through (Part 75) is also open.
