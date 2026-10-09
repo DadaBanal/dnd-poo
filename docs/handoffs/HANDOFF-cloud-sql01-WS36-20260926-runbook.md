@@ -3043,3 +3043,27 @@ Computer or laptop · Printer or scanner · Can't log in, or a password · Email
 `ticket.portal_tile_id` is set on **0** tickets, which is right: the column fills as requesters raise things through a tile from here, and nothing existing was rewritten.
 
 **Still open, and still Dada's** (unchanged from Part 59, recorded so it is not lost): Part 58's read measured **104 of 303 tickets caught by no tile's words**, and **Phone or extension** (1) and **CCTV** (0) have no tile among these nine. *Something else, or not sure* catches anything, so nothing is blocked — whether either earns a tenth tile is his call.
+
+### Part 61: 2026-10-09, ~11:55 +08:00. **08ca0ef live; `ticket-topics` has its new closing section; Procurement now emails its requesters. One of WS36's expected numbers was wrong, and why.** MEASURED.
+
+No schema step, no restart — the diff touches no `schema/` or `sqlserver/` file.
+
+**Part A.** `ticket-topics --days 180` run read-only under `EXECUTE AS psa_desk`. It now ends with the new section, *"Of the 104 no tile's words caught, how the desk classified them"* — **N = 104**, as WS36 expected. Output handed back whole; counts only. The useful part for tiles: of those 104, **35 are HIS › HIS on IT_HELP** and **29 have no Type › Subtype › Item at all** (19 IT_HELP, 6 PROCUREMENT, 4 UNROUTED). So the biggest uncovered group is not miscellaneous — it is BizBox HIS work that the *BizBox or a hospital system* tile's words are missing.
+
+**Part B — B1, all three gates passed before anything changed:** PROCUREMENT `notify_requester` = **0**; **P = 0** PENDING notifications; PSA-Notify last result **0**, Ready.
+
+**B2 preview — and the one number that did not match.** Two of the three lines were as the handoff said (*email the requester on*; *PREVIEW: nothing written*) and the switch still read **0** after it. But the count read **16 status and picked-up email(s)**, not the "about 12" expected.
+
+I did not wave that through. **WS36's figure was derived from misreading its own board-compare**: the 7 Oct output (Part 37) read *statuses 11 vs 15*, where **11 was IT_HELP's and 15 was Procurement's** — the handoff took the 11. Measured now: **PROCUREMENT has 15 active statuses** (21 rows, 6 retired), IT_HELP 13. So **16 = 15 active statuses + the picked-up email**, which is exactly right, and every one of the 16 is a Procurement status of its own. The expectation was wrong, not the system, so the gate's purpose — catching a wildly larger number than intended — was satisfied, and I went on.
+
+**B3:** applied, ended **`applied`**.
+
+**B4 — the values, all four passing:**
+- switch now reads **1**;
+- **PENDING is still 0**, equal to B1's P — so turning it on sent nothing about old tickets, which was the thing worth proving;
+- exactly **1** `BOARD_CONFIG` row reads *email the requester: on* (11:49, `sql01 for dada.banal`);
+- **re-running B3 changed nothing**: *"0 status and picked-up email(s) turned on"*, the audit row still 1, PENDING still 0.
+
+No undo was needed. **PSA-Notify's registration was not touched**; Procurement's email goes from helpdesk@ and replies thread on the `[PMC-…]` reference.
+
+**Still to hand back, and it needs a real event:** the next Procurement status change, showing that ticket's notification going PENDING then SENT (counts only). Nothing has moved on that board since, so PENDING is still 0.
