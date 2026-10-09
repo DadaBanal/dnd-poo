@@ -3445,3 +3445,15 @@ This matters because **AD's lockout threshold is "Never"** (minimum length 7; `n
 Checked first: no active connections, never had a DNS record, and not the tunnel the service runs (the service's config names `pmc-psa-net`). `cloudflared tunnel delete pmc-psa`; the `pmcne.ph` account now lists **no tunnels**. `pmc-psa-net` unaffected: still connected, `desk.pmcne.net` still answers 302 to the Access gate.
 
 Left on disk, for Dada to decide: the deleted tunnel's credential file (now useless — deleting a tunnel revokes it) in the user profile and its copy in `C:\ProgramData\cloudflared\`; and the **`pmcne.ph` origin certificate** (`%USERPROFILE%\.cloudflared\cert.pem`), which is still a live credential able to create tunnels and DNS routes in `pmcne.ph`. Nothing running needs it.
+
+### Part 72: 2026-10-09, ~19:10 +08:00. **Dada signed in to `desk.pmcne.net` from Australia through Access. CI run 85 green, so the held pull and PSA-Desk restart are done: crash-safe mail pickup and the coloured Came-from badges are live.** MEASURED.
+
+**Access, end to end.** Dada's first attempt from Australia failed `ERR_NAME_NOT_RESOLVED`: he had looked the name up minutes before the DNS record existed (~10:44Z), and `pmcne.net`'s SOA lets resolvers cache "does not exist" for **1800 s**. All four large public resolvers already answered correctly. Once his resolver let go, Cloudflare's Access log recorded: **PMC Service Desk · Allowed · dada.banal@pmcne.ph · AU · 18:54 (server time)**. The gate, the one-time PIN and the tunnel work from outside the country.
+
+**The held pull (Part 68).** WS36 fixed the three source-text tests (`118deb4` *pin the new delta-link save, not the old wording*; `1637d4b` *read Save-DeltaLink's body the same on a CRLF checkout*). **Run 85 on `1637d4b`: windows, sql-server, test (3.11), test (3.14) all success.** Every local commit was already upstream (`git cherry`: all `-`) and the tree was clean, so the live tree was aligned to the branch head with `git reset --keep` — nothing lost. PSA-Desk restarted: **401 → down → 401**.
+
+**The crash protection, first passes on the new code (19:05):** PSA-Mail-Helpdesk, -Support, -Procurement and PSA-Notify all **result 0**. Each mailbox now has its link **and a `.prev`** beside it — the new `Save-DeltaLink` (temp file, write-through, `File.Replace`) at work — and all six files are valid Graph links with **0 NUL bytes**. A shutdown mid-write now leaves the previous link, never a blank one.
+
+`desk.pmcne.net` still answers 302 to the Access gate after the restart.
+
+**Open, each needing Dada's yes or hand:** delete the `pmcne.ph` origin certificate (the permission layer refuses SQL01 on that folder — Dada runs `Remove-Item "$env:USERPROFILE\.cloudflared\cert.pem"`); turn on *remove inactive users from seats*; keep the 14-address list in step with the PMO Helpdesk board; Entra ID as the login method; a rate limit on `/login` (low value now — nothing unauthenticated reaches the origin); and, for WS36, email links that work from outside.
