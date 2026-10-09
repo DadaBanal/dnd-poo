@@ -8535,8 +8535,18 @@ class MailPickupScriptTest(unittest.TestCase):
 
     def test_the_delta_link_only_moves_after_a_good_import(self):
         failed = self.text.index("if ($code -ne 0) {")
-        saved = self.text.index("Set-Content -Path $DeltaFile")
+        # 9 Oct 2026: the save goes through Save-DeltaLink (a crash left three
+        # links as NUL bytes), still once, and still after the import's check
+        saved = self.text.index("if ($deltaLink) { Save-DeltaLink $deltaLink }")
         self.assertLess(failed, saved)
+        self.assertEqual(self.text.count("Save-DeltaLink $deltaLink"), 1)
+        self.assertNotIn("Set-Content -Path $DeltaFile", self.text)
+        # written whole to a .tmp and flushed, then swapped in: the file read
+        # next is the old link or the new one, never a half-written one
+        body = self.text[self.text.index("function Save-DeltaLink"):]
+        body = body[:body.index("\n}\n")]
+        self.assertIn("[IO.FileOptions]::WriteThrough", body)
+        self.assertIn("[IO.File]::Replace($tmp, $DeltaFile, \"$DeltaFile.prev\")", body)
 
     def test_two_pickups_keep_apart_and_one_can_name_its_board(self):
         # 058, the cut-over: helpdesk@ and support@ each get a pickup. Each
@@ -9546,7 +9556,9 @@ class MailPickupDeltaRecoveryTest(unittest.TestCase):
     def test_an_expired_delta_link_starts_a_fresh_window_instead_of_throwing(self):
         text = self.SCRIPT.read_bytes().decode("ascii")
         self.assertIn("if ($st -ne 410 -or $first) { throw }", text)      # only a saved link, and only 410
-        self.assertIn("Remove-Item -Path $DeltaFile -Force", text)
+        # the link kept before it goes too, or the next read would carry on from it (9 Oct 2026)
+        self.assertIn('foreach ($f in @($DeltaFile, "$DeltaFile.prev")) '
+                      '{ if (Test-Path $f) { Remove-Item -Path $f -Force } }', text)
         self.assertIn("$newIds.Clear()", text)                            # nothing from the dead page is kept
         i = text.index("Graph says the saved delta link has expired")
         self.assertIn("$first = $true", text[i:i + 700])                  # and it reads from -Since
