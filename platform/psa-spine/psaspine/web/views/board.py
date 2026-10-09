@@ -19,9 +19,10 @@ from __future__ import annotations
 import urllib.parse
 
 from ... import board as engine
-from ... import itil
+from ... import itil, origin
 from .. import templates as t
 from . import common
+from .common import came_badge
 
 PRIORITY_ORDER = {"P1": 0, "P2": 1, "P3": 2, "P4": 3}
 OPEN_STATES = ("RESOLVED", "CLOSED", "CANCELLED")
@@ -122,7 +123,11 @@ def _where(ctx, boards, f, tile_ids: dict[str, set]) -> tuple[str, list]:
         params.append(f["type"])
     elif f["type"] == "none":
         where.append("t.record_type IS NULL")
-    if f["src"] in SOURCES:
+    if f["src"] in origin.BUCKETS:              # 9 Oct 2026: where it came from, Chat first
+        clause, more = origin.where(ctx.conn, f["src"])
+        where.append(clause)
+        params += more
+    elif f["src"] in SOURCES:                   # an older saved view's raw source
         where.append("t.intake_source = ?")
         params.append(f["src"])
     needle = f["q"].strip()
@@ -364,8 +369,10 @@ def _filters(ctx, boards, f) -> str:
         "</select></div><div><label>Type</label><select name=type>"
         + _options([("", "Any")] + [(k, v) for k, v in itil.LABEL.items()]
                    + [("none", "Not set")], f["type"]) +
-        "</select></div><div><label>Source</label><select name=src>"
-        + _options([("", "Any")] + [(s, s.replace("_", "-").title()) for s in SOURCES], f["src"]) +
+        "</select></div><div><label>Came from</label><select name=src>"
+        + _options([("", "Anywhere")] + list(origin.BUCKETS.items())
+                   + ([(f["src"], f["src"].replace("_", "-").title())] if f["src"] in SOURCES
+                      and f["src"] not in origin.BUCKETS else []), f["src"]) +
         "</select></div>"
         f"<div class=wide style='flex:1'><label>Search</label><input name=q value='{t.esc(f['q'])}' "
         "placeholder='ticket #, summary, contact'></div>"
@@ -420,6 +427,7 @@ def _table(ctx, boards, shown, f, total: int) -> str:
                 lst.append(r["member"])
     lines = []
     from ... import richtext
+    came = origin.of(ctx.conn, [(x["r"]["work_item_id"], x["r"]["intake_source"]) for x in shown])
     for x in shown:
         r = x["r"]
         wid = r["work_item_id"]
@@ -439,7 +447,7 @@ def _table(ctx, boards, shown, f, total: int) -> str:
             f" · {t.esc(r['owner'] or 'unassigned')} · {t.esc(common.human_age(r['opened_at'], now=ctx.now))}</div>"
             + (" <span class='chip sla-warn' title='The requester has written since the desk last did'>"
                "customer updated</span>" if r["customer_updated"] else "")
-            + "<div class=last><span class=pill>" + t.esc(" › ".join(
+            + "<div class=last>" + came_badge(came[wid]) + " <span class=pill>" + t.esc(" › ".join(
                 [itil.LABEL.get(r["record_type"], "Type not set")] + ([r["klass"]] if r["klass"] else [])))
             + "</span>"
             + (f" <span class=pill title='Closes when its parent closes'>child of {t.esc(r['parent_id'])}</span>"

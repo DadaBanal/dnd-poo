@@ -23,6 +23,7 @@ import urllib.parse
 from datetime import timedelta
 
 from ... import board as engine
+from ... import origin as _origin
 from ... import phi, tickets
 from .. import templates as t
 from . import common
@@ -394,6 +395,7 @@ def detail(ctx, work_item_id):
            if can_work and not tk["merged_into"] else "")
         + "</h1>"
         f"<p class=sub>{t.esc(tk['board_name'])} · "
+        + common.came_badge(_origin.one(ctx.conn, wid), link=True) + " · "
         f"{t.chip(tk['status_name'] or tk['state'].replace('_', ' ').title())} · "
         f"{t.badge(tk['priority'])} <span class=why>{t.esc(t.priority_name(tk['priority']))} · {t.esc(why)}</span>"
         + (f" · <span class=pill>{t.esc(klass)}</span>" if klass else "")
@@ -707,7 +709,7 @@ def detail(ctx, work_item_id):
         "<div class=card data-pod=details><h3><svg class=ic aria-hidden=true><use href=#i-info></use></svg>Details</h3><dl class=kv>"
         f"<dt>Opened</dt><dd>{t.esc(tk['opened_at'])}</dd>"
         f"<dt>Updated</dt><dd>{t.esc(_ago(common.human_age(tk['updated_at'] or tk['opened_at'], now=ctx.now)))}</dd>"
-        f"<dt>Source</dt><dd>{t.esc((tk['intake_source'] or '—').replace('_', '-').title())}</dd>"
+        f"<dt>Came from</dt><dd>{common.came_badge(_origin.one(ctx.conn, wid), link=True)}</dd>"
         f"<dt>Desk ref</dt><dd>{t.esc(tk['external_ref'] or '—')}</dd>" + _raised_by(ctx, work_item_id) +
         f"<dt>Calendar</dt><dd>{t.esc(tk['calendar_name'] or '—')}</dd></dl></div>")
 
@@ -1923,7 +1925,8 @@ def tab(ctx, work_item_id, tab):
             + "<a class=backbtn data-back href='/' title='Back to the Service Board'>" + t.icon("left")
             + "<span class=lbl>Back to the Service Board</span></a>"
             f"<div class=hdr><div class=grow><h1 class=sumline>{wid}<span class=sumtext> · {t.esc(tk['summary'])}</span></h1>"
-            f"<p class=sub>{t.esc(tk['board_name'])} · {t.chip(tk['status_name'] or tk['state'].replace('_', ' ').title())} · "
+            f"<p class=sub>{t.esc(tk['board_name'])} · {common.came_badge(_origin.one(ctx.conn, wid), link=True)} · "
+            f"{t.chip(tk['status_name'] or tk['state'].replace('_', ' ').title())} · "
             f"{t.badge(tk['priority'])} · {t.esc(tk['entity'] or 'no company')}</p></div></div>" + _tab_bar(wid, tab))
     label = dict(TICKET_TABS)[tab]
     return Response(body=t.page(f"{work_item_id} · {label}", head + body, user=ctx.user, active="board",

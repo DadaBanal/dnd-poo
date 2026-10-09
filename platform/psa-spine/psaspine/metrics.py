@@ -49,7 +49,7 @@ def desk(conn: sqlite3.Connection, boards, *, now: datetime, months: int = 6,
              "backlog": 0, "opened_total": 0, "closed_total": 0,
              "median_respond": None, "median_resolve": None,
              "respond_met_total": None, "resolve_met_total": None,
-             "by_board": [], "by_type": [], "by_source": [], "by_priority": [],
+             "by_board": [], "by_type": [], "by_source": [], "by_came_from": [], "by_priority": [],
              "satisfaction": None, "satisfaction_n": 0, "chat_rating": None, "chat_rating_n": 0,
              "chat_by_operator": []}
     if not boards:
@@ -107,6 +107,15 @@ def desk(conn: sqlite3.Connection, boards, *, now: datetime, months: int = 6,
     out["by_board"] = mix("b.display_name", "JOIN board b ON b.board_id = t.board_id")
     out["by_type"] = mix("t.record_type")
     out["by_source"] = mix("t.intake_source")
+    # 9 Oct 2026: where tickets came from, Chat apart (origin.py). Counted here
+    # rather than grouped in SQL: SQL Server refuses a subquery in GROUP BY.
+    from . import origin
+    rows = conn.execute(f"SELECT t.work_item_id, t.intake_source FROM ticket t WHERE t.board_id IN ({marks})"
+                        " AND t.opened_at >= ?", (*boards, since)).fetchall()
+    came: dict[str, int] = {}
+    for o in origin.of(conn, [(r[0], r[1]) for r in rows]).values():
+        came[o["key"]] = came.get(o["key"], 0) + 1
+    out["by_came_from"] = sorted(came.items(), key=lambda x: (-x[1], list(origin.BUCKETS).index(x[0])))
     out["by_priority"] = sorted(mix("t.priority"), key=lambda x: x[0])
 
     if db.table_exists(conn, "survey_response"):

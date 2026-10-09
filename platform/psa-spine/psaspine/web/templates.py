@@ -439,6 +439,9 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 input::placeholder,textarea::placeholder{color:var(--ink-3)}
 select{appearance:none;-webkit-appearance:none;padding-right:30px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237a8290' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center}
 textarea{min-height:90px;resize:vertical;line-height:1.5}
+/* 9 Oct 2026: where a ticket came from. Chat stands out; the rest stay quiet. */
+.pill.came{font-weight:600} .pill.came-chat{background:var(--accent-bg);color:var(--accent);border-color:var(--accent)}
+.pill.came-email{border-style:dashed} a.pill.came:hover{text-decoration:none;filter:brightness(1.1)}
 /* 078: the portal's tiles (Dada, 9 Oct 2026). Not .tile, which is the desk's figure tiles. */
 .helptiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;margin:0 0 12px}
 .htile{display:flex;gap:12px;align-items:flex-start;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);padding:14px 16px;color:inherit;min-height:72px;transition:border-color .15s,background .15s,transform .15s}

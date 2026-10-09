@@ -2369,6 +2369,27 @@ clears them: operators read offline until their next page loads, and Busy/Away g
 the code: PSA-Desk is one process, so every page reads the same state. The operator list (names, the In/Out board) is
 read at most every 30 seconds; the states themselves are always current.
 
+## Where a ticket came from: Chat apart (9 Oct 2026, code only)
+
+Dada, 9 Oct 2026: *"chat tickets differ from regular ticketing can we do a separation if the tickets came from chat
+rather than numbering?"* Confirmed before building:
+
+- every ticket keeps its PMC- number (one sequence, D4);
+- each ticket shows where it came from as a badge, the Service Board can filter by it, and Reports split by it;
+- **Chat** means a ticket an operator made from a live chat, or one a chat was added to.
+
+How it works:
+
+- **The badge.** Each ticket's header and its row on the board carry a pill: **Chat #n** (accented, and it opens the
+  chat), **Portal** (*Portal tile* on the ticket when it came by a tile), **Email**, **Desk** (with *Phone* or
+  *Walk-up*), or **Other** (API, import). The ticket's details read *Came from* in place of *Source*.
+- **The filter.** The Service Board's *Source* select is now **Came from**: Anywhere, Chat, Portal, Email, Desk,
+  Other. A saved view that used an older raw source (Phone, say) still works.
+- **Reports.** *Opened, by where it came from* replaces *Opened, by source*. The CSV keeps the raw source as before.
+- **No schema step.** A chat already names its ticket (`chat_session.work_item_id`, 071), so `psaspine/origin.py`
+  reads that link before `ticket.intake_source`. It works on every ticket ever raised. A ticket made from a chat is
+  still written PORTAL in `intake_source`, which is why the chat link is checked first.
+
 ## Tiles on My requests, in the reference PSA's help-portal shape (9 Oct 2026, schema 078)
 
 Dada, 9 Oct 2026: *"on the my requests portal we should add in there an option like the help portal for connectwise

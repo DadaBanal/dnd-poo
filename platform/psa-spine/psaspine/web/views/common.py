@@ -343,3 +343,17 @@ def project_ticket_ok(ctx, work_item_id: str) -> bool:
         return True
     from ... import resources
     return me in {m.lower() for m in resources.everyone(ctx.conn, work_item_id)}
+
+
+def came_badge(o: dict, *, link: bool = False) -> str:
+    """Where a ticket came from, as a coloured pill (9 Oct 2026: chat tickets
+    apart from the rest, the number unchanged). A chat's pill opens the chat
+    when asked to."""
+    from .. import templates as t
+    cls = "came came-" + o["key"].lower()
+    title = {"CHAT": "Made from a live chat", "PORTAL": "Raised on the portal" + (f": {o['tile']}" if o.get("tile") else ""),
+             "EMAIL": "Came in by email", "DESK": "Raised on the desk", "OTHER": "Raised by another system"}[o["key"]]
+    if link and o["key"] == "CHAT" and o.get("chat_id"):
+        return (f"<a class='pill {cls}' href='/chat/{int(o['chat_id'])}' title='{t.esc(title)}'>"
+                f"{t.esc(o['label'])}</a>")
+    return f"<span class='pill {cls}' title='{t.esc(title)}'>{t.esc(o['label'])}</span>"

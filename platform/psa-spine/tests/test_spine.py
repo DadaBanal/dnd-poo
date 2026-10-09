@@ -17209,5 +17209,90 @@ class PortalTilesTest(unittest.TestCase):
             self.assertIn("Raise a request", page)
 
 
+
+class CameFromTest(unittest.TestCase):
+    """Dada, 9 Oct 2026: "chat tickets differ from regular ticketing can we do
+    a separation if the tickets came from chat rather than numbering?" One
+    PMC- sequence for all (D4); a badge, a Came-from filter and Reports split
+    by Chat, Portal, Email, Desk. Chat: made from a live chat, or a chat added
+    to it."""
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+
+    def setUp(self) -> None:
+        from psaspine import chat
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = str(_target(self.tmp))
+        conn = _fresh(self.tmp)
+        self.at = datetime(2026, 10, 9, 9, 0)
+        setup.apply_starter(conn, "IT_HELP", actor="t", at=self.at)
+        conn.execute("INSERT OR REPLACE INTO board_member (board_id, member, access) VALUES ('IT_HELP', 'bob', 'WORK')")
+        mk = lambda summary, src, who: tickets.open_ticket(conn, board_id="IT_HELP", summary=summary, impact="I3",
+                                                          urgency="U3", requested_by=who, at=self.at, source=src)
+        self.portal = mk("Payslip looks wrong", "PORTAL", "lea.cruz@pmcne.ph")
+        self.email = mk("Install a DICOM viewer", "EMAIL", "rosa.mendoza@pmcne.ph")
+        self.desk = mk("Phone in Ward 2", "DESK", None)
+        self.phone = mk("Rang about a printer", "PHONE", None)
+        cid, _ = chat.start(conn, requester="mia.santos@pmcne.ph", board_id="IT_HELP", subject="Leave credits",
+                            first="How many leave credits do I have left?", at=self.at)
+        self.chat_id = cid
+        self.chat = chat.to_ticket(conn, cid, member="bob", at=self.at)
+        cid2, _ = chat.start(conn, requester="rosa.mendoza@pmcne.ph", board_id="IT_HELP", subject="About my DICOM ticket",
+                             first="Any news on the viewer?", at=self.at)
+        self.email_chatted = mk("Second email ticket", "EMAIL", "jun.reyes@pmcne.ph")
+        chat.attach(conn, cid2, self.email_chatted, member="bob", at=self.at)
+        conn.commit()
+        conn.close()
+        self.config = Config(session_secret=_secrets.token_bytes(32))
+        self.raw = make_app(self.db_path, config=self.config, clock=lambda: self.at)
+        self.bob = self._cookie_for("bob")
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_each_ticket_says_where_it_came_from_and_the_number_is_unchanged(self):
+        from psaspine import origin
+        conn = db.connect(self.db_path)
+        got = {wid: origin.one(conn, wid) for wid in (self.portal, self.email, self.desk, self.phone, self.chat,
+                                                       self.email_chatted)}
+        conn.close()
+        self.assertEqual({w: o["key"] for w, o in got.items()},
+                         {self.portal: "PORTAL", self.email: "EMAIL", self.desk: "DESK", self.phone: "DESK",
+                          self.chat: "CHAT", self.email_chatted: "CHAT"})
+        self.assertEqual(got[self.chat]["label"], f"Chat #{self.chat_id}")
+        self.assertEqual(got[self.phone]["label"], "Phone")
+        for wid in got:
+            self.assertTrue(wid.startswith("PMC-"))                      # one sequence for all (D4)
+        _, _, page = self._call("GET", f"/ticket/{self.chat}", cookie=self.bob)
+        self.assertIn(f"<a class='pill came came-chat' href='/chat/{self.chat_id}'", page)
+        _, _, page = self._call("GET", f"/ticket/{self.email}", cookie=self.bob)
+        self.assertIn("class='pill came came-email'", page)
+
+    def test_the_board_filters_by_where_it_came_from(self):
+        def rows(src):
+            _, _, page = self._call("GET", "/", query=f"view=all&src={src}", cookie=self.bob)
+            return {w for w in (self.portal, self.email, self.desk, self.phone, self.chat, self.email_chatted)
+                    if f"/ticket/{w}'" in page}
+        self.assertEqual(rows("CHAT"), {self.chat, self.email_chatted})
+        self.assertEqual(rows("PORTAL"), {self.portal})
+        self.assertEqual(rows("EMAIL"), {self.email})
+        self.assertEqual(rows("DESK"), {self.desk, self.phone})
+        self.assertEqual(rows("PHONE"), {self.phone})                     # an older saved view still works
+        _, _, page = self._call("GET", "/", query="view=all", cookie=self.bob)
+        self.assertIn("<label>Came from</label>", page)
+        self.assertIn(f"Chat #{self.chat_id}", page)
+
+    def test_reports_split_by_where_it_came_from(self):
+        from psaspine import metrics
+        conn = db.connect(self.db_path)
+        m = metrics.desk(conn, {"IT_HELP"}, now=self.at)
+        conn.close()
+        self.assertEqual(dict(m["by_came_from"]), {"CHAT": 2, "PORTAL": 1, "EMAIL": 1, "DESK": 2})
+        self.assertEqual(dict(m["by_source"])["PORTAL"], 2)               # the raw column, as before
+        _, _, page = self._call("GET", "/reports", cookie=self.bob)
+        self.assertIn("Opened, by where it came from", page)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

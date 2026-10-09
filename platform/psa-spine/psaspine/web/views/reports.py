@@ -13,7 +13,7 @@ import csv
 import io
 from datetime import date
 
-from ... import metrics
+from ... import metrics, origin
 from .. import templates as t
 from . import common
 
@@ -193,8 +193,10 @@ def index(ctx):
         f"<div class=card><h3>{t.icon('layers')}Opened, by board</h3>{chart_bars(m['by_board'], 'Opened by board')}</div>"
         f"<div class=card><h3>{t.icon('tag')}Opened, by Type</h3>"
         f"{chart_bars(m['by_type'], 'Opened by type', names=itil.LABEL)}</div>"
-        f"<div class=card><h3>{t.icon('mail')}Opened, by source</h3>"
-        f"{chart_bars(m['by_source'], 'Opened by source', names={s: s.replace('_', '-').title() for s, _ in m['by_source']})}</div>"
+        f"<div class=card id=camefrom><h3>{t.icon('mail')}Opened, by where it came from</h3>"
+        f"{chart_bars(m['by_came_from'], 'Opened by where it came from', names=origin.BUCKETS)}"
+        "<p class=why style='margin:6px 0 0'>Chat is a ticket made from a live chat, or one a chat was added to. "
+        "The numbers are one PMC- sequence for all.</p></div>"
         f"<div class=card><h3>{t.icon('alert')}Opened, by priority</h3>{chart_bars(m['by_priority'], 'Opened by priority')}</div>"
         "</div>" + sat + util
         + f"<div class=card><h3>{t.icon('rows')}The table</h3>{table}</div>")
