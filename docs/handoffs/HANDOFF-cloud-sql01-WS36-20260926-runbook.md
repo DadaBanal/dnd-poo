@@ -3115,3 +3115,33 @@ So: for a user raising a ticket they are two different applications and deserve 
 **What follows from Q3 and Q4 together, for WS36 to decide, not me.** The seven *Payroll › Cannot log in* tickets have no path through the tiles: the password tile offers Windows and BizBox, and the hospital-system tile's Payroll child is *not working*, not *cannot log in*. A requester who cannot sign in to payroll today lands on neither. INFERRED from the two measurements above.
 
 Nothing was written. No key, GUID, subject or name read out of the database.
+
+### Part 63: 2026-10-09, ~13:35 +08:00. **`9c1977d` live. The eight PMC tiles applied — the gate matched WS36's four conditions exactly, and *Payroll › Cannot log in* now has a road from the portal.** MEASURED.
+
+Applies `docs/handoffs/HANDOFF-cloud-sql01-WS36-20261009-pmc-tiles.md`. No schema step, no restart — the diff touches no `schema/` or `sqlserver/` file, and PSA-Desk reads `portal_tile` at request time.
+
+The CLI form in the handoff is refused for my login (the dbo guard at `mssql.py:786`), so `portal_tiles.seed_pmc(helpdesk="IT_HELP", procurement="PROCUREMENT", actor="sql01 for dada.banal")` was called directly under `EXECUTE AS psa_desk`, as at Part 59. Preview rolled back; apply committed.
+
+**Before:** `portal_tile` **46**, top tiles **9**, `ticket` **310**.
+
+**The gate — all four conditions held, nothing else showed.**
+- All **nine** existing top tiles read `= tile … (already there, left as it is)`, and every one of their smaller tiles `= … (already there)`.
+- Exactly **one** new line under *Can't log in, or a password*: `+ I cannot log in to PMC Portal or PMC Payroll -> PMO Helpdesk · Premiere One › Payroll › Cannot log in`.
+- One new block, `+ tile PMC Portal, Payroll and PMC apps -> PMO Helpdesk`, with its six `+` lines — **every one landing on Premiere One**: Payroll ×3 (*Cannot log in*, *Wrong data or report*, *Not working*), Queue, Imaging, PSA Desk, all *Not working*.
+- Last line: **`Would add 8 tile(s) and 0 question(s). Preview only`**. No `no catalogue match` anywhere.
+
+**Applied:** ended `Added 8 tile(s) and 0 question(s).` then `applied`.
+
+**Verified, all four of step 5:**
+- `portal_tile` **46 → 54**;
+- top tiles **9 → 10**;
+- `ticket` **310 → 310, unchanged** — nothing touched a ticket;
+- **re-running with `--apply` added 0**: *`Added 0 tile(s) and 0 question(s).`*, counts still 54 / 10 / 310.
+
+**Placement MEASURED by `sort_order`**, which is what the handoff promised and what a requester actually sees: 10 Computer or laptop · 20 Printer or scanner · 30 Can't log in (now **4** children) · 40 Email and Teams · 50 BizBox or a hospital system (6) · 60 Network · 70 Set up something new · **75 PMC Portal, Payroll and PMC apps (6)** · 80 Buy something · 90 Stock, a delivery or a PO. The new tile sits between *Set up something new* and *Buy something*, exactly as specified.
+
+Nothing already there changed, the existing *Payroll* child under *BizBox or a hospital system* included — whether to retire that one is Dada's call in Setup › Portal tiles, not this step's.
+
+**What this closes.** Part 62 measured that the largest Premiere One pair, *Payroll › Cannot log in* at 7 tickets in 180 days, had no road through the tiles. It has two now: the smaller tile under *Can't log in*, and the first child of the new top tile. Thobie's case can be tried: *My requests* → *Can't log in, or a password* → *I cannot log in to PMC Portal or PMC Payroll*, which should raise on PMO Helpdesk with *Premiere One › Payroll › Cannot log in* already set.
+
+**Still owed to WS36, and both need a real person:** the tile walk-through (`ticket.portal_tile_id` and `portal_answer` were both 0 at last measure), and the next Procurement status change showing a notification going PENDING → SENT.
