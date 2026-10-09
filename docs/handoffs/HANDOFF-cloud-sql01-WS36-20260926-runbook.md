@@ -3493,3 +3493,17 @@ Applies `docs/handoffs/HANDOFF-cloud-sql01-WS36-20261009-desk-away-links.md`.
 - **`-PortalAwayUrl` not set**, as the second handoff says: requester emails stay word for word as today.
 
 **Waiting on Dada:** run `Set-PsaDeskAwayLinks.ps1 -Apply` on DND-SQL01, then the walk-through (owner email → *Away from PMC* on a phone off PMC Wi-Fi → Access PIN → desk sign-in → that ticket). SQL01 then checks the next passes are result 0.
+
+### Part 76: 2026-10-10. **Dada's two hand-steps in one script: away links and the old `pmcne.ph` certificate.** MEASURED.
+
+Dada: *"on one and 2 give me one sctipt ill run kt"*. Step 1 is the Part 75 away links; step 2 is deleting the `pmcne.ph` origin certificate (Parts 71–72).
+
+- **`scripts/Invoke-DadaAwayLinksAndCert.ps1`** (this commit), run elevated by Dada. It runs `Set-PsaDeskAwayLinks.ps1 -Apply`, which asks once for the `psa_desk` password. Then it deletes `C:\Users\dada.banal\.cloudflared\cert.pem`, but only if three checks pass: (a) the file's account differs from the Tech Sponge certificate's (`cloudflared-zone2`); (b) both accounts can be read; (c) the tunnel config does not name the file. Each step reports separately, and step 2 runs even if step 1 fails. It prints same/different only, never a token or an id.
+- **Checks, run by SQL01 before handing it over, with nothing deleted:**
+  - Both certificates are present (control: a missing name returns False).
+  - Their accounts are readable and **different**.
+  - `config.yml` does **not** name the file. The service runs `--config C:\ProgramData\cloudflared\config.yml`, which uses only its own `credentials-file`.
+  - The script parses under PowerShell 5.1.20348 with 0 errors and is plain ASCII.
+- **Not touched:** the dead `pmc-psa` tunnel's credential files (useless since the tunnel was deleted, Part 71).
+
+**Waiting on Dada:** run it. SQL01 then checks the next PSA-Notify and PSA-Teams passes are result 0.
