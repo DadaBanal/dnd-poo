@@ -3145,3 +3145,54 @@ Nothing already there changed, the existing *Payroll* child under *BizBox or a h
 **What this closes.** Part 62 measured that the largest Premiere One pair, *Payroll › Cannot log in* at 7 tickets in 180 days, had no road through the tiles. It has two now: the smaller tile under *Can't log in*, and the first child of the new top tile. Thobie's case can be tried: *My requests* → *Can't log in, or a password* → *I cannot log in to PMC Portal or PMC Payroll*, which should raise on PMO Helpdesk with *Premiere One › Payroll › Cannot log in* already set.
 
 **Still owed to WS36, and both need a real person:** the tile walk-through (`ticket.portal_tile_id` and `portal_answer` were both 0 at last measure), and the next Procurement status change showing a notification going PENDING → SENT.
+
+### Part 64: 2026-10-09, ~14:40 +08:00. **Why ticket numbers run ahead: one jump of 999 at an unclean restart, and 141 numbers spent by rolled-back dry runs. Chat is not the cause.** SELECTs only; nothing written.
+
+WS36 asked four read-only questions and its paste arrived with the SQL stripped, so the queries are mine. `psa.ticket_number` is append-only by design (`schema/014_numbering.sql`: *"a row is written when a number is ISSUED, never deleted"*), which makes it the right witness — **a cache loss and a failed save leave different marks in it.**
+
+**1. The gaps — 7 of them.**
+
+| after | issued_at | → next | issued_at | missing |
+|---|---|---|---|---|
+| 8 | 2026-10-01 05:50 | 56 | 2026-10-01 14:28 | **47** |
+| 56 | 2026-10-01 14:28 | 145 | 2026-10-01 14:11 | **88** |
+| 159 | 2026-10-02 09:29 | 161 | 2026-10-02 09:36 | 1 |
+| 161 | 2026-10-02 09:36 | 165 | 2026-10-02 02:30 | 3 |
+| 255 | 2026-10-05 07:39 | 257 | 2026-10-05 00:14 | 1 |
+| 288 | 2026-10-05 13:48 | 290 | 2026-10-05 02:40 | 1 |
+| **454** | **2026-10-09 13:00** | **1454** | **2026-10-09 13:34** | **999** |
+
+`issued_at` runs backwards across some rows because the mail import passes the *message's* time as `at`, not the clock. It is the `number` order that is the sequence.
+
+**2. Totals.** 319 numbers issued · lowest 1 · highest **1459** · `psa.ticket` **319** · imported ids 0 · **`issued_to` NULL: 0** · bound: 319 · **numbers lost to gaps: 1140**.
+
+**3. The server's side.** `number` **is** an IDENTITY column (`IsIdentity = 1`), `IDENT_CURRENT` 1459, seed 1, increment 1. Database scoped configuration **`IDENTITY_CACHE = ON`** (the default). SQL Server 2022 RTM-GDR KB5102334, 16.0.1190.2. Instance up since **2026-10-09 13:13:45**; tempdb created 13:13:47.
+
+**DND-SQL01's restarts since 1 Oct, from the System log:**
+
+| Date | Initiated (1074) | Shutdown | Boot (6005) | SQL running (7036) |
+|---|---|---|---|---|
+| 1 Oct | 08:00:51 | **clean** (6006) 08:01:35 | 08:01:52 | 08:01:58 |
+| 2 Oct | 07:23:16 | **clean** 07:23:59 | 07:24:16 | 07:24:21 |
+| 5 Oct | 14:06:45 | **clean** 14:07:30 | 14:07:54 | 14:07:59 |
+| 7 Oct | 06:54:50 | **clean** 06:55:48 | 06:56:03 | 06:56:09 |
+| 8 Oct | 07:49:44 | **clean** 07:50:24 | 07:50:41 | 07:50:47 |
+| **9 Oct** | **13:10:13** | **no 6006 — event 6008, UNEXPECTED** | 13:13:41 | 13:13:47 |
+
+**4. Chat tickets against their neighbours.** 8 chat tickets carry a number of ours. Six of the eight sit **immediately between their neighbours** — 387, 392, 415, 430, 434, 454 each have prev = n−1 and next = n+1. The two that look wrong, PMC-001454 and PMC-001455, are simply the first two tickets raised *after* the 13:13 restart. `chat_session` 20 rows, 8 with a ticket.
+
+## What the measurements say
+
+**The 999 is the IDENTITY cache, and it is now MEASURED, not inferred.** The last number before the jump was issued at **13:00**, the next at **13:34**, and the instance restarted at **13:13:45** — dead between them. 1,000 values were cached, 1 was used, 999 were lost.
+
+**But it took an *unclean* shutdown.** Five restarts since 1 Oct logged event 6006, a clean shutdown, and **none of them lost a number**. Today's logged no 6006 at all — event **6008, unexpected shutdown**, despite a 1074 at 13:10:13 having asked for it politely. That matches Microsoft's own wording. **VERIFIED** 9 Oct 2026, `https://learn.microsoft.com/en-us/sql/t-sql/statements/alter-database-scoped-configuration-transact-sql?view=sql-server-ver16`: *to avoid gaps in an identity column's values "when the server restarts unexpectedly or fails over to a secondary server", disable `IDENTITY_CACHE`* — the database-level form of trace flag 272. So the trigger is not the reboot; it is the reboot that did not shut SQL Server down properly.
+
+**The other 141 are rolled-back transactions, not failed saves.** This is the discrimination WS36 asked for, and the answer is neither of its two hypotheses as stated: **`issued_to` IS NULL returns 0**. A number issued and then abandoned by a *committed* caller would leave a row with `issued_to` NULL — `numbering.issue()` and `numbering.bind()` are two steps precisely so that shows. There are none. So every one of those 141 numbers was spent inside a transaction that **rolled back whole**, taking its `ticket_number` row with it but not the IDENTITY value, which SQL Server never returns. INFERRED, but the arithmetic closes exactly: 999 + 47 + 88 + 1 + 3 + 1 + 1 = **1140**, the measured loss. The two large ones fall on 1 Oct, during the mail-window recovery, when dry runs were rolled back by the dozen on this very road — which is to say **they are the cost of my own previews, not a defect in the desk**.
+
+**Chat is not the cause.** Six of the eight chat tickets are numerically adjacent to their neighbours. Chat looks guilty only because chat is what was being tested in the half hour after the crash, so it got the first numbers on the far side of the jump.
+
+## What this leaves for WS36 to choose
+
+Not mine to decide, but the measurements bear on it: gaps are explicitly fine by design (014: *"a reused ticket number is a reference that points at two different tickets, which is worse than a gap — and gaps are fine"*), so the question is cosmetic, not correctness. `ALTER DATABASE SCOPED CONFIGURATION SET IDENTITY_CACHE = OFF` would end the 1,000-jumps at the price of a log write per number. It would do nothing about the 141, which no setting can recover — only running fewer rolled-back previews against production would.
+
+**Separately, and for Dada rather than WS36: today's 13:10 reboot did not shut down cleanly** (6008, no 6006). That is worth a look on its own account, whatever is decided about the numbering.
