@@ -121,5 +121,5 @@ C:\PMC\Python312\python.exe -m psaspine mail-setup "<the desk's connection>" --b
 | | |
 |---|---|
 | Unit suite | See the commit message (SQLite). New or extended in `PortalTilesTest`: `test_ticket_topics_counts_what_was_ticketed_and_never_prints_a_summary` (the new section: the unmatched by the desk's Type › Subtype, or not classified; no summary text) and `test_procurement_emails_its_requesters_from_the_next_move_and_never_for_the_backlog` (the preview changes nothing; apply flips the switch and is audited once; no email for a ticket already there; the next status change emails the requester once; a second apply changes nothing). |
-| SQL Server | CI `psa-spine`, dispatched on this head. NOT VERIFIED until it reports. |
+| SQL Server | CI `psa-spine` run 79, dispatched on `08ca0ef`: green on all four jobs (Linux 3.11 and 3.14, sql-server, windows). MEASURED, 9 Oct 2026. |
 | Not run here | `mail-setup` against `PMC_PSA`, and PSA-Notify sending a Procurement email. |

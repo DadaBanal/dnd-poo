@@ -86,5 +86,5 @@ the BizBox group, so nothing is counted twice.
 | | |
 |---|---|
 | Unit suite | See the commit message (SQLite). |
-| SQL Server | CI `psa-spine`, dispatched on this head. NOT VERIFIED until it reports. |
+| SQL Server | CI `psa-spine` run 80, dispatched on `9c1977d`: green on all four jobs (Linux 3.11 and 3.14, sql-server, windows). MEASURED, 9 Oct 2026. |
 | Not run here | The preview against the live catalogue: SQL01's Q1 makes the matches INFERRED, not measured. |
