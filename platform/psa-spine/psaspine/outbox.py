@@ -816,18 +816,22 @@ def desk_addresses(desk_url: str | None = None, desk_away_url: str | None = None
     setting meant for something else can never stop the email. Quietly: the
     senders read stderr into the JSON they parse (2>&1, SQL01 part 28), so a
     warning line would fail every pass."""
+    return (_address(desk_url, "PSA_PUBLIC_URL", "desk"),
+            _address(desk_away_url, "PSA_DESK_AWAY_URL", "desk away"))
+
+
+def _address(given: str | None, env: str, what: str) -> str:
+    """One https:// address: refused when given and wrong, quietly dropped
+    when inherited from the environment and wrong (see desk_addresses)."""
     import os
-    out = []
-    for given, env, what in ((desk_url, "PSA_PUBLIC_URL", "desk"), (desk_away_url, "PSA_DESK_AWAY_URL", "desk away")):
-        url = (given or "").strip().rstrip("/")
+    url = (given or "").strip().rstrip("/")
+    if url and not url.lower().startswith("https://"):
+        raise ValueError(f"the {what} address must be https://")
+    if not url:
+        url = (os.environ.get(env) or "").strip().rstrip("/")
         if url and not url.lower().startswith("https://"):
-            raise ValueError(f"the {what} address must be https://")
-        if not url:
-            url = (os.environ.get(env) or "").strip().rstrip("/")
-            if url and not url.lower().startswith("https://"):
-                url = ""
-        out.append(url)
-    return out[0], out[1]
+            url = ""
+    return url
 
 
 def desk_links(work_item_id: str, desk_url: str, desk_away_url: str) -> str:
@@ -845,7 +849,7 @@ def desk_links(work_item_id: str, desk_url: str, desk_away_url: str) -> str:
 def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
             limit: int = 50, dry_run: bool = False,
             portal_url: str | None = None, desk_url: str | None = None,
-            desk_away_url: str | None = None) -> list[dict]:
+            desk_away_url: str | None = None, portal_away_url: str | None = None) -> list[dict]:
     """What is due now, as the sender needs it. Resolves addresses; anything that
     cannot be sent is marked here, so it never sits PENDING for ever."""
     import os
@@ -853,6 +857,11 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
     if portal_url and not portal_url.lower().startswith("https://"):
         raise ValueError("the portal address must be https://")
     desk_url, desk_away_url = desk_addresses(desk_url, desk_away_url)
+    # Dada, 9 Oct 2026: the requester's and approver's links too, at PMC and
+    # away (PSA_PORTAL_AWAY_URL, the published portal). Only beside a portal
+    # address: an away link alone would be the only way in, and the portal
+    # off the LAN is a separate decision.
+    portal_away_url = _address(portal_away_url, "PSA_PORTAL_AWAY_URL", "portal away") if portal_url else ""
     allowed = tuple(d.lower().lstrip("@") for d in allowed_domains)
     # "*" releases every domain: a requester on yahoo or gmail hears back too
     # (Dada, 1 Oct 2026: "all other generic emails"). The words are the same
@@ -877,8 +886,9 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
         # email opens this request on the portal whichever address they sign
         # in with (a shared mailbox, a Windows name the desk cannot tie to it).
         from . import tickets as _tickets
-        link = (f"{portal_url}/my/{n['work_item_id']}?k={_tickets.portal_key(conn, n['work_item_id']) or ''}" if portal_url
-                else "the PMC Requests portal, under Your requests")
+        key = f"/my/{n['work_item_id']}?k={_tickets.portal_key(conn, n['work_item_id']) or ''}" if portal_url else ""
+        link = f"{portal_url}{key}" if portal_url else "the PMC Requests portal, under Your requests"
+        away_link = f"{portal_away_url}{key}" if portal_away_url else ""
         subject = (n["subject"] or "").replace("{link}", link)
         thread = []
         if n["recipient_role"] in (REQUESTER, STATUS):
@@ -894,12 +904,16 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
             body = (f"{(n['body'] or '').replace('{link}', link)}"
                     + (f"\n\n{conversation_text(thread)}" if thread else "")
                     + f"\n\nYour reference: {n['work_item_id']}\n"
-                    f"See it here: {where}\n\nTo add something, reply to this email "
+                    f"See it here: {where}\n"
+                    + (f"Away from PMC: {away_link}\n" if away_link else "")
+                    + "\nTo add something, reply to this email "
                     "and keep the reference in the subject. The ward, the room or the "
                     "machine is all we need; a patient's details never are.")
         elif n["recipient_role"] == APPROVER:
             where = (f"{portal_url}/my/approvals" if portal_url else "the PMC Requests portal, under Approvals")
             body = f"{n['body'] or ''}\n\nThe reference: {n['work_item_id']}\nDecide it here: {where}"
+            if portal_away_url:
+                body += f"\nAway from PMC: {portal_away_url}/my/approvals"
         elif n["recipient_role"] == "PAGE":
             body = (n["body"] or "") + f"\n\nOpen the ticket on the desk and press Acknowledge: {n['work_item_id']}"
         else:
@@ -926,7 +940,8 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
             except (KeyError, IndexError):
                 written = None                       # a store that has not taken 064 yet
             item["html"] = html_email((n["body"] or "").replace("{link}", link), ticket=n["work_item_id"],
-                                      link=link if portal_url else None, board=b["display_name"] if b else "", hospital=_hospital(),
+                                      link=link if portal_url else None, away_link=away_link or None,
+                                      board=b["display_name"] if b else "", hospital=_hospital(),
                                       thread=thread,
                                       written=(written or "").replace("{link}", link) or None)
         out.append(item)
@@ -936,7 +951,8 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
 
 
 def html_email(text: str, *, ticket: str, link: str | None, board: str, hospital: str,
-               thread: list[dict] | None = None, written: str | None = None) -> str:
+               thread: list[dict] | None = None, written: str | None = None,
+               away_link: str | None = None) -> str:
     """The same words as the plain text, laid out (Dada, 1 Oct 2026: "a better
     formatted email this looks kinda bland"): a header with the hospital and
     the board, the reference, the paragraphs, a button to the request, and
@@ -973,6 +989,11 @@ def html_email(text: str, *, ticket: str, link: str | None, board: str, hospital
     button = (f'<p style="margin:18px 0 6px"><a href="{_h.escape(link)}" style="display:inline-block;background:#3d63dd;color:#ffffff;'
               f'text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px">See your request</a></p>'
               if link and link.startswith("http") else "")
+    if button and away_link and away_link.startswith("http"):
+        # 9 Oct 2026: the same request from outside PMC, plainer, beside it
+        button = button.replace("</p>", f' <a href="{_h.escape(away_link)}" style="display:inline-block;color:#3d63dd;'
+                                f'text-decoration:none;font-weight:600;font-size:14px;padding:9px 16px;border-radius:8px;'
+                                f'border:1px solid #3d63dd;margin-left:6px">Away from PMC</a></p>', 1)
     return (
         '<!doctype html><html><body style="margin:0;padding:0;background:#f4f5f8;font-family:Segoe UI,Arial,sans-serif">'
         '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f5f8;padding:24px 12px">'

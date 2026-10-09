@@ -17444,7 +17444,49 @@ class StaffDeskLinksTest(unittest.TestCase):
             self.assertIn("if ($DeskAwayUrl) { $args1 += @('--desk-away-url', $DeskAwayUrl) }", text, name)
         text = (d / "Send-PmcNotifications.ps1").read_bytes().decode("ascii")
         self.assertIn("if ($DeskUrl) { $args1 += @('--desk-url', $DeskUrl) }", text)
-        self.assertIn("throw 'DeskUrl and DeskAwayUrl must be https://'", text)
+        self.assertIn("throw 'DeskUrl, DeskAwayUrl and PortalAwayUrl must be https://'", text)
+        self.assertIn("if ($PortalAwayUrl) { $args1 += @('--portal-away-url', $PortalAwayUrl) }", text)
+
+    def test_the_requesters_and_approvers_emails_link_the_portal_at_pmc_and_away(self):
+        # Dada, 9 Oct 2026: "requester and approver email links to the portal ... do this as well"
+        from psaspine import outbox, tickets as tk
+        before = self._bodies(portal_url="https://help.pmcne.ph")
+        b = self._bodies(portal_url="https://help.pmcne.ph", portal_away_url="https://help.pmcne.net/")
+        key = tk.portal_key(self.conn, self.wid)
+        for who in ("nurse", "lea.cruz"):
+            self.assertIn(f"See it here: https://help.pmcne.ph/my/{self.wid}?k={key}\n"
+                          f"Away from PMC: https://help.pmcne.net/my/{self.wid}?k={key}\n", b[who], who)
+            # the only difference from before is that one line
+            self.assertEqual(b[who].replace(f"Away from PMC: https://help.pmcne.net/my/{self.wid}?k={key}\n", ""),
+                             before[who], who)
+        self.assertTrue(b["rosa.mendoza"].endswith("Decide it here: https://help.pmcne.ph/my/approvals\n"
+                                                   "Away from PMC: https://help.pmcne.net/my/approvals"), b["rosa.mendoza"])
+        for staff in ("bob", "carol", "jun.reyes", "mia.santos"):
+            self.assertNotIn("help.pmcne.net", b[staff], staff)
+        # the HTML layout: a second, plainer button beside "See your request"
+        html = {m["to"].split("@")[0]: m.get("html") for m in outbox.pending(
+            self.conn, allowed_domains=("pmcne.ph",), dry_run=True, portal_url="https://help.pmcne.ph",
+            portal_away_url="https://help.pmcne.net")}
+        self.assertIn(f'href="https://help.pmcne.net/my/{self.wid}?k={key}"', html["nurse"])
+        self.assertIn(">Away from PMC</a>", html["nurse"])
+        self.assertNotIn("Away from PMC", self._html_of("nurse", portal_url="https://help.pmcne.ph"))
+        # without a portal address an away one is not used alone; a bad one given is refused
+        self.assertNotIn("help.pmcne.net", self._bodies(portal_away_url="https://help.pmcne.net")["nurse"])
+        with self.assertRaises(ValueError):
+            self._bodies(portal_url="https://help.pmcne.ph", portal_away_url="http://help.pmcne.net")
+        # inherited and wrong: quietly left out, every email still goes
+        os.environ["PSA_PORTAL_AWAY_URL"] = "help.pmcne.net"
+        self.assertEqual(self._bodies(portal_url="https://help.pmcne.ph"), before)
+        # the link the desk records (076) is still the one at PMC: a real pass records it
+        outbox.pending(self.conn, allowed_domains=("pmcne.ph",), portal_url="https://help.pmcne.ph",
+                       portal_away_url="https://help.pmcne.net")
+        kept = [r[0] for r in self.conn.execute("SELECT portal_link FROM notification WHERE portal_link IS NOT NULL")]
+        self.assertEqual(sorted(kept), [f"https://help.pmcne.ph/my/{self.wid}?k={key}"] * 2)
+
+    def _html_of(self, who, **kw):
+        from psaspine import outbox
+        return {m["to"].split("@")[0]: m.get("html") for m in
+                outbox.pending(self.conn, allowed_domains=("pmcne.ph",), dry_run=True, **kw)}[who]
 
 
 if __name__ == "__main__":

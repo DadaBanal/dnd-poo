@@ -3007,6 +3007,7 @@ settings switch it on:
 | `PSA_ENTRA_CLIENT` | the app registration's client id |
 | `PSA_PUBLIC_URL` | optional: the URL staff type, e.g. `https://desk.pmcne.ph`; the redirect URI is built on it and must equal, byte for byte, the one registered on the app. Unset, the request's own scheme and host are used. It is also what tells the desk the world is https when a proxy terminates TLS (next section). |
 | `PSA_PORTAL_URL` | optional: the requester portal's own address, e.g. `https://help.pmcne.ph`. A request for that host serves the requester's pages and nothing else (next section); requester emails link to it. |
+| `PSA_PORTAL_AWAY_URL` | optional, email sender only: the requester portal's published address away from PMC, e.g. `https://help.pmcne.net`. It only adds a second link in requester, status and approver emails, beside `PSA_PORTAL_URL`'s. It is never an accepted origin. |
 | `PSA_DESK_AWAY_URL` | optional, senders only: the desk's published address away from PMC, behind the sign-in gate, e.g. `https://desk.pmcne.net`. It only adds a link: a member's email and a Teams card name the ticket at this address beside `PSA_PUBLIC_URL`'s (next paragraph). It is never an accepted origin, and the desk itself never reads it. |
 
 **Links in a member's email (9 Oct 2026).** Dada, with `desk.pmcne.net` live behind Cloudflare Access (SQL01 Part 70),
@@ -3022,8 +3023,15 @@ Away from PMC: https://desk.pmcne.net/ticket/PMC-001460 (asks for the PMC sign-i
   `PSA_DESK_AWAY_URL`.
 - An address left out is a line left out. With neither set, the email is word for word what it was.
 - A Teams card gets *Open away from PMC* beside *Open on the desk*.
-- The requester's, the status and the approver's emails stay on the portal: the public portal is not published, and
-  that is Dada's separate decision.
+- The requester's, the status and the approver's emails link the portal the same way, once a portal away address is
+  set (`Send-PmcNotifications.ps1 -PortalAwayUrl`, else `PSA_PORTAL_AWAY_URL`). This was asked the same day: *"requester
+  and approver email links to the portal ... do this as well"*. Each gets `Away from PMC: <portal away>/my/<id>?k=…`
+  (or `/my/approvals`) under the portal link. The HTML layout gets a plainer *Away from PMC* button beside *See your
+  request*.
+  - The away address is used only beside `PSA_PORTAL_URL`, never alone.
+  - The link the desk records on the email (076) stays the one at PMC.
+  - Such a link works only once the portal is published off the LAN (SQL01 Part 70: not yet). Until the setting is
+    filled, these emails are word for word as before.
 - An address given on the command line that is not https:// is refused. One inherited from the environment is quietly
   left out, so a stray setting never stops the email. It is quiet because the senders read stderr into the JSON they
   parse, so a warning line would fail the pass.

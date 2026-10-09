@@ -37,6 +37,12 @@
     link in "your request was updated" emails. It is deployment config, passed
     here or set as PSA_PORTAL_URL, and never written into the repository.
 
+    -PortalAwayUrl is the requester portal's https:// address away from PMC.
+    Requester, status and approver emails then carry it as a second link
+    beside -PortalUrl's (else PSA_PORTAL_AWAY_URL; left out, no second link;
+    ignored without -PortalUrl). It works only once that portal is published.
+    (9 Oct 2026)
+
     -DeskUrl and -DeskAwayUrl are the desk's https:// addresses at PMC and away
     from PMC (the published one behind the sign-in gate). A member's email
     (owner, resource, a visit booked, an on-call page) then names the ticket on
@@ -63,6 +69,7 @@ param(
     [Parameter(Mandatory = $true)] [string] $StateDir,
     [string] $AllowedDomain = 'pmcne.ph',
     [string] $PortalUrl,
+    [string] $PortalAwayUrl,
     [string] $DeskUrl,
     [string] $DeskAwayUrl,
     [string[]] $SendAs = @(),
@@ -76,8 +83,8 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
-foreach ($u in @($DeskUrl, $DeskAwayUrl)) {
-    if ($u -and -not $u.ToLower().StartsWith('https://')) { throw 'DeskUrl and DeskAwayUrl must be https://' }
+foreach ($u in @($DeskUrl, $DeskAwayUrl, $PortalAwayUrl)) {
+    if ($u -and -not $u.ToLower().StartsWith('https://')) { throw 'DeskUrl, DeskAwayUrl and PortalAwayUrl must be https://' }
 }
 if ($AttachmentDir) { $env:PSA_ATTACHMENT_DIR = $AttachmentDir }   # the desk's file folder, the task's own setting
 # The repository root, one above scripts\. Not a param() default: under Windows
@@ -225,6 +232,7 @@ function Invoke-Pass {
     $args1 = @('outbox-pending', $Database, '--allowed-domain', $AllowedDomain)
     if (-not $Apply) { $args1 += '--dry-run' }
     if ($PortalUrl) { $args1 += @('--portal-url', $PortalUrl) }
+    if ($PortalAwayUrl) { $args1 += @('--portal-away-url', $PortalAwayUrl) }
     if ($DeskUrl) { $args1 += @('--desk-url', $DeskUrl) }
     if ($DeskAwayUrl) { $args1 += @('--desk-away-url', $DeskAwayUrl) }
     $r = Invoke-Spine $args1

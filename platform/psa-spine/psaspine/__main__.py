@@ -227,6 +227,9 @@ def main(argv: list[str] | None = None) -> int:
     pob.add_argument("--desk-url",
                      help="https:// address of the desk at PMC, for the link in a member's email and on a "
                           "Teams card (else PSA_PUBLIC_URL)")
+    pob.add_argument("--portal-away-url",
+                     help="https:// address of the requester portal away from PMC, for a second link beside the "
+                          "portal's in requester and approver emails (else PSA_PORTAL_AWAY_URL; empty = none)")
     pob.add_argument("--desk-away-url",
                      help="https:// address of the desk away from PMC (the published one behind the sign-in "
                           "gate), for a second link beside it (else PSA_DESK_AWAY_URL; empty = none)")
@@ -800,7 +803,8 @@ def _run(conn, a) -> int:
             else:
                 items = outbox.pending(conn, allowed_domains=tuple(a.allowed_domain),
                                        dry_run=a.dry_run, portal_url=a.portal_url,
-                                       desk_url=a.desk_url, desk_away_url=a.desk_away_url)
+                                       desk_url=a.desk_url, desk_away_url=a.desk_away_url,
+                                       portal_away_url=a.portal_away_url)
         except ValueError as exc:
             print(f"refused: {exc}", file=sys.stderr)
             return 1
