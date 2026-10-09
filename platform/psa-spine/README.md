@@ -2443,6 +2443,17 @@ The reference PSA's customer portal is INFERRED from its product pages (its docs
   - **The tickets no tile catches.** SQL01's first run, 9 Oct: 104 of 303 tickets matched no tile's words.
     `ticket-topics` now ends with how the desk itself classified those (Type › Subtype, or *no Type › Subtype › Item
     yet*), still as counts only. That shows by name whether a tile is missing or a tile needs more words.
+- **The PMC tiles** (9 Oct). Thobie Dela Cruz on the portal: *"I cannot log in to PMC Portal or PMC Payroll"*. Dada:
+  *"also include the other pmc one things"*.
+  - SQL01's read of the live desk: 15 of the 17 Premiere One tickets in 180 days were Payroll (7 cannot log in,
+    5 wrong data), and no tile reached them. PMC Portal has no Subtype; it is Payroll's second front door on the same
+    process.
+  - Dada chose both of these:
+    - *I cannot log in to PMC Portal or PMC Payroll* under *Can't log in, or a password*;
+    - a top tile **PMC Portal, Payroll and PMC apps** (Payroll log-in, payslip/attendance/leave wrong, not working,
+      Queue, Imaging, My requests / PSA Desk), placed before *Buy something*.
+  - `portal-tiles` adds just these 8 to a desk that has the first 46. Handoff:
+    `HANDOFF-cloud-sql01-WS36-20261009-pmc-tiles.md`.
 - **Procurement emails its requesters** (Dada, 9 Oct: *"enabled procurement emails to requesters"*). This is set with
   the desk's own `mail-setup --board PROCUREMENT --email-requester on --moving-emails on`, previewed before it is
   applied. PMO Helpdesk already works the same way.

@@ -319,6 +319,7 @@ def save_question(conn, question_id: int, *, at: datetime, actor: str, label: st
 
 H, P = "HELPDESK", "PROCUREMENT"
 NOT_WORKING = r"^not working$"
+PAYROLL_LOGIN = [(r"premiere", r"^payroll", r"cannot log in"), (None, r"^payroll", r"cannot log in")]
 BUY_QUESTIONS = [("What do you need?", "TEXT", True), ("How many?", "NUMBER", True),
                  ("Needed by", "DATE", False), ("What is it for, and for which area?", "TEXT", True),
                  ("Estimated cost, if you know it", "NUMBER", False)]
@@ -338,7 +339,10 @@ STARTER = [
      "questions": [],
      "subs": [("Reset my password or unlock me", [(None, r"windows account|^windows", r"password")]),
               ("I cannot log in to Windows", [(None, r"windows account|^windows", r"cannot log in")]),
-              ("I cannot log in to BizBox", [(None, r"\bHIS\b", r"cannot log in"), (r"^HIS\b", None, r"cannot log in")])]},
+              ("I cannot log in to BizBox", [(None, r"\bHIS\b", r"cannot log in"), (r"^HIS\b", None, r"cannot log in")]),
+              # 9 Oct 2026, Thobie Dela Cruz on the portal; Dada chose it. PMC Portal has no
+              # Subtype: it is Payroll's second front door, one process (SQL01, Q2)
+              ("I cannot log in to PMC Portal or PMC Payroll", PAYROLL_LOGIN)]},
     {"label": "Email and Teams", "hint": "Outlook, Teams, a shared mailbox", "icon": "mail", "board": H,
      "questions": [],
      "subs": [("Not working", [(None, r"email and teams|^e-?mail", NOT_WORKING)]),
@@ -364,6 +368,19 @@ STARTER = [
               ("Set up a computer or device", [(None, r"desktop|\bnuc\b", r"new or install")]),
               ("Move a computer or printer", [(None, r"desktop|\bnuc\b", r"move or change")]),
               ("Access to a folder, mailbox or system", [(None, r"shared mailbox|folder", r"access")])]},
+    # 9 Oct 2026 (Dada: "also include the other pmc one things"), from SQL01's Q1-Q3:
+    # Premiere One is six Subtypes on IT_HELP; 15 of its 17 tickets in 180 days were
+    # Payroll (7 cannot log in, 5 wrong data). Placed before Buy something.
+    {"label": "PMC Portal, Payroll and PMC apps", "hint": "Payslip, attendance, leave, Queue, Imaging, My requests",
+     "icon": "users", "board": H, "sort": 75, "questions": [],
+     "subs": [("I cannot log in to PMC Portal or Payroll", PAYROLL_LOGIN),
+              ("My payslip, attendance or leave looks wrong", [(r"premiere", r"^payroll", r"wrong data"),
+                                                               (None, r"^payroll", r"wrong data")]),
+              ("PMC Portal or Payroll is not working", [(r"premiere", r"^payroll", NOT_WORKING),
+                                                        (None, r"^payroll", NOT_WORKING)]),
+              ("Queue (kiosk check-in, waiting-room screens)", [(r"premiere", r"^queue", NOT_WORKING)]),
+              ("Imaging portal", [(r"premiere", r"^imaging", NOT_WORKING), (None, r"imaging", NOT_WORKING)]),
+              ("My requests / PSA Desk", [(r"premiere", r"psa desk", NOT_WORKING)])]},
     {"label": "Buy something", "hint": "A purchase request for Procurement", "icon": "briefcase", "board": P,
      "questions": BUY_QUESTIONS,
      "subs": [("IT equipment", [(None, r"^it equipment", r"^purchase$")]),
@@ -439,7 +456,7 @@ def seed_pmc(conn, *, helpdesk: str, procurement: str, apply: bool, at: datetime
             out.append(f"+ tile  {spec['label']}  -> {names[board]}")
             added_t += 1
             tid = add_tile(conn, label=spec["label"], hint=spec["hint"], icon=spec["icon"], board_id=board,
-                           sort_order=n * 10, at=at, actor=actor) if apply else None
+                           sort_order=spec.get("sort", n * 10), at=at, actor=actor) if apply else None
         ask(tid, spec["questions"], "    ")
         for m, (label, patterns) in enumerate(spec["subs"], 1):
             if tid is not None and existing(label, tid):
@@ -485,8 +502,9 @@ FAMILIES = [
     ("Can't log in, or a password", r"\b(password|log ?in|login|log-in|sign ?in|locked|unlock|account|access)\b"),
     ("Email and Teams", r"\b(e-?mail|outlook|teams|mailbox|o365|office ?365)\b"),
     # not "his" alone (the everyday word) and not "system" (too wide): BizBox's own words
-    ("BizBox or a hospital system", r"\b(bizbox|his module|pis|pharmacy|philhealth|eclaims?|mms|fms|payroll|lis|ris|"
-                                    r"pacs|premiere|homebase|queu\w*|power ?bi)\b"),
+    ("BizBox or a hospital system", r"\b(bizbox|his module|pis|pharmacy|philhealth|eclaims?|mms|fms|lis|ris|pacs)\b"),
+    ("PMC Portal, Payroll and PMC apps", r"\b(pmc portal|employee portal|payroll|payslip|pay ?slip|attendance|biometric|"
+                                        r"leave|premiere|homebase|queu\w*|kiosk|power ?bi|analytics|imaging)\b"),
     ("Network, Wi-Fi or internet", r"\b(wi-?fi|wifi|internet|network|lan|cable|connection|offline|no connection|"
                                    r"router|switch|ethernet)\b"),
     ("Set up something new, or get access", r"\b(new user|new account|install\w*|set ?up|transfer|move|relocat\w*|"

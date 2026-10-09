@@ -16921,18 +16921,60 @@ class PortalTilesTest(unittest.TestCase):
         self.assertIn("    + BizBox HIS  -> PMO Helpdesk · Hospital systems (BizBox) › BizBox HIS › Not working", preview)
         # no pair called Pharmacy in the pack: it still routes, and the preview says the ticketer classifies it
         self.assertTrue(any(line.startswith("    + Pharmacy  -> PMO Helpdesk · no catalogue match") for line in preview))
-        self.assertTrue(preview[-1].startswith("Would add 46 tile(s) and 10 question(s). Preview only"))
+        self.assertTrue(preview[-1].startswith("Would add 54 tile(s) and 10 question(s). Preview only"))
+        # 9 Oct 2026: the PMC tile and Thobie's log-in, on Payroll (PMC Portal has no Subtype of its own)
+        self.assertIn("+ tile  PMC Portal, Payroll and PMC apps  -> PMO Helpdesk", preview)
+        self.assertIn("    + I cannot log in to PMC Portal or PMC Payroll  -> PMO Helpdesk · Hospital systems (BizBox)"
+                      " › Payroll › Cannot log in", preview)
+        self.assertIn("    + My payslip, attendance or leave looks wrong  -> PMO Helpdesk · Hospital systems (BizBox)"
+                      " › Payroll › Wrong data or report", preview)
         conn.close()
         applied = self._seed()
-        self.assertTrue(applied[-1].startswith("Added 46 tile(s) and 10 question(s)."))
+        self.assertTrue(applied[-1].startswith("Added 54 tile(s) and 10 question(s)."))
         conn = db.connect(self.db_path)
-        self.assertEqual(conn.execute("SELECT COUNT(*) FROM portal_tile WHERE parent_id IS NULL").fetchone()[0], 9)
-        self.assertEqual(conn.execute("SELECT COUNT(*) FROM portal_tile WHERE parent_id IS NOT NULL").fetchone()[0], 37)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM portal_tile WHERE parent_id IS NULL").fetchone()[0], 10)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM portal_tile WHERE parent_id IS NOT NULL").fetchone()[0], 44)
+        order = [r[0] for r in conn.execute("SELECT label FROM portal_tile WHERE parent_id IS NULL ORDER BY sort_order, label")]
+        self.assertEqual(order.index("PMC Portal, Payroll and PMC apps") + 1, order.index("Buy something"))
         self.assertGreater(conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'PORTAL_TILE'").fetchone()[0], 0)
         conn.close()
         again = self._seed()                                                  # once: nothing new, nothing changed
         self.assertTrue(again[-1].startswith("Added 0 tile(s) and 0 question(s)."))
         self.assertIn("= tile  Buy something  (already there, left as it is)", again)
+
+    def test_on_a_desk_with_the_first_46_a_run_adds_only_the_pmc_tiles(self):
+        """Live since Part 60: the first 46 tiles. The PMC additions (9 Oct)
+        go on with the same command: only the 8 new tiles, nothing that is
+        there changed, and a third run adds nothing."""
+        from unittest import mock
+        from psaspine import portal_tiles
+        first = [dict(t, subs=[x for x in t["subs"] if "PMC" not in x[0]]) for t in portal_tiles.STARTER
+                 if not t["label"].startswith("PMC")]
+        conn = db.connect(self.db_path)
+        with mock.patch.object(portal_tiles, "STARTER", first):
+            out = portal_tiles.seed_pmc(conn, helpdesk="IT_HELP", procurement="PROCUREMENT", apply=True,
+                                        at=self.at, actor="t")
+        self.assertTrue(out[-1].startswith("Added 46 tile(s) and 10 question(s)."))
+        conn.execute("UPDATE portal_tile SET hint = 'edited on the desk' WHERE label = 'Can''t log in, or a password'")
+        conn.commit()
+        before = {r[0]: tuple(r[1:]) for r in conn.execute("SELECT tile_id, label, hint, sort_order, catalogue_item_id"
+                                                              " FROM portal_tile")}
+        out = portal_tiles.seed_pmc(conn, helpdesk="IT_HELP", procurement="PROCUREMENT", apply=True, at=self.at, actor="t")
+        conn.commit()
+        self.assertTrue(out[-1].startswith("Added 8 tile(s) and 0 question(s)."), out[-1])
+        self.assertIn("= tile  Can't log in, or a password  (already there, left as it is)", out)
+        self.assertIn("    + I cannot log in to PMC Portal or PMC Payroll  -> PMO Helpdesk · Hospital systems (BizBox)"
+                      " › Payroll › Cannot log in", out)
+        after = {r[0]: tuple(r[1:]) for r in conn.execute("SELECT tile_id, label, hint, sort_order, catalogue_item_id"
+                                                             " FROM portal_tile")}
+        self.assertEqual({k: after[k] for k in before}, before)          # nothing that was there changed
+        self.assertEqual(len(after) - len(before), 8)
+        out = portal_tiles.seed_pmc(conn, helpdesk="IT_HELP", procurement="PROCUREMENT", apply=True, at=self.at, actor="t")
+        self.assertTrue(out[-1].startswith("Added 0 tile(s)"))
+        conn.rollback()
+        conn.close()
+        _, _, page = self._call("GET", "/my", cookie=self.ward)
+        self.assertLess(page.index("PMC Portal, Payroll and PMC apps"), page.index("Buy something"))
 
     def test_a_ward_picks_a_tile_and_the_ticket_lands_sorted_with_its_answers(self):
         # before any tile: the plain form, as today
