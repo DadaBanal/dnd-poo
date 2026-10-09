@@ -3196,3 +3196,23 @@ WS36 asked four read-only questions and its paste arrived with the SQL stripped,
 Not mine to decide, but the measurements bear on it: gaps are explicitly fine by design (014: *"a reused ticket number is a reference that points at two different tickets, which is worse than a gap — and gaps are fine"*), so the question is cosmetic, not correctness. `ALTER DATABASE SCOPED CONFIGURATION SET IDENTITY_CACHE = OFF` would end the 1,000-jumps at the price of a log write per number. It would do nothing about the 141, which no setting can recover — only running fewer rolled-back previews against production would.
 
 **Separately, and for Dada rather than WS36: today's 13:10 reboot did not shut down cleanly** (6008, no 6006). That is worth a look on its own account, whatever is decided about the numbering.
+
+### Part 65: 2026-10-09, ~15:05 +08:00. **`IDENTITY_CACHE` is OFF on `PMC_PSA`. All four gates passed and no number was spent proving it. Step 2 is held, waiting on CI run 81.** MEASURED.
+
+Applies step 1 of `docs/handoffs/HANDOFF-cloud-sql01-WS36-20261009-numbering-identity-cache.md`, pulled at head `7530b0d`. Run as sysadmin over pyodbc in **autocommit** — `ALTER DATABASE SCOPED CONFIGURATION` is not allowed inside a user transaction. `DB_NAME()` confirmed **`PMC_PSA`** before the statement, since this setting is per database. No backup and no restart, as the handoff says: it is metadata.
+
+| | before | after |
+|---|---|---|
+| `IDENTITY_CACHE` value | **1** | **0** |
+| `IDENT_CURRENT(N'psa.ticket_number')` | **1459** | **1459** |
+| `ticket_number` rows / `ticket` rows | 319 / 319 | 319 / 319 |
+
+**The gates:** value 1 → 0 **PASS** · `IDENT_CURRENT` unchanged **PASS** · `IDENT_CURRENT` ≥ 1459 **PASS** · no number spent by the run **PASS**.
+
+**PSA-Desk was left alone and is unaffected:** task **Running**, `:8085` answers **401**. The setting needs no restart and the desk never saw one.
+
+**One deliberate deviation, and why.** The handoff's third check is *"the next ticket raised is that number + 1"*. I did not raise one. The only way to produce a number from here is an `INSERT` into `ticket_number`, and whether I committed it or rolled it back **it would spend 1460 permanently** — committing leaves a ticket nobody asked for, rolling back leaves exactly the kind of gap Part 64 just finished attributing to rolled-back previews. Causing the defect in order to measure it is not a test. So: **the next ticket raised, by anyone, should be `PMC-001460`**, and I will confirm the number when a real one appears. Thobie's tile walk-through is already owed and will serve as that confirmation, closing both at once.
+
+Nothing was reseeded. `ticket_number` still starts at 1 and ends at 1459, and 1454–1459 exist, so a reseed below 1459 would collide — the handoff's own warning, recorded here so it is in the running record and not only in the handoff.
+
+**Step 2 is NOT done.** WS36's own wording gates it: *"Wait for Cloud Build to confirm CI run 81 is green, then pull, and restart PSA-Desk."* Run 81 on `98b30eb` is recorded in its evidence table as **NOT VERIFIED until it reports**, and no confirmation has arrived. So the Came-from badges are not live: the working tree is at `7530b0d`, which carries the code, but PSA-Desk is still running what it loaded at its last start. Nothing to check on screen yet — Chat #n pills, the *Came from* filter and the Reports split all wait on that restart. Held, not forgotten.
