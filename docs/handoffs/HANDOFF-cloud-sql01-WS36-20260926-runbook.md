@@ -3457,3 +3457,16 @@ Left on disk, for Dada to decide: the deleted tunnel's credential file (now usel
 `desk.pmcne.net` still answers 302 to the Access gate after the restart.
 
 **Open, each needing Dada's yes or hand:** delete the `pmcne.ph` origin certificate (the permission layer refuses SQL01 on that folder — Dada runs `Remove-Item "$env:USERPROFILE\.cloudflared\cert.pem"`); turn on *remove inactive users from seats*; keep the 14-address list in step with the PMO Helpdesk board; Entra ID as the login method; a rate limit on `/login` (low value now — nothing unauthenticated reaches the origin); and, for WS36, email links that work from outside.
+
+### Part 73: 2026-10-09, ~19:30 +08:00. **Parked for the week of 12 Oct 2026, on Dada's word: Entra ID sign-in on the Cloudflare gate.** Nothing built.
+
+Dada, 9 Oct: *"lets mark this for next week"*, after SQL01 laid out what Entra sign-in needs (steps VERIFIED against `developers.cloudflare.com/cloudflare-one/integrations/identity-providers/entra-id/`, updated 26 Aug 2026):
+
+- **Entra:** Enterprise applications → *Create your own* (app you're developing); redirect URI (Web) `https://pmcne.cloudflareaccess.com/cdn-cgi/access/callback`; note client ID and tenant ID; **client secret** (Dada creates and pastes it — SQL01 does not handle secrets; when it expires the gate locks everyone out, so it needs a renewal reminder); Graph delegated permissions `openid email profile offline_access User.Read` (+ `Directory.Read.All`, `GroupMember.Read.All` for a group rule); **Grant admin consent** (Dada's click).
+- **Cloudflare:** Zero Trust → Integrations → Identity providers → Add → *Azure AD*; Save, Test; PKCE on; Support groups on if a group rule. Then PMC Service Desk: login method Entra, policy by group.
+
+**Decisions waiting on Dada:** (1) group or list — recommended a **PMO Helpdesk Entra group**, which retires the hand-kept 14-address copy; does one exist? (2) keep **One-time PIN as a fallback** — recommended, because `encoder@premieremedicalcenter.net` may not be a PMC Microsoft account; (3) secret expiry — suggested **24 months** with a reminder.
+
+**Separate and bigger, for WS36:** the desk's own Entra sign-in (`PSA_ENTRA_TENANT` / `PSA_ENTRA_CLIENT`, built but off) would take domain passwords out of the desk entirely, LAN included, while AD lockout stays "Never".
+
+Still open from Part 72: Dada to delete the `pmcne.ph` origin certificate; yes/no on *remove inactive users from seats* (30 days suggested).
