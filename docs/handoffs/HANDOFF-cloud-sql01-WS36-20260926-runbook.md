@@ -3287,3 +3287,54 @@ Pulled to `ed9b9c5` (CI run 81 green on all four jobs, per WS36). **Restarted PS
 Someone signed in should still glance at the three screens; the logic underneath them is measured.
 
 **Restarted in this Part: PSA-Desk, once. Nothing else.** No pickup task, no state file, no drop file.
+
+### Part 67: 2026-10-09, ~16:35 +08:00. **Email to ticket is back on all three mailboxes. 18 email tickets recovered, no duplicates, no number gaps. The procurement window needed a second run — the first lost a race with the minute task.** MEASURED.
+
+Applies WS36's go on the delta repair. Elevated (`IsInRole(Administrator)` True), run through `powershell -Command` with a `&` call so `-Mailbox` arrives as three strings.
+
+**Two deviations, both stated before running.**
+- **No `-AsDesk`.** It reaches `Get-Credential` (`Invoke-PsaSpine.ps1:222`), a password prompt for the desk account. I do not type passwords, and this shell cannot answer one. It affects step 5 only — a read of what the desk has taken — which was refused under my login by the dbo guard, as the script itself predicts. I made that read myself under `EXECUTE AS psa_desk`, below.
+- **The script's step 3 judges a delta link by age, not contents.** It named all three only because each was 182 minutes old (> 120). A NUL-filled link written a minute ago would not be flagged. INFERRED gap in the tool, for WS36.
+
+**Preview — passed the gate.** All three named (*"the delta link has not moved for 182 minutes"*); certificate found, valid to 2027-10-01 (so not a 401); step 6 got `System.UriFormatException` on all three — not 410, 401 or 403; ended *"Nothing was changed."*
+
+**Baseline:** `intake_message` 377, newest 12:26, 0 after 12:26 · `ticket` 320 · `IDENT_CURRENT` **1460** · duplicate `message_id` groups 0.
+
+**PMC-001460 had already appeared** (IT_PROJECTS, intake DESK, 16:12), exactly +1 from 1459. **That closes Part 65's `IDENTITY_CACHE` check** — and it means the first mail ticket would be 1461 or later, not 1460 as WS36 expected.
+
+**Apply, run 1 — all three, `-Apply -ResetDelta`, 16:13:15.**
+- Each NUL link copied to `.bak` beside itself, then deleted.
+- **helpdesk:** step 6 fetched 13 files into the drop folder; import refused under my login (dbo), link not saved. The 16:14:02 minute task imported them: **0 new, 0 appended, 12 already seen, 1 auto-reply ignored.** Nothing was missing from helpdesk.
+- **support:** step 6 fetched into the drop folder over 16:13:57–16:15:05; the minute tasks imported **3 new** at 16:14:05 and **11 new, 2 appended, 53 already seen** at 16:15:08.
+- **procurement: the window was NOT re-read.** The minute task fired at 16:14:02 — after step 3 had deleted the link, before step 6 reached procurement at 16:15:06 — found no link, did *"first sync from 2026-10-09 16:14"*, and saved one. Step 6 then read *"since last pass"* from that link: 0. Everything between the crash and 16:14 would have been skipped.
+- **A second defect, latent this time:** run 1's procurement pass logged **`board IT_HELP`**. The script hands its one `-BoardId` (default IT_HELP) to every mailbox. It imported 0, so nothing was misrouted — and under a sysadmin login the import is refused anyway, so files would have gone to the drop folder and the minute task's own board. But run as the desk account, procurement mail would land on IT_HELP.
+
+**Apply, run 2 — procurement only, `-BoardId PROCUREMENT`, 16:17:06.** Started six seconds past the minute so step 6 would begin reading before the next minute task — it did, at 16:17:19. Fetched the window from 2026-10-07 16:17 into the drop folder, board PROCUREMENT; import refused under my login, link not saved. The 16:18:02 minute task imported: **11 files — 3 new, 8 already seen.** Those three would have been lost to run 1's race.
+
+**Verified, 16:19:**
+
+| Check | Result |
+|---|---|
+| PSA-Mail-Helpdesk / -Support / -Procurement last result | **0 / 0 / 0** (16:19:19); Notify 0, Calendar 0 |
+| Each delta file a readable link | all three begin `https://graph.microsoft.com/`, **0 NUL bytes**, rewritten 16:19:04 |
+| `intake_message` rows after 12:26 | **9** (newest 16:16); 377 → **398** in all |
+| `mail-drop\` drained | helpdesk 0 · support 0 · procurement 0 waiting |
+| `failed\` unchanged | **1 / 6 / 1**, as before |
+| No message imported twice | `GROUP BY message_id HAVING COUNT(*) > 1` → **0 rows** |
+| New ticket numbers | 1460–1479, **no gaps** |
+
+**What came in** (numbers > 1460, intake EMAIL): **IT_HELP 14 · PROCUREMENT 3 · UNROUTED 1 = 18.** Plus PMC-001464, a PHONE ticket raised at the desk at 16:14. `ticket` 320 → **339**.
+
+## One thing the counts surfaced, NOT VERIFIED
+
+**Ten of the 18 were sent this morning, before the crash** — nine to support (05:40 to 08:10) and one to procurement (06:17). Support's own log shows it **healthy all morning**: *"0 new"* from 05:00 to 08:16 local, then normal imports at 08:17, 08:29, 09:24, 09:33, 10:29 and on. So Graph's inbox delta did not hold those ten when they were dated; they entered the Inbox later. INFERRED: released from quarantine or moved out of Junk this afternoon, perhaps by someone looking for the missing mail. NOT VERIFIED — that needs the mailbox, which this desk does not read.
+
+**Consequence for the desk:** `opened_at` is the message's own time, so those ten carry 05:40–08:10 and will look up to ten hours old and likely past SLA, though the desk first saw them at 16:14–16:18. Correct to the requester's clock; misleading on the desk's. Dada's call whether to note it.
+
+**Changed in this Part:** three delta links reset (run 1) and procurement's reset again (run 2), each with its `.bak` kept beside it; two real passes fetched into the drop folders. No task registration, argument, certificate or code touched.
+
+**For WS36, three tool defects found by using the tool:**
+1. `Repair-PsaMailPickup.ps1` passes one `-BoardId` to every `-Mailbox`; it should take each mailbox's board from its task.
+2. Its step 3 → step 6 gap can lose a race with the minute task, which then saves a "from now" link and the window is never read. Disabling the pickup tasks across steps 3–6 would close it.
+3. Its step 3 judges a link by age only; a NUL or otherwise unparseable link should be flagged by contents.
+And from Part 66, still open: `Invoke-PmcMailPickup.ps1:322` writes the link in place; write-then-rename would survive the next 6008.
