@@ -144,5 +144,5 @@ When Dada says go, run the same command with `--apply` added. It ends `applied`.
 | Unit suite | See the commit message (SQLite). New: `PortalTilesTest` (5): the starter set previews, then is added once; a ward's tile → smaller tile → form → ticket on Procurement with its pair, its answers kept and in the description, refusals kept what was typed; a retired tile and a tile with smaller tiles refused; Something else unchanged; an Item needing approval asks the department approver; Setup adds, edits, retires, and refuses a third level, an unknown Item, or no name; a store without 078 shows the plain form. |
 | Browser checks | `tests/browsercheck.py`: 172 passed, 0 failed (MEASURED, this commit). New: the tiles and Something else on a phone's width with no sideways scroll; a tile opens its smaller tiles, then a form with its question; Send it lands the request on its board with its pair. |
 | T-SQL port | `tools/sqlite_to_tsql.py --check`: in step (MEASURED, this commit). |
-| SQL Server | CI `psa-spine`, dispatched on this head. NOT VERIFIED until it reports. |
+| SQL Server | CI `psa-spine` run 78, dispatched on `1c43ac0`: green on all four jobs (Linux 3.11 and 3.14, sql-server, windows). MEASURED, 9 Oct 2026. |
 | Not run here | 078 against `PMC_PSA`, and the preview against the live catalogue. |
