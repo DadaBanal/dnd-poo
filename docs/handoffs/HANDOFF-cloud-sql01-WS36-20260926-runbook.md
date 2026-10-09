@@ -3067,3 +3067,51 @@ I did not wave that through. **WS36's figure was derived from misreading its own
 No undo was needed. **PSA-Notify's registration was not touched**; Procurement's email goes from helpdesk@ and replies thread on the `[PMC-…]` reference.
 
 **Still to hand back, and it needs a real event:** the next Procurement status change, showing that ticket's notification going PENDING then SENT (counts only). Nothing has moved on that board since, so PENDING is still 0.
+
+### Part 62: 2026-10-09, ~13:10 +08:00. **The Premiere One question answered — Q1 the tree, Q2 which system is which, Q3 180 days of tickets, Q4 the two tiles' children. Read-only; nothing written.**
+
+Answers `docs/handoffs/HANDOFF-cloud-sql01-WS36-20261009-premiere-one-question.md` at head `8879afa`. Q1, Q3 and Q4 ran in one impersonated script under `EXECUTE AS psa_desk`, rolled back. Q2 is read from the record, not the database.
+
+**Q1 — the Premiere One tree. MEASURED, 55 rows.** Type `Premiere One`, six subtypes: **Analytics, HomeBase, Imaging, Payroll, PSA Desk, Queue**. Each carries the nine standard items; **Queue** additionally carries `Outage` — 6 × 9 + 1 = 55. Every pair has `default_board_id = IT_HELP`, every row `is_draft = 0`, none retired.
+
+**Q2 — which system is which. MEASURED from the record** (`PMC_PremiereOne_Systems_20260930.html` for what each is for; `pmc-estate` §14 and its hostname→port table for how each is served). Hostnames only.
+
+| System | What staff use it for | Hostname |
+|---|---|---|
+| Queue | Patient flow — kiosk check-in, waiting-room displays, nightly census. Live at PMC and JRBY. | `queue.pmcne.ph`, and `queue-jrby.pmcne.ph` for the second hospital |
+| Payroll | Computes pay from biometric attendance — salaries, night differential, deductions, payslips. The HR/payroll operators' app. | `payroll.pmcne.ph` |
+| Analytics | The hospital's reporting — occupancy, receivables, claims, stay, lab turnaround, with an audit trail on every figure. | **none recorded** — published as documents, not a web app |
+| Imaging | Vendor-independent image archive and portal, over TLS, taking live cathlab studies. | `imaging.pmcne.ph` |
+| HomeBase | The staff workspace and knowledge home. In build. | **none yet** — no IIS site in §14's seven |
+| PSA Desk | One place to raise any request (IT, biomedical, facilities, procurement). | `desk.pmcne.ph` for the desk, `help.pmcne.ph` for *My requests* |
+
+**PMC Portal is a seventh thing, and it is not in the catalogue.** `portal.pmcne.ph` is the **employee portal** — where staff see a payslip, file leave, check attendance and their duty for today and tomorrow. It is the front door Part 14 links *My requests* from. The record names 48 staff (6.8%) with no portal/AD login, who therefore "cannot see a payslip, file leave or check attendance", which is what the portal is for.
+
+**Are PMC Portal and PMC Payroll the same system or two?** The honest answer is **two front doors on one process**:
+- **Two** IIS sites, two hostnames, two pages (`PMC_Portal.html` from `C:\PMC\payroll\portal-site`; `PMC_Payroll.html` from `C:\PMC\payroll\web`), two audiences — employees vs the payroll operators — and two app pools (Payroll has its own; **the Portal shares `DefaultAppPool`**, so a default-site recycle takes the Portal down with it).
+- **One** Node process behind both: `bridge.js` on **4100**, which both sites rewrite their `api/*` to. One codebase, one database, one restart. The same process also holds the **8888** biometric ADMS listener, so restarting it drops device pushes.
+
+So: for a user raising a ticket they are two different applications and deserve two subtypes. For anyone fixing one, they are one system. The catalogue today has `Premiere One › Payroll` and no Portal subtype at all — **that is the gap Q2 exposes**, and it is WS36's call what to add.
+
+**Q3 — tickets per Premiere One pair, 180 days. MEASURED, 17 total.**
+
+| Pair | Tickets |
+|---|---|
+| Payroll › Cannot log in | **7** |
+| Payroll › Wrong data or report | **5** |
+| Payroll › Access or permission | **2** |
+| PSA Desk › Cannot log in | 1 |
+| Payroll › How do I | 1 |
+| Payroll › Slow or freezing | 1 |
+
+**15 of the 17 are Payroll**, and the single largest pair is exactly the complaint that started this. The other five subtypes — Analytics, HomeBase, Imaging, Queue — carry **nothing** in 180 days.
+
+**Q4 — the two tiles' children. MEASURED; all `inactive = 0`.** Note `board_id` is NULL on every child: they route through `catalogue_item_id`, not a board of their own.
+
+*BizBox or a hospital system* — six children: BizBox HIS (`CI_BIZBOX_HIS_NOT_WORKING`), Pharmacy (`CI_BIZBOX_PIS_PHILHEALTH_NOT_WORKING`), PhilHealth or eClaims (`CI_PHILHEALTH_ECLAIMS_NOT_WORKING`), BizBox MMS, the inventory system (`CI_BIZBOX_MMS_INVENTORY_NOT_WORKING`), BizBox FMS, finance (`CI_BIZBOX_FMS_FINANCE_NOT_WORKING`), **Payroll** (`CI_PAYROLL_NOT_WORKING`).
+
+*Can't log in, or a password* — three children: Reset my password or unlock me (`CI_WINDOWS_ACCOUNT_PASSWORD_RESET_OR_UNLOCK`), I cannot log in to Windows (`CI_WINDOWS_ACCOUNT_CANNOT_LOG_IN`), I cannot log in to BizBox (`CI_BIZBOX_HIS_CANNOT_LOG_IN`).
+
+**What follows from Q3 and Q4 together, for WS36 to decide, not me.** The seven *Payroll › Cannot log in* tickets have no path through the tiles: the password tile offers Windows and BizBox, and the hospital-system tile's Payroll child is *not working*, not *cannot log in*. A requester who cannot sign in to payroll today lands on neither. INFERRED from the two measurements above.
+
+Nothing was written. No key, GUID, subject or name read out of the database.
