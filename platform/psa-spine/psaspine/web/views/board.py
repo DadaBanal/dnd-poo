@@ -443,6 +443,8 @@ def _table(ctx, boards, shown, f, total: int) -> str:
             f"<td><input type=checkbox name=ids value='{t.esc(wid)}' form=bulk aria-label='Tick {t.esc(wid)}'></td>"
             f"<td class=sm-hide><a href='/ticket/{t.esc(wid)}'>{t.esc(wid)}</a></td>"
             f"<td class=sum><a href='/ticket/{t.esc(wid)}' style='color:inherit'><b>{t.esc(r['summary'])}</b></a>"
+            # Compact hides the line under the summary; the came-from pill stays beside it (9 Oct 2026)
+            + f" <span class=came-inline>{came_badge(came[wid])}</span>"
             f"<div class='sm-only meta'>{t.esc(wid)} · {t.esc(r['status_name'] or r['state'].replace('_', ' ').title())}"
             f" · {t.esc(r['owner'] or 'unassigned')} · {t.esc(common.human_age(r['opened_at'], now=ctx.now))}</div>"
             + (" <span class='chip sla-warn' title='The requester has written since the desk last did'>"

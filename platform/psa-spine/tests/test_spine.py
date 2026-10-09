@@ -17282,6 +17282,9 @@ class CameFromTest(unittest.TestCase):
         _, _, page = self._call("GET", "/", query="view=all", cookie=self.bob)
         self.assertIn("<label>Came from</label>", page)
         self.assertIn(f"Chat #{self.chat_id}", page)
+        # Compact hides the line under the summary: the pill is also beside it, shown only there
+        self.assertIn("<span class=came-inline><span class='pill came came-email'", page)
+        self.assertIn("[data-density=compact] table.grid td.sum .came-inline{display:inline-flex", page)
 
     def test_reports_split_by_where_it_came_from(self):
         from psaspine import metrics

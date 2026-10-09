@@ -353,7 +353,8 @@ def came_badge(o: dict, *, link: bool = False) -> str:
     cls = "came came-" + o["key"].lower()
     title = {"CHAT": "Made from a live chat", "PORTAL": "Raised on the portal" + (f": {o['tile']}" if o.get("tile") else ""),
              "EMAIL": "Came in by email", "DESK": "Raised on the desk", "OTHER": "Raised by another system"}[o["key"]]
+    icon = t.icon({"CHAT": "chat", "PORTAL": "portal", "EMAIL": "mail", "DESK": "monitor", "OTHER": "link"}[o["key"]])
     if link and o["key"] == "CHAT" and o.get("chat_id"):
         return (f"<a class='pill {cls}' href='/chat/{int(o['chat_id'])}' title='{t.esc(title)}'>"
-                f"{t.esc(o['label'])}</a>")
-    return f"<span class='pill {cls}' title='{t.esc(title)}'>{t.esc(o['label'])}</span>"
+                f"{icon}{t.esc(o['label'])}</a>")
+    return f"<span class='pill {cls}' title='{t.esc(title)}'>{icon}{t.esc(o['label'])}</span>"

@@ -163,7 +163,7 @@ body>svg[hidden]{display:none}
 .toast.ok{animation:toast-out .35s var(--ease) 7s forwards}
 @keyframes toast-out{to{opacity:0;translate:0 8px;visibility:hidden}}
 [data-density=compact] table.grid td{padding:4px 10px}
-[data-density=compact] table.grid td.sum .last{display:none}
+[data-density=compact] table.grid td.sum .last{display:none}.came-inline{display:none}[data-density=compact] table.grid td.sum .came-inline{display:inline-flex;vertical-align:middle;margin-left:6px}[data-density=compact] table.grid td.sum .came-inline .pill{font-size:11px;padding:0 7px;line-height:18px}
 [data-density=compact] .card{padding:12px 14px}
 .densi{display:inline-flex;gap:2px;margin-right:auto}
 .densi button{padding:3px 8px;font-size:12px}
@@ -439,9 +439,13 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 input::placeholder,textarea::placeholder{color:var(--ink-3)}
 select{appearance:none;-webkit-appearance:none;padding-right:30px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237a8290' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center}
 textarea{min-height:90px;resize:vertical;line-height:1.5}
-/* 9 Oct 2026: where a ticket came from. Chat stands out; the rest stay quiet. */
-.pill.came{font-weight:600} .pill.came-chat{background:var(--accent-bg);color:var(--accent);border-color:var(--accent)}
-.pill.came-email{border-style:dashed} a.pill.came:hover{text-decoration:none;filter:brightness(1.1)}
+/* 9 Oct 2026: where a ticket came from, one colour each (Dada: "nicely colored designed badges"). The words
+   stay in the page's ink, so they read in every theme; the colour is the tint, the edge and the icon. */
+.pill.came{display:inline-flex;align-items:center;gap:4px;font-weight:600;color:var(--ink);
+  background:color-mix(in srgb,var(--c) 16%,var(--surface));border:1px solid color-mix(in srgb,var(--c) 55%,transparent)}
+.pill.came .ic{width:12px;height:12px;margin:0;opacity:1;color:var(--c)}
+.came-chat{--c:#14b8a6}.came-portal{--c:#8b5cf6}.came-email{--c:#f59e0b}.came-desk{--c:#64748b}.came-other{--c:#9ca3af}
+a.pill.came:hover{text-decoration:none;background:color-mix(in srgb,var(--c) 28%,var(--surface))}
 /* 078: the portal's tiles (Dada, 9 Oct 2026). Not .tile, which is the desk's figure tiles. */
 .helptiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;margin:0 0 12px}
 .htile{display:flex;gap:12px;align-items:flex-start;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);padding:14px 16px;color:inherit;min-height:72px;transition:border-color .15s,background .15s,transform .15s}
@@ -2283,6 +2287,8 @@ ICONS = {
     "arrow": "M5 12h14M13 6l6 6-6 6",
     "keyboard": "M3 6h18v12H3zM7 10h.01M11 10h.01M15 10h.01M7 14h10",
     "mail": "M3 6h18v12H3zM3 7l9 6 9-6",
+    "chat": "M4 5h16v11H9l-5 4zM8 10h8",
+    "portal": "M3 4h18v16H3zM3 9h18M6.5 6.5h.01M9.5 6.5h.01",
     "bell": "M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 21h4",
     "layers": "M12 3 2 8l10 5 10-5zM2 13l10 5 10-5M2 18l10 5 10-5",
     "building": "M3 21h18M5 21V4h14v17M9 8h2M13 8h2M9 12h2M13 12h2M9 16h2M13 16h2",
