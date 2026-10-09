@@ -531,9 +531,14 @@ def topics(conn, *, since: str, top: int = 25) -> list[str]:
                " more than one, and a word can miss):")
     compiled = [(label, re.compile(rx, re.I)) for label, rx in FAMILIES]
     hits = {label: {} for label, _ in compiled}
-    none = {}
-    for r in conn.execute("SELECT t.board_id, w.name FROM ticket t JOIN work_item w ON w.work_item_id = t.work_item_id"
-                          " WHERE t.opened_at >= ?", (since,)):
+    none, missed = {}, {}
+    for r in conn.execute(
+            "SELECT t.board_id, w.name, f.display_name AS type, c.display_name AS subtype"
+            "  FROM ticket t JOIN work_item w ON w.work_item_id = t.work_item_id"
+            "  LEFT JOIN catalogue_item i ON i.catalogue_item_id = t.catalogue_item_id"
+            "  LEFT JOIN service_component c ON c.component_id = i.component_id"
+            "  LEFT JOIN service_family f ON f.family_id = c.family_id"
+            " WHERE t.opened_at >= ?", (since,)):
         caught = False
         for label, rx in compiled:
             if rx.search(r["name"] or ""):
@@ -541,10 +546,22 @@ def topics(conn, *, since: str, top: int = 25) -> list[str]:
                 caught = True
         if not caught:
             none[r["board_id"]] = none.get(r["board_id"], 0) + 1
+            # 9 Oct 2026 (Dada: "yes build it"): what the desk itself called the
+            # ones no tile's words caught, so a missing tile shows by name
+            key = (f"{r['type']} › {r['subtype']}" if r["type"] else "(no Type › Subtype › Item yet)", r["board_id"])
+            missed[key] = missed.get(key, 0) + 1
     for label, _ in compiled:
         by = hits[label]
         out.append(f"  {sum(by.values()):>5}  {label}" + (
             "  (" + ", ".join(f"{b} {n}" for b, n in sorted(by.items(), key=lambda x: -x[1])) + ")" if by else ""))
     out.append(f"  {sum(none.values()):>5}  caught by no tile's words  ("
                + ", ".join(f"{b} {n}" for b, n in sorted(none.items(), key=lambda x: -x[1])) + ")")
+    if missed:
+        out.append(f"Of the {sum(none.values())} no tile's words caught, how the desk classified them"
+                   f" (Type › Subtype, top {top}):")
+        for (name, board_id), n in sorted(missed.items(), key=lambda x: (-x[1], x[0]))[:top]:
+            out.append(f"  {n:>5}  {name}  [{board_id}]")
+        if len(missed) > top:
+            out.append(f"  {sum(n for _, n in sorted(missed.items(), key=lambda x: (-x[1], x[0]))[top:]):>5}"
+                       f"  in {len(missed) - top} more Type › Subtype")
     return out

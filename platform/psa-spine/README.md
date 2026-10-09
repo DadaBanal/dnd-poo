@@ -2440,6 +2440,16 @@ The reference PSA's customer portal is INFERRED from its product pages (its docs
     - how many summaries each tile's words would have caught, plus phones and CCTV, which have no tile;
     - how many tickets no tile catches.
   - The word lists are a rough net, so treat the result as a guide, not a measurement of topics.
+  - **The tickets no tile catches.** SQL01's first run, 9 Oct: 104 of 303 tickets matched no tile's words.
+    `ticket-topics` now ends with how the desk itself classified those (Type › Subtype, or *no Type › Subtype › Item
+    yet*), still as counts only. That shows by name whether a tile is missing or a tile needs more words.
+- **Procurement emails its requesters** (Dada, 9 Oct: *"enabled procurement emails to requesters"*). This is set with
+  the desk's own `mail-setup --board PROCUREMENT --email-requester on --moving-emails on`, previewed before it is
+  applied. PMO Helpdesk already works the same way.
+  - Nothing is sent about tickets already open; the emails start with each ticket's next move.
+  - They go from PSA-Notify's own mailbox (helpdesk@), because procurement@ is not one it may send as. A reply still
+    lands on the Procurement ticket by its `[PMC-…]` reference.
+  - Handoff: `HANDOFF-cloud-sql01-WS36-20261009-procurement-email-topics.md`.
 
 Schema 078 adds `portal_tile`, `portal_tile_question`, `portal_answer` and `ticket.portal_tile_id`. Handoff:
 `HANDOFF-cloud-sql01-WS36-20261009-portal-tiles-078.md`.

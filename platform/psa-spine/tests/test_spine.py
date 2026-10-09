@@ -17101,8 +17101,59 @@ class PortalTilesTest(unittest.TestCase):
         self.assertRegex(out, r"\n\s+2  Printer or scanner  \((IT_HELP 1, PROCUREMENT 1|PROCUREMENT 1, IT_HELP 1)\)")
         self.assertRegex(out, r"\n\s+1  BizBox or a hospital system  \(IT_HELP 1\)")    # not "his badge"
         self.assertRegex(out, r"\n\s+1  caught by no tile's words  \(IT_HELP 1\)")
+        self.assertIn("Of the 1 no tile's words caught, how the desk classified them", out)
+        self.assertRegex(out, r"\n\s+1  \(no Type › Subtype › Item yet\)  \[IT_HELP\]")
+        conn = db.connect(self.db_path)                   # classified on the desk: it is named by its Type
+        wid = tickets.open_ticket(conn, board_id="IT_HELP", summary="Ward 2 cannot hear the paging speaker",
+                                  impact="I3", urgency="U3", requested_by=None, at=self.at,
+                                  catalogue_item_id=self._pair(conn, "Phone or extension", "Not working"))
+        out = "\n".join(portal_tiles.topics(conn, since="2026-10-01"))
+        conn.rollback()
+        conn.close()
+        self.assertRegex(out, r"\n\s+1  Computers and devices › Phone or extension  \[IT_HELP\]")
+        self.assertNotIn("paging speaker", out)
         for secret in ("Juan", "Dela Cruz", "badge", "jammed", "PMC-"):
             self.assertNotIn(secret, out)
+
+    def test_procurement_emails_its_requesters_from_the_next_move_and_never_for_the_backlog(self):
+        """Dada, 9 Oct 2026: "enabled procurement emails to requesters" and
+        "make sure this is stupid proof". The desk's own mail-setup: a preview
+        changes nothing; applied, nothing goes about tickets already there;
+        the next status change emails the requester once."""
+        from psaspine.__main__ import main
+        conn = db.connect(self.db_path)
+        wid = tickets.open_ticket(conn, board_id="PROCUREMENT", summary="Toner for Ward 3", impact="I3", urgency="U3",
+                                  requested_by="mia.santos@pmcne.ph", at=self.at, source="PORTAL")
+        conn.commit()
+        sent = lambda c: c.execute("SELECT COUNT(*) FROM notification WHERE work_item_id = ?"
+                                   " AND LOWER(recipient) = 'mia.santos@pmcne.ph'", (wid,)).fetchone()[0]
+        self.assertEqual(sent(conn), 0)                                   # off today: not even "we have it"
+        conn.close()
+        args = ["mail-setup", self.db_path, "--board", "PROCUREMENT", "--email-requester", "on",
+                "--moving-emails", "on", "--actor", "sql01 for dada.banal"]
+        self.assertEqual(main(args), 0)                                   # preview
+        conn = db.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT COALESCE(notify_requester, 0) FROM board WHERE board_id = 'PROCUREMENT'").fetchone()[0], 0)
+        conn.close()
+        self.assertEqual(main(args + ["--apply"]), 0)
+        conn = db.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT notify_requester FROM board WHERE board_id = 'PROCUREMENT'").fetchone()[0], 1)
+        self.assertEqual(sent(conn), 0)                                   # no email about the backlog
+        self.assertTrue(conn.execute("SELECT 1 FROM audit_event WHERE action = 'BOARD_CONFIG' AND subject_id = 'PROCUREMENT'"
+                                     " AND detail = 'email the requester: on'").fetchone())
+        quote = conn.execute("SELECT board_status_id FROM board_status WHERE board_id = 'PROCUREMENT'"
+                             " AND name = 'For Quotation'").fetchone()[0]
+        board.change_status(conn, wid, quote, at=self.at, actor="alice")
+        conn.commit()
+        self.assertEqual(sent(conn), 1)                                   # the next move: one email
+        self.assertIn("Your request", conn.execute("SELECT subject FROM notification WHERE work_item_id = ?",
+                                                    (wid,)).fetchone()[0])
+        conn.close()
+        self.assertEqual(main(args + ["--apply"]), 0)                     # again: nothing changes twice
+        conn = db.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'BOARD_CONFIG'"
+                                      " AND subject_id = 'PROCUREMENT' AND detail = 'email the requester: on'").fetchone()[0], 1)
+        conn.close()
 
     def test_a_store_without_078_shows_the_plain_form(self):
         from unittest import mock
