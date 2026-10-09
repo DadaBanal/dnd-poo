@@ -3399,3 +3399,43 @@ The origin POSTs carried no credentials (an empty sign-in form), so nothing reac
 **Not done, in order:** Cloudflare Access on both names (needs Dada signed in to Cloudflare in the browser pane — the sign-in hit a verification check SQL01 cannot complete), WAF and a rate limit on `/login`, then the Windows service and the two DNS records. The UDM read (no port-forward to this server) was denied by the permission layer and was not retried.
 
 **For WS36 (INFERRED from the code):** every link the desk writes — the ticket link and approvals link in emails (`outbox.py:836,857`), the requester link on a ticket (`ticket.py:766`), the calendar feed (`members.py:329`) — uses `PSA_PORTAL_URL` / `PSA_PUBLIC_URL`, the `.ph` names. From outside PMC they do not resolve, exactly as today. Switching those two settings to `.net` alone would **break LAN sign-in**: the desk's accepted origins come from the same two settings, so posts from `help.pmcne.ph` would get 403. Making links work everywhere needs a code change: accept a list of public origins, and choose the link host per reader.
+
+### Part 70: 2026-10-09, ~19:00 +08:00. **`desk.pmcne.net` is LIVE on the internet, behind Cloudflare Access: only the 14 active PMO Helpdesk members, by one-time PIN. `help.pmcne.net` is not published.** MEASURED. Dada's instruction.
+
+Dada, 9 Oct, choosing among options SQL01 laid out: *"ok desk only for now pls"*; then *"it should only be accessed by pmo staff or whos member of the PMO helpdesk board"*.
+
+**Zero Trust, Tech Sponge account** (done by SQL01 in Dada's signed-in Chrome, each change approved in chat; Dada added the payment card himself — Cloudflare requires one even for the Free plan):
+- Plan **Zero Trust Free**, "50 seat limit", **0 of 50** seats used at set-up. The activation page's own words: the card may be charged *"for usage that exceeds free limits"*; Standard is $7/seat/month (Cloudflare's plan page, read 9 Oct).
+- Team domain **`pmcne.cloudflareaccess.com`** (was auto-named `icy-voice-0813`).
+- **Login method: One-time PIN added.** VERIFIED (Cloudflare changelog, 18 Jun 2026): new organisations default to the *Cloudflare* identity provider — sign-in with a Cloudflare account that is a member of the account — and OTP is no longer added automatically. Without adding it, no technician could have signed in.
+- Access application **PMC Service Desk**, self-hosted, destination **`desk.pmcne.net`** (whole host), login **One-time PIN only** (instant authentication on), session **24 h**.
+- Policy **PMO Helpdesk members only**: Allow, Include → Emails → **14 addresses** = every active member of board `IT_HELP` (`psa.board_member` × `psa.member` with no `inactive_from`): 13 `@pmcne.ph`, 1 `@premieremedicalcenter.net`; 9 WORK, 5 ADMIN. Checked chip by chip. Addresses not recorded here.
+
+**Server:**
+- Tunnel config now answers **`desk.pmcne.net` only** → `127.0.0.1:8092`; everything else 404 (`ingress validate` OK; `help.pmcne.net` hits the 404 rule). Previous config kept beside it as `.bak`.
+- IIS **PSA-Portal-Public stopped**, auto-start off. PSA-Desk-Public running. LAN sites untouched.
+- Windows service **Cloudflared**, Automatic, ImagePath `cloudflared.exe --config=C:\ProgramData\cloudflared\config.yml tunnel run`. (The first idle service process would not stop — Cloudflare's doc shows it NOT_STOPPABLE — so it was ended by PID and the service started fresh.) **4 connections**, QUIC: mnl01, ceb01, hkg10, hkg12.
+
+**DNS:** one record on `pmcne.net`: `desk` CNAME → the tunnel, **proxied**; the dashboard lists it as type *Tunnel → pmc-psa-net*. 30 of 200 records. `help` and `desk` were searched first and absent (search control: `mail` found 4).
+
+**Proved from outside**, against Cloudflare's authoritative servers:
+
+| Request as a stranger | Result |
+|---|---|
+| `GET /` | 302 → `pmcne.cloudflareaccess.com/cdn-cgi/access/login/desk.pmcne.net` |
+| `GET /login` | 302 → the same |
+| `POST /login` with a guessed password | **302 → the same — never reaches the desk** |
+| `GET /api/v1/health` | 302 → the same |
+| the desk's own sign-in form in any response | **0** |
+| gate page | 200, *PMC Service Desk*, *Send login code* |
+| `help.pmcne.net` | does not exist |
+
+This matters because **AD's lockout threshold is "Never"** (minimum length 7; `net accounts /domain`, read 9 Oct): without Access, the form would take unlimited password guesses against every domain account.
+
+**Not done / for later:**
+- The 14-address list is a **copy**: when someone joins or leaves the PMO Helpdesk board, the policy must change too. Candidate: a small sync from `board_member` (needs an API token — Dada's call).
+- *Remove inactive users from seats* is **off** (Zero Trust › Settings); turning it on keeps the seat count honest.
+- Microsoft Entra ID as the login method instead of OTP (PMC's own sign-in, with MFA) — needs an Entra app registration.
+- WAF / rate limit on `desk.pmcne.net` — lower priority now nothing unauthenticated reaches the origin.
+- Unused tunnel `pmc-psa` in the `pmcne.ph` account: delete once Dada agrees. Its certificate and the `pmcne.ph` cert remain in the user profile.
+- Email links still say the `.ph` names (Part 69).
