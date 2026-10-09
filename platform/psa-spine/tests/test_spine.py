@@ -17294,5 +17294,34 @@ class CameFromTest(unittest.TestCase):
         self.assertIn("Opened, by where it came from", page)
 
 
+
+class MailPickupDeltaLinkTest(unittest.TestCase):
+    """9 Oct 2026: the unclean shutdown at 13:10 (event 6008) left all three
+    pickups' delta links as NUL bytes and no email became a ticket for hours.
+    The pickup now saves a link safely (temporary file, forced to disk, swapped
+    in, the one before kept as .prev) and recovers from an unreadable one
+    instead of failing. Exercised on the script's own functions, under
+    whichever PowerShell this machine has (Windows PowerShell 5.1 on the
+    Windows CI job, as on DND-SQL01)."""
+
+    def test_an_unreadable_delta_link_is_recovered_from_not_failed_on(self):
+        import shutil
+        import subprocess
+        here = Path(__file__).parent
+        shell = shutil.which("pwsh") or shutil.which("powershell") or shutil.which("powershell.exe")
+        if not shell:
+            self.skipTest("no PowerShell on this machine")
+        with tempfile.TemporaryDirectory() as work:
+            run = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+                                  str(here / "ps" / "delta-link-check.ps1"),
+                                  "-Script", str(here.parent / "scripts" / "Invoke-PmcMailPickup.ps1"),
+                                  "-Work", str(Path(work) / "state")],
+                                 capture_output=True, text=True, timeout=180)
+        out = run.stdout + run.stderr
+        self.assertEqual(run.returncode, 0, out)
+        self.assertNotIn("FAIL", out)
+        self.assertEqual(out.count("PASS"), 14, out)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -211,6 +211,8 @@ if (-not (Test-Path $StateDir)) {
                 if ($Apply) {
                     Copy-Item -Path $df -Destination ($df + '.' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.bak') -Force
                     Remove-Item -Path $df -Force
+                    # the pickup keeps the link before as .prev (9 Oct 2026) and would carry on from it: forget it too
+                    if (Test-Path ($df + '.prev')) { Remove-Item -Path ($df + '.prev') -Force }
                     $script:Forgot += $mb
                     $script:Fixed += ($mb + ': delta link forgotten (a copy is kept beside it); the pass in step 6 reads from ' + $Since.ToString('yyyy-MM-dd HH:mm'))
                     Write-Step ('  FIXED: ' + $mb + ' delta link forgotten')

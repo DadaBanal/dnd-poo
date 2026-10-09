@@ -109,6 +109,65 @@ function Write-Log([string] $Message) {
     if ($Apply) { Add-Content -Path $LogFile -Value $line -Encoding ASCII }
 }
 
+# ---------------------------------------------------------------- the delta link, kept safely
+# 9 Oct 2026: the unclean shutdown at 13:10 (event 6008) caught all three
+# pickups saving their delta links, and each file was left as ~400 NUL bytes.
+# Every pass after that failed 'Invalid URI' until somebody noticed (MEASURED by
+# SQL01). So a link is now written to a temporary file, forced to disk, and
+# swapped in with the previous one kept as .prev; and a link that cannot be read
+# is set aside and recovered from, never failed on.
+function Test-DeltaLink([string] $Text) {
+    if (-not $Text) { return $false }
+    if ($Text.IndexOf([char]0) -ge 0) { return $false }
+    return ($Text.Trim() -match '^https://graph\.microsoft\.com/\S+$')
+}
+
+function Save-DeltaLink([string] $Link) {
+    $tmp = "$DeltaFile.tmp"
+    $bytes = [Text.Encoding]::ASCII.GetBytes($Link)
+    $fs = New-Object IO.FileStream($tmp, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None, 4096,
+                                   [IO.FileOptions]::WriteThrough)
+    try { $fs.Write($bytes, 0, $bytes.Length); $fs.Flush($true) } finally { $fs.Dispose() }
+    if (Test-Path $DeltaFile) { [IO.File]::Replace($tmp, $DeltaFile, "$DeltaFile.prev") }
+    else { [IO.File]::Move($tmp, $DeltaFile) }
+}
+
+function Get-RecoverFrom([datetime] $LastSaved) {
+    # Where to read from when the place is lost: two hours before the link was
+    # last saved (that save was the last good pass), never later than -Since and
+    # never more than 14 days back. The import is keyed by Message-ID, so the
+    # overlap imports nothing twice.
+    $from = $LastSaved.AddHours(-2)
+    if ($from -gt $Since) { $from = $Since }
+    $floor = (Get-Date).AddDays(-14)
+    if ($from -lt $floor) { $from = $floor }
+    return $from
+}
+
+function Read-DeltaLink {
+    # @{ Uri; From }: Uri is the link to carry on from, or $null with From the
+    # window to read instead ($null From and Uri together mean a first run).
+    $lastSaved = $null
+    foreach ($f in @($DeltaFile, "$DeltaFile.prev")) {
+        if (-not (Test-Path $f)) { continue }
+        $item = Get-Item $f
+        if (-not $lastSaved -or $item.LastWriteTime -gt $lastSaved) { $lastSaved = $item.LastWriteTime }
+        $text = [IO.File]::ReadAllText($f)
+        if (Test-DeltaLink $text) {
+            if ($f -ne $DeltaFile) {
+                Write-Log 'The saved delta link was unreadable; carrying on from the one before it (.prev). Nothing already imported is imported twice.'
+            }
+            return @{ Uri = $text.Trim(); From = $null }
+        }
+        $bad = $f + '.bad-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+        Write-Log ("The delta link in $(Split-Path -Leaf $f) is unreadable ($($item.Length) bytes, not a Graph link):" +
+                   ' most likely a shutdown while it was being written.' + $(if ($Apply) { " Set aside as $(Split-Path -Leaf $bad)." } else { ' (preview: left in place)' }))
+        if ($Apply) { Move-Item -Path $f -Destination $bad -Force }
+    }
+    if ($lastSaved) { return @{ Uri = $null; From = (Get-RecoverFrom $lastSaved) } }
+    return @{ Uri = $null; From = $null }
+}
+
 function ConvertTo-Base64Url([byte[]] $Bytes) {
     [Convert]::ToBase64String($Bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
 }
@@ -199,13 +258,20 @@ function Get-FileNameFor([string] $GraphId) {
 
 function Invoke-Pass {
     $mbx = [Uri]::EscapeDataString($Mailbox)
-    if (Test-Path $DeltaFile) {
-        $uri = (Get-Content -Path $DeltaFile -Raw).Trim()
+    $saved = Read-DeltaLink
+    $windowFrom = $Since
+    if ($saved.Uri) {
+        $uri = $saved.Uri
         $first = $false
     } else {
+        if ($saved.From) {
+            $windowFrom = $saved.From
+            Write-Log ("Recovering: reading from $($windowFrom.ToString('yyyy-MM-dd HH:mm')) (two hours before the last" +
+                       ' good save) instead of failing. Mail already imported is skipped by Message-ID.')
+        }
         # Not $since: PowerShell names ignore case, so that would overwrite the
         # [datetime] $Since parameter with a string (MEASURED by SQL01, part 27).
-        $sinceUtc = $Since.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+        $sinceUtc = $windowFrom.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
         $uri = "$Graph/users/$mbx/mailFolders/inbox/messages/delta?changeType=created" +
                "&`$select=id,receivedDateTime&`$filter=receivedDateTime+ge+$sinceUtc"
         $first = $true
@@ -226,9 +292,15 @@ function Invoke-Pass {
             $st = 0
             if ($_.Exception.PSObject.Properties['Response'] -and $_.Exception.Response) { $st = [int]$_.Exception.Response.StatusCode }
             if ($st -ne 410 -or $first) { throw }
-            Write-Log 'Graph says the saved delta link has expired (410). Forgetting it and reading from -Since instead.'
-            if (Test-Path $DeltaFile) { Remove-Item -Path $DeltaFile -Force }
-            $sinceUtc = $Since.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+            # 9 Oct 2026: read from the last good save, not from -Since. The
+            # task's -Since is "now", which skipped whatever arrived while the
+            # link was going stale.
+            $windowFrom = $Since
+            if (Test-Path $DeltaFile) { $windowFrom = Get-RecoverFrom (Get-Item $DeltaFile).LastWriteTime }
+            Write-Log ("Graph says the saved delta link has expired (410). Forgetting it and reading from " +
+                       "$($windowFrom.ToString('yyyy-MM-dd HH:mm')) instead.")
+            foreach ($f in @($DeltaFile, "$DeltaFile.prev")) { if (Test-Path $f) { Remove-Item -Path $f -Force } }
+            $sinceUtc = $windowFrom.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
             $uri = "$Graph/users/$mbx/mailFolders/inbox/messages/delta?changeType=created" +
                    "&`$select=id,receivedDateTime&`$filter=receivedDateTime+ge+$sinceUtc"
             $first = $true
@@ -246,7 +318,7 @@ function Invoke-Pass {
         if ($delta) { $deltaLink = $delta.Value }
     }
 
-    $label = if ($first) { "first sync from $($Since.ToString('yyyy-MM-dd HH:mm'))" } else { 'since last pass' }
+    $label = if ($first) { "first sync from $($windowFrom.ToString('yyyy-MM-dd HH:mm'))" } else { 'since last pass' }
     if (-not $Apply) {
         Write-Log "PREVIEW: $($newIds.Count) new message(s) $label. Nothing written; delta link not saved. Re-run with -Apply."
         return
@@ -319,7 +391,7 @@ function Invoke-Pass {
         }
     }
 
-    if ($deltaLink) { Set-Content -Path $DeltaFile -Value $deltaLink -Encoding ASCII }
+    if ($deltaLink) { Save-DeltaLink $deltaLink }
     Write-Log "$($newIds.Count) new message(s) $label; imported and delta link saved."
 }
 
