@@ -2980,3 +2980,48 @@ Read-only.
 **The log watch, reported for what it is worth and no more.** PSA-Desk's log is **1720 bytes, byte-identical to before the restart** — the startup banner — with no `Error converting`, no `has no port decided`, no traceback, after a minute. But an unchanged log also means **no request traffic was recorded in that minute**, so on its own it is weak evidence. The SQL exercises above are the real proof; the log merely fails to contradict them. The log is also truncated on each start by the task's `*>` redirect, so it holds nothing from before the restart.
 
 Chat 3's ward can now rate it (Part 56).
+
+### Part 58: 2026-10-09, ~10:50 +08:00. **1c43ac0 live; 077 applied, PSA-Calendar's first pass clean; `ticket-topics` run. 078 HELD.** MEASURED.
+
+**077 — applied, all of step 7 passing.** PSA-Calendar was **disabled first** (step 1), not merely stopped, for the reason the handoff gives and Part 53 learned: a minute task that is only stopped fires again on its own trigger. COPY_ONLY backup `PMC_PSA_pre077_20261009.bak`, PSA-Desk stopped, the three guarded `ALTER`s taken **verbatim from the port**, one transaction.
+
+**Step 7 values, handed back:**
+- `COL_LENGTH(psa.outlook_busy, subject)` = **800**
+- `COL_LENGTH(psa.outlook_busy, location)` = **800**
+- `COL_LENGTH(psa.outlook_busy, private)` = **4**
+- `COUNT(*) WHERE subject IS NOT NULL` = **0**
+- `outlook_busy` **262 → 262** (step 5 count held)
+
+`:8085` **401 → down → 401 in 2s**, then **PSA-Calendar re-enabled**.
+
+**The PSA-Calendar result: clean, no 403.** Its first pass after re-enabling finished **result 0** — *"0 write(s) due: 0 written, 0 failed; busy times read for 21 of 21 member(s)."* So nothing had to be handed back and the task stays enabled.
+
+**The privacy invariant after that pass — counts only, no subjects read or printed:**
+- `WHERE private = 1 AND (subject IS NOT NULL OR location IS NOT NULL)` = **0** ✔
+- Context: 262 rows, **0** marked private, 200 carrying a subject, 200 a location. Nothing private carries detail.
+
+**`ticket-topics --days 180` run read-only** (under `EXECUTE AS psa_desk`, the CLI's own connection being closed to a sysadmin; its handler rolls back and so did this). Output handed back whole to Dada and WS36. It prints counts only — no summary, name or reference — and the figure worth WS36's eye is the last line: **104 of 303 tickets are caught by no tile's words**, against 83 for the BizBox tile and 47 for the password one. A board not seen before also appears: **Office of the CIO (OFFICE_OF_THE_CIO), 2 tickets**.
+
+**078 is NOT applied, deliberately.** Cloud Build's own instruction is to wait until it confirms **CI run 78 is green**; it has not. Given Part 56 — an IDENTITY defect that reached this database through a suite that was green on SQLite and a CI job nobody had run against SQL Server since 30 September — waiting for that confirmation is the whole point, and 078 creates three tables with two IDENTITY keys. Nothing of 078 has been touched: no backup taken for it, no tables made, `portal_tile_id` not added, and `portal-tiles` not run even as a preview.
+
+### Part 59: 2026-10-09, ~11:20 +08:00. **078 applied on CI run 78 green; the tile preview is run and NOT applied, waiting on Dada.** MEASURED.
+
+Cloud Build confirmed run 78 green, which was the condition Part 58 held 078 for. COPY_ONLY backup `PMC_PSA_pre078_20261009.bak`, PSA-Desk stopped (PSA-Notify and PSA-Calendar left running, as §3 says neither touches these tables), the six blocks taken **verbatim from the port in the order §3 names**, one transaction.
+
+**Step 6 values, handed back — all seven pass:**
+- `OBJECT_ID` non-NULL for **`portal_tile`**, **`portal_tile_question`**, **`portal_answer`**.
+- `portal_tile.tile_id` **IsIdentity = 1**, `portal_tile_question.question_id` **IsIdentity = 1**. These are the tables' own new numbers, so IDENTITY is right here — the exact opposite of 072's fault, where a key *copied* from another table was made IDENTITY (Part 56). Checking it explicitly is the lesson from that.
+- `COL_LENGTH(psa.ticket, portal_tile_id)` = **4**
+- `COUNT(*) WHERE portal_tile_id IS NOT NULL` = **0**
+- `FK_ticket_portal_tile_id` = **1**
+- `ticket` **304 → 304** (step 4 count held)
+
+`:8085` **401 → down → 401 in 2s**.
+
+**`portal-tiles` preview run, nothing applied.** `--actor "sql01 for dada.banal"`, defaults `--helpdesk IT_HELP --procurement PROCUREMENT`, **no `--apply`**. It ends *"Would add 46 tile(s) and 10 question(s). Preview only"*, and `portal_tile` is still **0 rows** after it. The whole output is handed to Dada.
+
+**What the preview shows, for Dada's read.** Every one of the nine tiles found a live catalogue match — there is no `no catalogue match` line anywhere, which is the thing worth knowing given the 2 Oct restructure: the smaller tiles under *BizBox or a hospital system* land on the **new** Types exactly as WS36 inferred they would — HIS, Pharmacy, PhilHealth (insurance and claims), BizBox MMS (Procurement), FMS, and Premiere One for Payroll. Both *Buy something* and *Stock, a delivery or a PO* route to **Procurement**, the catalogue's own routing winning, as §4 says it should.
+
+**Not applied, and will not be until Dada says go.** §4 is explicit that he looks it over first because the matches are by name against a catalogue that was restructured on 2 Oct.
+
+**One thing for Dada to weigh against Part 58's `ticket-topics`:** that read measured **104 of 303 tickets caught by no tile's words**, and the two topics with no starter tile at all were **Phone or extension** (1) and **CCTV** (0). These nine tiles do not add either. Whether that matters is his call, not mine — *Something else, or not sure* still takes anything.
