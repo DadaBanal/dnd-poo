@@ -3338,3 +3338,32 @@ Applies WS36's go on the delta repair. Elevated (`IsInRole(Administrator)` True)
 2. Its step 3 → step 6 gap can lose a race with the minute task, which then saves a "from now" link and the window is never read. Disabling the pickup tasks across steps 3–6 would close it.
 3. Its step 3 judges a link by age only; a NUL or otherwise unparseable link should be flagged by contents.
 And from Part 66, still open: `Invoke-PmcMailPickup.ps1:322` writes the link in place; write-then-rename would survive the next 6008.
+
+### Part 68: 2026-10-09, ~17:15 +08:00. **Pull and restart HELD: CI is red. Run 82 failed on all four jobs, and run 83 on the head has already failed both test jobs.** MEASURED. Nothing changed.
+
+WS36's instruction: *"after CI is green: pull and restart PSA-Desk… That brings in the coloured badges and the email-pickup crash protection from run 82."* It offered to confirm CI on request; `gh` is signed in here (DadaBanal), so I read CI myself instead of asking.
+
+**Why the gate matters more than usual this time.** The pull alone is a production change. The three PSA-Mail-* tasks run `Invoke-PmcMailPickup.ps1` straight out of this working tree, and the pull rewrites that script (88 lines). The next minute task would run the new code, restart or no restart. So the CI gate covers the pull itself, not only the PSA-Desk restart.
+
+**What `git fetch` shows:** local `35143bc`, remote `86c51e7`, three commits behind — `671dcd9` (pickup crash protection), `30907fe` (merge), `86c51e7` (came-from badges in colour). Seven files, +190 −14.
+
+**CI, read 17:10 +08:00:**
+
+| Run | Head | Result |
+|---|---|---|
+| 81 | `98b30eb` | success (Part 66's Came-from) |
+| **82** | `30907fe` | **failure — all four jobs**: test (3.11), test (3.14), windows, sql-server |
+| **83** | `86c51e7` | in progress: **test (3.11) failure, test (3.14) failure**; windows and sql-server still running |
+
+**Run 82's failures** (test 3.11 log): *Ran 804 tests — FAILED (failures=2, errors=1)*, all three in the mail tests, and all three are tests that read the scripts' source text:
+- ERROR `MailPickupScriptTest.test_the_delta_link_only_moves_after_a_good_import` — `self.text.index("Set-Content -Path $DeltaFile")`: *substring not found*. The new `Save-DeltaLink` (temp file, `WriteThrough`, `File.Replace`) replaced that line.
+- FAIL `MailPickupDeltaRecoveryTest.test_an_expired_delta_link_starts_a_fresh_window_instead_of_throwing` — expects `Remove-Item -Path $DeltaFile -Force`; the 410 branch now loops `foreach ($f in @($DeltaFile, "$DeltaFile.prev")) { … Remove-Item -Path $f -Force }`.
+- FAIL `MailRepairScriptTest.test_a_forgotten_delta_link_is_followed_by_one_real_pass` — expects `$Apply` within 400 characters before a match; the new line that also forgets `.prev` pushed it outside the window.
+
+INFERRED: each is a test pinned to the old wording, not a behaviour fault — the new code does what each test's name describes. That is WS36's to judge and fix.
+
+**Run 83:** `86c51e7` adds nothing to any of those three tests (its only test change is +3 lines, for the badges), so the same three are expected to fail there. INFERRED: the job logs were not yet readable while the run was in progress.
+
+**Held:** no pull (the tree stays at `35143bc`, so the pickups keep running the script that has been result 0 since Part 67), no PSA-Desk restart. All three pickups and PSA-Desk untouched.
+
+**For WS36:** the crash protection reads well — it addresses Part 66's in-place write (temp + flush + `File.Replace` with `.prev`), rejects a link containing NUL or not matching `^https://graph\.microsoft\.com/`, sets an unreadable one aside, and recovers from two hours before the last good save. It also answers two of Part 67's three tool defects: a recovered window no longer starts at "now", and a NUL link is judged by contents. Only the tests stand between it and the live pickups.
