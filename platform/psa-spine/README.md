@@ -870,7 +870,8 @@ channel, and a page to the person on call that repeats until they answer.
   otherwise fail (both MEASURED on DND-SQL01, part 21). The card (an Adaptive Card in the incoming-webhook envelope)
   carries the ticket number, board, priority, status and owner, the rule's
   words and an *Open on the desk* button (`--desk-url`, else
-  `PSA_PUBLIC_URL`): **never the summary, never a note.** A channel is
+  `PSA_PUBLIC_URL`), plus *Open away from PMC* when `--desk-away-url` or
+  `PSA_DESK_AWAY_URL` is set (9 Oct 2026): **never the summary, never a note.** A channel is
   outside the sign-in, and §6.1 keeps a patient's words behind it. Whether
   Teams renders the envelope exactly as posted is NOT VERIFIED from here; the
   SQL01 sitting posts one card and says.
@@ -3006,6 +3007,26 @@ settings switch it on:
 | `PSA_ENTRA_CLIENT` | the app registration's client id |
 | `PSA_PUBLIC_URL` | optional: the URL staff type, e.g. `https://desk.pmcne.ph`; the redirect URI is built on it and must equal, byte for byte, the one registered on the app. Unset, the request's own scheme and host are used. It is also what tells the desk the world is https when a proxy terminates TLS (next section). |
 | `PSA_PORTAL_URL` | optional: the requester portal's own address, e.g. `https://help.pmcne.ph`. A request for that host serves the requester's pages and nothing else (next section); requester emails link to it. |
+| `PSA_DESK_AWAY_URL` | optional, senders only: the desk's published address away from PMC, behind the sign-in gate, e.g. `https://desk.pmcne.net`. It only adds a link: a member's email and a Teams card name the ticket at this address beside `PSA_PUBLIC_URL`'s (next paragraph). It is never an accepted origin, and the desk itself never reads it. |
+
+**Links in a member's email (9 Oct 2026).** Dada, with `desk.pmcne.net` live behind Cloudflare Access (SQL01 Part 70),
+chose both links, since an email cannot know where it will be opened. An owner, resource, booked-visit or on-call-page
+email now ends with:
+
+```
+At PMC: https://desk.pmcne.ph/ticket/PMC-001460
+Away from PMC: https://desk.pmcne.net/ticket/PMC-001460 (asks for the PMC sign-in code, once a day)
+```
+
+- The two addresses come from `Send-PmcNotifications.ps1 -DeskUrl/-DeskAwayUrl`, else `PSA_PUBLIC_URL` and
+  `PSA_DESK_AWAY_URL`.
+- An address left out is a line left out. With neither set, the email is word for word what it was.
+- A Teams card gets *Open away from PMC* beside *Open on the desk*.
+- The requester's, the status and the approver's emails stay on the portal: the public portal is not published, and
+  that is Dada's separate decision.
+- An address given on the command line that is not https:// is refused. One inherited from the environment is quietly
+  left out, so a stray setting never stops the email. It is quiet because the senders read stderr into the JSON they
+  parse, so a warning line would fail the pass.
 
 `/entra/start` sends the browser to Microsoft with a state, a nonce and a code
 challenge, remembered in a signed cookie that lives ten minutes and only on

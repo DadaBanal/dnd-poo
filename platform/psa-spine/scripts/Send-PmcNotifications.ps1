@@ -37,6 +37,13 @@
     link in "your request was updated" emails. It is deployment config, passed
     here or set as PSA_PORTAL_URL, and never written into the repository.
 
+    -DeskUrl and -DeskAwayUrl are the desk's https:// addresses at PMC and away
+    from PMC (the published one behind the sign-in gate). A member's email
+    (owner, resource, a visit booked, an on-call page) then names the ticket on
+    both; requester and approver emails stay on the portal. Either may be left
+    out, and then that line is not written (else PSA_PUBLIC_URL and
+    PSA_DESK_AWAY_URL). Deployment config, never committed. (9 Oct 2026)
+
 .EXAMPLE
     .\Send-PmcNotifications.ps1 -TenantId <guid> -ClientId <guid> -CertThumbprint <thumb> `
         -Mailbox helpdesk@pmcne.ph -Database D:\psa\spine.db -StateDir D:\psa\mail-state
@@ -56,6 +63,8 @@ param(
     [Parameter(Mandatory = $true)] [string] $StateDir,
     [string] $AllowedDomain = 'pmcne.ph',
     [string] $PortalUrl,
+    [string] $DeskUrl,
+    [string] $DeskAwayUrl,
     [string[]] $SendAs = @(),
     [string] $SpineDir,
     [string] $AttachmentDir = 'D:\psa\files',
@@ -67,6 +76,9 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+foreach ($u in @($DeskUrl, $DeskAwayUrl)) {
+    if ($u -and -not $u.ToLower().StartsWith('https://')) { throw 'DeskUrl and DeskAwayUrl must be https://' }
+}
 if ($AttachmentDir) { $env:PSA_ATTACHMENT_DIR = $AttachmentDir }   # the desk's file folder, the task's own setting
 # The repository root, one above scripts\. Not a param() default: under Windows
 # PowerShell 5.1 run with -File, $PSScriptRoot is empty while the defaults are
@@ -213,6 +225,8 @@ function Invoke-Pass {
     $args1 = @('outbox-pending', $Database, '--allowed-domain', $AllowedDomain)
     if (-not $Apply) { $args1 += '--dry-run' }
     if ($PortalUrl) { $args1 += @('--portal-url', $PortalUrl) }
+    if ($DeskUrl) { $args1 += @('--desk-url', $DeskUrl) }
+    if ($DeskAwayUrl) { $args1 += @('--desk-away-url', $DeskAwayUrl) }
     $r = Invoke-Spine $args1
     if ($r.Code -ne 0) { throw "outbox-pending failed (exit $($r.Code))" }
     # Under Windows PowerShell 5.1, '[]' | ConvertFrom-Json is ONE object (an

@@ -103,7 +103,8 @@ def queue_teams(conn: sqlite3.Connection, work_item_id: str, target_id: str, *, 
     return cur.lastrowid
 
 
-def card(conn: sqlite3.Connection, n: sqlite3.Row, *, desk_url: str | None = None) -> dict:
+def card(conn: sqlite3.Connection, n: sqlite3.Row, *, desk_url: str | None = None,
+         desk_away_url: str | None = None) -> dict:
     """The Adaptive Card a channel shows, in the incoming-webhook envelope. No
     summary, no note: the words stay behind the sign-in."""
     tk = conn.execute(
@@ -123,22 +124,26 @@ def card(conn: sqlite3.Connection, n: sqlite3.Row, *, desk_url: str | None = Non
         body.append({"type": "TextBlock", "wrap": True, "text": n["body"]})
     content = {"$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "type": "AdaptiveCard",
                "version": "1.4", "body": body}
+    import urllib.parse
+    path = "/ticket/" + urllib.parse.quote(n["work_item_id"], safe="")
+    actions = []
     if desk_url:
-        content["actions"] = [{"type": "Action.OpenUrl", "title": "Open on the desk",
-                               "url": f"{desk_url}/ticket/{n['work_item_id']}"}]
+        actions.append({"type": "Action.OpenUrl", "title": "Open on the desk", "url": f"{desk_url}{path}"})
+    if desk_away_url:      # 9 Oct 2026: the published desk, behind the sign-in gate
+        actions.append({"type": "Action.OpenUrl", "title": "Open away from PMC", "url": f"{desk_away_url}{path}"})
+    if actions:
+        content["actions"] = actions
     return {"type": "message", "attachments": [{"contentType": "application/vnd.microsoft.card.adaptive",
                                                 "contentUrl": None, "content": content}]}
 
 
 def pending_teams(conn: sqlite3.Connection, *, limit: int = 50, dry_run: bool = False,
-                  desk_url: str | None = None) -> list[dict]:
+                  desk_url: str | None = None, desk_away_url: str | None = None) -> list[dict]:
     """What the Teams sender posts now: one card per row, keyed by the channel
     name the host resolves to a URL. A card whose channel is gone or off is
     marked NO_SENDER here, so it never sits PENDING for ever."""
-    import os
-    desk_url = (desk_url or os.environ.get("PSA_PUBLIC_URL") or "").rstrip("/")
-    if desk_url and not desk_url.lower().startswith("https://"):
-        raise ValueError("the desk address must be https://")
+    from .outbox import desk_addresses
+    desk_url, desk_away_url = desk_addresses(desk_url, desk_away_url)
     out = []
     for n in conn.execute("SELECT * FROM notification WHERE status = 'PENDING' AND channel = ?"
                           " ORDER BY notification_id LIMIT ?", (TEAMS, limit)).fetchall():
@@ -149,7 +154,7 @@ def pending_teams(conn: sqlite3.Connection, *, limit: int = 50, dry_run: bool = 
                              (n["notification_id"],))
             continue
         out.append({"id": n["notification_id"], "target": n["target_id"], "ticket": n["work_item_id"],
-                    "card": card(conn, n, desk_url=desk_url or None)})
+                    "card": card(conn, n, desk_url=desk_url or None, desk_away_url=desk_away_url or None)})
     if not dry_run:
         conn.commit()
     return out

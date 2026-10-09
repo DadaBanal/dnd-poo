@@ -25,7 +25,10 @@
     Logs counts only. Never a URL, a subject or a card.
 
     -DeskUrl is the https:// address of the desk, for the "Open on the desk"
-    button on the card (else PSA_PUBLIC_URL). Deployment config, never committed.
+    button on the card (else PSA_PUBLIC_URL). -DeskAwayUrl, the desk away from
+    PMC (behind the sign-in gate), adds an "Open away from PMC" button beside it
+    (else PSA_DESK_AWAY_URL; left out, no second button). Deployment config,
+    never committed.
 
 .EXAMPLE
     .\Send-PsaTeamsNotifications.ps1 -Database D:\psa\spine.db -WebhookFile D:\psa\teams-webhooks.json `
@@ -39,6 +42,7 @@ param(
     [Parameter(Mandatory = $true)] [string] $WebhookFile,
     [Parameter(Mandatory = $true)] [string] $StateDir,
     [string] $DeskUrl,
+    [string] $DeskAwayUrl,
     [string] $SpineDir,
     [string] $PythonExe = 'C:\PMC\Python312\python.exe',
     [int] $IntervalSeconds = 60,
@@ -106,6 +110,7 @@ function Invoke-Pass {
     $args1 = @('outbox-pending', $Database, '--channel', 'TEAMS', '--allowed-domain', 'unused')
     if (-not $Apply) { $args1 += '--dry-run' }
     if ($DeskUrl) { $args1 += @('--desk-url', $DeskUrl) }
+    if ($DeskAwayUrl) { $args1 += @('--desk-away-url', $DeskAwayUrl) }
     $r = Invoke-Spine $args1
     if ($r.Code -ne 0) { throw "outbox-pending failed (exit $($r.Code))" }
     # Under Windows PowerShell 5.1, '[]' | ConvertFrom-Json is ONE object (an
@@ -154,6 +159,7 @@ foreach ($p in @($SpineDir, $WebhookFile) + $(if ($isConnectionString) { @() } e
     if (-not (Test-Path $p)) { throw "Not found: $p" }
 }
 if ($DeskUrl -and -not $DeskUrl.ToLower().StartsWith('https://')) { throw 'DeskUrl must be https://' }
+if ($DeskAwayUrl -and -not $DeskAwayUrl.ToLower().StartsWith('https://')) { throw 'DeskAwayUrl must be https://' }
 if ($Apply -and -not (Test-Path $StateDir)) { New-Item -ItemType Directory -Path $StateDir | Out-Null }
 Write-Log ("Teams sender ({0}{1})" -f $(if ($Apply) { 'APPLY' } else { 'PREVIEW' }), $(if ($Loop) { ", every $IntervalSeconds s" } else { '' }))
 

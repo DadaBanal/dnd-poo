@@ -800,15 +800,59 @@ def address_for(conn: sqlite3.Connection, recipient: str) -> str | None:
     return row[0]["email"] if len(row) == 1 else None
 
 
+STAFF_ROLES = (OWNER, RESOURCE, SCHEDULED, "PAGE")
+AWAY_WORDS = "asks for the PMC sign-in code, once a day"
+
+
+def desk_addresses(desk_url: str | None = None, desk_away_url: str | None = None) -> tuple[str, str]:
+    """The desk's two addresses for a link a member is sent: at PMC (the LAN
+    name, PSA_PUBLIC_URL) and away from PMC (the published one behind the
+    sign-in gate, PSA_DESK_AWAY_URL). Dada, 9 Oct 2026: both, since an email
+    cannot know where it will be opened. Either may be empty; each must be
+    https://. Links only: neither changes which origins the desk accepts.
+
+    An address given on the command line that is not https:// is refused. One
+    read from the environment that is not is quietly left out instead, so a
+    setting meant for something else can never stop the email. Quietly: the
+    senders read stderr into the JSON they parse (2>&1, SQL01 part 28), so a
+    warning line would fail every pass."""
+    import os
+    out = []
+    for given, env, what in ((desk_url, "PSA_PUBLIC_URL", "desk"), (desk_away_url, "PSA_DESK_AWAY_URL", "desk away")):
+        url = (given or "").strip().rstrip("/")
+        if url and not url.lower().startswith("https://"):
+            raise ValueError(f"the {what} address must be https://")
+        if not url:
+            url = (os.environ.get(env) or "").strip().rstrip("/")
+            if url and not url.lower().startswith("https://"):
+                url = ""
+        out.append(url)
+    return out[0], out[1]
+
+
+def desk_links(work_item_id: str, desk_url: str, desk_away_url: str) -> str:
+    """The lines under a member's email: one per address that is set."""
+    import urllib.parse
+    path = "/ticket/" + urllib.parse.quote(work_item_id, safe="")
+    lines = []
+    if desk_url:
+        lines.append(f"At PMC: {desk_url}{path}")
+    if desk_away_url:
+        lines.append(f"Away from PMC: {desk_away_url}{path} ({AWAY_WORDS})")
+    return "\n".join(lines)
+
+
 def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
             limit: int = 50, dry_run: bool = False,
-            portal_url: str | None = None) -> list[dict]:
+            portal_url: str | None = None, desk_url: str | None = None,
+            desk_away_url: str | None = None) -> list[dict]:
     """What is due now, as the sender needs it. Resolves addresses; anything that
     cannot be sent is marked here, so it never sits PENDING for ever."""
     import os
     portal_url = (portal_url or os.environ.get("PSA_PORTAL_URL") or "").rstrip("/")
     if portal_url and not portal_url.lower().startswith("https://"):
         raise ValueError("the portal address must be https://")
+    desk_url, desk_away_url = desk_addresses(desk_url, desk_away_url)
     allowed = tuple(d.lower().lstrip("@") for d in allowed_domains)
     # "*" releases every domain: a requester on yahoo or gmail hears back too
     # (Dada, 1 Oct 2026: "all other generic emails"). The words are the same
@@ -860,6 +904,12 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
             body = (n["body"] or "") + f"\n\nOpen the ticket on the desk and press Acknowledge: {n['work_item_id']}"
         else:
             body = (n["body"] or "") + f"\n\nOpen the ticket on the desk: {n['work_item_id']}"
+        if n["recipient_role"] in STAFF_ROLES:
+            # 9 Oct 2026: a member's email names the ticket on the desk at PMC
+            # and away from it; the requester's and approver's stay on the portal
+            links = desk_links(n["work_item_id"], desk_url, desk_away_url)
+            if links:
+                body += "\n" + links
         copied = []
         if n["recipient_role"] in (REQUESTER, STATUS):      # 061: the ticket's Cc hears what the requester hears
             from . import cc as _cc

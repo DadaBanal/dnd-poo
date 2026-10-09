@@ -17338,5 +17338,114 @@ class MailPickupDeltaLinkTest(unittest.TestCase):
         self.assertEqual(out.count("PASS"), 14, out)
 
 
+
+from unittest import mock  # noqa: E402
+
+
+class StaffDeskLinksTest(unittest.TestCase):
+    """Dada, 9 Oct 2026, with desk.pmcne.net live behind Cloudflare Access
+    (SQL01 Part 70): a member's email names the ticket on the desk at PMC and
+    away from it, since an email cannot know where it will be opened. The
+    requester's and approver's stay on the portal, which is not published."""
+
+    LAN = "https://desk.pmcne.ph"
+    AWAY = "https://desk.pmcne.net"
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = _fresh(self.tmp)
+        self.at = datetime(2026, 10, 9, 19, 30)
+        setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        self.wid = tickets.open_ticket(self.conn, board_id="IT_HELP", summary="Printer down in Ward 3", impact="I2",
+                                       urgency="U2", requested_by=None, at=self.at, entity_id="PMC")
+        for role, who in (("OWNER", "bob@pmcne.ph"), ("RESOURCE", "carol@pmcne.ph"), ("SCHEDULED", "jun.reyes@pmcne.ph"),
+                          ("PAGE", "mia.santos@pmcne.ph"), ("REQUESTER", "nurse@pmcne.ph"),
+                          ("REQUESTER_STATUS", "lea.cruz@pmcne.ph"), ("APPROVER", "rosa.mendoza@pmcne.ph")):
+            self.conn.execute("INSERT INTO notification (work_item_id, recipient, recipient_role, subject, body, created_at,"
+                              " status) VALUES (?,?,?,?,?,?,'PENDING')", (self.wid, who, role, f"[{self.wid}] {role}",
+                                                                         "Something happened.", "2026-10-09 19:30"))
+        self.conn.commit()
+        patcher = mock.patch.dict(os.environ, {}, clear=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        for k in ("PSA_PUBLIC_URL", "PSA_DESK_AWAY_URL", "PSA_PORTAL_URL"):
+            os.environ.pop(k, None)
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _bodies(self, **kw):
+        from psaspine import outbox
+        return {m["to"].split("@")[0]: m["body"] for m in
+                outbox.pending(self.conn, allowed_domains=("pmcne.ph",), dry_run=True, **kw)}
+
+    def test_a_members_email_carries_the_desk_at_pmc_and_away(self):
+        b = self._bodies(desk_url=self.LAN + "/", desk_away_url=self.AWAY, portal_url="https://help.pmcne.ph")
+        for staff in ("bob", "carol", "jun.reyes", "mia.santos"):
+            self.assertIn(f"At PMC: {self.LAN}/ticket/{self.wid}\n", b[staff] + "\n", staff)
+            self.assertIn(f"Away from PMC: {self.AWAY}/ticket/{self.wid} (asks for the PMC sign-in code", b[staff], staff)
+            self.assertIn(f"Open the ticket on the desk", b[staff], staff)    # the words before stay
+        self.assertIn("press Acknowledge", b["mia.santos"])
+        # the requester's, the status email's and the approver's: the portal only, never the desk
+        for other in ("nurse", "lea.cruz", "rosa.mendoza"):
+            self.assertNotIn("desk.pmcne", b[other], other)
+            self.assertNotIn("Away from PMC", b[other], other)
+            self.assertIn("https://help.pmcne.ph/my", b[other], other)
+
+    def test_with_nothing_set_a_members_email_is_as_it_was(self):
+        b = self._bodies()
+        self.assertTrue(b["bob"].endswith(f"Open the ticket on the desk: {self.wid}"), b["bob"])
+        self.assertNotIn("https://", b["bob"])
+        # only the LAN address (PSA_PUBLIC_URL, as the Teams sender already reads it): one line
+        os.environ["PSA_PUBLIC_URL"] = self.LAN
+        b = self._bodies()
+        self.assertIn(f"At PMC: {self.LAN}/ticket/{self.wid}", b["bob"])
+        self.assertNotIn("Away from PMC", b["bob"])
+        os.environ["PSA_DESK_AWAY_URL"] = self.AWAY
+        self.assertIn(f"Away from PMC: {self.AWAY}/ticket/{self.wid}", self._bodies()["bob"])
+
+    def test_a_bad_address_is_refused_when_given_and_never_stops_the_email_when_inherited(self):
+        from psaspine import outbox
+        for kw in ({"desk_url": "http://desk.pmcne.ph"}, {"desk_away_url": "desk.pmcne.net"}):
+            with self.assertRaises(ValueError):
+                self._bodies(**kw)
+        os.environ["PSA_PUBLIC_URL"] = "http://desk.pmcne.ph"
+        os.environ["PSA_DESK_AWAY_URL"] = "ftp://desk.pmcne.net"
+        with mock.patch("sys.stderr", new_callable=_io.StringIO) as err:
+            b = self._bodies()
+        self.assertEqual(len(b), 7)                                    # every email still goes
+        self.assertNotIn("At PMC", b["bob"])
+        self.assertNotIn("Away from PMC", b["bob"])
+        # and silently: the senders read stderr into the JSON they parse (2>&1)
+        self.assertEqual(err.getvalue(), "")
+        self.assertEqual(outbox.desk_links("PMC-1", "", ""), "")
+
+    def test_a_teams_card_gets_a_second_button_for_away(self):
+        from psaspine import channels
+        channels.add_target(self.conn, "helpdesk-alerts", label="IT Helpdesk", at=self.at, actor="root")
+        channels.queue_teams(self.conn, self.wid, "helpdesk-alerts", subject="s", body=None, at=self.at)
+        self.conn.commit()
+        acts = channels.pending_teams(self.conn, dry_run=True, desk_url=self.LAN,
+                                      desk_away_url=self.AWAY)[0]["card"]["attachments"][0]["content"]["actions"]
+        self.assertEqual([(a["title"], a["url"]) for a in acts],
+                         [("Open on the desk", f"{self.LAN}/ticket/{self.wid}"),
+                          ("Open away from PMC", f"{self.AWAY}/ticket/{self.wid}")])
+        acts = channels.pending_teams(self.conn, dry_run=True, desk_url=self.LAN)[0]["card"]["attachments"][0]["content"]["actions"]
+        self.assertEqual([a["title"] for a in acts], ["Open on the desk"])
+        content = channels.pending_teams(self.conn, dry_run=True)[0]["card"]["attachments"][0]["content"]
+        self.assertNotIn("actions", content)
+
+    def test_the_senders_pass_both_addresses_on_and_refuse_a_plain_http_one(self):
+        d = Path(__file__).resolve().parent.parent / "scripts"
+        for name in ("Send-PmcNotifications.ps1", "Send-PsaTeamsNotifications.ps1"):
+            text = (d / name).read_bytes().decode("ascii")
+            self.assertIn("[string] $DeskAwayUrl,", text, name)
+            self.assertIn("if ($DeskAwayUrl) { $args1 += @('--desk-away-url', $DeskAwayUrl) }", text, name)
+        text = (d / "Send-PmcNotifications.ps1").read_bytes().decode("ascii")
+        self.assertIn("if ($DeskUrl) { $args1 += @('--desk-url', $DeskUrl) }", text)
+        self.assertIn("throw 'DeskUrl and DeskAwayUrl must be https://'", text)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

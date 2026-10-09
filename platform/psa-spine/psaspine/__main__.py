@@ -225,7 +225,11 @@ def main(argv: list[str] | None = None) -> int:
     pob.add_argument("--channel", choices=("EMAIL", "TEAMS"), default="EMAIL",
                      help="which sender is asking: EMAIL (the Graph sender) or TEAMS (the webhook sender)")
     pob.add_argument("--desk-url",
-                     help="https:// address of the desk for the link on a Teams card (else PSA_PUBLIC_URL)")
+                     help="https:// address of the desk at PMC, for the link in a member's email and on a "
+                          "Teams card (else PSA_PUBLIC_URL)")
+    pob.add_argument("--desk-away-url",
+                     help="https:// address of the desk away from PMC (the published one behind the sign-in "
+                          "gate), for a second link beside it (else PSA_DESK_AWAY_URL; empty = none)")
     pms = sub.add_parser("mail-setup",
                          help="058: one board's mail in one step - its intake addresses, the requester switch, "
                               "and the status and picked-up emails. Preview unless --apply")
@@ -791,10 +795,12 @@ def _run(conn, a) -> int:
         from . import channels, outbox
         try:
             if a.channel == "TEAMS":
-                items = channels.pending_teams(conn, dry_run=a.dry_run, desk_url=a.desk_url)
+                items = channels.pending_teams(conn, dry_run=a.dry_run, desk_url=a.desk_url,
+                                               desk_away_url=a.desk_away_url)
             else:
                 items = outbox.pending(conn, allowed_domains=tuple(a.allowed_domain),
-                                       dry_run=a.dry_run, portal_url=a.portal_url)
+                                       dry_run=a.dry_run, portal_url=a.portal_url,
+                                       desk_url=a.desk_url, desk_away_url=a.desk_away_url)
         except ValueError as exc:
             print(f"refused: {exc}", file=sys.stderr)
             return 1
