@@ -3517,3 +3517,15 @@ Next passes:
 - **PSA-Teams:** result 0, error lines 0. "Nothing posted" because it has been in PREVIEW since Part 22 by design. The backup confirms there was no `-Apply` before, so that is unchanged.
 
 **Still open:** the certificate (step 2). Re-running `Invoke-DadaAwayLinksAndCert.ps1` is safe: step 1 now prints `SKIP … already has -DeskAwayUrl` without asking for a password, and step 2 runs. The walk-through (Part 75) is also open.
+
+**Part 76, update (06:44 +08:00): step 2 done by Dada. MEASURED.** `Invoke-DadaAwayLinksAndCert.ps1` result:
+- **Step 1** skipped both tasks, as expected.
+- **Step 2** checks passed: the certificate belongs to a different account from Tech Sponge's, and the tunnel config does not use it. Then "Deleted.", with the cloudflared service Running.
+
+Read back by SQL01:
+- The `pmcne.ph` certificate is gone. The Tech Sponge one is still present.
+- cloudflared is Running, with 0 ERR lines and 4 registered connections in the last 200 log lines.
+- `desk.pmcne.net` → 302 to `pmcne.cloudflareaccess.com`. Control: an unpublished name gives no answer.
+- PSA-Notify and PSA-Teams: result 0 at 06:44:44.
+
+**Remaining from Parts 71–76:** the walk-through; *remove inactive users from seats*; encoder's primary address in AD.
