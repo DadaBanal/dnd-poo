@@ -2980,3 +2980,26 @@ Read-only.
 **The log watch, reported for what it is worth and no more.** PSA-Desk's log is **1720 bytes, byte-identical to before the restart** — the startup banner — with no `Error converting`, no `has no port decided`, no traceback, after a minute. But an unchanged log also means **no request traffic was recorded in that minute**, so on its own it is weak evidence. The SQL exercises above are the real proof; the log merely fails to contradict them. The log is also truncated on each start by the task's `*>` redirect, so it holds nothing from before the restart.
 
 Chat 3's ward can now rate it (Part 56).
+
+### Part 58: 2026-10-09, ~10:50 +08:00. **1c43ac0 live; 077 applied, PSA-Calendar's first pass clean; `ticket-topics` run. 078 HELD.** MEASURED.
+
+**077 — applied, all of step 7 passing.** PSA-Calendar was **disabled first** (step 1), not merely stopped, for the reason the handoff gives and Part 53 learned: a minute task that is only stopped fires again on its own trigger. COPY_ONLY backup `PMC_PSA_pre077_20261009.bak`, PSA-Desk stopped, the three guarded `ALTER`s taken **verbatim from the port**, one transaction.
+
+**Step 7 values, handed back:**
+- `COL_LENGTH(psa.outlook_busy, subject)` = **800**
+- `COL_LENGTH(psa.outlook_busy, location)` = **800**
+- `COL_LENGTH(psa.outlook_busy, private)` = **4**
+- `COUNT(*) WHERE subject IS NOT NULL` = **0**
+- `outlook_busy` **262 → 262** (step 5 count held)
+
+`:8085` **401 → down → 401 in 2s**, then **PSA-Calendar re-enabled**.
+
+**The PSA-Calendar result: clean, no 403.** Its first pass after re-enabling finished **result 0** — *"0 write(s) due: 0 written, 0 failed; busy times read for 21 of 21 member(s)."* So nothing had to be handed back and the task stays enabled.
+
+**The privacy invariant after that pass — counts only, no subjects read or printed:**
+- `WHERE private = 1 AND (subject IS NOT NULL OR location IS NOT NULL)` = **0** ✔
+- Context: 262 rows, **0** marked private, 200 carrying a subject, 200 a location. Nothing private carries detail.
+
+**`ticket-topics --days 180` run read-only** (under `EXECUTE AS psa_desk`, the CLI's own connection being closed to a sysadmin; its handler rolls back and so did this). Output handed back whole to Dada and WS36. It prints counts only — no summary, name or reference — and the figure worth WS36's eye is the last line: **104 of 303 tickets are caught by no tile's words**, against 83 for the BizBox tile and 47 for the password one. A board not seen before also appears: **Office of the CIO (OFFICE_OF_THE_CIO), 2 tickets**.
+
+**078 is NOT applied, deliberately.** Cloud Build's own instruction is to wait until it confirms **CI run 78 is green**; it has not. Given Part 56 — an IDENTITY defect that reached this database through a suite that was green on SQLite and a CI job nobody had run against SQL Server since 30 September — waiting for that confirmation is the whole point, and 078 creates three tables with two IDENTITY keys. Nothing of 078 has been touched: no backup taken for it, no tables made, `portal_tile_id` not added, and `portal-tiles` not run even as a preview.
