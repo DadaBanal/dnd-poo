@@ -3025,3 +3025,21 @@ Cloud Build confirmed run 78 green, which was the condition Part 58 held 078 for
 **Not applied, and will not be until Dada says go.** §4 is explicit that he looks it over first because the matches are by name against a catalogue that was restructured on 2 Oct.
 
 **One thing for Dada to weigh against Part 58's `ticket-topics`:** that read measured **104 of 303 tickets caught by no tile's words**, and the two topics with no starter tile at all were **Phone or extension** (1) and **CCTV** (0). These nine tiles do not add either. Whether that matters is his call, not mine — *Something else, or not sure* still takes anything.
+
+### Part 60: 2026-10-09, ~11:35 +08:00. **The portal tiles are live on Dada's approval: 46 tiles, 10 questions, and all three of §4's after-checks pass.** MEASURED.
+
+Dada read the Part 59 preview and said apply. COPY_ONLY backup `PMC_PSA_pre_tiles_apply_20261009.bak` first, then `portal-tiles --apply` through the desk's own `portal_tiles.seed_pmc` as `psa_desk`, `--actor "sql01 for dada.banal"`, defaults `--helpdesk IT_HELP --procurement PROCUREMENT`.
+
+**The apply was gated on the approved numbers, not just run.** The transaction committed only if it wrote **exactly the 46 tiles and 10 questions the preview showed Dada** and left `ticket` unchanged; anything else would have rolled back. It ended *"Added 46 tile(s) and 10 question(s)."* → **applied**, with `ticket` **305 → 305**.
+
+**§4's three after-checks, all passing:**
+- **A second run adds nothing.** Re-run as a preview: **46 lines read `=` (already there)**, the last line *"Would add 0 tile(s) and 0 question(s)"*. Idempotent, as promised. (One `+` line remains: *Something else, or not sure*, which the preview itself marks "always there … no row".)
+- **The count matches the preview:** `portal_tile` **46**, `portal_tile_question` **10**.
+- **Setup › Audit shows `PORTAL_TILE` rows by the actor named:** **56** rows, all `sql01 for dada.banal`.
+
+**What is live now — nine top-level tiles, 37 children:**
+Computer or laptop · Printer or scanner · Can't log in, or a password · Email and Teams · BizBox or a hospital system · Network, Wi-Fi or internet · Set up something new, or get access → **IT_HELP**; Buy something · Stock, a delivery or a PO → **PROCUREMENT**.
+
+`ticket.portal_tile_id` is set on **0** tickets, which is right: the column fills as requesters raise things through a tile from here, and nothing existing was rewritten.
+
+**Still open, and still Dada's** (unchanged from Part 59, recorded so it is not lost): Part 58's read measured **104 of 303 tickets caught by no tile's words**, and **Phone or extension** (1) and **CCTV** (0) have no tile among these nine. *Something else, or not sure* catches anything, so nothing is blocked — whether either earns a tenth tile is his call.
