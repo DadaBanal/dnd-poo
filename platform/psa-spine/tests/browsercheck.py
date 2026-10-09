@@ -120,6 +120,20 @@ def build(db_path: Path) -> str:
     # 073: IT Help takes chats and tech answers them
     conn.execute("UPDATE board SET takes_chats = 1 WHERE board_id = 'IT_HELP'")
     chat.set_operator(conn, "tech", True, at=at, actor="tech")
+    # 078: a tile on the portal, with a smaller tile and a question (9 Oct 2026)
+    from psaspine import portal_tiles
+    pair = conn.execute("SELECT i.catalogue_item_id FROM catalogue_item i JOIN service_component c ON c.component_id ="
+                        " i.component_id JOIN service_action a ON a.action_id = i.action_id"
+                        " WHERE c.display_name = 'Label or barcode printer' AND a.display_name = 'Not working'").fetchone()[0]
+    for n, (label, hint, icon) in enumerate((("Printer or scanner", "Not printing, jammed, or not scanning", "note"),
+                                             ("Computer or laptop", "Not working, slow, or an error", "monitor"),
+                                             ("Email and Teams", "Outlook, Teams, a shared mailbox", "mail"))):
+        top = portal_tiles.add_tile(conn, label=label, hint=hint, icon=icon, board_id="IT_HELP", sort_order=n,
+                                    at=at, actor="t")
+        if n == 0:
+            portal_tiles.add_tile(conn, label="Label printer", parent_id=top, catalogue_item_id=pair, at=at, actor="t")
+            portal_tiles.add_question(conn, top, label="The printer's name, or where it is", field_type="TEXT",
+                                      required=True, at=at, actor="t")
     conn.commit()
     conn.close()
     return wid, mail, noted, prj, ph_b, emailed
@@ -1163,6 +1177,43 @@ def main() -> int:
                  "and the browser remembers it on the next visit")
             page.locator(".tabs a.order").click()                  # leave it as it was found
             page.wait_for_load_state("domcontentloaded")
+
+            # 078: the portal's tiles (Dada, 9 Oct 2026), on a phone's width too
+            tiles = browser.new_context(viewport={"width": 390, "height": 800}).new_page()
+            tiles.on("console", lambda m: errors.append("tiles: " + m.text) if m.type == "error" else None)
+            tiles.goto(f"{base}/login", wait_until="domcontentloaded")
+            tiles.fill("input[name=username]", "nurse7")
+            tiles.fill("input[name=password]", PASSWORD)
+            tiles.click("button[type=submit]")
+            tiles.wait_for_load_state("domcontentloaded")
+            tiles.goto(f"{base}/my", wait_until="domcontentloaded")
+            grid = tiles.locator(".helptiles a.htile")
+            note(grid.count() == 4 and "Something else" in grid.nth(3).inner_text()
+                 and tiles.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth"),
+                 "My requests shows the tiles and Something else, with no sideways scroll on a phone",
+                 f"{grid.count()} tiles")
+            tiles.locator(".htile", has_text="Printer or scanner").click()
+            tiles.wait_for_load_state("domcontentloaded")
+            tiles.locator(".htile", has_text="Label printer").click()
+            tiles.wait_for_load_state("domcontentloaded")
+            note("This goes to" in tiles.content() and tiles.locator("input[name^=q]").count() == 1,
+                 "a tile opens its smaller tiles, then a form with its question", tiles.url)
+            tiles.locator("input[name^=q]").fill("Ward 7 nurses' station")
+            tiles.locator("input[name=impact][value=I2]").check()
+            tiles.locator("input[name=urgency][value=U3]").check()
+            tiles.locator("button[type=submit]", has_text="Send it").click()
+            tiles.wait_for_load_state("domcontentloaded")
+            ref = tiles.url.rstrip("/").rsplit("/", 1)[-1]
+            import sqlite3 as _sq
+            with _sq.connect(str(db_path)) as _c:
+                got = _c.execute("SELECT t.portal_tile_id IS NOT NULL, c.display_name FROM ticket t JOIN catalogue_item i"
+                                 " ON i.catalogue_item_id = t.catalogue_item_id JOIN service_component c"
+                                 " ON c.component_id = i.component_id WHERE t.work_item_id = ?", (ref,)).fetchone()
+            note(got == (1, "Label or barcode printer"), "Send it lands the request on its board, already sorted", f"{ref} {got}")
+            if os.environ.get("PSA_SHOTS"):
+                tiles.goto(f"{base}/my", wait_until="domcontentloaded")
+                tiles.screenshot(path=os.path.join(os.environ["PSA_SHOTS"], "portal-tiles.png"), full_page=True)
+            tiles.context.close()
 
             note(not errors, "no console errors anywhere above",
                  " | ".join(errors[:5]) if errors else "")

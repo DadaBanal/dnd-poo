@@ -23,6 +23,7 @@ from .views import tokens as tokens_view
 from .views import mail as mail_view
 from .views import cmdbsetup as cmdbsetup_view
 from .views import smallsetup as smallsetup_view
+from .views import tilesetup as tilesetup_view
 from .views import inout as inout_view
 from .views import live as live_view
 from .views import kb as kb_view
@@ -129,6 +130,11 @@ ROUTES = [
     ("GET", "/admin/projects", projects_view.setup),
     ("POST", "/admin/projects/status", projects_view.setup_status),
     ("POST", "/admin/projects/<what>", projects_view.setup_simple),
+    ("GET", "/admin/portal-tiles", tilesetup_view.index),
+    ("POST", "/admin/portal-tiles/tile", tilesetup_view.tile_add),
+    ("POST", "/admin/portal-tiles/tile/<tile_id>", tilesetup_view.tile_save),
+    ("POST", "/admin/portal-tiles/tile/<tile_id>/question", tilesetup_view.question_add),
+    ("POST", "/admin/portal-tiles/question/<question_id>", tilesetup_view.question_save),
     ("GET", "/admin/priorities", smallsetup_view.pr_index),
     ("POST", "/admin/priorities/<code>", smallsetup_view.pr_save),
     ("GET", "/admin/kb-categories", smallsetup_view.kb_index),
@@ -268,6 +274,7 @@ ROUTES = [
     ("GET", "/my", portal.index),
     ("GET", "/my/approvals", approvals_view.portal_index),
     ("POST", "/my/approvals/<approval_id>/decide", approvals_view.portal_decide),
+    ("GET", "/my/new", portal.new_form),
     ("POST", "/my/new", portal.create),
     ("GET", "/my/<work_item_id>", portal.detail),
     ("POST", "/my/<work_item_id>/reply", portal.reply),

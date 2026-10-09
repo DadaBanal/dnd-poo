@@ -247,6 +247,9 @@ BEGIN
     PRINT N'    psa.chat_reaction';
     PRINT N'    psa.chat_file';
     PRINT N'    psa.chat_survey';
+    PRINT N'    psa.portal_tile';
+    PRINT N'    psa.portal_tile_question';
+    PRINT N'    psa.portal_answer';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -313,13 +316,15 @@ BEGIN
     PRINT N'    psa.ix_chat_session_requester';
     PRINT N'    psa.ix_chat_message_chat';
     PRINT N'    psa.ix_chat_file_chat';
+    PRINT N'    psa.ix_portal_tile_parent';
+    PRINT N'    psa.ix_portal_tile_question_tile';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  149 tables, 65 indexes, 4 triggers.';
+    PRINT N'  152 tables, 67 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -3797,6 +3802,69 @@ CREATE TABLE psa.[chat_survey] (
 END;
 
 -- --------------------------------------------------------------------------
+-- portal_tile   (from schema/078_portal_tiles.sql)
+-- 078: tiles on the requester portal, in the reference PSA's help-portal shape.
+--
+-- Dada, 9 Oct 2026: "on the my requests portal we should add in there an option
+-- like the help portal for connectwise like choosing tiles what are your issues
+-- so that we can route to the procurement board the pmo helpdesk board so it
+-- helps the ticketer". Confirmed before building:
+--   * the tiles are set up on a Setup page, not fixed in the code;
+--   * a tile may open a row of smaller tiles (one level), and a tile sends the
+--     request to its board with its Type, Subtype and Item already chosen;
+--   * a tile may ask a few questions, kept per question for the desk;
+--   * every department sees every tile ("every department has procurement
+--     inventory mms issues"), so a tile's board does not need a department tick;
+--   * a request whose Item needs approval (049) asks for it, as the desk does.
+-- A sub-tile with no board or no Item takes its parent's.
+IF OBJECT_ID(N'psa.[portal_tile]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[portal_tile] (
+    [tile_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_portal_tile] PRIMARY KEY,
+    [parent_id] INT NULL CONSTRAINT [FK_portal_tile_parent_id] REFERENCES psa.[portal_tile]([tile_id]),
+    [label] NVARCHAR(400) NOT NULL,
+    [hint] NVARCHAR(400) NULL,
+    [icon] NVARCHAR(32) NULL,
+    [board_id] NVARCHAR(64) NULL CONSTRAINT [FK_portal_tile_board_id] REFERENCES psa.[board]([board_id]),
+    [catalogue_item_id] NVARCHAR(64) NULL CONSTRAINT [FK_portal_tile_catalogue_item_id] REFERENCES psa.[catalogue_item]([catalogue_item_id]),
+    [sort_order] INT NOT NULL CONSTRAINT [DF_portal_tile_sort_order] DEFAULT (0),
+    [inactive] INT NOT NULL CONSTRAINT [DF_portal_tile_inactive] DEFAULT (0) CONSTRAINT [CK_portal_tile_01] CHECK (inactive IN (0, 1))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- portal_tile_question   (from schema/078_portal_tiles.sql)
+-- A question a tile asks. A parent tile's questions are asked for each of its
+-- sub-tiles as well, before the sub-tile's own.
+IF OBJECT_ID(N'psa.[portal_tile_question]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[portal_tile_question] (
+    [question_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_portal_tile_question] PRIMARY KEY,
+    [tile_id] INT NOT NULL CONSTRAINT [FK_portal_tile_question_tile_id] REFERENCES psa.[portal_tile]([tile_id]),
+    [label] NVARCHAR(400) NOT NULL,
+    [field_type] NVARCHAR(32) NOT NULL CONSTRAINT [DF_portal_tile_question_field_type] DEFAULT ('TEXT') CONSTRAINT [CK_portal_tile_question_01] CHECK (field_type IN ('TEXT', 'PARAGRAPH', 'NUMBER', 'DATE', 'CHECKBOX')),
+    [required] INT NOT NULL CONSTRAINT [DF_portal_tile_question_required] DEFAULT (0) CONSTRAINT [CK_portal_tile_question_02] CHECK (required IN (0, 1)),
+    [sort_order] INT NOT NULL CONSTRAINT [DF_portal_tile_question_sort_order] DEFAULT (0),
+    [inactive] INT NOT NULL CONSTRAINT [DF_portal_tile_question_inactive] DEFAULT (0) CONSTRAINT [CK_portal_tile_question_03] CHECK (inactive IN (0, 1))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- portal_answer   (from schema/078_portal_tiles.sql)
+-- What the requester answered, one row per question, with the question's words
+-- as they were asked (a question renamed later does not rewrite an answer).
+IF OBJECT_ID(N'psa.[portal_answer]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[portal_answer] (
+    [work_item_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_portal_answer_work_item_id] REFERENCES psa.[ticket]([work_item_id]),
+    [question_id] INT NOT NULL CONSTRAINT [FK_portal_answer_question_id] REFERENCES psa.[portal_tile_question]([question_id]),
+    [label] NVARCHAR(400) NOT NULL,
+    [value] NVARCHAR(MAX) NULL,
+    CONSTRAINT [PK_portal_answer] PRIMARY KEY ([work_item_id], [question_id])
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -4392,6 +4460,10 @@ ALTER TABLE psa.[outlook_busy] ADD [location] NVARCHAR(400) NULL;
 IF COL_LENGTH(N'psa.[outlook_busy]', N'private') IS NULL
 ALTER TABLE psa.[outlook_busy] ADD [private] INT NULL CONSTRAINT [DF_outlook_busy_private] DEFAULT (0);
 
+-- Which tile a request came in by, for the desk and for reports.
+IF COL_LENGTH(N'psa.[ticket]', N'portal_tile_id') IS NULL
+ALTER TABLE psa.[ticket] ADD [portal_tile_id] INT NULL CONSTRAINT [FK_ticket_portal_tile_id] REFERENCES psa.[portal_tile]([tile_id]);
+
 IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
 ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
 
@@ -4609,6 +4681,12 @@ CREATE INDEX [ix_chat_message_chat] ON psa.[chat_message] ([chat_id], [message_i
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_chat_file_chat' AND object_id = OBJECT_ID(N'psa.[chat_file]'))
 CREATE INDEX [ix_chat_file_chat] ON psa.[chat_file] ([chat_id]);
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_portal_tile_parent' AND object_id = OBJECT_ID(N'psa.[portal_tile]'))
+CREATE INDEX [ix_portal_tile_parent] ON psa.[portal_tile] ([parent_id]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_portal_tile_question_tile' AND object_id = OBJECT_ID(N'psa.[portal_tile_question]'))
+CREATE INDEX [ix_portal_tile_question_tile] ON psa.[portal_tile_question] ([tile_id]);
+
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
@@ -4744,10 +4822,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 149 OR @Triggers <> 4 OR @Indexes < 65
+IF @Tables <> 152 OR @Triggers <> 4 OR @Indexes < 67
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 149), %d triggers (expected 4), %d indexes (expected at least 65). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 152), %d triggers (expected 4), %d indexes (expected at least 67). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -4775,6 +4853,7 @@ PRINT N'target is enforced until somebody with the authority says so.';
     DROP TRIGGER IF EXISTS psa.[ticket_close_requires_a_variation];
     DROP TRIGGER IF EXISTS psa.[patient_reference_needs_a_restricted_board];
     DROP TRIGGER IF EXISTS psa.[patient_reference_stays_on_a_restricted_board];
+    ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_portal_tile_id];
     ALTER TABLE psa.[entity] DROP CONSTRAINT IF EXISTS [FK_entity_type_id];
     ALTER TABLE psa.[entity] DROP CONSTRAINT IF EXISTS [FK_entity_status_id];
     ALTER TABLE psa.[kb_article] DROP CONSTRAINT IF EXISTS [FK_kb_article_category_id];
@@ -4803,6 +4882,9 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[portal_answer];
+    DROP TABLE IF EXISTS psa.[portal_tile_question];
+    DROP TABLE IF EXISTS psa.[portal_tile];
     DROP TABLE IF EXISTS psa.[chat_survey];
     DROP TABLE IF EXISTS psa.[chat_file];
     DROP TABLE IF EXISTS psa.[chat_reaction];

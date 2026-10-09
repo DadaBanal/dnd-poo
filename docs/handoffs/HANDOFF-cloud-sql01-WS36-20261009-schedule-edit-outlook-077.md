@@ -111,5 +111,5 @@ The busy times already pulled have no subject until the next pass. Each pass del
 | Unit suite | See the commit message (SQLite). New: `ConnectWiseShapeTest.test_a_visit_or_a_block_is_edited_in_place_and_rescheduled`, `OutlookCalendarTest.test_the_owner_reads_their_own_outlook_entries_and_nobody_else_does`. |
 | Browser checks | `tests/browsercheck.py`, all pass (MEASURED, this commit). New: right-click > Edit opens a filled window; Save moves the visit on the same page; a double-click opens the same window and not *Add*. That last check found the single-click bug in §5, which is fixed here. |
 | T-SQL port | `tools/sqlite_to_tsql.py --check`: in step (MEASURED, this commit). |
-| SQL Server | CI `psa-spine`, dispatched on this head. NOT VERIFIED until it reports. |
+| SQL Server | CI `psa-spine` run 77, dispatched on `124ab71`: green on all four jobs (Linux 3.11 and 3.14, sql-server, windows). MEASURED, 9 Oct 2026. |
 | Not run here | 077 against `PMC_PSA`, and the sync script against Graph. |

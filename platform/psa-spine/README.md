@@ -2369,6 +2369,81 @@ clears them: operators read offline until their next page loads, and Busy/Away g
 the code: PSA-Desk is one process, so every page reads the same state. The operator list (names, the In/Out board) is
 read at most every 30 seconds; the states themselves are always current.
 
+## Tiles on My requests, in the reference PSA's help-portal shape (9 Oct 2026, schema 078)
+
+Dada, 9 Oct 2026: *"on the my requests portal we should add in there an option like the help portal for connectwise
+like choosing tiles what are your issues so that we can route to the procurement board the pmo helpdesk board so it
+helps the ticketer"*. Each part was confirmed before building:
+
+- tiles are set up on a Setup page;
+- a tile sends the request to its board with its Type, Subtype and Item, plus a few questions;
+- every department sees every tile (*"every department has procurement inventory mms issues"*);
+- the starter set is the ten tiles proposed;
+- a tile can open smaller tiles;
+- an Item that needs approval asks for it.
+
+The reference PSA's customer portal is INFERRED from its product pages (its docs are behind sign-in, NOT VERIFIED).
+
+- **What a ward sees.** *My requests* opens on **What do you need help with?**, a grid of tiles in plain words with a
+  line under each.
+  - A tile either opens a row of smaller tiles (*Buy something* → *IT equipment*, *Consumables*, *Medical supplies*
+    …) or goes straight to the form.
+  - The form says which team it goes to and asks the tile's questions. It also asks the two usual questions (who is
+    affected, is a patient waiting), and offers a box for anything else and files.
+  - **Something else, or not sure** is always last. It is the plain form exactly as before, routed by Setup ›
+    Departments, else Unrouted.
+  - Everything is plain links and a plain form, so it needs no script on a ward PC, and it fits a phone with no
+    sideways scroll.
+  - A store with no tile (or without 078) shows the plain form, as before.
+- **What the ticketer gets.** The ticket lands on the tile's board with its catalogue pair set, so Type, Subtype,
+  Item, the record type, the priority floor and the clinical impact all come from the catalogue as they do on the
+  desk.
+  - The answers are added to the description under *Answers from the portal:* and kept one per question
+    (`portal_answer`, with the question's words as asked).
+  - The activity says *raised from the portal tile Buy something › IT equipment*.
+  - `ticket.portal_tile_id` records which tile it came by, for reports.
+- **Every department sees every tile.** A tile's board needs no department tick. That is how Procurement reaches the
+  wards: no department is ticked for it today (MEASURED by SQL01 on 6 Oct: IT_HELP 52 ticks, PROCUREMENT 0), and it
+  takes mail only.
+- **Approvals.** A request whose Item is marked *needs approval* (049) now asks the requester's department's approver
+  from the portal too, as the desk's save does. Nothing changes for an Item not marked.
+- **Setup › Portal tiles** (`/admin/portal-tiles`, system administrators):
+  - Add, rename, reorder, retire and restore tiles.
+  - Each tile has words, a line under it, a picture (from the desk's own icon set), a board, and a Type › Subtype ›
+    Item, typed with suggestions from the live catalogue.
+  - A smaller tile with no board or no Item takes its parent's. Tiles go one level deep.
+  - Questions are a line, a few lines, a number, a date or a tick box, each needed or not. A parent's questions are
+    asked for each of its smaller tiles too.
+  - A choice that cannot route is refused with the reason: an Item the board does not take, a third level, or a name
+    that is not in the catalogue.
+  - Every change is in Setup › Audit as `PORTAL_TILE`.
+- **The PMC starter set.** `psaspine portal-tiles <db> --actor <you> [--helpdesk IT_HELP] [--procurement PROCUREMENT]`
+  previews and writes nothing. `--apply` writes it.
+  - **PMO Helpdesk:** *Computer or laptop*, *Printer or scanner*, *Can't log in, or a password*, *Email and Teams*,
+    *BizBox or a hospital system*, *Network, Wi-Fi or internet*, *Set up something new, or get access*.
+  - **Procurement:**
+    - *Buy something*, asking what, how many, needed by, what for and which area, and the estimated cost.
+    - *Stock, a delivery or a PO*, for BizBox MMS, asking for the PO or item number and what happened.
+  - Each smaller tile is matched to the live catalogue by name, because the 2 Oct restructure renamed parts of the
+    tree.
+    - Where the live pair belongs to the other of the two boards, the catalogue's own routing wins.
+    - Where nothing matches, the tile still routes to its board, the ticketer classifies, and the preview says so.
+  - It adds only what is not there by name and never changes a tile that is.
+- **What is usually ticketed.** Dada, 9 Oct: *"check the ticketing for previous errors so u can have a read to what is
+  usually ticketed"*.
+  - MEASURED: the repo and the record hold totals per board and per mailbox only. No breakdown by topic exists, and
+    the subjects stay on the host.
+  - `psaspine ticket-topics <db> [--days 180] [--top 25]` reads them where they are and prints counts only: never a
+    summary, a name or a reference. It writes nothing. It prints:
+    - tickets per board, and how many are classified;
+    - the most used Type › Subtype › Item;
+    - how many summaries each tile's words would have caught, plus phones and CCTV, which have no tile;
+    - how many tickets no tile catches.
+  - The word lists are a rough net, so treat the result as a guide, not a measurement of topics.
+
+Schema 078 adds `portal_tile`, `portal_tile_question`, `portal_answer` and `ticket.portal_tile_id`. Handoff:
+`HANDOFF-cloud-sql01-WS36-20261009-portal-tiles-078.md`.
+
 ## Changing a booking in place, and your own Outlook entries (9 Oct 2026, schema 077)
 
 Dada, 9 Oct 2026: *"u can dispatch but when changing a schedule there is no modify on calendars and dispatch portal"*,

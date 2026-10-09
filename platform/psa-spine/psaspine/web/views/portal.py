@@ -201,10 +201,103 @@ def index(ctx):
         table = ("<div class='card'><div class='empty'>You have not raised "
                  "anything yet.</div></div>")
 
+    tiles = _tiles(ctx)
     body = ("<h1>Your requests</h1>"
             "<p class='sub'>Everything you have asked for, and where each one "
-            "has got to.</p>" + _raise_form(boards=_my_boards(ctx)) + table)
+            "has got to.</p>" + (_tile_grid(tiles) if tiles else _raise_form(boards=_my_boards(ctx))) + table)
     return Response(body=t.page("Your requests", body, user=ctx.user))
+
+
+# ------------------------------------------------------------- tiles (078)
+# Dada, 9 Oct 2026: "an option like the help portal for connectwise like
+# choosing tiles what are your issues so that we can route to the procurement
+# board the pmo helpdesk board so it helps the ticketer". A tile sends the
+# request to its board with its Type, Subtype and Item chosen, and asks its
+# questions; every department sees every tile (Dada: "every department has
+# procurement inventory mms issues"). Plain links and a plain form, so a ward PC
+# needs no script. Something else is today's form, unchanged.
+
+def _tiles(ctx) -> list[dict]:
+    from ... import portal_tiles
+    return portal_tiles.top(ctx.conn) if portal_tiles.available(ctx.conn) else []
+
+
+def _tile_card(tile: dict) -> str:
+    return (f"<a class=htile href='/my/new?tile={tile['tile_id']}'>{t.icon(tile['icon'] or 'ticket')}"
+            f"<div><b>{t.esc(tile['label'])}</b>"
+            + (f"<span>{t.esc(tile['hint'])}</span>" if tile.get("hint") else "") + "</div></a>")
+
+
+def _tile_grid(tiles, *, title: str = "What do you need help with?", back: bool = False) -> str:
+    other = ("<a class='htile else' href='/my/new'>" + t.icon("info") + "<div><b>Something else, or not sure</b>"
+             "<span>Tell us in your own words, and we will send it to the right team</span></div></a>")
+    return ("<div class='card'><h3>" + t.icon("plus") + t.esc(title) + "</h3>"
+            "<p class='why' style='margin-top:0'>Choose the one closest to it: your request goes straight to the "
+            "team that does it" + (", already sorted" if not back else "") + ".</p>"
+            "<div class=helptiles>" + "".join(_tile_card(x) for x in tiles) + other + "</div>"
+            + ("<p style='margin:0'><a href='/my'>&larr; Back to every choice</a></p>" if back else "") + "</div>")
+
+
+def _question_field(q: dict, value) -> str:
+    name, req = f"q{q['question_id']}", " required" if q["required"] else ""
+    v = t.esc(value or "")
+    label = t.esc(q["label"]) + ("" if q["required"] else " <span class=muted>(if you can)</span>")
+    kind = q["field_type"]
+    if kind == "CHECKBOX":
+        return (f"<label><input type=checkbox name={name} value=1{' checked' if value else ''}{req}> "
+                f"{t.esc(q['label'])}</label>")
+    if kind == "PARAGRAPH":
+        return f"<label>{label} <textarea name={name} rows=3 maxlength=2000{req}>{v}</textarea></label>"
+    typ = {"NUMBER": "number' step='any", "DATE": "date"}.get(kind, "text")
+    return f"<label>{label} <input type='{typ}' name={name} value='{v}' maxlength=400{req}></label>"
+
+
+def _tile_form(ctx, route: dict, *, error: str = "", values=None) -> str:
+    values = values or {}
+    tile, parent = route["tile"], route["parent"]
+    board = ctx.conn.execute("SELECT display_name FROM board WHERE board_id = ?", (route["board_id"],)).fetchone()
+    title = (f"{parent['label']} › {tile['label']}" if parent else tile["label"])
+    summary = values.get("summary", title if not parent else f"{parent['label']}: {tile['label']}")
+    ask = "".join(_question_field(q, values.get(f"q{q['question_id']}")) for q in route["questions"])
+    kind = ("" if route["catalogue_item_id"] else
+            _radio_group("kind", "Is something broken, or do you need something?", KIND_CHOICES, required=False))
+    back = (f"/my/new?tile={parent['tile_id']}" if parent else "/my")
+    return ((f"<div class='banner err'>{t.esc(error)}</div>" if error else "")
+            + "<div class='card'><h3>" + t.icon(tile.get("icon") or (parent or {}).get("icon") or "plus")
+            + t.esc(title) + "</h3>"
+            f"<p class='why' style='margin-top:0'>This goes to <b>{t.esc(board['display_name'] if board else '')}</b>. "
+            f"<a href='{back}'>Not this? Choose again</a></p>"
+            "<form class='stack' method='post' action='/my/new' style='max-width:none' enctype='multipart/form-data'>"
+            f"<input type=hidden name=tile_id value='{tile['tile_id']}'>"
+            f"<label>What do you need? <input name='summary' required maxlength='200' value='{t.esc(summary)}'></label>"
+            + ask + kind
+            + _radio_group("impact", "Who is affected?", WHO_IS_AFFECTED)
+            + _radio_group("urgency", "Is a patient waiting?", PATIENT_WAITING)
+            + "<label>Anything else that would help " + _help("what to write")
+            + "<textarea name='description' placeholder='The ward or office, the room, the machine, and since when.'>"
+            + t.esc(values.get("description", "")) + "</textarea></label>"
+            + _FILE_FIELD + "<div><button type='submit'>Send it</button></div></form></div>")
+
+
+def new_form(ctx):
+    """GET /my/new: a tile's smaller tiles, or a tile's form, or (no tile, or
+    Something else) the plain form as it has always been."""
+    from .. import Response
+    from ... import portal_tiles
+    page = lambda inner, status="200 OK": Response(status, t.page("Your requests", "<h1>Your requests</h1>" + inner,
+                                                                    user=ctx.user))
+    tid = ctx.request.query.get("tile", "")
+    if not tid or not portal_tiles.available(ctx.conn):
+        return page(_raise_form(boards=_my_boards(ctx)) + "<p><a href='/my'>&larr; Back</a></p>")
+    tile = portal_tiles.get(ctx.conn, tid)
+    subs = portal_tiles.children(ctx.conn, tile["tile_id"]) if tile and not tile["inactive"] else []
+    if subs:
+        return page(_tile_grid(subs, title=f"{tile['label']}: which one?", back=True))
+    try:
+        route = portal_tiles.route(ctx.conn, tid)
+    except LookupError as exc:
+        return page(_raise_form(error=str(exc), boards=_my_boards(ctx)), "404 Not Found")
+    return page(_tile_form(ctx, route))
 
 
 def _my_boards(ctx):
@@ -489,6 +582,8 @@ def fresh_link(ctx, work_item_id):
 def create(ctx):
     from .. import Response, redirect
     form = ctx.request.form()
+    if form.get("tile_id"):
+        return _create_from_tile(ctx, form)
     summary = form.get("summary", "").strip()
     description = form.get("description", "").strip()
     mine = _my_boards(ctx)
@@ -544,6 +639,7 @@ def create(ctx):
             " detail, severity) VALUES (?,?,?,?,?,?)",
             ("portal", "ticket", ticket_id, code, detail, severity))
     refused = _attach(ctx, ticket_id, requester)
+    _ask_approval(ctx, ticket_id, requester)
     ctx.conn.commit()
 
     if findings or refused:
@@ -557,6 +653,85 @@ def create(ctx):
             notice += " " + " ".join(refused)
         return Response(body=t.page("Your requests", (
             "<h1>Your requests</h1>" + _raise_form(notice=notice, boards=mine)), user=ctx.user))
+    return redirect(f"/my/{ticket_id}")
+
+
+def _ask_approval(ctx, ticket_id: str, requester: str) -> None:
+    """049 on the portal (Dada, 9 Oct 2026: honour it): a request whose Item
+    needs approval asks the requester's department's approver, as the desk's
+    save does. Nothing happens for an Item that does not need one."""
+    from ... import approvals
+    approvals.maybe_request(ctx.conn, ticket_id, at=ctx.now, actor=requester)
+
+
+def _create_from_tile(ctx, form):
+    """POST /my/new with a tile: its board, its Item, its questions. The
+    tile's board needs no department tick (every department sees every tile)."""
+    from .. import Response, redirect
+    from ... import portal_tiles
+    from ...board import _event
+    if not portal_tiles.available(ctx.conn):
+        return redirect("/my/new")
+    try:
+        route = portal_tiles.route(ctx.conn, form.get("tile_id"))
+    except LookupError as exc:
+        return Response("400 Bad Request", t.page("Your requests", "<h1>Your requests</h1>" + _raise_form(
+            error=str(exc), boards=_my_boards(ctx)), user=ctx.user))
+
+    def again(error):
+        return Response("400 Bad Request", t.page(
+            "Your requests", "<h1>Your requests</h1>" + _tile_form(ctx, route, error=error, values=form), user=ctx.user))
+    summary = " ".join(form.get("summary", "").split())
+    description = form.get("description", "").strip()
+    if not summary:
+        return again("Tell us what you need.")
+    impact, urgency = form.get("impact", ""), form.get("urgency", "")
+    if impact not in dict(WHO_IS_AFFECTED) or urgency not in dict(PATIENT_WAITING):
+        return again("Please answer both questions: who is affected, and whether a patient is waiting.")
+    try:
+        answers = portal_tiles.read_answers(route["questions"], form)
+    except ValueError as exc:
+        return again(str(exc))
+    block = portal_tiles.answers_text(answers)
+    full = "\n\n".join(x for x in (description, block) if x)
+    board_id, item = route["board_id"], route["catalogue_item_id"]
+    kind = form.get("kind") if form.get("kind") in dict(KIND_CHOICES) else None
+    requester = (ctx.user.email or ctx.user.id or "").lower()
+    try:
+        ticket_id = tickets.open_ticket(
+            ctx.conn, board_id=board_id, summary=summary[:200], impact=impact, urgency=urgency,
+            requested_by=requester, description=full or None, at=ctx.now, source="PORTAL",
+            catalogue_item_id=item, record_type=None if item else itil.fit(ctx.conn, board_id, kind))
+    except (itil.NotAccepted, LookupError):
+        ctx.conn.rollback()
+        return again("That choice cannot take requests right now. Use Something else, and we will route it.")
+    tile, parent = route["tile"], route["parent"]
+    ctx.conn.execute("UPDATE ticket SET portal_tile_id = ? WHERE work_item_id = ?", (tile["tile_id"], ticket_id))
+    portal_tiles.keep_answers(ctx.conn, ticket_id, answers)
+    _event(ctx.conn, ticket_id, ctx.now.isoformat(sep=" ", timespec="minutes"), "UPDATED", requester,
+           "raised from the portal tile " + (f"{parent['label']} › " if parent else "") + tile["label"]
+           + (f" ({len([a for a in answers if a[1] is not None])} answer(s) in the description)" if block else ""))
+    findings = phi.scan_fields({"summary": summary, "description": full})
+    for code, severity, detail in findings:
+        ctx.conn.execute(
+            "INSERT INTO data_quality (run_id, subject_kind, subject_id, code,"
+            " detail, severity) VALUES (?,?,?,?,?,?)",
+            ("portal", "ticket", ticket_id, code, detail, severity))
+    refused = _attach(ctx, ticket_id, requester)
+    _ask_approval(ctx, ticket_id, requester)
+    ctx.conn.commit()
+    if findings or refused:
+        notice = f"Raised as {ticket_id}. Thank you."
+        if findings:
+            notice += (" One tip for next time: the ward, the room or the machine is all we "
+                       "need to find it, so there is no need to type a patient's name or number. "
+                       "We will tidy this one.")
+        if refused:
+            notice += " " + " ".join(refused)
+        tiles = _tiles(ctx)
+        return Response(body=t.page("Your requests", (
+            f"<h1>Your requests</h1><div class='banner ok'>{t.esc(notice)}</div>"
+            + (_tile_grid(tiles) if tiles else _raise_form(boards=_my_boards(ctx)))), user=ctx.user))
     return redirect(f"/my/{ticket_id}")
 
 

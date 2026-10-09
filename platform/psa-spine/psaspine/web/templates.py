@@ -439,6 +439,13 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 input::placeholder,textarea::placeholder{color:var(--ink-3)}
 select{appearance:none;-webkit-appearance:none;padding-right:30px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237a8290' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center}
 textarea{min-height:90px;resize:vertical;line-height:1.5}
+/* 078: the portal's tiles (Dada, 9 Oct 2026). Not .tile, which is the desk's figure tiles. */
+.helptiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;margin:0 0 12px}
+.htile{display:flex;gap:12px;align-items:flex-start;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);padding:14px 16px;color:inherit;min-height:72px;transition:border-color .15s,background .15s,transform .15s}
+.htile:hover,.htile:focus-visible{border-color:var(--accent);background:var(--surface-2);transform:translateY(-1px);text-decoration:none}
+.htile .ic{width:26px;height:26px;flex:0 0 26px;color:var(--accent)} .htile b{display:block;font-size:14px;color:var(--ink)}
+.htile span{display:block;color:var(--ink-3);font-size:12px;margin-top:3px;line-height:1.35} .htile.else{border-style:dashed}
+@media (prefers-reduced-motion:reduce){.htile{transition:none}.htile:hover{transform:none}}
 fieldset.q{border:none;padding:0;margin:0 0 12px} fieldset.q legend{font-size:13px;font-weight:600;color:var(--muted);margin-bottom:6px;padding:0}
 .choices{display:flex;flex-wrap:wrap;gap:8px 22px}
 .choices label{display:inline-flex;align-items:center;gap:6px;font-weight:400;color:var(--ink);font-size:13px;letter-spacing:0;cursor:pointer}

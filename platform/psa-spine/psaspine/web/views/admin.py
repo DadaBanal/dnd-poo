@@ -96,6 +96,7 @@ def index(ctx):
             f"<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/catalogue'>Catalogue: Type / Subtype / "
             f"Item ({n_items})</a></div>"
             "<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/configuration-types'>Configuration types</a></div>"
+            "<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/portal-tiles'>Portal tiles</a></div>"
             "<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/priorities'>Priorities</a></div>"
             "<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/kb-categories'>Knowledge categories</a></div>"
             "<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/projects'>Projects</a></div>"

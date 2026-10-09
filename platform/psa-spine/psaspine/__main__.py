@@ -256,6 +256,22 @@ def main(argv: list[str] | None = None) -> int:
                           " own catalogue. Rows this desk retired or moved are listed as skip: and left alone")
     ppk.add_argument("--statuses-only", action="store_true",
                      help="the pack's statuses and nothing else (now the default; kept so older runbooks still work)")
+    ptl = sub.add_parser("portal-tiles",
+                         help="the PMC starter tiles on the requester portal (078): nine tiles with their smaller "
+                              "tiles and questions, matched to the live catalogue by name. Adds only what is not "
+                              "there and never changes a tile that is. Preview unless --apply")
+    ptl.add_argument("database", help=DB_HELP)
+    ptl.add_argument("--helpdesk", default="IT_HELP", help="the help desk board_id (default IT_HELP)")
+    ptl.add_argument("--procurement", default="PROCUREMENT", help="the procurement board_id (default PROCUREMENT)")
+    ptl.add_argument("--actor", required=True, help="who this is done for, for the audit trail")
+    ptl.add_argument("--apply", action="store_true", help="write it; without this nothing is changed")
+    ptt = sub.add_parser("ticket-topics",
+                         help="what is usually ticketed: counts per board, the most used Type > Subtype > Item, and "
+                              "how many summaries each portal tile's words would catch. Counts only: it never prints "
+                              "a summary, a name or a reference. Writes nothing")
+    ptt.add_argument("database", help=DB_HELP)
+    ptt.add_argument("--days", type=int, default=180, help="how far back (default 180)")
+    ptt.add_argument("--top", type=int, default=25, help="how many Type > Subtype > Item rows (default 25)")
     pas = sub.add_parser("add-status", help="one status on one board, nothing else. Preview unless --apply")
     pas.add_argument("database", help=DB_HELP)
     pas.add_argument("board_id")
@@ -857,6 +873,32 @@ def _run(conn, a) -> int:
         else:
             conn.rollback()
             print("PREVIEW: nothing written; re-run with --apply")
+        return 0
+
+    if a.cmd == "ticket-topics":
+        from . import portal_tiles
+        since = (datetime.now() - timedelta(days=max(1, a.days))).strftime("%Y-%m-%d")
+        for line in portal_tiles.topics(conn, since=since, top=max(1, a.top)):
+            print(line)
+        conn.rollback()
+        return 0
+
+    if a.cmd == "portal-tiles":
+        from . import portal_tiles
+        try:
+            lines = portal_tiles.seed_pmc(conn, helpdesk=a.helpdesk, procurement=a.procurement, apply=a.apply,
+                                          at=datetime.now(), actor=a.actor)
+        except ValueError as exc:
+            conn.rollback()
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        for line in lines:
+            print(line)
+        if a.apply:
+            conn.commit()
+            print("applied")
+        else:
+            conn.rollback()
         return 0
 
     if a.cmd == "mail-setup":

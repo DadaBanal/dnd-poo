@@ -16850,5 +16850,271 @@ class ConnectWiseShapeTest(unittest.TestCase):
         self.assertNotIn("4471", w["body"])
 
 
+
+class PortalTilesTest(unittest.TestCase):
+    """078 (Dada, 9 Oct 2026): tiles on My requests, like the reference PSA's
+    help portal. A tile routes to its board with its Type › Subtype › Item
+    chosen and asks its questions; every department sees every tile; an Item
+    that needs approval asks for it; Setup › Portal tiles holds them; the PMC
+    starter set previews first and is added once."""
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+    APPROVER = "head.nursing@pmcne.ph"
+
+    def setUp(self) -> None:
+        from psaspine import departments, pmc_pack
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = str(_target(self.tmp))
+        conn = _fresh(self.tmp)
+        self.at = datetime(2026, 10, 9, 9, 0)
+        setup.apply_starter(conn, "IT_HELP", actor="t", at=self.at)
+        setup.create_board(conn, display_name="Procurement", board_id="PROCUREMENT", fulfiller_group="Finance",
+                           creator="alice", at=self.at)
+        pmc_pack.apply(conn, procurement="PROCUREMENT", live=True, owner="alice", deputy="bob", catalogue=True,
+                       at=self.at, actor="t")
+        conn.execute("INSERT INTO contact (contact_id, entity_id, display_name, email, sam_account, department, source,"
+                     " inactive, created_at) VALUES ('C_MS', 'PMC', 'Mia Santos', 'mia.santos@pmcne.ph', 'mia.santos',"
+                     " 'Nursing - Ward 3', 'AD', 0, '2026-09-17 08:00')")
+        departments.add(conn, "Nursing - Ward 3", at=self.at, actor="root")
+        departments.set_approver(conn, "Nursing - Ward 3", "Head.Nursing@pmcne.ph", at=self.at, actor="root")
+        conn.commit()
+        conn.close()
+        self.config = Config(session_secret=_secrets.token_bytes(32))
+        self.raw = make_app(self.db_path, config=self.config, clock=lambda: self.at)
+        # a ward with no department tick at all: Procurement is not on its plain form
+        self.ward = self._cookie_for("mia.santos", email="mia.santos@pmcne.ph", department="Nursing - Ward 3")
+        self.root = self._cookie_for("root", is_sysadmin=True)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _seed(self):
+        from psaspine import portal_tiles
+        conn = db.connect(self.db_path)
+        out = portal_tiles.seed_pmc(conn, helpdesk="IT_HELP", procurement="PROCUREMENT", apply=True, at=self.at,
+                                    actor="t")
+        conn.commit()
+        conn.close()
+        return out
+
+    def _tile(self, conn, label, parent=None):
+        return conn.execute("SELECT tile_id FROM portal_tile WHERE label = ? AND " + (
+            "parent_id IS NULL" if parent is None else "parent_id = ?"),
+            (label,) if parent is None else (label, parent)).fetchone()[0]
+
+    def _pair(self, conn, subtype, item):
+        return conn.execute(
+            "SELECT i.catalogue_item_id FROM catalogue_item i JOIN service_component c ON c.component_id = i.component_id"
+            " JOIN service_action a ON a.action_id = i.action_id WHERE c.display_name = ? AND a.display_name = ?",
+            (subtype, item)).fetchone()[0]
+
+    def test_the_starter_set_previews_then_is_added_once(self):
+        from psaspine import portal_tiles
+        conn = db.connect(self.db_path)
+        preview = portal_tiles.seed_pmc(conn, helpdesk="IT_HELP", procurement="PROCUREMENT", apply=False,
+                                        at=self.at, actor="t")
+        conn.rollback()
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM portal_tile").fetchone()[0], 0)       # preview wrote nothing
+        self.assertIn("+ tile  Buy something  -> Procurement", preview)
+        self.assertIn("    + IT equipment  -> Procurement · Purchasing › IT equipment › Purchase", preview)
+        self.assertIn("    + BizBox HIS  -> PMO Helpdesk · Hospital systems (BizBox) › BizBox HIS › Not working", preview)
+        # no pair called Pharmacy in the pack: it still routes, and the preview says the ticketer classifies it
+        self.assertTrue(any(line.startswith("    + Pharmacy  -> PMO Helpdesk · no catalogue match") for line in preview))
+        self.assertTrue(preview[-1].startswith("Would add 46 tile(s) and 10 question(s). Preview only"))
+        conn.close()
+        applied = self._seed()
+        self.assertTrue(applied[-1].startswith("Added 46 tile(s) and 10 question(s)."))
+        conn = db.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM portal_tile WHERE parent_id IS NULL").fetchone()[0], 9)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM portal_tile WHERE parent_id IS NOT NULL").fetchone()[0], 37)
+        self.assertGreater(conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'PORTAL_TILE'").fetchone()[0], 0)
+        conn.close()
+        again = self._seed()                                                  # once: nothing new, nothing changed
+        self.assertTrue(again[-1].startswith("Added 0 tile(s) and 0 question(s)."))
+        self.assertIn("= tile  Buy something  (already there, left as it is)", again)
+
+    def test_a_ward_picks_a_tile_and_the_ticket_lands_sorted_with_its_answers(self):
+        # before any tile: the plain form, as today
+        _, _, page = self._call("GET", "/my", cookie=self.ward)
+        self.assertIn("Raise a request", page)
+        self.assertNotIn("What do you need help with?", page)
+        self._seed()
+        conn = db.connect(self.db_path)
+        buy = self._tile(conn, "Buy something")
+        it = self._tile(conn, "IT equipment", buy)
+        pair = self._pair(conn, "IT equipment", "Purchase")
+        qs = {r[1]: r[0] for r in conn.execute(
+            "SELECT question_id, label FROM portal_tile_question WHERE tile_id = ?", (buy,))}
+        conn.close()
+        _, _, page = self._call("GET", "/my", cookie=self.ward)
+        self.assertIn("What do you need help with?", page)
+        self.assertIn(f"/my/new?tile={buy}", page)                  # Procurement, with no department tick
+        self.assertIn("Something else, or not sure", page)
+        _, _, page = self._call("GET", "/my/new", query=f"tile={buy}", cookie=self.ward)
+        self.assertIn("Buy something: which one?", page)
+        self.assertIn(f"/my/new?tile={it}", page)
+        _, _, page = self._call("GET", "/my/new", query=f"tile={it}", cookie=self.ward)
+        self.assertIn("This goes to <b>Procurement</b>", page)
+        self.assertIn("What do you need?", page)
+        self.assertIn("name=q%d" % qs["How many?"], page)
+        self.assertNotIn("Is something broken, or do you need something?", page)     # the Item says it already
+        form = {"tile_id": str(it), "summary": "Buy something: IT equipment", "impact": "I3", "urgency": "U3",
+                f"q{qs['What is it for, and for which area?']}": "Ward 3 nurses' station"}
+        status, _, page = self._call("POST", "/my/new", cookie=self.ward, form=form)
+        self.assertTrue(status.startswith("400"))
+        self.assertIn("Please answer: What do you need?", page)
+        self.assertIn("Ward 3 nurses&#x27; station", page)          # what was typed is kept
+        form.update({f"q{qs['What do you need?']}": "A label printer", f"q{qs['How many?']}": "two"})
+        status, _, page = self._call("POST", "/my/new", cookie=self.ward, form=form)
+        self.assertIn("How many?: a number, please.", page)
+        form.update({f"q{qs['How many?']}": "2", f"q{qs['Needed by']}": "2026-10-30", "description": "For discharge labels."})
+        status, headers, _ = self._call("POST", "/my/new", cookie=self.ward, form=form)
+        self.assertTrue(status.startswith("303"), status)
+        wid = dict(headers)["Location"].rsplit("/", 1)[1]
+        conn = db.connect(self.db_path)
+        row = conn.execute("SELECT board_id, catalogue_item_id, portal_tile_id, record_type, intake_source FROM ticket"
+                           " WHERE work_item_id = ?", (wid,)).fetchone()
+        self.assertEqual(tuple(row), ("PROCUREMENT", pair, it, "SERVICE_REQUEST", "PORTAL"))
+        desc = conn.execute("SELECT detail FROM ticket_event WHERE work_item_id = ? AND detail LIKE '%Answers from the portal%'",
+                            (wid,)).fetchone()[0]
+        self.assertIn("For discharge labels.", desc)
+        self.assertIn("Answers from the portal:\nWhat do you need?: A label printer\nHow many?: 2\nNeeded by: 2026-10-30", desc)
+        self.assertEqual({(r[0], r[1]) for r in conn.execute("SELECT label, value FROM portal_answer WHERE work_item_id = ?", (wid,))},
+                         {("What do you need?", "A label printer"), ("How many?", "2"), ("Needed by", "2026-10-30"),
+                          ("What is it for, and for which area?", "Ward 3 nurses' station")})
+        self.assertTrue(conn.execute("SELECT 1 FROM ticket_event WHERE work_item_id = ? AND detail LIKE"
+                                     " 'raised from the portal tile Buy something › IT equipment%'", (wid,)).fetchone())
+        self.assertIsNone(conn.execute("SELECT 1 FROM approval WHERE work_item_id = ?", (wid,)).fetchone())   # not needed
+        conn.close()
+        # a tile that opens smaller tiles is not itself a request; a retired one is gone
+        status, _, page = self._call("POST", "/my/new", cookie=self.ward, form={**form, "tile_id": str(buy)})
+        self.assertTrue(status.startswith("400"))
+        self.assertIn("Choose one of the smaller tiles first.", page)
+        conn = db.connect(self.db_path)
+        conn.execute("UPDATE portal_tile SET inactive = 1 WHERE tile_id = ?", (it,))
+        conn.commit()
+        conn.close()
+        status, _, page = self._call("POST", "/my/new", cookie=self.ward, form=form)
+        self.assertIn("That choice is not available any more.", page)
+        _, _, page = self._call("GET", "/my/new", query=f"tile={buy}", cookie=self.ward)
+        self.assertNotIn(f"/my/new?tile={it}", page)
+        # Something else is the plain form, routed as before
+        _, _, page = self._call("GET", "/my/new", cookie=self.ward)
+        self.assertIn("Raise a request", page)
+        _, headers, _ = self._call("POST", "/my/new", cookie=self.ward, form={
+            "summary": "Not sure who does this", "impact": "I3", "urgency": "U3"})
+        wid = dict(headers)["Location"].rsplit("/", 1)[1]
+        conn = db.connect(self.db_path)
+        self.assertEqual(tuple(conn.execute("SELECT board_id, portal_tile_id FROM ticket WHERE work_item_id = ?",
+                                            (wid,)).fetchone()), ("UNROUTED", None))
+        conn.close()
+
+    def test_an_item_that_needs_approval_asks_the_wards_approver(self):
+        self._seed()
+        conn = db.connect(self.db_path)
+        buy = self._tile(conn, "Buy something")
+        med = self._tile(conn, "Medical supplies", buy)
+        conn.execute("UPDATE catalogue_item SET needs_approval = 1 WHERE catalogue_item_id = ?",
+                     (self._pair(conn, "Medical supplies", "Purchase"),))
+        qs = {r[1]: r[0] for r in conn.execute("SELECT question_id, label FROM portal_tile_question WHERE tile_id = ?", (buy,))}
+        conn.commit()
+        conn.close()
+        _, headers, _ = self._call("POST", "/my/new", cookie=self.ward, form={
+            "tile_id": str(med), "summary": "Gloves", "impact": "I2", "urgency": "U3",
+            f"q{qs['What do you need?']}": "Gloves, medium", f"q{qs['How many?']}": "40",
+            f"q{qs['What is it for, and for which area?']}": "Ward 3"})
+        wid = dict(headers)["Location"].rsplit("/", 1)[1]
+        conn = db.connect(self.db_path)
+        row = conn.execute("SELECT status, approver FROM approval WHERE work_item_id = ?", (wid,)).fetchone()
+        self.assertEqual((row[0], row[1].lower()), ("PENDING", self.APPROVER))
+        conn.close()
+
+    def test_setup_adds_edits_retires_and_refuses_what_cannot_route(self):
+        status, _, page = self._call("GET", "/admin/portal-tiles", cookie=self.ward)
+        self.assertFalse(status.startswith("200"))                            # a sysadmin's page
+        status, _, page = self._call("GET", "/admin/portal-tiles", cookie=self.root)
+        self.assertTrue(status.startswith("200"))
+        self.assertIn("psaspine portal-tiles", page)                           # empty: says how to seed
+        self.assertIn("<datalist id=pairs>", page)
+        label = "Computers and devices › Phone or extension › Not working"
+        self.assertIn(label, page)
+        _, headers, _ = self._call("POST", "/admin/portal-tiles/tile", cookie=self.root, form={
+            "label": "Phones", "hint": "A desk phone or an extension", "icon": "users", "board_id": "IT_HELP",
+            "pair": "", "sort_order": "10"})
+        self.assertIn("msg=Added", dict(headers)["Location"])
+        conn = db.connect(self.db_path)
+        phones = self._tile(conn, "Phones")
+        conn.close()
+        _, headers, _ = self._call("POST", "/admin/portal-tiles/tile", cookie=self.root, form={
+            "label": "Dead phone", "parent_id": str(phones), "pair": label, "sort_order": "10"})
+        conn = db.connect(self.db_path)
+        dead = self._tile(conn, "Dead phone", phones)
+        self.assertEqual(conn.execute("SELECT catalogue_item_id, board_id FROM portal_tile WHERE tile_id = ?",
+                                      (dead,)).fetchone()[:], (self._pair(conn, "Phone or extension", "Not working"), None))
+        conn.close()
+        for form, why in (({"label": "Deeper", "parent_id": str(dead)}, "one level deep"),
+                          ({"label": "Typo", "pair": "Not a real › thing › at all"}, "No live Type"),
+                          ({"label": "", "board_id": "IT_HELP"}, "needs a name")):
+            _, headers, _ = self._call("POST", "/admin/portal-tiles/tile", cookie=self.root, form=form)
+            self.assertIn("err=", dict(headers)["Location"])
+            self.assertIn(_urlparse.quote_plus(why).split("+")[0], dict(headers)["Location"])
+        self._call("POST", f"/admin/portal-tiles/tile/{phones}/question", cookie=self.root, form={
+            "label": "The extension number", "field_type": "NUMBER", "required": "1"})
+        _, _, page = self._call("GET", "/my/new", query=f"tile={dead}", cookie=self.ward)
+        self.assertIn("The extension number", page)                           # a parent's question, on its sub-tile
+        self.assertIn("This goes to <b>PMO Helpdesk</b>", page)               # the parent's board
+        conn = db.connect(self.db_path)
+        qid = conn.execute("SELECT question_id FROM portal_tile_question WHERE tile_id = ?", (phones,)).fetchone()[0]
+        conn.close()
+        self._call("POST", f"/admin/portal-tiles/question/{qid}", cookie=self.root, form={"label": "x", "inactive": "1"})
+        _, _, page = self._call("GET", "/my/new", query=f"tile={dead}", cookie=self.ward)
+        self.assertNotIn("The extension number", page)
+        self._call("POST", f"/admin/portal-tiles/tile/{phones}", cookie=self.root, form={
+            "label": "Phones", "board_id": "IT_HELP", "icon": "users", "pair": "", "sort_order": "10", "inactive": "1"})
+        _, _, page = self._call("GET", "/my", cookie=self.ward)
+        self.assertNotIn("Phones", page)                                      # its only tile retired: the plain form
+        self.assertIn("Raise a request", page)
+        conn = db.connect(self.db_path)
+        self.assertGreaterEqual(conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'PORTAL_TILE'").fetchone()[0], 4)
+        conn.close()
+
+    def test_ticket_topics_counts_what_was_ticketed_and_never_prints_a_summary(self):
+        """Dada, 9 Oct 2026: "check the ticketing ... what is usually ticketed".
+        Read where the tickets are (SQL01); counts only, since a summary can
+        carry a name."""
+        from psaspine import portal_tiles
+        conn = db.connect(self.db_path)
+        pair = self._pair(conn, "Printer", "Not working")
+        for summary, board_id, item in (("Printer on Ward 3 jammed for Juan Dela Cruz", "IT_HELP", pair),
+                                        ("BizBox HIS module will not open", "IT_HELP", None),
+                                        ("He lost his badge", "IT_HELP", None),
+                                        ("Purchase request: toner x4", "PROCUREMENT", None)):
+            tickets.open_ticket(conn, board_id=board_id, summary=summary, impact="I3", urgency="U3",
+                                requested_by=None, at=self.at, catalogue_item_id=item)
+        out = "\n".join(portal_tiles.topics(conn, since="2026-10-01"))
+        conn.rollback()
+        conn.close()
+        self.assertIn("  all boards: 4", out)
+        self.assertIn("PMO Helpdesk (IT_HELP): 3, of which 1 have a Type › Subtype › Item", out)
+        self.assertIn("Computers and devices › Printer › Not working  [IT_HELP]", out)
+        self.assertRegex(out, r"\n\s+2  Printer or scanner  \((IT_HELP 1, PROCUREMENT 1|PROCUREMENT 1, IT_HELP 1)\)")
+        self.assertRegex(out, r"\n\s+1  BizBox or a hospital system  \(IT_HELP 1\)")    # not "his badge"
+        self.assertRegex(out, r"\n\s+1  caught by no tile's words  \(IT_HELP 1\)")
+        for secret in ("Juan", "Dela Cruz", "badge", "jammed", "PMC-"):
+            self.assertNotIn(secret, out)
+
+    def test_a_store_without_078_shows_the_plain_form(self):
+        from unittest import mock
+        from psaspine import portal_tiles
+        self._seed()
+        with mock.patch.object(portal_tiles, "available", return_value=False):
+            _, _, page = self._call("GET", "/my", cookie=self.ward)
+            self.assertIn("Raise a request", page)
+            self.assertNotIn("What do you need help with?", page)
+            _, _, page = self._call("GET", "/my/new", query="tile=1", cookie=self.ward)
+            self.assertIn("Raise a request", page)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

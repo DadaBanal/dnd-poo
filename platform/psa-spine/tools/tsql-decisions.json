@@ -1181,6 +1181,16 @@
     "chat_survey.comment": "FREE",
     "chat_survey.answered_by": "PERSON",
     "chat_survey.answered_at": "TIMESTAMP_TEXT",
-    "board.chat_welcome": "NAME"
+    "board.chat_welcome": "NAME",
+    "portal_tile.label": "NAME",
+    "portal_tile.hint": "NAME",
+    "portal_tile.icon": "CODE",
+    "portal_tile.board_id": "ID",
+    "portal_tile_question.label": "NAME",
+    "portal_tile_question.field_type": "CODE",
+    "portal_answer.work_item_id": "ID",
+    "portal_answer.label": "NAME",
+    "portal_answer.value": "FREE",
+    "portal_tile.catalogue_item_id": "ID"
   }
 }
