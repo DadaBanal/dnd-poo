@@ -3216,3 +3216,74 @@ Applies step 1 of `docs/handoffs/HANDOFF-cloud-sql01-WS36-20261009-numbering-ide
 Nothing was reseeded. `ticket_number` still starts at 1 and ends at 1459, and 1454–1459 exist, so a reseed below 1459 would collide — the handoff's own warning, recorded here so it is in the running record and not only in the handoff.
 
 **Step 2 is NOT done.** WS36's own wording gates it: *"Wait for Cloud Build to confirm CI run 81 is green, then pull, and restart PSA-Desk."* Run 81 on `98b30eb` is recorded in its evidence table as **NOT VERIFIED until it reports**, and no confirmation has arrived. So the Came-from badges are not live: the working tree is at `7530b0d`, which carries the code, but PSA-Desk is still running what it loaded at its last start. Nothing to check on screen yet — Chat #n pills, the *Came from* filter and the Reports split all wait on that restart. Held, not forgotten.
+
+### Part 66: 2026-10-09, ~16:20 +08:00. **Email to ticket stopped because the unclean shutdown zeroed all three delta-link files. Handed back, nothing changed — it is a parse error. Came-from is live.** MEASURED.
+
+Answers WS36's two-part message at head `ed9b9c5`. Step 1 read-only throughout; the only change in this Part is the PSA-Desk restart WS36 cleared in step 2.
+
+## 1. Email to ticket
+
+**Tasks** (`Get-ScheduledTask PSA-* | Get-ScheduledTaskInfo`, read ~16:03):
+
+| Task | State | LastRunTime | LastTaskResult | NextRunTime |
+|---|---|---|---|---|
+| PSA-Mail-Helpdesk | Ready | 2026-10-09 16:02:02 | **1** | 16:03:03 |
+| PSA-Mail-Support | Ready | 2026-10-09 16:02:02 | **1** | 16:03:03 |
+| PSA-Mail-Procurement | Ready | 2026-10-09 16:02:02 | **1** | 16:03:03 |
+| PSA-Notify | Ready | 2026-10-09 16:02:02 | 0 | 16:03:03 |
+| PSA-Calendar | Ready | 2026-10-09 16:02:02 | 0 | 16:03:03 |
+| PSA-Rules | Ready | 16:02:02 | 0 | 16:03:03 |
+| PSA-Teams | Ready | 16:02:02 | 0 | 16:03:03 |
+| PSA-BizBox | Ready | 15:05:05 | 0 | 16:05:05 |
+| PSA-Desk | Running | 13:13:13 | 267009 (running) | — |
+
+**No pickup is disabled and every one has run since 13:13** — each runs every minute and fails. So the one fix WS36 allowed without handing back does not apply.
+
+**Logs** — each pickup's log holds only its last pass; all three read the same, no subject or address in them:
+> `Pass failed: Invalid URI: The hostname could not be parsed.`
+
+PSA-Notify's: `0 due: 0 sent, 0 failed.`
+
+**The database:**
+- By channel today: **helpdesk** only, `last_in` **2026-10-09 12:26**, n = **22**. No support or procurement row today.
+- Per hour from 06:00: 07 NEW_TICKET 1 · 08 APPENDED 1 · 09 NEW_TICKET 2 · 10 NEW_TICKET 2 · 11 APPENDED 1, NEW_TICKET 1 · 12 APPENDED 2. **Nothing at 13 or after.**
+- Newest `received_at` anywhere in `intake_message`: **12:26**. So the stoppage starts between 12:26 and the 13:10 shutdown, and no later.
+
+**The drop folder:** 0 files waiting in `helpdesk-pmcne-ph\`, `support-pmcne-ph\`, `procurement-pmcne-ph\`, and 0 in the root. `failed\`: helpdesk **1**, support **6**, procurement **1** — **every one dated 2–6 Oct, none today.** Nothing is piling up, because no pass gets far enough to fetch.
+
+**The cause. MEASURED.** The task runs `Invoke-PmcMailPickup.ps1`, which at line 203 reads its saved Graph delta link into `$uri` with `(Get-Content -Raw).Trim()` and calls Graph with it; line 322 rewrites that file at the end of **every** successful pass, i.e. every minute. All three live files in `D:\psa\mail-state\`:
+
+| File | Bytes | NUL bytes | Last written |
+|---|---|---|---|
+| `inbox-deltalink-helpdesk-pmcne-ph.txt` | 407 | **407** | **13:11:03** |
+| `inbox-deltalink-support-pmcne-ph.txt` | 406 | **406** | **13:11:03** |
+| `inbox-deltalink-procurement-pmcne-ph.txt` | 410 | **410** | **13:11:03** |
+
+Every byte is `0x00`. A good backup from 2 Oct, read the same way, begins `68 74 74 70 73 3a 2f 2f` (`https://`) and ends in CR LF. **13:11:03 is fifty seconds after the 13:10:13 shutdown request and two and a half minutes before the 13:13:41 boot that logged event 6008.** The file sizes were committed and the data never was — the textbook mark of a hard stop during a write. `.Trim()` does not remove NUL, so `$uri` is 407 NULs, and .NET answers exactly *"Invalid URI: The hostname could not be parsed."* The token was not printed; only its bytes were counted.
+
+The same shutdown that cost 999 ticket numbers (Part 64) also blanked the three mailboxes' bookmarks.
+
+**What I did NOT do, and why.** WS36's rule: *"Anything else (a certificate error, a Graph 403, a parse error, files piling up in failed\): hand back with the log lines and change nothing."* This is a parse error. Nothing in `mail-state\`, `mail-drop\` or any task was touched.
+
+**The remedy already exists, for WS36 to authorise.** `scripts/Repair-PsaMailPickup.ps1`, built after 2 Oct's 410 incident: with `-Apply -ResetDelta` it copies each delta link beside itself, deletes it, and runs one real pass from `-Since` (default two days back, which covers 12:26), keyed by Message-ID so nothing imports twice. Three things to know before choosing it:
+- its default `-Mailbox` is **helpdesk and support only** — procurement must be named;
+- it was written for a link that *expired* (410), not one that is *zeroed*; `-ResetDelta` forces the reset either way, but whether its step-3 diagnosis recognises a NUL file as broken is NOT VERIFIED;
+- run as a sysadmin login, the import step is refused by the dbo guard; the messages land in `mail-drop\` and the minute task, running as `psa_desk`, imports them — which it can do only once its own delta file is no longer zeroed.
+
+`mail-why` not run: Dada has not yet passed a sender.
+
+INFERRED, for WS36: line 322's `Set-Content` writes in place. A write to a temp file then a rename would leave either the old link or the new one after a crash, never a blank. That is a code change and WS36's to make.
+
+## 2. Came-from
+
+Pulled to `ed9b9c5` (CI run 81 green on all four jobs, per WS36). **Restarted PSA-Desk:** before Running, `:8085` **401** → stopped, Ready, no answer → started, Running, **401** after 2 s.
+
+**The three checks, exercised as `psa_desk` against live data in the code the desk just loaded** — the functions each page calls, not the rendered page, because `:8085` is behind Windows sign-in and I do not type credentials:
+
+- **Chat #n pill that opens the chat — PASS.** All **8** chat-made tickets resolve to their own pill: Chat #3, #6, #12, #15, #16, #17, #18, #20. For PMC-000387 the badge renders `<a class='pill came came-chat' href='/chat/3' title='Made from a live chat'>Chat #3</a>` — a link to that chat.
+- **Board *Came from* filter — PASS in code.** `board.py:372` renders `<label>Came from</label><select name=src>` with *Anywhere* plus Chat, Portal, Email, Desk, Other; `board.py:126` applies it.
+- **Reports, *Opened by where it came from* — PASS.** `metrics.desk(...)["by_came_from"]` over all 7 boards, six months: **Email 258 · Desk 28 · Portal 25 · Chat 8 = 319**, every ticket accounted for. Desk splits as Desk 14, Phone 13, Walk-up 1; Portal as plain 19 and tile 6.
+
+Someone signed in should still glance at the three screens; the logic underneath them is measured.
+
+**Restarted in this Part: PSA-Desk, once. Nothing else.** No pickup task, no state file, no drop file.
