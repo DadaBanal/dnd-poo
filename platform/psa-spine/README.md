@@ -3007,7 +3007,7 @@ settings switch it on:
 | `PSA_ENTRA_CLIENT` | the app registration's client id |
 | `PSA_PUBLIC_URL` | optional: the URL staff type, e.g. `https://desk.pmcne.ph`; the redirect URI is built on it and must equal, byte for byte, the one registered on the app. Unset, the request's own scheme and host are used. It is also what tells the desk the world is https when a proxy terminates TLS (next section). |
 | `PSA_PORTAL_URL` | optional: the requester portal's own address, e.g. `https://help.pmcne.ph`. A request for that host serves the requester's pages and nothing else (next section); requester emails link to it. |
-| `PSA_PORTAL_AWAY_URL` | optional, email sender only: the requester portal's published address away from PMC, e.g. `https://help.pmcne.net`. It only adds a second link in requester, status and approver emails, beside `PSA_PORTAL_URL`'s. It is never an accepted origin. |
+| `PSA_PORTAL_AWAY_URL` | optional, email sender only: the requester portal's published address away from PMC, e.g. `https://help.pmcne.net`. It only adds a second link in requester, status and approver emails, beside `PSA_PORTAL_URL`'s. It is never an accepted origin. **Leave it unset: Dada, 10 Oct 2026, the requester portal stays on the internal LAN only** (`…-20261010-help-stays-lan.md`). |
 | `PSA_DESK_AWAY_URL` | optional, senders only: the desk's published address away from PMC, behind the sign-in gate, e.g. `https://desk.pmcne.net`. It only adds a link: a member's email and a Teams card name the ticket at this address beside `PSA_PUBLIC_URL`'s (next paragraph). It is never an accepted origin, and the desk itself never reads it. |
 
 **Links in a member's email (9 Oct 2026).** Dada, with `desk.pmcne.net` live behind Cloudflare Access (SQL01 Part 70),
