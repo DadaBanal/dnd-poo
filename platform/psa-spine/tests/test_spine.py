@@ -16848,7 +16848,8 @@ class ConnectWiseShapeTest(unittest.TestCase):
         schedule.add(self.conn, "ITO-1", member="bob", starts_at=datetime(2026, 9, 18, 9), ends_at=datetime(2026, 9, 18, 10),
                      note="bring a toner", actor="alice", at=self.at)
         [w] = pend()
-        self.assertEqual(w["subject"], "ITO-1 - Premiere Medical Center Nueva Ecija - Printer down")
+        # 12 Oct 2026: PMC is every ticket's company by default now, so it is not named on every visit
+        self.assertEqual(w["subject"], "ITO-1 - Printer down")
         self.assertIn("Ticket ITO-1 (", w["body"])
         self.assertIn("Printer down", w["body"])
         self.assertNotIn("toner", w["subject"] + w["body"])                       # the note stays on the desk
