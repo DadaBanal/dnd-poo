@@ -502,7 +502,7 @@ def open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
                 event_kind: str = "INTAKE",
                 description_format: str | None = None,
                 min_priority: str | None = None, source: str = "DESK",
-                catalogue_item_id: str | None = None) -> str:
+                catalogue_item_id: str | None = None, department: str | None = None) -> str:
     """Open one ticket, the same way whichever door it came in by.
 
     The portal, email intake, the machine API and a fulfiller's New Ticket all
@@ -585,6 +585,13 @@ def open_ticket(conn: sqlite3.Connection, *, board_id: str, summary: str,
             (ticket_id, stamp, event_kind, actor or requested_by, description,
              description_format))
     board.admit(conn, ticket_id, at=at)
+    # 079: the department it is for -- the one the door was told (the portal's
+    # dropdown, the desk's), else the contact's own in AD when it is on the list
+    from . import departments
+    if departments.on_tickets(conn):
+        if not departments.set_ticket(conn, ticket_id, department):
+            cid = conn.execute("SELECT contact_id FROM ticket WHERE work_item_id = ?", (ticket_id,)).fetchone()[0]
+            departments.set_ticket(conn, ticket_id, departments.of_contact(conn, cid))
     from . import workflow
     workflow.fire(conn, ticket_id, "ON_CREATE", at=at)
     from . import outbox

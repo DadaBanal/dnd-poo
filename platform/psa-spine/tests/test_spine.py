@@ -4773,7 +4773,7 @@ class PortalTest(unittest.TestCase):
         body = conn.execute("SELECT body FROM notification WHERE recipient_role = 'REQUESTER'").fetchone()[0]
         board_name = conn.execute("SELECT display_name FROM board WHERE board_id = 'UNROUTED'").fetchone()[0]
         conn.close()
-        self.assertIn(f"from {board_name} has replied to your request", body)
+        self.assertIn(f"Thanks,\n{board_name}\n", body)               # signed by the board that owns it
         for path in ("/my", "/my/PMC-000901"):
             _, _, page = self._call("GET", path, cookie=self.nurse_a)
             main = page.split("<main>")[1].split("</main>")[0]
@@ -8309,12 +8309,20 @@ class BoardSetupTest(unittest.TestCase):
             "SELECT clock, target_minutes FROM ticket_clock WHERE work_item_id = ?", (tid,))}
         self.assertEqual(clocks_, {"RESPOND": 15, "RESOLUTION_PLAN": 60, "RESOLVE": 240})
 
-    def test_a_ticket_with_no_known_company_goes_to_the_catch_all_not_to_pmc(self):
-        """Guessing PMC would put effort against the wrong entity."""
+    def test_a_ticket_with_no_known_company_goes_to_pmc_and_to_the_catch_all_without_it(self):
+        """Until 12 Oct 2026 this went to the catch-all ("guessing PMC would put
+        effort against the wrong entity"). Dada reversed it: PMC is the only
+        company served, so it is the default; a desk without PMC keeps the
+        catch-all. Revisit when a second company is served."""
+        from unittest import mock
+        from psaspine import board as _b
         tid = self._open()
         self.assertEqual(self.conn.execute(
-            "SELECT entity_id FROM work_item WHERE work_item_id = ?", (tid,)).fetchone()[0],
-            "UNCLASSIFIED")
+            "SELECT entity_id FROM work_item WHERE work_item_id = ?", (tid,)).fetchone()[0], "PMC")
+        with mock.patch.object(_b, "DEFAULT_COMPANY", "NOT-ON-THIS-DESK"):
+            lost = self._open()
+        self.assertEqual(self.conn.execute(
+            "SELECT entity_id FROM work_item WHERE work_item_id = ?", (lost,)).fetchone()[0], "UNCLASSIFIED")
         named = self._open(entity_id="PMC")
         self.assertEqual(self.conn.execute(
             "SELECT entity_id FROM work_item WHERE work_item_id = ?", (named,)).fetchone()[0],
@@ -11126,7 +11134,7 @@ class RequesterMailTest(unittest.TestCase):
     def test_opening_a_ticket_tells_the_requester_without_the_summary(self):
         wid = self._open()
         [n] = self._mail(wid)
-        self.assertEqual(n["subject"], f"[{wid}] We have your request")
+        self.assertEqual(n["subject"], f"[{wid}] We've got your request")
         self.assertNotIn("CANARY", n["subject"] + n["body"])
         [item] = self.outbox.pending(self.conn, allowed_domains=("pmcne.ph",),
                                      portal_url="https://imaging.pmcne.ph/")
@@ -11144,7 +11152,7 @@ class RequesterMailTest(unittest.TestCase):
         self._note(wid, "DISCUSSION", body="And again.")
         mails = self._mail(wid)
         self.assertEqual(len(mails), 2)                 # the second update waits on the first
-        self.assertEqual(mails[1]["subject"], f"[{wid}] the PMO Helpdesk team has replied to your request")
+        self.assertEqual(mails[1]["subject"], f"[{wid}] New reply on your request")
         self.assertNotIn("CANARY", mails[1]["body"])
         self.outbox.mark(self.conn, mails[1]["notification_id"], "SENT", at=self.at)
         self._note(wid, "RESOLUTION", body="Fixed.")
@@ -14907,7 +14915,7 @@ class SmallSetupTest(unittest.TestCase):
         # back to the desk's words
         self.assertTrue(outbox.reset_template(self.conn, "IT_HELP", "OPENED", at=self.at, actor="alice"))
         self.assertFalse(outbox.reset_template(self.conn, "IT_HELP", "OPENED", at=self.at, actor="alice"))
-        self.assertEqual(outbox.template(self.conn, "IT_HELP", "OPENED")["subject"], "We have your request")
+        self.assertEqual(outbox.template(self.conn, "IT_HELP", "OPENED")["subject"], "We've got your request")
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'MAIL_TEMPLATE'").fetchone()[0], 3)
         self.conn.commit()
         # the tab: a board administrator's; saves and resets through the form
@@ -15300,7 +15308,7 @@ class MailCutoverTest(unittest.TestCase):
         self.assertEqual((m["to"], m["from"], sorted(m["cc"])), ("jrby@yahoo.com", "helpdesk@pmcne.ph", ["aunt@gmail.com", "nurse3@pmcne.ph"]))
         self.assertNotIn("NETWORK", m["subject"] + m["body"] + m["html"])            # never the summary
         # the first name, and the same words laid out as HTML beside the text
-        self.assertIn("Hello Jrby,", m["body"])
+        self.assertIn("Hi Jrby,", m["body"])
         self.assertIn(f"Reference {wid}", m["html"])
         self.assertIn('href="https://help.pmcne.ph/my/' + wid + '?k=', m["html"])     # 075: the ticket's key
         self.assertIn("See your request", m["html"])
@@ -15326,9 +15334,9 @@ class MailCutoverTest(unittest.TestCase):
         board.add_note(self.conn, wid, body="We have ordered the toner; it arrives Friday.\nI will install it.", flag="DISCUSSION",
                        actor="bob", at=self.at)
         [m] = outbox.pending(self.conn, allowed_domains=("*",), dry_run=True, portal_url="https://help.pmcne.ph")
-        self.assertEqual(m["subject"], f"[{wid}] Bob has replied to your request")
-        self.assertIn("Hello Susan,", m["body"])
-        self.assertIn("Bob from PMO Helpdesk has replied to your request, as of 1 October 2026:\n\nWe have ordered the toner; it arrives Friday.\nI will install it.", m["body"])
+        self.assertEqual(m["subject"], f"[{wid}] New reply on your request")
+        self.assertIn("Hi Susan,", m["body"])
+        self.assertIn("Here's the latest from Bob:\n\nWe have ordered the toner; it arrives Friday.\nI will install it.", m["body"])
         self.assertIn("We have ordered the toner; it arrives Friday.<br>I will install it.", m["html"])
         # a second reply before the sender runs: the one email says the newer reply
         board.add_note(self.conn, wid, body="Correction: it arrives Monday.", flag="DISCUSSION", actor="bob", at=self.at)
@@ -15383,7 +15391,7 @@ class MailCutoverTest(unittest.TestCase):
         [m] = outbox.pending(self.conn, allowed_domains=("*",), dry_run=True, portal_url="https://help.pmcne.ph")
         body, html = m["body"], m["html"]
         # the reply itself is the body; the exchange before it follows, newest first
-        self.assertIn("Bob from PMO Helpdesk has replied to your request, as of 1 October 2026:\n\nInstalled. Please try again.", body)
+        self.assertIn("Here's the latest from Bob:\n\nInstalled. Please try again.", body)
         self.assertEqual(body.count("Installed. Please try again."), 1)
         thread = body.split(outbox.THREAD_TITLE, 1)[1].split("Your reference:", 1)[0]
         # (an email reply is stamped with the mail's own Date header, not the run's clock)
@@ -15656,19 +15664,18 @@ class MailCutoverTest(unittest.TestCase):
         board.update_fields(self.conn, wid, at=self.at, actor="bob", owner="bob")
         board.change_status(self.conn, wid, "IT_HELP.ASSIGNED", at=self.at, actor="bob")
         [m] = self._status_mails(wid)
-        self.assertEqual(m["subject"], f"[{wid}] Your request: Assigned")
-        self.assertIn("Hello Ward 3 Station,", m["body"])
+        self.assertEqual(m["subject"], f"[{wid}] An update on your request")
+        self.assertIn("Hi Ward 3 Station,", m["body"])
         self.assertIn("Assigned to a technician", m["body"])                      # {status_text}: the portal's words
-        self.assertIn("It is with Bob.", m["body"])                                # {owner}: the first name
+        self.assertIn("It's with Bob,", m["body"])                                 # {owner}: the first name
         self.assertTrue(m["body"].endswith("PMO Helpdesk\nPremiere Medical Center - Nueva Ecija"))   # {board}, {hospital}
-        self.assertIn("1 October 2026", m["body"])                                 # {date}
         self.assertNotIn("chart", m["subject"] + m["body"])                        # the requester's subject never comes back
         self.assertEqual(m["from_address"], "support@pmcne.ph")                    # where they wrote
         # a second change before the sender runs: one email, the newer
         board.change_status(self.conn, wid, "IT_HELP.WAITING_ON_REQUESTER", at=self.at, actor="bob")
         [m] = self._status_mails(wid)
-        self.assertEqual(m["subject"], f"[{wid}] We need something from you")
-        self.assertIn("Reply to this email", m["body"])
+        self.assertEqual(m["subject"], f"[{wid}] We need a little more from you")
+        self.assertIn("reply to this email", m["body"])
         due = {d["id"]: d for d in outbox.pending(self.conn, allowed_domains=("pmcne.ph",), portal_url="https://help.pmcne.ph")}
         item = due[m["notification_id"]]
         self.assertEqual((item["to"], item["from"]), ("ward3@pmcne.ph", "support@pmcne.ph"))
@@ -15726,7 +15733,7 @@ class MailCutoverTest(unittest.TestCase):
         self.assertIsNone(item["from"])
         # back to the desk's words keeps the switch
         m = outbox.set_status_mail(self.conn, "IT_HELP.IN_PROGRESS", enabled=True, desk_words=True, at=self.at, actor="dada")
-        self.assertEqual((m["custom"], m["subject"]), (False, "Your request: {status}"))
+        self.assertEqual((m["custom"], m["subject"]), (False, "An update on your request"))
         # the event templates take the new placeholders too
         outbox.set_template(self.conn, "IT_HELP", "OPENED", subject="Thanks {requester}", body="{board} has it. {link}",
                             at=self.at, actor="dada")
@@ -15739,15 +15746,15 @@ class MailCutoverTest(unittest.TestCase):
                                   requested_by="ward3@pmcne.ph", at=self.at, source="PORTAL")
         opened = self.conn.execute("SELECT body FROM notification WHERE work_item_id = ? AND recipient_role = 'REQUESTER'",
                                    (wid,)).fetchone()["body"]
-        self.assertIn("Hello Ward 3 Station,", opened)                              # the desk's words, for the hospital
-        self.assertIn("it is with the PMO Helpdesk team", opened)
-        self.assertIn("stopping care on the ward", opened)
+        self.assertIn("Hi Ward 3 Station,", opened)                              # the desk's words, for the hospital
+        self.assertIn("the PMO Helpdesk team will take care of it", opened)
+        self.assertIn("stopping patient care right now", opened)
         self.assertTrue(opened.endswith("Premiere Medical Center - Nueva Ecija"))
         self.assertEqual(self._status_mails(wid), [])                               # nobody has it yet
         board.update_fields(self.conn, wid, at=self.at, actor="bob", owner="bob")
         [m] = self._status_mails(wid)
         self.assertEqual(m["subject"], f"[{wid}] Bob has picked up your request")
-        self.assertIn("Bob from PMO Helpdesk has picked up your request, as of 1 October 2026", m["body"])
+        self.assertIn("Your request is with Bob, who has started on it now.", m["body"])
         # handed to someone else before the first has gone: one email, the newer
         board.update_fields(self.conn, wid, at=self.at, actor="bob", owner="ward3")
         [m] = self._status_mails(wid)
@@ -17200,7 +17207,7 @@ class PortalTilesTest(unittest.TestCase):
         board.change_status(conn, wid, quote, at=self.at, actor="alice")
         conn.commit()
         self.assertEqual(sent(conn), 1)                                   # the next move: one email
-        self.assertIn("Your request", conn.execute("SELECT subject FROM notification WHERE work_item_id = ?",
+        self.assertIn("An update on your request", conn.execute("SELECT subject FROM notification WHERE work_item_id = ?",
                                                     (wid,)).fetchone()[0])
         conn.close()
         self.assertEqual(main(args + ["--apply"]), 0)                     # again: nothing changes twice
@@ -17487,6 +17494,270 @@ class StaffDeskLinksTest(unittest.TestCase):
         from psaspine import outbox
         return {m["to"].split("@")[0]: m.get("html") for m in
                 outbox.pending(self.conn, allowed_domains=("pmcne.ph",), dry_run=True, **kw)}[who]
+
+
+
+class DepartmentCompanyAndWordsTest(unittest.TestCase):
+    """Dada, 12 Oct 2026, each part confirmed before building: warm and plain
+    emails with the PMO Helpdesk's and Procurement's own words per status; a
+    Department on every ticket (a board column with a filter, a badge, the
+    desk's dropdown, the portal's dropdown already set to the requester's own);
+    a new ticket's company is PMC when nothing names one; and a tile with no
+    Type › Subtype › Item is named so it can be given one."""
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+    setUp = PortalTilesTest.setUp
+    tearDown = PortalTilesTest.tearDown
+    _seed = PortalTilesTest._seed
+    _tile = PortalTilesTest._tile
+
+    def _more(self):
+        from psaspine import departments
+        conn = db.connect(self.db_path)
+        departments.add(conn, "Pharmacy", at=self.at, actor="root")
+        departments.add(conn, "Radiology", at=self.at, actor="root")
+        conn.execute("INSERT OR REPLACE INTO board_member (board_id, member, access) VALUES ('IT_HELP', 'alice', 'ADMIN')")
+        conn.commit()
+        conn.close()
+        return self._cookie_for("alice")
+
+    def _row(self, wid, sql="SELECT t.department, w.entity_id FROM ticket t JOIN work_item w"
+                            " ON w.work_item_id = t.work_item_id WHERE t.work_item_id = ?"):
+        conn = db.connect(self.db_path)
+        try:
+            return tuple(conn.execute(sql, (wid,)).fetchone())
+        finally:
+            conn.close()
+
+    def _newest(self):
+        conn = db.connect(self.db_path)
+        try:
+            return conn.execute("SELECT work_item_id FROM ticket ORDER BY work_item_id DESC LIMIT 1").fetchone()[0]
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------ department
+    def test_the_portal_offers_the_department_already_set_and_keeps_what_is_chosen(self):
+        self._more()
+        _, _, page = self._call("GET", "/my/new", cookie=self.ward)
+        self.assertIn("Which department is this for?", page)
+        self.assertIn("<option selected>Nursing - Ward 3</option>", page)
+        self.assertIn("<option>Pharmacy</option>", page)
+        form = {"summary": "Label printer jammed", "impact": "I3", "urgency": "U3"}
+        self._call("POST", "/my/new", cookie=self.ward, form=form)
+        self.assertEqual(self._row(self._newest()), ("Nursing - Ward 3", "PMC"))          # their own, and PMC
+        self._call("POST", "/my/new", cookie=self.ward, form=dict(form, department="pharmacy "))
+        self.assertEqual(self._row(self._newest())[0], "Pharmacy")                          # another ward's, by name
+        self._call("POST", "/my/new", cookie=self.ward, form=dict(form, department="Not a ward"))
+        self.assertEqual(self._row(self._newest())[0], "Nursing - Ward 3")                  # junk: their own
+        # a tile's form has the same dropdown
+        self._seed()
+        conn = db.connect(self.db_path)
+        buy = self._tile(conn, "Buy something")
+        it = self._tile(conn, "IT equipment", buy)
+        conn.close()
+        _, _, page = self._call("GET", "/my/new", query=f"tile={it}", cookie=self.ward)
+        self.assertIn("<option selected>Nursing - Ward 3</option>", page)
+
+    def test_an_emailed_or_desk_ticket_takes_the_contacts_department_and_the_desk_can_change_it(self):
+        alice = self._more()
+        conn = db.connect(self.db_path)
+        wid = tickets.open_ticket(conn, board_id="IT_HELP", summary="Mouse", impact="I3", urgency="U3",
+                                  requested_by="mia.santos@pmcne.ph", at=self.at, source="EMAIL")
+        stranger = tickets.open_ticket(conn, board_id="IT_HELP", summary="Hello", impact="I3", urgency="U3",
+                                       requested_by="someone@gmail.com", at=self.at, source="EMAIL")
+        # the desk's save needs a Type › Subtype › Item and a ticket type (Dada, 6 Oct 2026)
+        pair = PortalTilesTest._pair(self, conn, "BizBox HIS", "Not working")
+        conn.execute("UPDATE ticket SET catalogue_item_id = ?, record_type = 'INCIDENT' WHERE work_item_id = ?",
+                     (pair, wid))
+        conn.commit()
+        conn.close()
+        self.assertEqual(self._row(wid), ("Nursing - Ward 3", "PMC"))     # AD's department; PMC from the contact
+        self.assertEqual(self._row(stranger), (None, "PMC"))             # nobody known: no department, still PMC
+        _, _, page = self._call("GET", f"/ticket/{wid}", cookie=alice)
+        self.assertIn("<span class='pill dept' title='Department: Nursing - Ward 3'>", page)
+        self.assertIn("<label>Department</label><select name=department>", page)
+        status, headers, _ = self._call("POST", f"/ticket/{wid}/update", cookie=alice,
+                                        form={"fields": "1", "department": "Radiology", "entity_id": "PMC",
+                                              "record_type": "INCIDENT", "catalogue_item_id": pair})
+        self.assertNotIn("err=", dict(headers).get("Location", ""), headers)
+        self.assertEqual(self._row(wid)[0], "Radiology")
+        conn = db.connect(self.db_path)
+        self.assertTrue(conn.execute("SELECT 1 FROM ticket_event WHERE work_item_id = ? AND detail LIKE"
+                                     " '%department Nursing - Ward 3 -> Radiology%'", (wid,)).fetchone())
+        with self.assertRaises(LookupError):
+            from psaspine import board as _b
+            _b.update_fields(conn, wid, at=self.at, actor="alice", department="Nowhere")
+        _b.update_fields(conn, wid, at=self.at, actor="alice", department="")
+        self.assertIsNone(conn.execute("SELECT department FROM ticket WHERE work_item_id = ?", (wid,)).fetchone()[0])
+        conn.rollback()
+        conn.close()
+
+    def test_the_board_has_a_department_column_a_filter_and_a_sort(self):
+        alice = self._more()
+        conn = db.connect(self.db_path)
+        a = tickets.open_ticket(conn, board_id="IT_HELP", summary="One", impact="I3", urgency="U3",
+                                requested_by=None, at=self.at, department="Radiology")
+        b = tickets.open_ticket(conn, board_id="IT_HELP", summary="Two", impact="I3", urgency="U3",
+                                requested_by=None, at=self.at, department="Pharmacy")
+        c = tickets.open_ticket(conn, board_id="IT_HELP", summary="Three", impact="I3", urgency="U3",
+                                requested_by=None, at=self.at)
+        conn.commit()
+        conn.close()
+        _, _, page = self._call("GET", "/", cookie=alice)
+        self.assertIn(">Department</a></th>", page)
+        self.assertIn("<label>Department</label><select name=dept>", page)
+        self.assertIn("Radiology</span></td>", page)
+        _, _, page = self._call("GET", "/", query="dept=Pharmacy", cookie=alice)
+        self.assertIn(f"/ticket/{b}", page)
+        self.assertNotIn(f"/ticket/{a}", page)
+        _, _, page = self._call("GET", "/", query="dept=none", cookie=alice)
+        self.assertIn(f"/ticket/{c}", page)
+        self.assertNotIn(f"/ticket/{a}", page)
+        _, _, page = self._call("GET", "/", query="sort=dept&dir=asc", cookie=alice)
+        self.assertLess(page.index(f"/ticket/{b}'"), page.index(f"/ticket/{a}'"))    # Pharmacy before Radiology
+
+    def test_a_store_without_079_carries_on_as_before(self):
+        # Every reader asks departments.on_tickets first; answering no is a store
+        # without the column, on SQLite and SQL Server alike.
+        from unittest import mock
+        from psaspine import departments
+        alice = self._more()
+        with mock.patch.object(departments, "on_tickets", return_value=False):
+            conn = db.connect(self.db_path)
+            wid = tickets.open_ticket(conn, board_id="IT_HELP", summary="Old store", impact="I3", urgency="U3",
+                                      requested_by="mia.santos@pmcne.ph", at=self.at, department="Pharmacy")
+            conn.commit()
+            conn.close()
+            self.assertEqual(self._row(wid)[0], None)                       # nothing written
+            for path, q in (("/", ""), ("/", "dept=Pharmacy&sort=dept"), (f"/ticket/{wid}", "")):
+                status, _, page = self._call("GET", path, query=q, cookie=alice)
+                self.assertTrue(status.startswith("200"), (path, status))
+                self.assertNotIn("name=dept", page)
+                self.assertNotIn("name=department", page)
+                self.assertIn(f"/ticket/{wid}", page)
+            status, _, page = self._call("GET", "/my/new", cookie=self.ward)
+            self.assertNotIn("Which department is this for?", page)
+
+    # ------------------------------------------------------------ company and the one-off fill
+    def test_a_new_ticket_is_pmcs_and_ticket_fill_tidies_the_old_ones(self):
+        from psaspine import board as _b, departments
+        self._more()
+        conn = db.connect(self.db_path)
+        self.assertEqual(_b.fallback_company(conn), "PMC")
+        old = tickets.open_ticket(conn, board_id="IT_HELP", summary="Before", impact="I3", urgency="U3",
+                                  requested_by="mia.santos@pmcne.ph", at=self.at)
+        conn.execute("UPDATE ticket SET department = NULL WHERE work_item_id = ?", (old,))   # raised before 079 ...
+        lost = tickets.open_ticket(conn, board_id="IT_HELP", summary="Lost", impact="I3", urgency="U3",
+                                   requested_by=None, at=self.at)
+        conn.execute("UPDATE work_item SET entity_id = 'UNCLASSIFIED' WHERE work_item_id = ?", (lost,))  # ... and before today
+        conn.commit()
+        d = departments.backfill(conn, apply=False, at=self.at, actor="t")
+        c = _b.fill_company(conn, apply=False, at=self.at, actor="t")
+        conn.rollback()
+        self.assertEqual((d["filled"], d["by_department"]), (1, {"Nursing - Ward 3": 1}))
+        self.assertEqual(c, {"target": "PMC", "moved": 1})
+        self.assertEqual(self._row(old), (None, "PMC"))                  # the preview wrote nothing
+        self.assertEqual(self._row(lost), (None, "UNCLASSIFIED"))
+        departments.backfill(conn, apply=True, at=self.at, actor="t")
+        _b.fill_company(conn, apply=True, at=self.at, actor="t")
+        conn.commit()
+        self.assertEqual(self._row(old)[0], "Nursing - Ward 3")
+        self.assertEqual(self._row(lost)[1], "PMC")
+        self.assertEqual(_b.fill_company(conn, apply=True, at=self.at, actor="t")["moved"], 0)   # once only
+        self.assertEqual(departments.backfill(conn, apply=True, at=self.at, actor="t")["filled"], 0)
+        # a desk without PMC keeps the catch-all
+        conn.execute("UPDATE work_item SET entity_id = 'UNCLASSIFIED' WHERE entity_id = 'PMC'")
+        from unittest import mock
+        with mock.patch.object(_b, "DEFAULT_COMPANY", "NOT-ON-THIS-DESK"):
+            self.assertEqual(_b.fallback_company(conn), "UNCLASSIFIED")
+            self.assertEqual(_b.fill_company(conn, apply=False, at=self.at, actor="t")["moved"], 0)
+        conn.rollback()
+        conn.close()
+
+    def test_the_tiles_that_leave_a_ticket_unclassified_are_named(self):
+        from psaspine import portal_tiles
+        self._seed()
+        conn = db.connect(self.db_path)
+        bare = portal_tiles.without_item(conn)
+        conn.close()
+        self.assertIn("BizBox or a hospital system › Pharmacy", bare)      # no pair called Pharmacy in the pack
+        self.assertNotIn("Buy something › IT equipment", bare)
+        _, _, page = self._call("GET", "/admin/portal-tiles", cookie=self.root)
+        self.assertIn("would raise a ticket with no Type › Subtype › Item", page)
+        self.assertIn("Pharmacy", page)
+
+    # ------------------------------------------------------------ the words
+    def test_each_boards_own_words_preview_then_apply_once_and_keep_what_the_board_wrote(self):
+        from psaspine import mail_words, outbox
+        conn = db.connect(self.db_path)
+        on_before = {m["name"]: m["enabled"] for m in outbox.status_mails(conn, "PROCUREMENT")}
+        preview = mail_words.apply_words(conn, "PROCUREMENT", "PROCUREMENT", apply=False, replace=False,
+                                         at=self.at, actor="t")
+        conn.rollback()
+        self.assertFalse(outbox.template(conn, "PROCUREMENT", "OPENED")["custom"])           # nothing written
+        self.assertTrue(preview[-1].endswith("Preview only"), preview[-1])
+        self.assertIn('+ Status Ordered (email off)  "Your item has been ordered"', preview)
+        # a board's own words, written on its Emails tab, are kept unless asked
+        outbox.set_template(conn, "PROCUREMENT", "CLOSED", subject="Done", body="Hi {requester}, done.",
+                            at=self.at, actor="alice")
+        out = mail_words.apply_words(conn, "PROCUREMENT", "PROCUREMENT", apply=True, replace=False,
+                                     at=self.at, actor="t")
+        self.assertIn("~ Ticket closed, to the requester (the board's own words kept)", out)
+        self.assertEqual(outbox.template(conn, "PROCUREMENT", "CLOSED")["subject"], "Done")
+        self.assertEqual({m["name"]: m["enabled"] for m in outbox.status_mails(conn, "PROCUREMENT")}, on_before)
+        ordered = next(m for m in outbox.status_mails(conn, "PROCUREMENT") if m["name"] == "Ordered")
+        self.assertEqual(ordered["subject"], "Your item has been ordered")
+        self.assertIn("We'll let you know as soon as it arrives at the hospital.", ordered["body"])
+        again = mail_words.apply_words(conn, "PROCUREMENT", "PROCUREMENT", apply=True, replace=False,
+                                       at=self.at, actor="t")
+        self.assertTrue(again[-1].startswith("Wrote 0 email(s);"), again[-1])
+        out = mail_words.apply_words(conn, "PROCUREMENT", "PROCUREMENT", apply=True, replace=True,
+                                     at=self.at, actor="t")
+        self.assertEqual(outbox.template(conn, "PROCUREMENT", "CLOSED")["subject"], "Your request is closed")
+        hd = mail_words.apply_words(conn, "IT_HELP", "HELPDESK", apply=True, replace=False, at=self.at, actor="t")
+        self.assertTrue(hd[-1].startswith("Wrote "), hd[-1])
+        self.assertNotIn("?", "".join(line[0] for line in hd[:-1]))         # every PMO Helpdesk status has words
+        with self.assertRaises(ValueError):
+            mail_words.apply_words(conn, "NOPE", "HELPDESK", apply=False, replace=False, at=self.at, actor="t")
+        conn.rollback()
+        conn.close()
+
+    def test_a_fixed_ticket_reads_like_a_person_wrote_it(self):
+        from psaspine import mail_words, outbox
+        self._more()
+        conn = db.connect(self.db_path)
+        mail_words.apply_words(conn, "IT_HELP", "HELPDESK", apply=True, replace=False, at=self.at, actor="t")
+        conn.execute("INSERT OR REPLACE INTO board_member (board_id, member, access) VALUES ('IT_HELP', 'anne', 'WORK')")
+        conn.execute("UPDATE board SET notify_requester = 1 WHERE board_id = 'IT_HELP'")
+        wid = tickets.open_ticket(conn, board_id="IT_HELP", summary="Printer", impact="I3", urgency="U3",
+                                  requested_by="mia.santos@pmcne.ph", at=self.at, owner="anne")
+        res = conn.execute("SELECT board_status_id FROM board_status WHERE board_id = 'IT_HELP' AND name = 'Resolved'"
+                           ).fetchone()[0]
+        outbox.set_status_mail(conn, res, enabled=True, at=self.at, actor="t")
+        conn.execute("DELETE FROM notification")
+        outbox.queue_status(conn, wid, res, at=self.at, actor="anne")
+        mail = [m for m in outbox.pending(conn, allowed_domains=("pmcne.ph",), dry_run=True)
+                if m["subject"].endswith("Good news: your request is fixed")]
+        conn.rollback()
+        conn.close()
+        self.assertEqual(len(mail), 1, mail)
+        body = mail[0]["body"]
+        self.assertTrue(body.startswith("Hi Mia,\n\nGood news: Anne has fixed your request."), body[:80])
+        self.assertIn("Could you check it on the ward when you get a moment?", body)
+        self.assertIn("Thanks,\nPMO Helpdesk", body)
+        for robotic in ("as of", "We think this is fixed", "{", "a patient's details never are"):
+            self.assertNotIn(robotic, body)
+        self.assertIn("Please don't include patient names or numbers", body)
+
+    def test_a_message_kept_off_email_says_why_in_plain_words(self):
+        from psaspine import outbox
+        self.assertEqual(outbox.note_for_email("Pt Juan Dela Cruz, HRN 00123456 bed 4"), outbox.PORTAL_WORDS)
+        self.assertEqual(outbox.PORTAL_WORDS, "We've kept this message off email in case it mentions a patient. "
+                                              "You can read it on the PMC Requests portal from any PMC computer.")
+        for (subject, body) in list(outbox.DEFAULTS.values()) + list(outbox.STATUS_DEFAULTS.values()):
+            self.assertNotIn("as of {date}", body)
 
 
 if __name__ == "__main__":

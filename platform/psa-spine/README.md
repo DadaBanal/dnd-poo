@@ -2487,6 +2487,67 @@ The reference PSA's customer portal is INFERRED from its product pages (its docs
 Schema 078 adds `portal_tile`, `portal_tile_question`, `portal_answer` and `ticket.portal_tile_id`. Handoff:
 `HANDOFF-cloud-sql01-WS36-20261009-portal-tiles-078.md`.
 
+## Warmer emails, a department on every ticket, PMC by default (12 Oct 2026, schema 079)
+
+Dada, 12 Oct 2026, with a screenshot of a *"we think your request is fixed"* email: *"the messages or replies are
+very robotic can we please do specific replies for procurement board and the pmo helpdesk board and make it more human
+and fit for the hospital"*, a department dropdown and *"a department mark on each tickets or a column"*, and then
+*"the default [company] should be premiere medical center"* with the Type, Subtype and Item picked automatically from
+the requests page. Each part was confirmed before building.
+
+**The words.**
+- The desk's own defaults are rewritten warm and plain, as Dada chose from two samples. Each one uses first names,
+  says what happens next, and signs off *Thanks, {board}*. No sentence starts with `{owner}`, which reads *the PMO
+  Helpdesk team* while nobody owns the ticket.
+- The old Resolved email pasted the status's portal wording mid-sentence (*"… as of 12 October 2026: We think this
+  is fixed — reply if it is not."*). Its words are now their own.
+- `python -m psaspine mail-words <db> --board IT_HELP --words HELPDESK --actor … [--apply]` writes the PMO Helpdesk's
+  own words: opened, replied, closed, picked up, and one for every status, worded for the ward. The same command
+  with `--board PROCUREMENT --words PROCUREMENT` does Procurement's, worded for quotations, approval, purchase order,
+  delivery and issue.
+  - These are the same per-board words Setup › board › Emails edits.
+  - The command keeps any words the board already wrote, unless `--replace` is given.
+  - It never turns a status email on or off.
+  - It runs as a preview first.
+- **The patient-detail guard stays.** A message the PHI scan flags still never goes into an email. Instead of *"Sign
+  in to the portal to read it."* it now says why, once: *"We've kept this message off email in case it mentions a
+  patient. You can read it on the PMC Requests portal from any PMC computer."*
+
+**Department (079).**
+- `ticket.department` is a name from Setup › Departments, or NULL for not known. It shows in four places:
+  - a **Department** column on the Service Board, sortable, with a Department filter (*Any*, *Not set*, each name)
+    beside *Came from*;
+  - a sky-blue badge on the ticket header;
+  - a dropdown on the ticket's fields and on New ticket;
+  - on the portal's *Raise a request* and tile forms, a dropdown **already set to the requester's own department**,
+    changed only when raising for another ward.
+- Where the value comes from:
+  - The portal and the desk write the department chosen.
+  - Anything else takes the contact's AD department, when it is on the list.
+  - A name not on the list is never written.
+  - A change on the desk is written in the ticket's history.
+- **Before 079 is applied, nothing changes:** every reader asks `departments.on_tickets` first.
+
+**Company.** A new ticket whose company intake cannot tell now takes **PMC** instead of UNCLASSIFIED, on Dada's
+word (*"the only company we are working with atm"*). This reverses the earlier rule that the catch-all is *never a
+guess that it is PMC*, and the reversal is recorded in `board.py`. A desk with no PMC company keeps the catch-all.
+
+**Type › Subtype › Item from the requests page.** This was already so: a tile raises its ticket with its own
+Item, or its parent's, and the board's default status. Where a tile has neither, the ticketer classifies the ticket
+by hand. Those tiles are now named:
+- in a banner on Setup › Portal tiles;
+- by `ticket-fill` (next).
+
+**The one-off tidy.** `python -m psaspine ticket-fill <db> --actor … [--apply]` does three things:
+- gives tickets with no department their contact's, where AD's matches the list;
+- moves tickets filed under UNCLASSIFIED to PMC;
+- lists the tiles with no Item.
+
+It prints counts, department names and tile labels only, never a person or a summary. It runs as a preview first,
+and a second run finds nothing to do.
+
+Tests: `DepartmentCompanyAndWordsTest`.
+
 ## Changing a booking in place, and your own Outlook entries (9 Oct 2026, schema 077)
 
 Dada, 9 Oct 2026: *"u can dispatch but when changing a schedule there is no modify on calendars and dispatch portal"*,

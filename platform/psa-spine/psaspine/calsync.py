@@ -189,8 +189,11 @@ def event_words(conn, v, link: str) -> tuple[str, str]:
         subject = f"{v['work_item_id']} - {v['board']}" + (f" - {v['place']}" if v["place"] else "")
         body = f"A visit on ticket {v['work_item_id']} ({v['board']}).{status}\n\nOpen it on the desk: {link}\n\nThe ticket's words stay on the desk."
     else:
-        from .board import UNKNOWN_ENTITY
-        company = (row["company"] if row and row["entity_id"] != UNKNOWN_ENTITY else "") or ""
+        from .board import DEFAULT_COMPANY, UNKNOWN_ENTITY
+        # 12 Oct 2026: PMC is every ticket's company by default now, so naming
+        # it on every visit says nothing; only another company is named.
+        company = (row["company"] if row and row["entity_id"] not in (UNKNOWN_ENTITY, DEFAULT_COMPANY)
+                   else "") or ""
         subject = f"{v['work_item_id']} - " + (f"{company} - " if company else "") + summary
         body = (f"Ticket {v['work_item_id']} ({v['board']}): {summary}.{status}"
                 + (f" Where: {v['place']}." if v["place"] else "") + f"\n\nOpen it on the desk: {link}")

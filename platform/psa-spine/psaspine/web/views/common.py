@@ -345,6 +345,38 @@ def project_ticket_ok(ctx, work_item_id: str) -> bool:
     return me in {m.lower() for m in resources.everyone(ctx.conn, work_item_id)}
 
 
+def dept_badge(name: str | None) -> str:
+    """079: the department a ticket is for, as a pill beside where it came from
+    (Dada, 12 Oct 2026). Empty when it is not known."""
+    from .. import templates as t
+    if not name:
+        return ""
+    return (f"<span class='pill dept' title='Department: {t.esc(name)}'>{t.icon('building')}"
+            f"{t.esc(name)}</span>")
+
+
+def dept_of(row) -> str | None:
+    """A ticket row's department, on a store that has taken 079."""
+    try:
+        return row["department"]
+    except (KeyError, IndexError):
+        return None
+
+
+def dept_select(conn, current: str | None, *, name: str = "department", attrs: str = "",
+                blank: str = "(not set)") -> str:
+    """The desk's Department dropdown: the live list, plus the ticket's own if
+    it has since been retired, so a save never silently drops it."""
+    from .. import templates as t
+    from ... import departments
+    names = departments.live_names(conn)
+    if current and current not in names:
+        names = [current] + names
+    opts = f"<option value=''>{t.esc(blank)}</option>" + "".join(
+        f"<option{' selected' if n == current else ''}>{t.esc(n)}</option>" for n in names)
+    return f"<select name={name}{attrs}>{opts}</select>"
+
+
 def came_badge(o: dict, *, link: bool = False) -> str:
     """Where a ticket came from, as a coloured pill (9 Oct 2026: chat tickets
     apart from the rest, the number unchanged). A chat's pill opens the chat

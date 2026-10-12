@@ -272,6 +272,24 @@ def main(argv: list[str] | None = None) -> int:
     ptl.add_argument("--procurement", default="PROCUREMENT", help="the procurement board_id (default PROCUREMENT)")
     ptl.add_argument("--actor", required=True, help="who this is done for, for the audit trail")
     ptl.add_argument("--apply", action="store_true", help="write it; without this nothing is changed")
+    pmw = sub.add_parser("mail-words",
+                         help="12 Oct 2026: a board's own warm, plain words for its requester emails -- opened, "
+                              "replied, closed, picked up and every status -- for the PMO Helpdesk or Procurement. "
+                              "Keeps words the board already wrote unless --replace; never turns an email on or "
+                              "off. Preview unless --apply")
+    pmw.add_argument("database", help=DB_HELP)
+    pmw.add_argument("--board", required=True, help="the board_id, e.g. IT_HELP or PROCUREMENT")
+    pmw.add_argument("--words", required=True, choices=("HELPDESK", "PROCUREMENT"), help="which set of words")
+    pmw.add_argument("--replace", action="store_true", help="also overwrite words the board already wrote")
+    pmw.add_argument("--actor", required=True, help="who this is done for, for the audit trail")
+    pmw.add_argument("--apply", action="store_true", help="write it; without this nothing is changed")
+    ptf = sub.add_parser("ticket-fill",
+                         help="12 Oct 2026: tickets with no department take their contact's (079), tickets filed "
+                              "under UNCLASSIFIED take PMC's company, and the portal tiles that would leave a ticket "
+                              "with no Type > Subtype > Item are named. Counts and tile names only. Preview unless --apply")
+    ptf.add_argument("database", help=DB_HELP)
+    ptf.add_argument("--actor", required=True, help="who this is done for, for the audit trail")
+    ptf.add_argument("--apply", action="store_true", help="write it; without this nothing is changed")
     ptt = sub.add_parser("ticket-topics",
                          help="what is usually ticketed: counts per board, the most used Type > Subtype > Item, and "
                               "how many summaries each portal tile's words would catch. Counts only: it never prints "
@@ -891,6 +909,52 @@ def _run(conn, a) -> int:
         for line in portal_tiles.topics(conn, since=since, top=max(1, a.top)):
             print(line)
         conn.rollback()
+        return 0
+
+    if a.cmd == "mail-words":
+        from . import mail_words
+        try:
+            lines = mail_words.apply_words(conn, a.board, a.words, apply=a.apply, replace=a.replace,
+                                           at=datetime.now(), actor=a.actor)
+        except ValueError as exc:
+            conn.rollback()
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        for line in lines:
+            print(line)
+        if a.apply:
+            conn.commit()
+            print("applied")
+        else:
+            conn.rollback()
+        return 0
+
+    if a.cmd == "ticket-fill":
+        from . import board as _board, departments, portal_tiles
+        now = datetime.now()
+        d = departments.backfill(conn, apply=a.apply, at=now, actor=a.actor)
+        if not d["ready"]:
+            print("department: this store has not taken 079 yet; nothing to fill")
+        else:
+            print(f"department: {d['empty']} ticket(s) with none; {d['filled']} take their contact's;"
+                  f" {d['unmatched']} stay unset (no contact, or AD's department is not on Setup > Departments)")
+            for name, n in sorted(d["by_department"].items(), key=lambda kv: (-kv[1], kv[0])):
+                print(f"  {n:6d}  {name}")
+        c = _board.fill_company(conn, apply=a.apply, at=now, actor=a.actor)
+        if c["target"] == _board.UNKNOWN_ENTITY:
+            print("company: no PMC company on this desk; nothing moved")
+        else:
+            print(f"company: {c['moved']} ticket(s) under {_board.UNKNOWN_ENTITY} -> {c['target']}")
+        bare = portal_tiles.without_item(conn)
+        print(f"portal tiles with no Type > Subtype > Item (set in Setup > Portal tiles): {len(bare)}")
+        for label in bare:
+            print(f"  - {label}")
+        if a.apply:
+            conn.commit()
+            print("applied")
+        else:
+            conn.rollback()
+            print("PREVIEW: nothing written; re-run with --apply")
         return 0
 
     if a.cmd == "portal-tiles":

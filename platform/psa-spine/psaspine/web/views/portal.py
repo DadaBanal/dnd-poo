@@ -204,7 +204,7 @@ def index(ctx):
     tiles = _tiles(ctx)
     body = ("<h1>Your requests</h1>"
             "<p class='sub'>Everything you have asked for, and where each one "
-            "has got to.</p>" + (_tile_grid(tiles) if tiles else _raise_form(boards=_my_boards(ctx))) + table)
+            "has got to.</p>" + (_tile_grid(tiles) if tiles else _raise_form(boards=_my_boards(ctx), dept=_dept_field(ctx))) + table)
     return Response(body=t.page("Your requests", body, user=ctx.user))
 
 
@@ -270,7 +270,7 @@ def _tile_form(ctx, route: dict, *, error: str = "", values=None) -> str:
             "<form class='stack' method='post' action='/my/new' style='max-width:none' enctype='multipart/form-data'>"
             f"<input type=hidden name=tile_id value='{tile['tile_id']}'>"
             f"<label>What do you need? <input name='summary' required maxlength='200' value='{t.esc(summary)}'></label>"
-            + ask + kind
+            + _dept_field(ctx, values.get("department")) + ask + kind
             + _radio_group("impact", "Who is affected?", WHO_IS_AFFECTED)
             + _radio_group("urgency", "Is a patient waiting?", PATIENT_WAITING)
             + "<label>Anything else that would help " + _help("what to write")
@@ -288,7 +288,7 @@ def new_form(ctx):
                                                                     user=ctx.user))
     tid = ctx.request.query.get("tile", "")
     if not tid or not portal_tiles.available(ctx.conn):
-        return page(_raise_form(boards=_my_boards(ctx)) + "<p><a href='/my'>&larr; Back</a></p>")
+        return page(_raise_form(boards=_my_boards(ctx), dept=_dept_field(ctx)) + "<p><a href='/my'>&larr; Back</a></p>")
     tile = portal_tiles.get(ctx.conn, tid)
     subs = portal_tiles.children(ctx.conn, tile["tile_id"]) if tile and not tile["inactive"] else []
     if subs:
@@ -296,7 +296,7 @@ def new_form(ctx):
     try:
         route = portal_tiles.route(ctx.conn, tid)
     except LookupError as exc:
-        return page(_raise_form(error=str(exc), boards=_my_boards(ctx)), "404 Not Found")
+        return page(_raise_form(error=str(exc), boards=_my_boards(ctx), dept=_dept_field(ctx)), "404 Not Found")
     return page(_tile_form(ctx, route))
 
 
@@ -327,7 +327,32 @@ def _help(what: str, *, sample: str = SAMPLE, files: bool = False) -> str:
             f"<p class=sample>“{t.esc(sample)}”</p>{extra}</div></details>")
 
 
-def _raise_form(error: str = "", notice: str = "", *, boards=()) -> str:
+def _dept_field(ctx, chosen: str | None = None) -> str:
+    """079: which department the request is for, already set to the
+    requester's own (Dada, 12 Oct 2026: a dropdown, pre-filled; they change it
+    only when raising for another ward). Empty when the store has no list."""
+    from ... import departments
+    if not departments.on_tickets(ctx.conn):
+        return ""
+    names = departments.live_names(ctx.conn)
+    if not names:
+        return ""
+    pick = departments.match(ctx.conn, chosen) or departments.match(ctx.conn, getattr(ctx.user, "department", None))
+    opts = "".join(f"<option{' selected' if n == pick else ''}>{t.esc(n)}</option>" for n in names)
+    return ("<label>Which department is this for? <select name='department'>"
+            + ("" if pick else "<option value='' selected>Choose your department</option>")
+            + opts + "</select></label>")
+
+
+def _dept_of(ctx, form) -> str | None:
+    """The department a request is raised for: the one chosen, if it is on the
+    list, else the requester's own."""
+    from ... import departments
+    return (departments.match(ctx.conn, form.get("department"))
+            or departments.match(ctx.conn, getattr(ctx.user, "department", None)))
+
+
+def _raise_form(error: str = "", notice: str = "", *, boards=(), dept: str = "") -> str:
     err = f"<div class='banner err'>{t.esc(error)}</div>" if error else ""
     note = f"<div class='banner ok'>{t.esc(notice)}</div>" if notice else ""
     boards = list(boards)
@@ -345,7 +370,7 @@ def _raise_form(error: str = "", notice: str = "", *, boards=()) -> str:
             " enctype='multipart/form-data'>"
             "<label>What do you need? "
             "<input name='summary' required maxlength='200' "
-            "placeholder='Printer in ward 3 is offline'></label>" + who
+            "placeholder='Printer in ward 3 is offline'></label>" + dept + who
             + _radio_group("kind", "Is something broken, or do you need something?",
                            KIND_CHOICES, required=False)
             + _radio_group("impact", "Who is affected?", WHO_IS_AFFECTED) +
@@ -590,7 +615,8 @@ def create(ctx):
 
     def again(error):
         return Response("400 Bad Request", t.page(
-            "Your requests", "<h1>Your requests</h1>" + _raise_form(error=error, boards=mine), user=ctx.user))
+            "Your requests", "<h1>Your requests</h1>" + _raise_form(error=error, boards=mine,
+                                                    dept=_dept_field(ctx, form.get("department"))), user=ctx.user))
     if not summary:
         return again("Tell us what you need.")
     impact = form.get("impact", "")
@@ -625,7 +651,7 @@ def create(ctx):
     ticket_id = tickets.open_ticket(
         ctx.conn, board_id=board["board_id"], summary=summary, impact=impact,
         urgency=urgency, requested_by=requester, description=description or None,
-        at=ctx.now, source="PORTAL",
+        at=ctx.now, source="PORTAL", department=_dept_of(ctx, form),
         record_type=itil.fit(ctx.conn, board["board_id"], form.get("kind")
                              if form.get("kind") in dict(KIND_CHOICES) else None))
 
@@ -652,7 +678,7 @@ def create(ctx):
         if refused:
             notice += " " + " ".join(refused)
         return Response(body=t.page("Your requests", (
-            "<h1>Your requests</h1>" + _raise_form(notice=notice, boards=mine)), user=ctx.user))
+            "<h1>Your requests</h1>" + _raise_form(notice=notice, boards=mine, dept=_dept_field(ctx))), user=ctx.user))
     return redirect(f"/my/{ticket_id}")
 
 
@@ -676,7 +702,7 @@ def _create_from_tile(ctx, form):
         route = portal_tiles.route(ctx.conn, form.get("tile_id"))
     except LookupError as exc:
         return Response("400 Bad Request", t.page("Your requests", "<h1>Your requests</h1>" + _raise_form(
-            error=str(exc), boards=_my_boards(ctx)), user=ctx.user))
+            error=str(exc), boards=_my_boards(ctx), dept=_dept_field(ctx)), user=ctx.user))
 
     def again(error):
         return Response("400 Bad Request", t.page(
@@ -701,7 +727,8 @@ def _create_from_tile(ctx, form):
         ticket_id = tickets.open_ticket(
             ctx.conn, board_id=board_id, summary=summary[:200], impact=impact, urgency=urgency,
             requested_by=requester, description=full or None, at=ctx.now, source="PORTAL",
-            catalogue_item_id=item, record_type=None if item else itil.fit(ctx.conn, board_id, kind))
+            catalogue_item_id=item, record_type=None if item else itil.fit(ctx.conn, board_id, kind),
+            department=_dept_of(ctx, form))
     except (itil.NotAccepted, LookupError):
         ctx.conn.rollback()
         return again("That choice cannot take requests right now. Use Something else, and we will route it.")
@@ -731,7 +758,7 @@ def _create_from_tile(ctx, form):
         tiles = _tiles(ctx)
         return Response(body=t.page("Your requests", (
             f"<h1>Your requests</h1><div class='banner ok'>{t.esc(notice)}</div>"
-            + (_tile_grid(tiles) if tiles else _raise_form(boards=_my_boards(ctx)))), user=ctx.user))
+            + (_tile_grid(tiles) if tiles else _raise_form(boards=_my_boards(ctx), dept=_dept_field(ctx)))), user=ctx.user))
     return redirect(f"/my/{ticket_id}")
 
 

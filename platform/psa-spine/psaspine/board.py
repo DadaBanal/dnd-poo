@@ -340,6 +340,37 @@ def close_loop(conn: sqlite3.Connection, work_item_id: str, to_status_id: str, *
 # for — the reference PSA's email connector does the same with a "catch-all" company.
 # It is a seeded entity that is flagged, never a guess that it is PMC.
 UNKNOWN_ENTITY = "UNCLASSIFIED"
+# Reversed for new tickets on Dada's word, 12 Oct 2026: "the default should be
+# premiere medical center as that the only company we are working with atm".
+# A ticket whose company intake cannot tell now takes PMC's, when that company
+# is on the desk; UNCLASSIFIED stays for a desk without it, and for history
+# that import-tickets brings in. When a second company is served, this is the
+# line to revisit.
+DEFAULT_COMPANY = "PMC"
+
+
+def fallback_company(conn: sqlite3.Connection) -> str:
+    """Where a new ticket's company falls when nothing names one."""
+    row = conn.execute("SELECT 1 FROM entity WHERE entity_id = ?", (DEFAULT_COMPANY,)).fetchone()
+    return DEFAULT_COMPANY if row else UNKNOWN_ENTITY
+
+
+def fill_company(conn: sqlite3.Connection, *, apply: bool, at: datetime, actor: str) -> dict:
+    """Open and closed tickets still filed under the catch-all take PMC's
+    company (12 Oct 2026). Counts only; preview unless apply; a second run
+    finds nothing. Nothing happens on a desk without PMC."""
+    target = fallback_company(conn)
+    rows = [r[0] for r in conn.execute(
+        "SELECT t.work_item_id FROM ticket t JOIN work_item w ON w.work_item_id = t.work_item_id"
+        " WHERE w.entity_id = ?", (UNKNOWN_ENTITY,))] if target != UNKNOWN_ENTITY else []
+    if apply and rows:
+        for wid in rows:
+            conn.execute("UPDATE work_item SET entity_id = ? WHERE work_item_id = ? AND entity_id = ?",
+                         (target, wid, UNKNOWN_ENTITY))
+        from . import db
+        db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor, action="TICKET_COMPANY",
+                 subject_kind="ticket", subject_id="*", detail=f"{len(rows)} ticket(s) {UNKNOWN_ENTITY} -> {target}")
+    return {"target": target, "moved": len(rows)}
 
 
 def default_status(conn: sqlite3.Connection, board_id: str,
@@ -380,7 +411,8 @@ def admit(conn: sqlite3.Connection, work_item_id: str, *, at: datetime) -> dict:
     - the board's default status, if the ticket has none;
     - the contact, when the requester's address is exactly one active contact,
       and that contact's company if intake named none;
-    - a company: the catch-all if intake could not tell;
+    - a company: PMC if intake could not tell (12 Oct 2026; the catch-all on a
+      desk without PMC);
     - the SLA clocks the board's targets call for, on the board's calendar,
       started at the moment the ticket was opened. A board that is not set up
       starts none, and the board view says so.
@@ -417,7 +449,7 @@ def admit(conn: sqlite3.Connection, work_item_id: str, *, at: datetime) -> dict:
                              " AND entity_id IS NULL", (company, work_item_id))
 
     conn.execute("UPDATE work_item SET entity_id = ? WHERE work_item_id = ?"
-                 " AND entity_id IS NULL", (UNKNOWN_ENTITY, work_item_id))
+                 " AND entity_id IS NULL", (fallback_company(conn), work_item_id))
 
     started: list[int] = []
     if ticket["calendar_id"]:
@@ -932,7 +964,7 @@ def update_fields(conn: sqlite3.Connection, work_item_id: str, *, at: datetime,
                   planned_end: str | None = None,
                   backout_plan: str | None = None,
                   priority: str | None = None, priority_reason: str | None = None,
-                  summary: str | None = None) -> list[str]:
+                  summary: str | None = None, department: str | None = None) -> list[str]:
     """Change the ticket's editable fields and write down every change.
 
     The summary (the work item's name) is editable too (Dada, 1 Oct 2026:
@@ -1009,6 +1041,17 @@ def update_fields(conn: sqlite3.Connection, work_item_id: str, *, at: datetime,
         conn.execute("UPDATE work_item SET entity_id = ? WHERE work_item_id = ?",
                      (entity_id, work_item_id))
         changed.append(f"company {row['entity_id'] or '-'} -> {entity_id}")
+
+    # 079: the department the ticket is for, one from Setup › Departments ("" clears it)
+    if department is not None:
+        from . import departments
+        if departments.on_tickets(conn):
+            dept = departments.match(conn, department, retired=True) if norm(department) else None
+            if norm(department) and dept is None:
+                raise LookupError(f"no department {norm(department)!r}")
+            if dept != row["department"]:
+                conn.execute("UPDATE ticket SET department = ? WHERE work_item_id = ?", (dept, work_item_id))
+                changed.append(f"department {row['department'] or '-'} -> {dept or '-'}")
 
     item_changed = False
     if catalogue_item_id is not None and (catalogue_item_id or None) != row["catalogue_item_id"]:

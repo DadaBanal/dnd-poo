@@ -69,24 +69,30 @@ PLACEHOLDER_HELP = ", ".join("{" + p + "}" for p in PLACEHOLDERS)
 HOSPITAL = "Premiere Medical Center - Nueva Ecija"
 # How every desk email to a requester ends: the board that has it, then the
 # hospital. The sender adds the reference, the portal link and how to reply.
-_SIGN = "\n\n{board}\n{hospital}"
-_WARD = ("\n\nIf this is stopping care on the ward right now, call the helpdesk and quote {ticket}; "
-         "an email can wait, a patient cannot.")
+_SIGN = "\n\nThanks,\n{board}\n{hospital}"
+# Dada, 12 Oct 2026: "the messages or replies are very robotic ... make it more
+# human and fit for the hospital". Warm and plain (his choice of two samples):
+# first names, what happens next, no form-letter phrasing. A sentence never
+# starts with {owner}, which reads "the PMO Helpdesk team" while nobody owns it.
+_WARD = ("\n\nIf this is stopping patient care right now, please call {board} and quote {ticket} so we can "
+         "help straight away.")
 DEFAULTS = {
-    "OPENED": ("We have your request",
-               "Hello {requester},\n\n{board} has your request, as of {date}, and it is with {owner}. You do not "
-               "need to do anything; we will email you as it moves." + _WARD + _SIGN),
-    "UPDATED": ("{owner} has replied to your request",
-                "Hello {requester},\n\n{owner} from {board} has replied to your request, as of {date}:\n\n{note}\n\n"
-                "To answer, reply to this email and keep the reference in the subject." + _SIGN),
+    "OPENED": ("We've got your request",
+               "Hi {requester},\n\nThanks for letting us know. We've got your request, and {owner} will take "
+               "care of it.\n\nThere's nothing else you need to do for now. We'll email you as soon as there's "
+               "news." + _WARD + _SIGN),
+    "UPDATED": ("New reply on your request",
+                "Hi {requester},\n\nHere's the latest from {owner}:\n\n{note}\n\nIf you'd like to answer, "
+                "just reply to this email." + _SIGN),
     "CLOSED": ("Your request is closed",
-               "Hello {requester},\n\n{board} has closed your request, as of {date}. If it is not fixed, reply to "
-               "this email and it reopens. On the portal you can tell us how we did, one to five." + _SIGN),
+               "Hi {requester},\n\nWe've closed your request. Thank you for your patience while we sorted it "
+               "out.\n\nIf it's still giving you trouble, just reply to this email and we'll reopen it. And if "
+               "you have a minute, you can rate how we did on the PMC Requests portal." + _SIGN),
     "ASSIGNED": ("Assigned to you on {board}", "{ticket} on {board} was assigned to you by {actor}."),
     "SCHEDULED": ("Scheduled for you on {board}", "{ticket} on {board}: a visit booked for you by {actor}, {when}."),
     "APPROVAL": ("A request needs your approval",
-                 "A request on the desk waits for your approval before the work is done. Sign in to the portal and "
-                 "open Approvals to read it and decide, with a reason."),
+                 "Hi,\n\nA request is waiting for your approval before the work can go ahead. Please sign in "
+                 "to the PMC Requests portal and open Approvals to read it and decide, with a short reason."),
 }
 REQUESTER_WORDS = {k: DEFAULTS[k] for k in ("OPENED", "UPDATED", "CLOSED")}   # kept for readers of 03x
 
@@ -261,7 +267,8 @@ def words(conn: sqlite3.Connection, board_id: str, kind: str, **values) -> tuple
     return tpl["subject"].format_map(fill), tpl["body"].format_map(fill)
 
 
-PORTAL_WORDS = "Sign in to the portal to read it."
+PORTAL_WORDS = ("We've kept this message off email in case it mentions a patient. You can read it on the "
+                "PMC Requests portal from any PMC computer.")
 
 
 def note_for_email(note: str | None) -> str:
@@ -465,23 +472,24 @@ STATUS_SHAPES = {
     "OTHER": "moves the work on",
 }
 STATUS_DEFAULTS = {
-    "WAITING": ("We need something from you",
-                "Hello {requester},\n\nTo go on with your request, {owner} needs something from you: {status_text}."
-                "\n\nReply to this email with it and keep the reference in the subject, so your reply joins your "
-                "request. The ward, the room or the machine is all we need; never a patient's details." + _SIGN),
-    "RESOLVED": ("We think your request is fixed",
-                 "Hello {requester},\n\n{owner} thinks your request is fixed, as of {date}: {status_text}.\n\n"
-                 "Please check it on the ward. If it is not fixed, reply to this email and it comes straight back "
-                 "to us." + _SIGN),
+    "WAITING": ("We need a little more from you",
+                "Hi {requester},\n\nTo keep going on your request, we need a bit more from you: {status_text}."
+                "\n\nCould you reply to this email with the details? The ward, the room, the machine or a photo "
+                "of the error all help. Please don't include patient names or numbers." + _SIGN),
+    "RESOLVED": ("Good news: your request is fixed",
+                 "Hi {requester},\n\nGood news: {owner} has fixed your request.\n\nCould you check it on the "
+                 "ward when you get a moment? If it's still not right, just reply to this email and it comes "
+                 "straight back to us." + _SIGN),
     "CLOSED": DEFAULTS["CLOSED"],
-    "OTHER": ("Your request: {status}",
-              "Hello {requester},\n\nYour request has moved on, as of {date}: {status_text}.\n\n"
-              "It is with {owner}. You do not need to do anything; we will email you when it moves again." + _WARD + _SIGN),
+    "OTHER": ("An update on your request",
+              "Hi {requester},\n\nA quick update: your request is now at \"{status}\". {status_text}.\n\n"
+              "It's with {owner}, and there's nothing you need to do for now. We'll let you know when it moves "
+              "again." + _WARD + _SIGN),
 }
 PICKUP_DEFAULT = ("{owner} has picked up your request",
-                  "Hello {requester},\n\n{owner} from {board} has picked up your request, as of {date}, and is "
-                  "working on it now.\n\nIf {owner} needs anything they will contact you. To add "
-                  "something, reply to this email and keep the reference in the subject." + _WARD + _SIGN)
+                  "Hi {requester},\n\nYour request is with {owner}, who has started on it now.\n\nIf anything "
+                  "else is needed, we'll be in touch. You can add details any time by replying to this email."
+                  + _WARD + _SIGN)
 _WAITS_ON_REQUESTER = re.compile(r"requester|customer|from you|your reply", re.I)
 
 
@@ -906,9 +914,9 @@ def pending(conn: sqlite3.Connection, *, allowed_domains: tuple[str, ...],
                     + f"\n\nYour reference: {n['work_item_id']}\n"
                     f"See it here: {where}\n"
                     + (f"Away from PMC: {away_link}\n" if away_link else "")
-                    + "\nTo add something, reply to this email "
-                    "and keep the reference in the subject. The ward, the room or the "
-                    "machine is all we need; a patient's details never are.")
+                    + "\nTo add anything, just reply to this email and keep the reference in the "
+                    "subject. Please don't include patient names or numbers: the ward, the room or "
+                    "the machine is all we need.")
         elif n["recipient_role"] == APPROVER:
             where = (f"{portal_url}/my/approvals" if portal_url else "the PMC Requests portal, under Approvals")
             body = f"{n['body'] or ''}\n\nThe reference: {n['work_item_id']}\nDecide it here: {where}"
@@ -1008,8 +1016,8 @@ def html_email(text: str, *, ticket: str, link: str | None, board: str, hospital
         f'padding:3px 10px;margin-bottom:14px">Reference {_h.escape(ticket)}</div>'
         f'{body_html}{button}</td></tr>'
         '<tr><td style="padding:12px 24px 20px;font-size:12px;line-height:1.5;color:#6b7785;border-top:1px solid #eef0f5">'
-        'Reply to this email to add something, and keep the reference in the subject. The ward, the room or the machine is all '
-        'we need; a patient\'s details never are.</td></tr>'
+        'To add anything, just reply to this email and keep the reference in the subject. Please don\'t include patient '
+        'names or numbers: the ward, the room or the machine is all we need.</td></tr>'
         '</table></td></tr></table></body></html>')
 
 

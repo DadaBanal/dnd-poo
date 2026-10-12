@@ -583,3 +583,23 @@ def topics(conn, *, since: str, top: int = 25) -> list[str]:
             out.append(f"  {sum(n for _, n in sorted(missed.items(), key=lambda x: (-x[1], x[0]))[top:]):>5}"
                        f"  in {len(missed) - top} more Type › Subtype")
     return out
+
+
+def without_item(conn) -> list[str]:
+    """12 Oct 2026 (Dada: "when they pick ... type subtype and item can be
+    auto picked"): the tiles a request is raised from that carry no Type ›
+    Subtype › Item of their own or from their parent, so the ticketer still
+    classifies those by hand. Labels only. Set them in Setup › Portal tiles."""
+    if not available(conn):
+        return []
+    out = []
+    for tile in conn.execute("SELECT * FROM portal_tile WHERE inactive = 0 ORDER BY sort_order, label").fetchall():
+        if children(conn, tile["tile_id"]):
+            continue
+        try:
+            r = route(conn, tile["tile_id"])
+        except LookupError:
+            continue
+        if not r["catalogue_item_id"]:
+            out.append((f"{r['parent']['label']} › " if r["parent"] else "") + tile["label"])
+    return out

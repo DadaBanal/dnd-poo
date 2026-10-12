@@ -19,6 +19,7 @@ from __future__ import annotations
 import urllib.parse
 
 from ... import board as engine
+from ... import departments as _departments
 from ... import itil, origin
 from .. import templates as t
 from . import common
@@ -28,7 +29,7 @@ PRIORITY_ORDER = {"P1": 0, "P2": 1, "P3": 2, "P4": 3}
 OPEN_STATES = ("RESOLVED", "CLOSED", "CANCELLED")
 SOURCES = ("EMAIL", "PHONE", "WALK_UP", "PORTAL", "API", "DESK", "IMPORT")
 COLUMNS = (("id", "Ticket #"), ("summary", "Summary"), ("company", "Company"),
-           ("contact", "Contact"), ("board", "Board"), ("status", "Status"),
+           ("dept", "Department"), ("contact", "Contact"), ("board", "Board"), ("status", "Status"),
            ("pri", "Pri"), ("owner", "Owner"), ("age", "Age"), ("updated", "Updated"),
            ("sla", "SLA"))
 TILES = (("", "Open on my boards", "", "inbox"), ("breached", "SLA breached", "bad", "alert"),
@@ -43,13 +44,14 @@ def _is_mine(ctx, owner) -> bool:
 
 # On a phone (gap 5) the row keeps the summary, the priority and the clocks; the
 # rest folds into a line under the summary, so the list reads as cards.
-SM_HIDE = {"id", "company", "contact", "board", "status", "owner", "age", "updated"}
+SM_HIDE = {"id", "company", "dept", "contact", "board", "status", "owner", "age", "updated"}
 PAGE = 100
 CLOSED_STATES_SQL = "('RESOLVED','CLOSED','CANCELLED')"
 # Sort keys SQL can order by; "sla" needs the clocks and is sorted in Python.
 ORDER_SQL = {
     "id": "t.work_item_id", "summary": "w.name COLLATE NOCASE",
     "company": "e.name COLLATE NOCASE", "contact": "requested_by COLLATE NOCASE",
+    "dept": "COALESCE(t.department, '~') COLLATE NOCASE",      # 079
     "board": "b.display_name COLLATE NOCASE", "status": "COALESCE(s.name, t.state)",
     "pri": "t.priority", "owner": "COALESCE(t.owner, '~') COLLATE NOCASE",
     "age": "t.opened_at", "updated": "COALESCE(t.updated_at, t.opened_at)",
@@ -130,6 +132,12 @@ def _where(ctx, boards, f, tile_ids: dict[str, set]) -> tuple[str, list]:
     elif f["src"] in SOURCES:                   # an older saved view's raw source
         where.append("t.intake_source = ?")
         params.append(f["src"])
+    if f["dept"] and _departments.on_tickets(ctx.conn):    # 079, Dada 12 Oct 2026
+        if f["dept"] == "none":
+            where.append("t.department IS NULL")
+        else:
+            where.append("t.department = ?")
+            params.append(f["dept"])
     needle = f["q"].strip()
     if needle:
         like = _like(needle.lower())
@@ -189,7 +197,7 @@ def _page_of(ctx, boards, f, tile_ids) -> tuple[list, int]:
             reverse=(direction == "desc"))
         page_ids = ranked[offset:offset + PAGE]
     else:
-        if key not in ORDER_SQL:
+        if key not in ORDER_SQL or (key == "dept" and not _departments.on_tickets(ctx.conn)):
             key, direction = "updated", direction or "desc"
         desc = (direction == "desc") != (key == "age") if key != "updated" else direction != "asc"
         tiebreak = "" if ORDER_SQL[key] == "t.work_item_id" else ", t.work_item_id"
@@ -203,7 +211,8 @@ def _page_of(ctx, boards, f, tile_ids) -> tuple[list, int]:
     if not page_ids:
         return [], total
     by_id = {r["work_item_id"]: r for r in ctx.conn.execute(
-        SELECT + FROM + " WHERE t.work_item_id IN (%s)" % ",".join("?" * len(page_ids)),
+        SELECT + (", t.department" if _departments.on_tickets(ctx.conn) else ", NULL AS department")
+        + FROM + " WHERE t.work_item_id IN (%s)" % ",".join("?" * len(page_ids)),
         page_ids)}
     return [_item(by_id[wid], states[wid]) for wid in page_ids], total
 
@@ -229,7 +238,7 @@ def index(ctx):
         # (A fulfiller who is not yet on a board is added on Setup by an admin.)
         return redirect("/my")
     q = ctx.request.query
-    f = {k: q.get(k, "") for k in ("board", "view", "owner", "pri", "src", "type", "q",
+    f = {k: q.get(k, "") for k in ("board", "view", "owner", "pri", "src", "type", "dept", "q",
                                    "tile", "sort", "dir", "msg", "page")}
     f["view"] = f["view"] or "open"
     f["sort"] = f["sort"] or "sla"
@@ -261,6 +270,7 @@ def _sort(rows, key, direction):
         "id": lambda x: x["r"]["work_item_id"],
         "summary": lambda x: (x["r"]["summary"] or "").lower(),
         "company": lambda x: (x["r"]["entity"] or "").lower(),
+        "dept": lambda x: (x["r"]["department"] or "~").lower(),
         "contact": lambda x: (x["r"]["requested_by"] or "").lower(),
         "board": lambda x: x["r"]["board_name"],
         "status": lambda x: x["r"]["status_name"] or x["r"]["state"],
@@ -339,7 +349,7 @@ def _tiles(f, counts) -> str:
     out = []
     for key, label, cls, ic in TILES:
         on = " on" if f["tile"] == key and (key or not any(
-            f[k] for k in ("tile", "owner", "pri", "src", "type", "q"))) else ""
+            f[k] for k in ("tile", "owner", "pri", "src", "type", "dept", "q"))) else ""
         out.append(f"<a class='tile {cls}{on}' href='{t.esc(_link(f, tile=key, view='open'))}'>{t.icon(ic)}"
                    f"<div class=n>{counts[key]}</div><div class=l>{t.esc(label)}</div></a>")
     return "<div class=tiles>" + "".join(out) + "</div>"
@@ -373,10 +383,23 @@ def _filters(ctx, boards, f) -> str:
         + _options([("", "Anywhere")] + list(origin.BUCKETS.items())
                    + ([(f["src"], f["src"].replace("_", "-").title())] if f["src"] in SOURCES
                       and f["src"] not in origin.BUCKETS else []), f["src"]) +
-        "</select></div>"
+        "</select></div>" + _dept_filter(ctx, f) +
         f"<div class=wide style='flex:1'><label>Search</label><input name=q value='{t.esc(f['q'])}' "
         "placeholder='ticket #, summary, contact'></div>"
         f"<div style='min-width:0'><button type=submit>{t.icon('filter')} Filter</button></div></form></div>")
+
+
+def _dept_filter(ctx, f) -> str:
+    """079: the Department filter, beside Came from. Hidden on a store
+    without the column or without a department list."""
+    if not _departments.on_tickets(ctx.conn):
+        return ""
+    names = _departments.live_names(ctx.conn)
+    if f["dept"] and f["dept"] not in ("none", *names):
+        names = [f["dept"]] + names
+    return ("<div><label>Department</label><select name=dept>"
+            + _options([("", "Any"), ("none", "Not set")] + [(n, n) for n in names], f["dept"])
+            + "</select></div>")
 
 
 def _pager(f, shown: int, total: int) -> str:
@@ -461,6 +484,7 @@ def _table(ctx, boards, shown, f, total: int) -> str:
             + "</div>"
             + (f"<div class=last>{t.esc(last)}</div>" if last else "") + "</td>"
             f"<td class=sm-hide title='{t.esc(r['entity'] or '')}'>{t.esc(r['entity_id'] or '—')}</td>"
+            f"<td class='wrap sm-hide'>{common.dept_badge(r['department']) or '—'}</td>"
             f"<td class='muted wrap sm-hide'>{t.esc(r['requested_by'] or '—')}</td>"
             f"<td class='wrap sm-hide'>{t.esc(r['board_name'])}</td>"
             f"<td class=sm-hide>{t.esc(r['status_name'] or r['state'].replace('_', ' ').title())}</td>"

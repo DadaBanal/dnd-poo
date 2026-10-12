@@ -445,6 +445,9 @@ textarea{min-height:90px;resize:vertical;line-height:1.5}
   background:color-mix(in srgb,var(--c) 16%,var(--surface));border:1px solid color-mix(in srgb,var(--c) 55%,transparent)}
 .pill.came .ic{width:12px;height:12px;margin:0;opacity:1;color:var(--c)}
 .came-chat{--c:#14b8a6}.came-portal{--c:#8b5cf6}.came-email{--c:#f59e0b}.came-desk{--c:#64748b}.came-other{--c:#9ca3af}
+.pill.dept{display:inline-flex;align-items:center;gap:4px;font-weight:600;color:var(--ink);--c:#0ea5e9;
+  background:color-mix(in srgb,var(--c) 14%,var(--surface));border:1px solid color-mix(in srgb,var(--c) 50%,transparent)}
+.pill.dept .ic{width:12px;height:12px;margin:0;opacity:1;color:var(--c)}
 a.pill.came:hover{text-decoration:none;background:color-mix(in srgb,var(--c) 28%,var(--surface))}
 /* 078: the portal's tiles (Dada, 9 Oct 2026). Not .tile, which is the desk's figure tiles. */
 .helptiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;margin:0 0 12px}

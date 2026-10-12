@@ -318,13 +318,14 @@ BEGIN
     PRINT N'    psa.ix_chat_file_chat';
     PRINT N'    psa.ix_portal_tile_parent';
     PRINT N'    psa.ix_portal_tile_question_tile';
+    PRINT N'    psa.ix_ticket_department';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  152 tables, 67 indexes, 4 triggers.';
+    PRINT N'  152 tables, 68 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -4464,6 +4465,22 @@ ALTER TABLE psa.[outlook_busy] ADD [private] INT NULL CONSTRAINT [DF_outlook_bus
 IF COL_LENGTH(N'psa.[ticket]', N'portal_tile_id') IS NULL
 ALTER TABLE psa.[ticket] ADD [portal_tile_id] INT NULL CONSTRAINT [FK_ticket_portal_tile_id] REFERENCES psa.[portal_tile]([tile_id]);
 
+-- 079 — the department a ticket is for (Dada, 12 Oct 2026: "can we add a
+-- department mark on each tickets or a column whichever u think is best";
+-- confirmed before building: a column on the Service Board with a filter, a
+-- badge on the ticket, and a dropdown on the desk and on the portal's raise
+-- form, already set to the requester's own department).
+--
+-- A name from Setup › Departments (034), written only when it matches one
+-- there: the portal's dropdown offers that list, an emailed ticket takes the
+-- sender's AD department when it is on it, and the desk's dropdown is the same
+-- list. NULL means not known, and every ticket raised before this step reads
+-- NULL until someone sets it or `ticket-departments --apply` fills it from the
+-- requester's contact. No foreign key: a department is never deleted (034
+-- retires it), and the code checks the name, so the step stays one column.
+IF COL_LENGTH(N'psa.[ticket]', N'department') IS NULL
+ALTER TABLE psa.[ticket] ADD [department] NVARCHAR(400) NULL;
+
 IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
 ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
 
@@ -4687,6 +4704,9 @@ CREATE INDEX [ix_portal_tile_parent] ON psa.[portal_tile] ([parent_id]);
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_portal_tile_question_tile' AND object_id = OBJECT_ID(N'psa.[portal_tile_question]'))
 CREATE INDEX [ix_portal_tile_question_tile] ON psa.[portal_tile_question] ([tile_id]);
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ticket_department' AND object_id = OBJECT_ID(N'psa.[ticket]'))
+CREATE INDEX [ix_ticket_department] ON psa.[ticket] ([department]);
+
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
@@ -4822,10 +4842,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 152 OR @Triggers <> 4 OR @Indexes < 67
+IF @Tables <> 152 OR @Triggers <> 4 OR @Indexes < 68
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 152), %d triggers (expected 4), %d indexes (expected at least 67). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 152), %d triggers (expected 4), %d indexes (expected at least 68). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;

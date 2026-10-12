@@ -158,3 +158,82 @@ def save_grid(conn: sqlite3.Connection, wanted: dict[str, set[str]], *, at: date
         db.audit(conn, at=stamp, actor=actor, action="DEPARTMENT_BOARDS", subject_kind="department",
                  subject_id=None, detail="; ".join(lines))
     return lines
+
+
+# ------------------------------------------------- the ticket's department (079)
+# Dada, 12 Oct 2026: a department mark on every ticket. The name is always one
+# of the list above: the portal and the desk offer it as a dropdown, and an
+# emailed ticket takes the sender's AD department only when it matches one.
+
+def on_tickets(conn: sqlite3.Connection) -> bool:
+    """Whether this store has taken 079. Without it nothing here writes."""
+    return db.column_exists(conn, "ticket", "department") and db.table_exists(conn, "department")
+
+
+def live_names(conn: sqlite3.Connection) -> list[str]:
+    """The names a dropdown offers: every department not retired, A to Z."""
+    if not db.table_exists(conn, "department"):
+        return []
+    return [r["name"] for r in conn.execute("SELECT name FROM department WHERE retired = 0 ORDER BY name")]
+
+
+def _key(name: str | None) -> str:
+    return " ".join(str(name or "").split()).casefold()
+
+
+def match(conn: sqlite3.Connection, name: str | None, *, retired: bool = False) -> str | None:
+    """The department's own name for what was given, ignoring case and spacing;
+    None when it is not on the list (a retired one only when asked)."""
+    want = _key(name)
+    if not want or not db.table_exists(conn, "department"):
+        return None
+    for r in conn.execute("SELECT name, retired FROM department ORDER BY retired, name"):
+        if _key(r["name"]) == want and (retired or not r["retired"]):
+            return r["name"]
+    return None
+
+
+def of_contact(conn: sqlite3.Connection, contact_id: str | None) -> str | None:
+    """The department AD gives the ticket's contact, when it is on the list."""
+    if not contact_id or not db.table_exists(conn, "contact"):
+        return None
+    row = conn.execute("SELECT department FROM contact WHERE contact_id = ?", (contact_id,)).fetchone()
+    return match(conn, row["department"]) if row else None
+
+
+def set_ticket(conn: sqlite3.Connection, work_item_id: str, name: str | None) -> str | None:
+    """Write a new ticket's department, quietly (opening is its own event).
+    Only a name on the list is written; anything else leaves it unknown.
+    Returns what was written."""
+    if not on_tickets(conn):
+        return None
+    dept = match(conn, name)
+    if dept:
+        conn.execute("UPDATE ticket SET department = ? WHERE work_item_id = ?", (dept, work_item_id))
+    return dept
+
+
+def backfill(conn: sqlite3.Connection, *, apply: bool, at: datetime, actor: str) -> dict:
+    """Tickets with no department take their contact's, where AD's matches the
+    list. Counts only: never a name of a person or a summary. Preview unless
+    apply; a second run finds nothing to do."""
+    out = {"ready": on_tickets(conn), "empty": 0, "filled": 0, "unmatched": 0, "by_department": {}}
+    if not out["ready"]:
+        return out
+    rows = conn.execute("SELECT t.work_item_id, c.department FROM ticket t LEFT JOIN contact c"
+                        " ON c.contact_id = t.contact_id WHERE t.department IS NULL").fetchall()
+    out["empty"] = len(rows)
+    for r in rows:
+        dept = match(conn, r["department"])
+        if not dept:
+            out["unmatched"] += 1
+            continue
+        out["filled"] += 1
+        out["by_department"][dept] = out["by_department"].get(dept, 0) + 1
+        if apply:
+            conn.execute("UPDATE ticket SET department = ? WHERE work_item_id = ? AND department IS NULL",
+                         (dept, r["work_item_id"]))
+    if apply and out["filled"]:
+        db.audit(conn, at=_stamp(at), actor=actor, action="TICKET_DEPARTMENT", subject_kind="ticket",
+                 subject_id="*", detail=f"{out['filled']} ticket(s) given their contact's department")
+    return out

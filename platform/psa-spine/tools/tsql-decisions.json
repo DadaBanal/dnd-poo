@@ -1191,6 +1191,7 @@
     "portal_answer.work_item_id": "ID",
     "portal_answer.label": "NAME",
     "portal_answer.value": "FREE",
-    "portal_tile.catalogue_item_id": "ID"
+    "portal_tile.catalogue_item_id": "ID",
+    "ticket.department": "NAME"
   }
 }

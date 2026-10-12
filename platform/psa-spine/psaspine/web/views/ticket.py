@@ -23,6 +23,7 @@ import urllib.parse
 from datetime import timedelta
 
 from ... import board as engine
+from ... import departments as _departments
 from ... import origin as _origin
 from ... import phi, tickets
 from .. import templates as t
@@ -396,7 +397,8 @@ def detail(ctx, work_item_id):
         + "</h1>"
         f"<p class=sub>{t.esc(tk['board_name'])} · "
         + common.came_badge(_origin.one(ctx.conn, wid), link=True) + " · "
-        f"{t.chip(tk['status_name'] or tk['state'].replace('_', ' ').title())} · "
+        + (common.dept_badge(common.dept_of(tk)) + " · " if common.dept_of(tk) else "")
+        + f"{t.chip(tk['status_name'] or tk['state'].replace('_', ' ').title())} · "
         f"{t.badge(tk['priority'])} <span class=why>{t.esc(t.priority_name(tk['priority']))} · {t.esc(why)}</span>"
         + (f" · <span class=pill>{t.esc(klass)}</span>" if klass else "")
         + resources_line + "</p></div>"
@@ -618,7 +620,9 @@ def detail(ctx, work_item_id):
         + ("<input type=hidden name=fields value=1>" if can_work else "")
         + f"<label>Company{REQ if can_work else ''}</label><select name=entity_id{dis}{' required' if can_work else ''}>"
         f"{_options([('', '(choose a company)')] + [(e['entity_id'], e['name']) for e in entities], tk['entity_id'] or '')}</select>"
-        f"<label>Contact</label><input name=requested_by list=contacts-ticket "
+        + (f"<label>Department</label>" + common.dept_select(ctx.conn, common.dept_of(tk), attrs=dis)
+           if _departments.on_tickets(ctx.conn) else "")
+        + f"<label>Contact</label><input name=requested_by list=contacts-ticket "
         f"value='{t.esc(tk['requested_by'] or '')}'{dis}>"
         + _contact_list(ctx.conn, "contacts-ticket", tk["entity_id"]) + person_line
         + _portal_link_button(ctx, tk, can_work)
@@ -1131,7 +1135,8 @@ def update(ctx, work_item_id):
             catalogue_item_id=f.get("catalogue_item_id") if "catalogue_item_id" in f else None,
             record_type=want_type, priority=f.get("priority") or None,
             priority_reason=f.get("priority_reason"),
-            summary=f.get("summary") if "summary" in f else None, **change_fields_from(f))
+            summary=f.get("summary") if "summary" in f else None,
+            department=f.get("department") if "department" in f else None, **change_fields_from(f))
         if f.get("resources_shown") == "1":
             from ... import board as _bd, resources as _resources
             allowed = {m.lower() for m in _bd._working_members(ctx.conn, tk["board_id"])}
@@ -1217,7 +1222,10 @@ def new_form(ctx, *, error: str = "", values: dict | None = None):
         f"<div><label>Source</label><select name=source>{_options(SOURCES, v.get('source', 'PHONE'))}</select></div>"
         "<input type=hidden name=fields value=1>"
         f"<div><label>Company{REQ}</label><select name=entity_id required>{_options([('', '(choose a company)')] + [(e['entity_id'], e['name']) for e in entities], v.get('entity_id', 'PMC'))}</select></div>"
-        f"<div><label>Contact</label><input name=requested_by list=contacts-new value='{t.esc(v.get('requested_by', ''))}' placeholder='start typing a name, or an email'>"
+        + (f"<div><label>Department</label>" + common.dept_select(
+            ctx.conn, v.get("department") or None, blank="(the contact's own, if known)") + "</div>"
+           if _departments.on_tickets(ctx.conn) else "")
+        + f"<div><label>Contact</label><input name=requested_by list=contacts-new value='{t.esc(v.get('requested_by', ''))}' placeholder='start typing a name, or an email'>"
         + _contact_list(ctx.conn, "contacts-new") + "</div>"
         f"<div style='grid-column:1/-1'><label>Summary</label><input name=summary required value='{t.esc(v.get('summary', ''))}' placeholder='What is wrong, in one line'></div>"
         + f"<div>{_type_select(ctx.conn, None, v.get('record_type', ''), required=True)}</div><div></div>"
@@ -1268,7 +1276,7 @@ def new_create(ctx):
             actor=ctx.user.id, description=description or None, entity_id=entity_id,
             owner=f.get("owner", "").strip() or None, source=source, event_kind="OPENED",
             catalogue_item_id=f.get("catalogue_item_id") or None,
-            record_type=f.get("record_type") or None)
+            record_type=f.get("record_type") or None, department=f.get("department") or None)
         if f.get("catalogue_item_id"):
             from ... import approvals as _appr
             _appr.maybe_request(ctx.conn, wid, at=ctx.now, actor=ctx.user.id)

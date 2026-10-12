@@ -70,6 +70,11 @@ def index(ctx):
         return Response(body=t.page("Portal tiles", banners + head + "<div class=card><p>Step 078 is not applied to "
                                     "this store yet, so the portal shows the plain form. Nothing here until it is.</p>"
                                     "</div>", user=ctx.user, active="admin"))
+    bare = pt.without_item(ctx.conn)
+    if bare:     # 12 Oct 2026: a ticket from these arrives with no Type › Subtype › Item
+        banners += ("<div class='banner err'>" + str(len(bare)) + " tile(s) would raise a ticket with no "
+                    "Type › Subtype › Item, so the ticketer has to pick one by hand: "
+                    + t.esc(", ".join(bare)) + ". Give each one below (or its parent) an Item.</div>")
     boards = _boards(ctx)
     rows = pt.tiles(ctx.conn, all_rows=True)
     tops = [r for r in rows if r["parent_id"] is None]
