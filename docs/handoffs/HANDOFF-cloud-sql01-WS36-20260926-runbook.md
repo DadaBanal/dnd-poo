@@ -3529,3 +3529,37 @@ Read back by SQL01:
 - PSA-Notify and PSA-Teams: result 0 at 06:44:44.
 
 **Remaining from Parts 71–76:** the walk-through; *remove inactive users from seats*; encoder's primary address in AD.
+
+### Part 77: 2026-10-12, ~11:00 +08:00. **079 applied, both boards' warm words written, the one-off tidy previewed and held for Dada.** MEASURED.
+
+Applies `docs/handoffs/HANDOFF-cloud-sql01-WS36-20261012-warm-emails-department-079.md`.
+
+- **CI run 90 on `dae80be`: windows, sql-server, test (3.11), test (3.14) all success.** Pulled fast-forward; 0 local-only commits, tree clean.
+- **Backup.** `D:\Backups\PMC_PSA\PMC_PSA_COPYONLY_pre079_20261012-105041.bak`, 113.1 MB, COPY_ONLY with CHECKSUM; `RESTORE VERIFYONLY` reads *the backup set on file 1 is valid*. Ticket count before: **372**.
+- **A control first, and it changed the reading.** `COL_LENGTH(N'psa.ticket', N'ticket_id')` read *absent* — because the key column is `work_item_id`, not `ticket_id`. Re-probed on the real first column: **128**. Only then was "department absent" a measurement rather than a blind method.
+- **PSA-Desk** stopped (`:8085` 401 → down), 079 run, then started (down → 401, Running).
+- **079, one transaction, both statements extracted verbatim from `platform/psa-spine/sqlserver/PMC_PSA_Spine_SqlServer.sql` by line range** (the guarded `ADD [department] NVARCHAR(400) NULL` at 4481–4482 and `CREATE INDEX [ix_ticket_department]` at 4707–4708). Checks inside the transaction, all PASS: column length **800**; index count **1**; `department IS NOT NULL` **0**; ticket count **372**, unchanged; control — a made-up column still reads absent. **COMMITTED.**
+- **Board words, preview then apply, under `EXECUTE AS psa_desk`** (the desk's dbo guard refuses the CLI under a sysadmin login, as for Parts 66–78). Neither preview held a `~` line, so both were applied:
+  - `IT_HELP` / `HELPDESK`: *Wrote 15 email(s); 2 already so; 0 kept as the board wrote them; 0 left on the desk's words.*
+  - `PROCUREMENT` / `PROCUREMENT`: *Wrote 18 email(s); 0 already so; 0 kept as the board wrote them; 1 left on the desk's words.*
+  - **Not touched:** whether any status emails at all.
+- **One harness fault of SQL01's own, worth keeping.** The first apply raised `No results. Previous SQL was not a query.` from `outbox.set_template`. Cause: SQL01's impersonation harness built `mssql.Connection` directly and so skipped the `SET NOCOUNT ON; SET XACT_ABORT OFF` that `mssql.connect` sets; without NOCOUNT the port's `<stmt>; SELECT @@ROWCOUNT` batch yields the count second and the fetch fails. **Not a defect in the build.** `mail_template` read **0 rows** afterwards, so the transaction had rolled back whole. Fixed in the harness, both previews re-run identically, then applied.
+
+**Two things for Cloud Build, neither blocking:**
+
+1. **`IT_HELP` / *Status Resolved* reads `+` on every run**, so the handoff's *"a second run reads `Wrote 0 email(s)`"* does not hold for that one line (it reads *Would write 1*). **Not a data fault:** `outbox._set_mail` stores NULL words when the words asked for equal the desk's own defaults (line 550, deliberate), so the row never reads `custom` and the preview re-offers it. MEASURED: stored subject and body are **character-for-character equal** to the words wanted, and `status_mail` for `IT_HELP` holds **14 rows, exactly 1 of them with NULL words**. `PROCUREMENT` settles at *Would write 0*.
+2. **The tidy's department half can fill nothing on this desk.** `departments.backfill` joins `ticket` to `contact` on `contact_id`. MEASURED: `psa.department` holds **52** rows, `psa.contact` holds **0**. So every ticket stays unset, and departments will only arrive on new tickets from AD.
+
+**Step 6 (`ticket-fill`) previewed and NOT applied** — the handoff says Dada sees it first. Preview, whole:
+
+```
+department: 373 ticket(s) with none; 0 take their contact's; 373 stay unset (no contact, or AD's department is not on Setup > Departments)
+company: 46 ticket(s) under UNCLASSIFIED -> PMC
+portal tiles with no Type > Subtype > Item: 0
+```
+
+(373, not 372: one ticket arrived during the step.)
+
+**After the step:** PSA-Notify and PSA-Teams both result 0 at 11:00 (*0 due: 0 sent, 0 failed*); PSA-Desk Running, `:8085` 401.
+
+**Waiting on Dada:** his word on the `ticket-fill` preview above, then SQL01 runs it with `--apply`. Then the eyes-on checks: the Department column and filter on the board, the badge on a ticket, the portal's *Which department is this for?* on a ward PC, and the next requester email on either board reading like a person wrote it.
