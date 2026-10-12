@@ -3563,3 +3563,18 @@ portal tiles with no Type > Subtype > Item: 0
 **After the step:** PSA-Notify and PSA-Teams both result 0 at 11:00 (*0 due: 0 sent, 0 failed*); PSA-Desk Running, `:8085` 401.
 
 **Waiting on Dada:** his word on the `ticket-fill` preview above, then SQL01 runs it with `--apply`. Then the eyes-on checks: the Department column and filter on the board, the badge on a ticket, the portal's *Which department is this for?* on a ward PC, and the next requester email on either board reading like a person wrote it.
+
+**Part 77, ruling (12 Oct 2026): a ticket's department is never backfilled.** Dada, on reading the `ticket-fill` preview: *"thje departments should only come from when it gets picked up from the requests portal direct emailing the ticket tech or the member will add their dept manually"*.
+
+So a department is written at one of three doors only:
+1. the requests portal's dropdown when the ticket is raised;
+2. an emailed ticket, from the sender's own AD department, when it is on Setup › Departments;
+3. a member typing it on the desk.
+
+**MEASURED: the build already does exactly these three.** `tickets.py` (~588) takes the department the door was told, else `departments.of_contact` for the contact. The extra is `departments.backfill`, which `ticket-fill` calls — **that is what the ruling removes.**
+
+- **`ticket-fill` is therefore NOT applied, in any part.** The 46 `UNCLASSIFIED -> PMC` company moves stay pending with it, since the one command does both.
+- Handed to WS36 (cloud, one-way): take the department half out of `ticket-fill` or gate it so it can never write; say whether the company half becomes its own command. Also sent: the `IT_HELP` *Resolved* `+` line, and that the handoff's `ticket_id` control cannot work because the key column is `work_item_id`.
+- The ruling costs nothing today in any case: `psa.contact` holds **0** rows against `psa.department`'s **52**, so `backfill` would have filled 0 tickets.
+
+**Waiting on Dada:** nothing on departments. Open: whether the 46 old tickets under UNCLASSIFIED should move to PMC once WS36 splits that out.
