@@ -3578,3 +3578,17 @@ So a department is written at one of three doors only:
 - The ruling costs nothing today in any case: `psa.contact` holds **0** rows against `psa.department`'s **52**, so `backfill` would have filled 0 tickets.
 
 **Waiting on Dada:** nothing on departments. Open: whether the 46 old tickets under UNCLASSIFIED should move to PMC once WS36 splits that out.
+
+**Part 77, applied (12 Oct 2026, ~11:15 +08:00): the 46 UNCLASSIFIED tickets are on PMC. MEASURED.** Dada: *"those unclassified move them to premiere medical center"*.
+
+- **The company half ONLY.** `board.fill_company` was called on its own; `departments.backfill` was **not called at all**, per the ruling above. Run under `EXECUTE AS psa_desk`, one transaction, verify gate inside it.
+- **Backup first:** `D:\Backups\PMC_PSA\PMC_PSA_COPYONLY_pre_company_move_20261012-111455.bak`, COPY_ONLY with CHECKSUM, `RESTORE VERIFYONLY` valid.
+- **Measured against the right column.** The company is on `work_item.entity_id`, not on `ticket` — read from `board.fill_company` itself, not assumed.
+- **Before:** 373 tickets, 46 under `UNCLASSIFIED`, 317 under `PMC`, 0 with a department. Control: a made-up company id reads 0, so the counts are counts and not a blind method.
+- **Checks, all PASS:** under `UNCLASSIFIED` fell by 46 to **0**; under `PMC` rose by 46 to **363**; ticket count **373**, unchanged; **0** departments written, so the ruling held; control still 0. **COMMITTED.**
+- **Audit:** one `TICKET_COMPANY` row, *46 ticket(s) UNCLASSIFIED -> PMC*.
+- **A second run finds nothing** (*0 ticket(s)*).
+- **Worth knowing, not a fault:** the desk's 373 tickets are now **PMC 363** and **JRBY-CI 10**. JRBY-CI was never under the catch-all and was not touched.
+- **After:** PSA-Desk Running, `:8085` 401; PSA-Notify result 0 at 11:15.
+
+**Still waiting on WS36 (cloud, one-way):** take the department half out of `ticket-fill`, so the command cannot backfill. Until then `ticket-fill` is not to be run at all — the company half is done and the department half is ruled out.
