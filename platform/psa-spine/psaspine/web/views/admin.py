@@ -79,7 +79,8 @@ def index(ctx):
             "And the machine credentials: one board and one scope each, minted here and shown once.</p>"
             f"<div class=row><div style='flex:0 0 auto'><a class=btn href='/admin/audit'>Audit ({n_audit})</a></div>"
             f"<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/api-tokens'>API tokens ({n_tokens} live)</a></div>"
-            "<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/mail'>Email connector</a></div></div></div>")
+            "<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/mail'>Email connector</a></div>"
+            "<div style='flex:0 0 auto'><a class='btn ghost' href='/admin/mms-reports'>MMS reports</a></div></div></div>")
         n_items = ctx.conn.execute("SELECT COUNT(*) FROM catalogue_item").fetchone()[0]
         cards.append(
             "<div class=card><h3><svg class=ic aria-hidden=true><use href=#i-layers></use></svg>Boards and the service catalogue</h3>"
@@ -2210,3 +2211,73 @@ def remove_auto_assign_rule(ctx, board_id):
         ctx.conn.rollback()
         return _done(board_id, "assign", f"Not removed: {exc}")
     return _done(board_id, "assign", "Rule removed")
+
+
+# ------------------------------------------------------ Setup › MMS reports
+#
+# The catalogue of the report server's MMS reports (082): the title a person
+# reads, the Procurement area whose See level shows it, whether it shows, its
+# order; and a button to read the server's list now.
+
+def mms_reports_setup(ctx):
+    from .. import Response
+    from ... import mms_reports
+    common.require_sysadmin(ctx)
+    q = ctx.request.query
+    if not mms_reports.ready(ctx.conn):
+        body = ("<h1>MMS reports</h1><p class=sub>Schema 082 is not applied on this store yet; nothing to set.</p>")
+        return Response(body=t.page("MMS reports", body, user=ctx.user, active="admin"))
+    rows = ctx.conn.execute("SELECT * FROM mms_report ORDER BY present DESC, area, COALESCE(sort_no, 9999), title").fetchall()
+    last = ctx.conn.execute("SELECT occurred_at AS at, detail FROM audit_event WHERE action = 'MMS_REPORTS_SYNC'"
+                            " ORDER BY audit_id DESC LIMIT 1").fetchone()
+    trs = "".join(
+        f"<tr{' style=opacity:.55' if not r['present'] else ''}><td><form id='r{r['report_id']}' method=post action='/admin/mms-reports/{r['report_id']}/save'></form>"
+        f"<input form='r{r['report_id']}' name=title value='{t.esc(r['title'])}' maxlength=200 aria-label='Title'><div class=muted>{t.esc(r['name'])}"
+        + ("" if r["present"] else " · no longer listed by the server") + "</div></td>"
+        f"<td><select form='r{r['report_id']}' name=area aria-label='Area'>"
+        + "".join(f"<option value={a}{' selected' if a == r['area'] else ''}>{t.esc(w)}</option>" for a, w in mms_reports.AREA_WORDS.items())
+        + "</select></td>"
+        f"<td><label><input form='r{r['report_id']}' type=checkbox name=shown value=1{' checked' if r['shown'] else ''}> shown</label></td>"
+        f"<td><input form='r{r['report_id']}' type=number name=sort_no value='{t.esc(str(r['sort_no'] or ''))}' style='width:80px' aria-label='Order'></td>"
+        f"<td class=muted>{t.esc(', '.join(mms_reports.params_summary(r)) or '—')}</td>"
+        f"<td><button form='r{r['report_id']}' class='ghost small' type=submit>Save</button></td></tr>" for r in rows)
+    body = ((f"<div class='banner ok'>{t.esc(q.get('msg', ''))}</div>" if q.get("msg") else "")
+            + (f"<div class='banner err'>{t.esc(q.get('err', ''))}</div>" if q.get("err") else "")
+            + "<h1>MMS reports</h1><p class=sub>The report server's reports as the desk lists them under Procurement › Reports. "
+              "Give each a title a person reads, put it in the area whose <i>See</i> level should show it, hide one, or order "
+              "them. The reports themselves live on the report server and are not changed here. <a href='/admin'>Setup</a></p>"
+            + "<div class=card><form method=post action='/admin/mms-reports/sync' class=row style='align-items:center'>"
+              "<div style='flex:1 1 auto' class=muted>" + (f"Last read: {t.esc(last['at'])} · {t.esc(last['detail'])}" if last else "Not read yet.") + "</div>"
+              f"<div style='flex:0 0 auto'><button class=ghost type=submit>{t.icon('arrow')} Read the server's list now</button></div></form></div>"
+            + "<div class=card><div class=tablewrap><table><thead><tr><th>Title · server name</th><th>Area</th><th></th><th>Order</th><th>Asks</th><th></th></tr></thead>"
+              f"<tbody>{trs or '<tr><td colspan=6 class=muted>Nothing listed yet.</td></tr>'}</tbody></table></div></div>")
+    return Response(body=t.page("MMS reports", body, user=ctx.user, active="admin"))
+
+
+def mms_reports_sync(ctx):
+    from .. import redirect
+    from ... import mms_reports, ssrs
+    from . import procurement as procurement_view
+    common.require_sysadmin(ctx)
+    try:
+        reports = procurement_view._ssrs().list_reports()
+        counts = mms_reports.sync(ctx.conn, reports, at=ctx.now, actor=ctx.user.id, apply=True)
+    except (ssrs.Refused, ssrs.ServerError) as exc:
+        ctx.conn.rollback()
+        return redirect("/admin/mms-reports?" + urllib.parse.urlencode({"err": f"Not read: {exc}"}))
+    return redirect("/admin/mms-reports?" + urllib.parse.urlencode({"msg": counts["words"]}))
+
+
+def mms_reports_save(ctx, report_id):
+    from .. import redirect
+    from ... import mms_reports, ssrs
+    common.require_sysadmin(ctx)
+    f = ctx.request.form()
+    try:
+        words = mms_reports.set_report(ctx.conn, int(report_id) if str(report_id).isdigit() else -1, at=ctx.now, actor=ctx.user.id,
+                                       title=f.get("title"), area=f.get("area"), shown=f.get("shown") == "1", sort_no=f.get("sort_no", ""))
+        ctx.conn.commit()
+    except ssrs.Refused as exc:
+        ctx.conn.rollback()
+        return redirect("/admin/mms-reports?" + urllib.parse.urlencode({"err": f"Not saved: {exc}"}))
+    return redirect("/admin/mms-reports?" + urllib.parse.urlencode({"msg": f"Report {report_id}: {words}"}))

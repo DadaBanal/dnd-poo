@@ -1217,6 +1217,21 @@
     "ext_lookup.list": "CODE",
     "ext_lookup.code": "NAME",
     "ext_lookup.label": "NAME",
-    "ext_lookup.synced_at": "TIMESTAMP_TEXT"
+    "ext_lookup.synced_at": "TIMESTAMP_TEXT",
+    "mms_report.path": "REF",
+    "mms_report.name": "NAME",
+    "mms_report.title": "NAME",
+    "mms_report.description": "FREE",
+    "mms_report.area": "CODE",
+    "mms_report.params_json": "FREE",
+    "mms_report.synced_at": "TIMESTAMP_TEXT",
+    "mms_report.title_set_by": "PERSON",
+    "mms_report.area_set_by": "PERSON",
+    "mms_report_run.member": "PERSON",
+    "mms_report_run.ran_at": "TIMESTAMP_TEXT",
+    "mms_report_run.format": "CODE",
+    "mms_report_run.params_json": "FREE",
+    "mms_report_run.outcome": "CODE",
+    "mms_report_run.message": "FREE"
   }
 }

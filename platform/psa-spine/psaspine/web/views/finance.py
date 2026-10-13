@@ -94,13 +94,15 @@ def _ref_link(kind: str, ref, area: str = "finance") -> str:
     return f"<a href='{t.esc(_url(kind, ref, area))}'>{t.esc(ref)}</a>" if ref else ""
 
 
-def _cell(rec, field, area: str = "finance") -> str:
+def _cell(rec, field, area: str = "finance", labels: dict | None = None) -> str:
     v = rec[field]
     if field == "agreement_ref":
         return f"<td>{_ref_link('agreement', v, area)}</td>"
     if field in ("amount", "total", "unit_cost"):
         cur = rec["currency"] if "currency" in rec.keys() else None
         return f"<td class=num>{t.esc(_money(v, cur))}</td>"
+    if labels and field in labels:
+        return f"<td>{t.esc(bizbox.word(labels, field, v))}</td>"
     return f"<td>{t.esc(v or '')}</td>"
 
 
@@ -150,14 +152,17 @@ def _changes_table(ctx, rows, *, with_record: bool = True, pending_word: str = "
     back = {v: k for k, v in bizbox.LINK_KIND.items()}
     words = {"PENDING": pending_word, "APPLIED": "Applied in BizBox", "REJECTED": "Refused by BizBox",
              "CANCELLED": "Cancelled"}
-    trs = []
+    trs, labels = [], {}
     for c in rows:
         kind = back[c["kind"]]
+        if kind not in labels:
+            labels[kind] = bizbox.labels_for(ctx.conn, kind)
         rec = (f"<td>{ONE[kind]} {_ref_link(kind, c['ext_ref'])}</td>" if with_record else "")
         cancel = (f"<form method=post action='/finance/change/{c['change_id']}/cancel' class=inline>"
                   "<button class='ghost small' type=submit>Cancel</button></form>" if can and c["status"] == "PENDING" else "")
         trs.append(f"<tr><td>#{c['change_id']}</td>{rec}<td>{t.esc(bizbox.FIELD_WORDS.get(c['field'], c['field']))}</td>"
-                   f"<td>{t.esc(c['old_value'] or '—')} → <b>{t.esc(c['new_value'] or '—')}</b></td>"
+                   f"<td>{t.esc(bizbox.word(labels[kind], c['field'], c['old_value']) or '—')} → "
+                   f"<b>{t.esc(bizbox.word(labels[kind], c['field'], c['new_value']) or '—')}</b></td>"
                    f"<td>{t.esc(c['reason'])}</td><td>{t.esc(c['requested_by'])}<div class=muted>{t.esc(c['requested_at'])}</div></td>"
                    f"<td>{t.chip(words[c['status']])}" + (f"<div class=muted>{t.esc(c['answer'])}</div>" if c["answer"] else "")
                    + f"</td><td>{cancel}</td></tr>")
@@ -205,17 +210,18 @@ def index(ctx):
     summary = ""
     if kind in TILED:
         summary = ("<div class='tiles' style='grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:12px'>"
-                   + "".join(f"<div class=tile><div class=l>{t.esc(s['status'])}</div><div class=n>{s['n']}</div>"
+                   + "".join(f"<div class=tile><div class=l>{t.esc(bizbox.word(bizbox.labels_for(ctx.conn, kind), 'status', s['status']))}</div><div class=n>{s['n']}</div>"
                              f"<div class=muted>{t.esc(_money(s['total'] or 0, 'PHP'))}</div></div>"
                              for s in bizbox.summary(ctx.conn, kind, q=search, include_absent=absent))
                    + "</div>")
     trs = []
+    labels = bizbox.labels_for(ctx.conn, kind)
     for r in rows:
         n = linked_cell(r["ext_ref"])
         cells = "".join(
             (f"<td>{_ref_link(kind, r['ext_ref'])}"
              + ("" if r["present"] else " <span class=pill>gone from BizBox</span>") + "</td>")
-            if f == "ext_ref" else _cell(r, f) for f, _ in columns)
+            if f == "ext_ref" else _cell(r, f, labels=labels) for f, _ in columns)
         trs.append(f"<tr>{cells}<td>{n}</td></tr>")
     first, last = (page_no - 1) * bizbox.PAGE + 1, min(page_no * bizbox.PAGE, total_n)
     keep = {"tab": kind, "q": search} | ({"absent": "1"} if absent else {})
@@ -305,11 +311,15 @@ def detail(ctx, kind, *, area: str = "finance"):
     rec = bizbox.get(ctx.conn, kind, ext_ref)
     if rec is None:
         raise HttpError("404 Not Found", "No such record in the BizBox mirror.")
+    labels = bizbox.labels_for(ctx.conn, kind)
+
     def fact(f):
         if f == "agreement_ref":
             return _ref_link("agreement", rec[f], area) or "—"
         if f in ("amount", "total", "unit_cost"):
             return t.esc(_money(rec[f], rec["currency"] if "currency" in rec.keys() else None))
+        if f in labels:
+            return t.esc(bizbox.word(labels, f, rec[f]) or "—")
         return t.esc(rec[f] or "—")
     facts = "".join(f"<dt>{t.esc(lab)}</dt><dd>{fact(f)}</dd>" for f, lab in _columns(ctx, kind))
     seen = common.board_ids_for(ctx)

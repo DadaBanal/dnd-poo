@@ -252,6 +252,8 @@ BEGIN
     PRINT N'    psa.portal_answer';
     PRINT N'    psa.ext_batch';
     PRINT N'    psa.ext_lookup';
+    PRINT N'    psa.mms_report';
+    PRINT N'    psa.mms_report_run';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -325,13 +327,16 @@ BEGIN
     PRINT N'    psa.ix_ext_batch_status';
     PRINT N'    psa.ix_ext_change_batch';
     PRINT N'    psa.ix_ext_lookup_list';
+    PRINT N'    psa.ux_mms_report_path';
+    PRINT N'    psa.ix_mms_report_area';
+    PRINT N'    psa.ix_mms_report_run_member';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  154 tables, 72 indexes, 4 triggers.';
+    PRINT N'  156 tables, 75 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -3932,6 +3937,53 @@ CREATE TABLE psa.[ext_lookup] (
 END;
 
 -- --------------------------------------------------------------------------
+-- mms_report   (from schema/082_mms_reports.sql)
+IF OBJECT_ID(N'psa.[mms_report]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[mms_report] (
+    [report_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_mms_report] PRIMARY KEY,
+    [path] NVARCHAR(400) NOT NULL,
+    [name] NVARCHAR(400) NOT NULL,
+    [title] NVARCHAR(400) NOT NULL,
+    [description] NVARCHAR(MAX) NULL,
+    [area] NVARCHAR(32) NOT NULL CONSTRAINT [CK_mms_report_01] CHECK (area IN ('purchase_order', 'invoice', 'product')),
+    [shown] INT NOT NULL CONSTRAINT [DF_mms_report_shown] DEFAULT (1) CONSTRAINT [CK_mms_report_02] CHECK (shown IN (0, 1)),
+    [sort_no] INT NULL,
+    [params_json] NVARCHAR(MAX) NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_mms_report_present] DEFAULT (1) CONSTRAINT [CK_mms_report_03] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+    [title_set_by] NVARCHAR(200) NULL,
+    [area_set_by] NVARCHAR(200) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- mms_report_run   (from schema/082_mms_reports.sql)
+IF OBJECT_ID(N'psa.[mms_report_run]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[mms_report_run] (
+    [run_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_mms_report_run] PRIMARY KEY,
+    [report_id] INT NOT NULL CONSTRAINT [FK_mms_report_run_report_id] REFERENCES psa.[mms_report]([report_id]),
+    [member] NVARCHAR(200) NOT NULL,
+    [ran_at] NVARCHAR(64) NOT NULL,
+    [format] NVARCHAR(32) NOT NULL CONSTRAINT [CK_mms_report_run_01] CHECK (format IN ('PDF', 'EXCELOPENXML')),
+    [params_json] NVARCHAR(MAX) NULL,
+    [outcome] NVARCHAR(32) NOT NULL CONSTRAINT [CK_mms_report_run_02] CHECK (outcome IN ('OK', 'ERROR')),
+    [message] NVARCHAR(MAX) NULL,
+    [bytes] INT NULL,
+    [millis] INT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [ran_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [ran_at], 126), CASE WHEN [ran_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [ran_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -4819,6 +4871,15 @@ CREATE INDEX [ix_ext_change_batch] ON psa.[ext_change] ([batch_id]);
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_lookup_list' AND object_id = OBJECT_ID(N'psa.[ext_lookup]'))
 CREATE INDEX [ix_ext_lookup_list] ON psa.[ext_lookup] ([source_id], [list], [present]);
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_mms_report_path' AND object_id = OBJECT_ID(N'psa.[mms_report]'))
+CREATE UNIQUE INDEX [ux_mms_report_path] ON psa.[mms_report] ([path]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_mms_report_area' AND object_id = OBJECT_ID(N'psa.[mms_report]'))
+CREATE INDEX [ix_mms_report_area] ON psa.[mms_report] ([area], [shown], [present]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_mms_report_run_member' AND object_id = OBJECT_ID(N'psa.[mms_report_run]'))
+CREATE INDEX [ix_mms_report_run_member] ON psa.[mms_report_run] ([member], [report_id], [ran_at]);
+
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
@@ -4954,10 +5015,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 154 OR @Triggers <> 4 OR @Indexes < 72
+IF @Tables <> 156 OR @Triggers <> 4 OR @Indexes < 75
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 154), %d triggers (expected 4), %d indexes (expected at least 72). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 156), %d triggers (expected 4), %d indexes (expected at least 75). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -5017,6 +5078,8 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[mms_report_run];
+    DROP TABLE IF EXISTS psa.[mms_report];
     DROP TABLE IF EXISTS psa.[ext_lookup];
     DROP TABLE IF EXISTS psa.[ext_batch];
     DROP TABLE IF EXISTS psa.[portal_answer];

@@ -155,6 +155,23 @@ If a value is forced in another way, the desk refuses it with *That is not a sta
 pick one from the list*, and no batch is opened. A date must be a real date; an amount must be a number; a line's
 item must be an item BizBox has.
 
+## 5a. MMS reports: run one, read it on the page, or take the Excel
+
+**Procurement › Reports** lists the hospital's MMS reports (stock on hand, reorder points, purchases by vendor,
+receiving, issued supplies and the rest), grouped by area. You see the areas your role allows. Search by a word in
+the title.
+
+1. Click a report. Its page asks for what the report needs: dates, a warehouse group, a warehouse, yes or no. Lists
+   come from the report server itself, so you can only pick what it knows.
+2. When a list depends on another (the warehouse on the warehouse group), choose the first and the second fills in.
+   If it does not, click **Refresh choices**.
+3. **Run and show the PDF.** The report appears on the page. **Open in a new tab** shows it larger or prints it;
+   **Download Excel** saves a workbook with the same values.
+4. Next time, the page opens with the values you used last.
+
+If the page says the report server refused the desk's sign-in or could not be reached, nothing is wrong with your
+values: tell Dada, who tells SQL01. Every run is logged, so a report you ran can always be found again.
+
 ## 6. What your role lets you do in Procurement
 
 Procurement has three areas, as BizBox grants purchasing, receiving and inventory separately: **Purchase orders**,

@@ -184,6 +184,12 @@ def main(argv: list[str] | None = None) -> int:
                      help="read the mapped views through the read-only connection string in PSA_BIZBOX_ODBC")
     pbz.add_argument("--apply", action="store_true", help="write; without it nothing is changed")
 
+    pmr = sub.add_parser("sync-mms-reports",
+                         help="13 Oct 2026: read the report server's folder (PSA_SSRS_URL, PSA_SSRS_FOLDER) into the "
+                              "desk's catalogue of MMS reports; preview unless --apply")
+    pmr.add_argument("database", help=DB_HELP)
+    pmr.add_argument("--apply", action="store_true", help="write; without it nothing is changed")
+
     pbp = sub.add_parser("bizbox-push",
                          help="13 Oct 2026: offer every APPROVED change to the BizBox writer. With "
                               "PSA_BIZBOX_WRITE_ODBC set the writer calls psa.sp_apply_change in BizBox (SQL01's "
@@ -753,6 +759,18 @@ def _run(conn, a) -> int:
             print(f"{kind}: {c['rows']} rows, {c['new']} new, {c['changed']} changed, {c['unchanged']} unchanged, "
                   f"{c['absent']} absent, {c['returned']} returned, {c['skipped']} skipped")
         print("applied" if a.apply else "preview only: nothing was written (add --apply)")
+        return 0
+
+    if a.cmd == "sync-mms-reports":
+        from . import mms_reports, ssrs
+        try:
+            reports = ssrs.Ssrs().list_reports()
+            counts = mms_reports.sync(conn, reports, at=datetime.now(), actor="cli", apply=a.apply)
+        except (ssrs.Refused, ssrs.ServerError) as exc:
+            conn.rollback()
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        print(counts["words"] + ("" if a.apply else " (PREVIEW, nothing written)"))
         return 0
 
     if a.cmd == "bizbox-push":

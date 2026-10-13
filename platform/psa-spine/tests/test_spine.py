@@ -18166,7 +18166,7 @@ class CwShapeTest(unittest.TestCase):
         self.assertEqual((ch["ext_ref"], ch["field"], ch["new_value"]), ("PO-1", "status", "Ordered"))
         # BizBox's own list, once SQL01's lookup view is mapped: labels and all, and the list it names takes over
         folder = self._csvs()
-        (folder / "lookup.csv").write_text("ListName,Code,Label,SortNo\r\npo_status,Approved,Approved,1\r\npo_status,Ordered,Ordered,2\r\n"
+        (folder / "lookup.csv").write_text("ListName,Code,Label,SortNo\r\npo_status,Approved,Approved,1\r\npo_status,Ordered,Ordered from supplier,2\r\n"
                                            "po_status,Shipped,Shipped by supplier,3\r\ncurrency,PHP,Philippine peso,1\r\ncurrency,USD,US dollar,2\r\n",
                                            encoding="utf-8")
         lookup = {"lookup": {"view": "psa.vw_lookup", "columns": {"list": "ListName", "code": "Code", "label": "Label", "sort_no": "SortNo"}}}
@@ -18178,7 +18178,7 @@ class CwShapeTest(unittest.TestCase):
         self.assertEqual(conn.execute("SELECT ext_ref FROM ext_lookup WHERE code = 'Shipped'").fetchone()[0], "po_status:Shipped")
         self.assertIn("5 list entries (5 new)", bizbox.read_words(bizbox.status(conn)["last_result"]))
         self.assertEqual(bizbox.choices(conn, "purchase_order", "status"),
-                         [("Approved", "Approved"), ("Ordered", "Ordered"), ("Shipped", "Shipped by supplier")])
+                         [("Approved", "Approved"), ("Ordered", "Ordered from supplier"), ("Shipped", "Shipped by supplier")])
         self.assertEqual(bizbox.choices(conn, "purchase_order", "currency"), [("PHP", "Philippine peso"), ("USD", "US dollar")])
         self.assertEqual(bizbox.choices_from(conn, "purchase_order", "status"), "BizBox's own list")
         self.assertEqual(bizbox.choices(conn, "invoice", "status"), [("Posted", "Posted")])         # a list not fed stays as seen
@@ -18188,6 +18188,21 @@ class CwShapeTest(unittest.TestCase):
         _, _, page = self._call("GET", "/procurement", cookie=self.alice)
         self.assertIn("<option value='Shipped'>Shipped by supplier</option>", page)
         self.assertIn("Read from BizBox 2026-09-29 10:00 · 5 list entries (5 new)", page)          # the banner, in words
+        # every screen shows the list's word for a stored code, never the code (the category that read 1001)
+        _, _, page = self._call("GET", "/finance", query="tab=purchase_order", cookie=self.alice)
+        self.assertIn("<td>Ordered from supplier</td>", page)                                    # PO-3, a plain cell
+        self.assertNotIn("<td>Ordered</td>", page)
+        _, _, page = self._call("GET", "/procurement/purchase_order", query="ref=PO-3", cookie=self.alice)
+        self.assertIn("<dd>Ordered from supplier</dd>", page)
+        _, _, page = self._call("GET", "/procurement", cookie=self.alice)
+        self.assertIn("<option value='Ordered'>Ordered from supplier</option>", page)             # the filter and the cells
+        _, _, page = self._call("GET", "/procurement/batch/2", cookie=self.alice)
+        self.assertIn("Approved → <b>Shipped by supplier</b>", page)
+        _, h, _ = self._call("POST", "/procurement/purchase_order/add", cookie=self.alice,
+                             form={"vendor": "Vendor A", "currency": "USD", "line1_product_ref": "IT-1", "line1_quantity": "1", "reason": "dollars"})
+        bid = int(dict(h)["Location"].split("Batch+%23")[1].split("+")[0])
+        _, _, page = self._call("GET", f"/procurement/batch/{bid}", cookie=self.alice)
+        self.assertIn("<dt>Currency</dt><dd>US dollar</dd>", page)
         # a second read with the same rows changes nothing; one that drops Shipped marks it absent, and it leaves the list
         self.assertEqual(bizbox.sync(conn, bizbox.read_csv_dir(folder, m), at=self.at, actor="t", apply=True)["lookup"]["unchanged"], 5)
         (folder / "lookup.csv").write_text("ListName,Code,Label,SortNo\r\npo_status,Approved,Approved,1\r\npo_status,Ordered,Ordered,2\r\n", encoding="utf-8")
@@ -18302,6 +18317,237 @@ class CwShapeTest(unittest.TestCase):
         self.assertNotIn("Purchase orders · ", page)
         status, _, _ = self._call("GET", "/finance", cookie=self.alice)
         self.assertTrue(status.startswith("200"), status)                                    # Finance is still Finance's
+
+class MmsReportsTest(unittest.TestCase):
+    """082 (13 Oct 2026): the report server's MMS reports listed by area, their
+    parameters asked of the server, rendered to PDF on the page or Excel as
+    a download, every run logged. The server is a fake transport answering
+    canned SOAP, so nothing here reaches a network."""
+    _cookie_for = WebWSGITest._cookie_for
+    _call = WebWSGITest._call
+    _environ = WebWSGITest._environ
+    _csvs = ModulesTest._csvs
+    _conn = ModulesTest._conn
+    setUp = ModulesTest.setUp
+
+    NS = "http://schemas.microsoft.com/sqlserver/2010/06/30/reporting/reportingservices"
+
+    class Fake:
+        name = "fake"
+
+        def __init__(self, test):
+            self.test, self.calls, self.status = test, [], 200
+
+        def request(self, method, url, *, headers=None, body=None):
+            text = (body or b"").decode("utf-8")
+            self.calls.append((method, url, text))
+            if self.status != 200:
+                return self.status, "text/html", b"<html><head><title>401 Unauthorized</title></head></html>"
+            if url.endswith("/ReportService2010.asmx"):
+                action = (headers or {}).get("SOAPAction", "")
+                if action.endswith('/ListChildren"'):
+                    return 200, "text/xml; charset=utf-8", self.test._list_xml().encode()
+                if action.endswith('/GetItemParameters"'):
+                    group = "<Name>WarehouseGroup</Name><Value>" in text
+                    return 200, "text/xml; charset=utf-8", self.test._params_xml(group).encode()
+                return 500, "text/xml", b"<faultstring>no such action</faultstring>"
+            if "rs%3ACommand=Render" in url or "rs:Command=Render" in url:
+                if "rs%3AFormat=PDF" in url or "rs:Format=PDF" in url:
+                    return 200, "application/pdf", b"%PDF-1.4 fake report"
+                return 200, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", b"PK fake workbook"
+            return 404, "text/html", b"<title>Not found</title>"
+
+    def _list_xml(self):
+        def item(name, path, kind, desc=""):
+            return (f"<CatalogItem><Name>{name}</Name><Path>{path}</Path><TypeName>{kind}</TypeName>"
+                    + (f"<Description>{desc}</Description>" if desc else "") + "<Hidden>false</Hidden></CatalogItem>")
+        items = (item("Sub", "/BizBox MMS Reports/Sub", "Folder")
+                 + item("MMS_PerpetualInventory", "/BizBox MMS Reports/MMS_PerpetualInventory", "Report", "Stock on hand per warehouse")
+                 + item("MMS_ReorderPoint", "/BizBox MMS Reports/MMS_ReorderPoint", "Report")
+                 + item("MMS_PurcSum_ByVendor", "/BizBox MMS Reports/MMS_PurcSum_ByVendor", "Report")
+                 + item("MMS_SumDelReceiving", "/BizBox MMS Reports/Sub/MMS_SumDelReceiving", "LinkedReport")
+                 + item("Shared data", "/BizBox MMS Reports/Shared data", "DataSource"))
+        return (f'<?xml version="1.0"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body>'
+                f'<ListChildrenResponse xmlns="{self.NS}"><CatalogItems>{items}</CatalogItems></ListChildrenResponse></soap:Body></soap:Envelope>')
+
+    def _params_xml(self, group_chosen):
+        def p(name, kind, *, prompt=None, nullable=False, blank=False, multi=False, user=True, deps=(), valid=(), defaults=(), state="HasValidValue", query=False):
+            return (f"<ItemParameter><Name>{name}</Name><ParameterTypeName>{kind}</ParameterTypeName><Nullable>{str(nullable).lower()}</Nullable>"
+                    f"<AllowBlank>{str(blank).lower()}</AllowBlank><MultiValue>{str(multi).lower()}</MultiValue><QueryParameter>false</QueryParameter>"
+                    f"<Prompt>{prompt or name}</Prompt><PromptUser>{str(user).lower()}</PromptUser>"
+                    + ("<Dependencies>" + "".join(f"<Dependency>{d}</Dependency>" for d in deps) + "</Dependencies>" if deps else "")
+                    + f"<ValidValuesQueryBased>{str(query).lower()}</ValidValuesQueryBased>"
+                    + ("<ValidValues>" + "".join(f"<ValidValue><Label>{l}</Label><Value>{v}</Value></ValidValue>" for l, v in valid) + "</ValidValues>" if valid else "")
+                    + ("<DefaultValues>" + "".join(f"<Value>{d}</Value>" for d in defaults) + "</DefaultValues>" if defaults else "")
+                    + f"<State>{state}</State></ItemParameter>")
+        body = (p("DateFrom", "DateTime", prompt="From", defaults=("2026-10-01T00:00:00",))
+                + p("DateTo", "DateTime", prompt="To")
+                + p("WarehouseGroup", "String", prompt="Warehouse group", valid=(("Main stores", "G1"), ("Pharmacy", "G2")), query=True)
+                + p("Warehouse", "String", prompt="Warehouse", multi=True, deps=("WarehouseGroup",), query=True,
+                    valid=(("Central store", "W1"), ("Ward 3 store", "W2")) if group_chosen else (),
+                    state="HasValidValue" if group_chosen else "HasOutstandingDependencies")
+                + p("IncludeZero", "Boolean", prompt="Include zero stock", defaults=("false",))
+                + p("Note", "String", prompt="Note", nullable=True)
+                + p("Internal", "String", user=False, defaults=("x",)))
+        return (f'<?xml version="1.0"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body>'
+                f'<GetItemParametersResponse xmlns="{self.NS}"><Parameters>{body}</Parameters></GetItemParametersResponse></soap:Body></soap:Envelope>')
+
+    def _client(self):
+        from psaspine import ssrs
+        from psaspine.web.views import procurement
+        fake = self.Fake(self)
+        client = ssrs.Ssrs("http://reports.test/ReportServer", "/BizBox MMS Reports", fake)
+        procurement.SSRS_FACTORY = lambda: client
+        self.addCleanup(setattr, procurement, "SSRS_FACTORY", None)
+        return client, fake
+
+    def _catalogue(self):
+        from psaspine import mms_reports
+        client, fake = self._client()
+        conn = self._conn()
+        counts = mms_reports.sync(conn, client.list_reports(), at=self.at, actor="root")
+        return conn, client, fake, counts
+
+    def test_the_catalogue_is_the_servers_folder_in_words_by_area(self):
+        from psaspine import mms_reports, ssrs
+        conn, client, fake, counts = self._catalogue()
+        self.assertEqual((counts["rows"], counts["new"]), (4, 4))                           # the folder and the data source are not reports
+        self.assertIn("4 reports listed: 4 new", counts["words"])
+        rows = {r["name"]: r for r in conn.execute("SELECT * FROM mms_report")}
+        self.assertEqual(rows["MMS_PerpetualInventory"]["title"], "Perpetual inventory")
+        self.assertEqual(rows["MMS_PerpetualInventory"]["description"], "Stock on hand per warehouse")
+        self.assertEqual({n: r["area"] for n, r in rows.items()},
+                         {"MMS_PerpetualInventory": "product", "MMS_ReorderPoint": "product",
+                          "MMS_PurcSum_ByVendor": "purchase_order", "MMS_SumDelReceiving": "invoice"})
+        self.assertEqual(ssrs.humanise("MMS_ItemInventoryBalancePerDept"), "Item inventory balance per department")
+        # a second read changes nothing; a report gone from the server is kept, marked absent; a set title survives
+        mms_reports.set_report(conn, rows["MMS_ReorderPoint"]["report_id"], at=self.at, actor="root", title="Reorder point (critical items)")
+        conn.commit()
+        again = mms_reports.sync(conn, client.list_reports(), at=self.at, actor="root")
+        self.assertEqual((again["new"], again["unchanged"], again["absent"]), (0, 4, 0))
+        fewer = [r for r in client.list_reports() if r.name != "MMS_PurcSum_ByVendor"]
+        gone = mms_reports.sync(conn, fewer, at=self.at, actor="root")
+        self.assertEqual(gone["absent"], 1)
+        self.assertEqual(conn.execute("SELECT present FROM mms_report WHERE name = 'MMS_PurcSum_ByVendor'").fetchone()[0], 0)
+        self.assertEqual(conn.execute("SELECT title FROM mms_report WHERE name = 'MMS_ReorderPoint'").fetchone()[0], "Reorder point (critical items)")
+        # the map is read from the environment, never the repo; a bad address is refused in a sentence
+        with self.assertRaises(ssrs.Refused):
+            ssrs.Ssrs("", "/x", fake)
+        with self.assertRaises(ssrs.Refused):
+            ssrs.Ssrs("ftp://x/ReportServer", "/x", fake)
+        # the CLI preview reads the server through the environment and writes nothing
+        import contextlib, io as _io, os as _os
+        from unittest import mock
+        from psaspine import ssrs as _ssrs
+        from psaspine.__main__ import main
+        out = _io.StringIO()
+        with mock.patch.dict(_os.environ, {"PSA_SSRS_URL": "http://reports.test/ReportServer"}), \
+                mock.patch.object(_ssrs, "transport", lambda: fake), contextlib.redirect_stdout(out):
+            self.assertEqual(main(["sync-mms-reports", self.db_path]), 0)
+        self.assertIn("PREVIEW", out.getvalue())
+
+    def test_the_reports_tab_lists_by_area_and_the_report_page_asks_the_server_and_shows_the_pdf(self):
+        from psaspine import mms_reports, security
+        conn, client, fake, _ = self._catalogue()
+        conn.commit()
+        rid = conn.execute("SELECT report_id FROM mms_report WHERE name = 'MMS_PerpetualInventory'").fetchone()[0]
+        po = conn.execute("SELECT report_id FROM mms_report WHERE name = 'MMS_PurcSum_ByVendor'").fetchone()[0]
+        # the tab, by area, with the count on it
+        _, _, page = self._call("GET", "/procurement", query="tab=reports", cookie=self.alice)
+        self.assertIn("Reports · 4", page)
+        for words in ("Items and stock · 2", "Purchase orders · 1", "Receiving · 1", "Perpetual inventory", "Stock on hand per warehouse",
+                      f"href='/procurement/report/{rid}'", "Every run is logged"):
+            self.assertIn(words, page, words)
+        _, _, page = self._call("GET", "/procurement", query="tab=reports&q=reorder", cookie=self.alice)
+        self.assertIn("Reorder point", page)
+        self.assertNotIn("Perpetual inventory", page)
+        self.assertIn('href="/procurement?tab=reports"', self._call("GET", "/", cookie=self.alice)[2])
+        # the report page: the server's parameters as controls; the child dropdown waits for its parent
+        _, _, page = self._call("GET", f"/procurement/report/{rid}", cookie=self.alice)
+        for words in ("<h1>Perpetual inventory</h1>", "<label>From</label>", "type=date name='p.DateFrom' value='2026-10-01'",
+                      "<select name='p.WarehouseGroup' data-param='p.WarehouseGroup'>", "<option value='G2'>Pharmacy</option>",
+                      "name='p.Warehouse' multiple", "Choose the fields above first", "<label>Include zero stock</label>",
+                      "name='p.Note.null'", "Refresh choices", "Run and show the PDF"):
+            self.assertIn(words, page, words)
+        self.assertNotIn("p.Internal", page)                                                       # not asked of a person
+        self.assertEqual(len([c for c in fake.calls if "GetItemParameters" in c[2]]), 2)           # once bare, once with the defaults
+        # choosing the group refreshes the child's choices from the server
+        _, _, page = self._call("GET", f"/procurement/report/{rid}", query="p.DateFrom=2026-10-01&p.WarehouseGroup=G1&refresh=1", cookie=self.alice)
+        self.assertIn("<option value='W2'>Ward 3 store</option>", page)
+        self.assertIn("<option value='G1' selected>Main stores</option>", page)
+        self.assertIn("<Name>WarehouseGroup</Name><Value>G1</Value>", fake.calls[-1][2])
+        # a run with something missing says what; a run with everything shows the PDF embedded and logs it
+        _, _, page = self._call("GET", f"/procurement/report/{rid}", query="p.DateFrom=2026-10-01&p.WarehouseGroup=G1&run=1", cookie=self.alice)
+        self.assertIn("Fill in: To, Warehouse.", page)
+        self.assertNotIn("<iframe", page)
+        q = "p.DateFrom=2026-10-01&p.DateTo=2026-10-13&p.WarehouseGroup=G1&p.Warehouse=W1&p.Warehouse=W2&p.IncludeZero=false&p.Note.null=1"
+        _, _, page = self._call("GET", f"/procurement/report/{rid}", query=q + "&run=1", cookie=self.alice)
+        self.assertIn(f"<iframe class=rptframe src='/procurement/report/{rid}/render?", page)
+        self.assertIn("Download Excel", page)
+        self.assertIn("Open in a new tab", page)
+        status, headers, body = self._call("GET", f"/procurement/report/{rid}/render", query=q + "&format=PDF", cookie=self.alice)
+        self.assertEqual(status, "200 OK")
+        h = dict(headers)
+        self.assertEqual(h["Content-Type"], "application/pdf")
+        self.assertTrue(h["Content-Disposition"].startswith('inline; filename="Perpetual-inventory-'), h["Content-Disposition"])
+        self.assertEqual(body, "%PDF-1.4 fake report")
+        url = fake.calls[-1][1]
+        for words in ("rs%3ACommand=Render", "rs%3AFormat=PDF", "DateFrom=2026-10-01", "Warehouse=W1&Warehouse=W2", "Note%3Aisnull=true", "IncludeZero=false"):
+            self.assertIn(words, url, words)
+        self.assertNotIn("Internal", url)
+        status, headers, body = self._call("GET", f"/procurement/report/{rid}/render", query=q + "&format=EXCELOPENXML", cookie=self.alice)
+        self.assertTrue(dict(headers)["Content-Disposition"].startswith('attachment; filename="Perpetual-inventory-'))
+        self.assertTrue(dict(headers)["Content-Disposition"].endswith('.xlsx"'))
+        runs = conn.execute("SELECT member, format, outcome, params_json FROM mms_report_run ORDER BY run_id").fetchall()
+        self.assertEqual([(r["member"], r["format"], r["outcome"]) for r in runs], [("alice", "PDF", "OK"), ("alice", "EXCELOPENXML", "OK")])
+        self.assertIn('"Warehouse": ["W1", "W2"]', runs[0]["params_json"])
+        # the page opens on what this person ran last time, and lists the recent runs
+        _, _, page = self._call("GET", f"/procurement/report/{rid}", cookie=self.alice)
+        self.assertIn("<option value='W2' selected>Ward 3 store</option>", page)
+        self.assertIn("type=date name='p.DateTo' value='2026-10-13'", page)
+        self.assertIn("Recent runs", page)
+        # a server refusal is a sentence on the page and a logged failure, never a stack
+        fake.status = 401
+        status, headers, _ = self._call("GET", f"/procurement/report/{rid}/render", query=q + "&format=PDF", cookie=self.alice)
+        self.assertTrue(status.startswith("303"))
+        self.assertIn("refused+the+desk%27s+sign-in", dict(headers)["Location"])
+        _, _, page = self._call("GET", f"/procurement/report/{rid}", cookie=self.alice)
+        self.assertIn("refused the desk&#x27;s sign-in", page.replace("&#39;", "&#x27;"))
+        self.assertEqual(conn.execute("SELECT outcome FROM mms_report_run ORDER BY run_id DESC LIMIT 1").fetchone()[0], "ERROR")
+        fake.status = 200
+        # rights: a role with See on purchase orders only sees that area's reports and nothing of items
+        role = security.add_role(conn, "Buyer", at=self.at, actor="root")
+        security.save_grants(conn, role, {"PROC_PO": "READ"}, at=self.at, actor="root")
+        security.assign(conn, "alice", role, at=self.at, actor="root")
+        conn.commit()
+        _, _, page = self._call("GET", "/procurement", query="tab=reports", cookie=self.alice)
+        self.assertIn("Reports · 1", page)
+        self.assertIn("Purchase summary by vendor", page)
+        self.assertNotIn("Perpetual inventory", page)
+        self.assertTrue(self._call("GET", f"/procurement/report/{rid}", cookie=self.alice)[0].startswith("403"))
+        self.assertTrue(self._call("GET", f"/procurement/report/{rid}/render", query="format=PDF", cookie=self.alice)[0].startswith("403"))
+        self.assertTrue(self._call("GET", f"/procurement/report/{po}", cookie=self.alice)[0].startswith("200"))
+        # Setup: a title in words, a move between areas, hidden; and reading the server's list from the page
+        status, _, page = self._call("GET", "/admin/mms-reports", cookie=self.root)
+        self.assertEqual(status, "200 OK")
+        self.assertIn("MMS_PerpetualInventory", page)
+        self.assertIn("Asks</th>", page)
+        self.assertIn("From, To, Warehouse group, Warehouse, Include zero stock, Note", page)
+        self.assertTrue(self._call("GET", "/admin/mms-reports", cookie=self.alice)[0].startswith("403"))
+        _, h, _ = self._call("POST", f"/admin/mms-reports/{po}/save", cookie=self.root,
+                             form={"title": "Purchases by vendor", "area": "invoice", "shown": "1", "sort_no": "1"})
+        self.assertIn("title", dict(h)["Location"])
+        _, h, _ = self._call("POST", f"/admin/mms-reports/{rid}/save", cookie=self.root,
+                             form={"title": "Perpetual inventory", "area": "product", "sort_no": ""})
+        self.assertIn("hidden", dict(h)["Location"])
+        _, _, page = self._call("GET", "/procurement", query="tab=reports", cookie=self.root)
+        self.assertIn("Purchases by vendor", page)
+        self.assertNotIn("Perpetual inventory", page)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'MMS_REPORT'").fetchone()[0], 2)
+        _, h, _ = self._call("POST", "/admin/mms-reports/sync", cookie=self.root)
+        self.assertIn("4+reports+listed", dict(h)["Location"])
+        self.assertEqual(conn.execute("SELECT area FROM mms_report WHERE report_id = ?", (po,)).fetchone()[0], "invoice")   # the set area survives a read
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -586,6 +586,8 @@ h1.sumline .sumform{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margi
 .tabs a.on{color:var(--ink);border-color:var(--accent);font-weight:600}
 .tabs{flex-wrap:wrap}.tabs a.order{margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:12.5px;white-space:nowrap}
 .tabs a.order .ic{width:14px;height:14px}
+.rptlist li{padding:8px 0;border-top:1px solid var(--line)}.rptlist li:first-child{border-top:0}.rptlist a.rpt{display:block;color:inherit;text-decoration:none}.rptlist a.rpt:hover b{color:var(--accent);text-decoration:underline}
+.rptframe{display:block;width:100%;height:75vh;min-height:420px;border:1px solid var(--line);border-radius:10px;background:var(--surface);margin-top:10px}
 .stabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
 .stabs a{padding:6px 14px;border-radius:999px;background:var(--surface);border:1px solid var(--line);color:var(--ink-2);font-weight:600;
   transition:background var(--fast) var(--ease),color var(--fast) var(--ease),border-color var(--fast) var(--ease)}
@@ -2992,7 +2994,8 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         # 13 Oct 2026: BizBox's MMS as its own Procurement module (Dada).
         ("procurement", "Procurement", [
             ("procurement", "/procurement", "Procurement", "Purchase orders, receiving, items and vendors from BizBox"),
-            ("pochanges", "/procurement?tab=changes", "Changes to BizBox", "What waits for approval or the push")]),
+            ("pochanges", "/procurement?tab=changes", "Changes to BizBox", "What waits for approval or the push"),
+            ("poreports", "/procurement?tab=reports", "MMS reports", "The report server's reports, as PDF or Excel")]),
         ("reports", "Reports", [
             ("reports", "/reports", "Reports", "KPIs, monthly charts, the writer"),
             ("uplift", "/uplift", "Uplift", "The programme's evidence")]),
@@ -3002,7 +3005,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
     levels = getattr(user, "modules", None) or {}
     gate = {"schedule": "SCHEDULE", "projects": "PROJECTS", "kb": "KNOWLEDGE", "reports": "REPORTS",
             "finance": "FINANCE", "sales": "FINANCE", "time": "TIME", "calendar": "SCHEDULE",
-            "procurement": "PROCUREMENT", "pochanges": "PROCUREMENT"}
+            "procurement": "PROCUREMENT", "pochanges": "PROCUREMENT", "poreports": "PROCUREMENT"}
     groups = [(g, label, [pg for pg in pages if pg[0] not in gate or levels.get(gate[pg[0]], "READ") != "NONE"])
               for g, label, pages in groups]
     # 073: the desk's Chat is for chat operators (Dada, 7 Oct 2026).
@@ -3020,7 +3023,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
     icons = {"admin": "setup", "schedule": "grip", "projects": "layers", "kb": "note", "finance": "tag", "sales": "briefcase",
              "help": "note", "time": "clock", "approvals": "check", "service": "ticket", "configurations": "monitor",
              "chat": "note", "cfgnew": "plus", "cfgcsv": "reports", "cfgtypes": "setup", "cfgint": "link",
-             "procurement": "cart", "pochanges": "checks"}
+             "procurement": "cart", "pochanges": "checks", "poreports": "reports"}
 
     def one(key, href, label, cls="", current=False):
         return (f'<a href="{esc(href)}" title="{esc(label)}" class="{cls}{" on" if current else ""}"'

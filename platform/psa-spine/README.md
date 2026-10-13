@@ -2623,6 +2623,42 @@ inside BizBox*.
 
 Tests: `CwShapeTest`, including the choices and the per-area rights.
 
+## MMS reports on the desk, rendered by the report server (13 Oct 2026, schema 082)
+
+Dada, 13 Oct 2026: *"printing out reports for MMS"*; then, with SQL01's measurement that the 164 reports already exist
+under `/BizBox MMS Reports` on the host's Reporting Services: *"show them on the desk, rendered from SSRS. Don't write new
+reports."* Four choices were put to him: a **Reports tab inside Procurement**; the desk signing in to the report server
+**as its own service account**; **all 164 reports on from day one**; **the PDF on the page, Excel as a download**.
+
+- **The tab** (`/procurement?tab=reports`) lists the catalogue by the three Procurement areas, with a search; a role's
+  *See* on an area shows that area's reports. Each report's title is in words (`ssrs.humanise`), its description is the
+  server's, and the list says what it asks for.
+- **A report's page** (`/procurement/report/<id>`) asks the server for the report's own parameters
+  (`GetItemParameters`, for rendering, with the values chosen so far) and draws them: the server's lists as dropdowns
+  (several at once where the report takes several), a date box, a number, yes/no, text, and a box to leave a nullable
+  one empty. A cascading dropdown refreshes from the server when its parent changes (*Refresh choices*, or by itself
+  with script). The form opens on what that person ran last time, else the server's defaults. A parameter the report
+  does not show a person is never asked.
+- **Run and show the PDF** renders through URL access (`rs:Command=Render`) and embeds the PDF on the page, with *Open
+  in a new tab* and *Download Excel* beside it. The bytes pass through the desk (`/procurement/report/<id>/render`);
+  the browser never talks to the report server. Every run is a row in `mms_report_run`: who, which report, which
+  values, which format, OK or the server's sentence, size and time.
+- **The server's refusal is a sentence**, never a stack: a 401 names what SQL01 grants; a server error carries the
+  server's own message out of its fault or error page.
+- **Setup › MMS reports** (a system administrator): a title in words, the area, shown or hidden, the order; *Read the
+  server's list now*. `psaspine sync-mms-reports <db> [--apply]` is the same read for a scheduled task. A report the
+  server stops listing is kept and marked, so a run's history still names it. A title or area set on Setup survives
+  a read.
+- **How the desk reaches the server.** `PSA_SSRS_URL` (and `PSA_SSRS_FOLDER`, default `/BizBox MMS Reports`) from the
+  host's environment, never the repo. On Windows the request goes through the system's own HTTP stack
+  (`WinHttpRequest` via `pywin32`) with the process identity, so the service account's Windows sign-in reaches the
+  server and no password exists anywhere; elsewhere, or without `pywin32`, Python's own client goes out and a 401 is
+  reported plainly. `ssrs.Transport` is the seam the tests use with canned SOAP.
+- **Nothing is written** to the report server, to BizBox or to the mirror: `ListChildren`, `GetItemParameters` and a
+  render `GET` are the only three things sent.
+
+Tests: `MmsReportsTest`.
+
 ## Changing a booking in place, and your own Outlook entries (9 Oct 2026, schema 077)
 
 Dada, 9 Oct 2026: *"u can dispatch but when changing a schedule there is no modify on calendars and dispatch portal"*,

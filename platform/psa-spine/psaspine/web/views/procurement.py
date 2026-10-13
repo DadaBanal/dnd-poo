@@ -25,6 +25,7 @@ is approved is something BizBox will take.
 """
 from __future__ import annotations
 
+import re
 import urllib.parse
 
 from ... import bizbox, security
@@ -33,7 +34,7 @@ from . import common, finance
 
 AREA = "procurement"
 TABS = (("purchase_order", "Purchase orders"), ("invoice", "Receiving"), ("product", "Products"),
-        ("vendor", "Vendors"), ("changes", "Changes"))
+        ("vendor", "Vendors"), ("changes", "Changes"), ("reports", "Reports"))
 KINDS = ("purchase_order", "invoice", "product")
 NEW_WORDS = {"purchase_order": "New purchase order", "product": "New item"}
 # the column a vendor filter reads, per kind
@@ -79,6 +80,9 @@ def _tabs(ctx, on: str) -> str:
     counts["changes"] = ctx.conn.execute(
         "SELECT COUNT(*) FROM ext_batch WHERE source_id = ? AND status IN ('PENDING', 'APPROVED')"
         f" AND kind IN ({marks})", [bizbox.SOURCE, *(bizbox.LINK_KIND[k] for k in seen)]).fetchone()[0] if seen else 0
+    if seen and mms_reports.ready(ctx.conn):
+        counts["reports"] = ctx.conn.execute(
+            f"SELECT COUNT(*) FROM mms_report WHERE present = 1 AND shown = 1 AND area IN ({marks})", seen).fetchone()[0]
     return ("<div class=stabs>" + "".join(
         f"<a class='{'on' if k == on else ''}' href='/procurement?tab={k}'>{v} · {counts[k]}</a>" for k, v in TABS if k in counts) + "</div>")
 
@@ -103,6 +107,8 @@ def index(ctx):
         return _vendors(ctx)
     if tab == "changes":
         return _changes(ctx)
+    if tab == "reports":
+        return _reports(ctx)
     if tab not in KINDS:
         tab = (_seen(ctx) or ["changes"])[0]               # the first area the person may see
         if tab == "changes":
@@ -146,6 +152,7 @@ def _grid(ctx, kind) -> str:
     can = _can_write(ctx, kind)
     editable = bizbox.EDITABLE.get(kind, {}) if can else {}
     choice = {f: bizbox.choices(ctx.conn, kind, f) for f in editable}     # [] for a free-text field
+    labels = bizbox.labels_for(ctx.conn, kind)                                # the word for a stored code
     lines = {}
     if kind == "purchase_order" and rows:
         refs = [r["ext_ref"] for r in rows]
@@ -180,7 +187,7 @@ def _grid(ctx, kind) -> str:
             typ = "date" if editable[f] == "date" else "text"
             return (f"<td class='ecell{' num' if f == 'unit_cost' else ''}'><input form=grid type={typ} name='e:{t.esc(r['ext_ref'])}:{f}'"
                     f" value='{t.esc(cur)}' data-was='{t.esc(cur)}' aria-label='{t.esc(label)}'></td>")
-        return finance._cell(r, f, AREA)
+        return finance._cell(r, f, AREA, labels)
     trs = []
     for r in rows:
         waiting = ", ".join(sorted(bizbox.FIELD_WORDS.get(f, f) for f in pending.get(r["ext_ref"], ())))
@@ -197,7 +204,8 @@ def _grid(ctx, kind) -> str:
              + (f"<a class='ghost small' href='/procurement?{urllib.parse.urlencode(keep | {'page': page_no - 1})}'>‹ Previous</a> " if page_no > 1 else "")
              + (f"<a class='ghost small' href='/procurement?{urllib.parse.urlencode(keep | {'page': page_no + 1})}'>Next ›</a>" if last < total else "")
              + "</div></div>") if total > bizbox.PAGE else f"<div class=muted style='margin-top:8px'>{total} record(s).</div>"
-    sopts = "".join(f"<option value='{t.esc(s)}'{' selected' if s == status else ''}>{t.esc(s)}</option>" for s in _statuses(ctx.conn, kind))
+    sopts = "".join(f"<option value='{t.esc(s)}'{' selected' if s == status else ''}>{t.esc(bizbox.word(labels, FILTER_COL[kind], s))}</option>"
+                    for s in _statuses(ctx.conn, kind))
     vopts = "".join(f"<option value='{t.esc(v['name'])}'{' selected' if v['name'] == vendor else ''}>{t.esc(v['name'])}</option>"
                     for v in bizbox.vendors(ctx.conn)) if kind in VENDOR_COL else ""
     filters = (f"<form method=get action='/procurement' class='row schedbar'><input type=hidden name=tab value={kind}>"
@@ -343,7 +351,8 @@ def batch_page(ctx, batch_id):
     if b["change_kind"] == "ADD":
         p = bizbox.payload_of(b)
         rec, lines = p.get("record", {}), p.get("lines") or []
-        facts = "".join(f"<dt>{t.esc(bizbox.FIELD_WORDS.get(f, f.replace('_', ' ').capitalize()))}</dt><dd>{t.esc(str(v))}</dd>" for f, v in rec.items())
+        labels = bizbox.labels_for(ctx.conn, kind)
+        facts = "".join(f"<dt>{t.esc(bizbox.FIELD_WORDS.get(f, f.replace('_', ' ').capitalize()))}</dt><dd>{t.esc(bizbox.word(labels, f, v))}</dd>" for f, v in rec.items())
         extra = f"<div class=card><h3>{t.icon('plus')}The new record</h3><dl class=kv>{facts}</dl>"
         if lines:
             extra += ("<div class=tablewrap><table class=compact><thead><tr><th>#</th><th>Item</th><th>Description</th><th class=num>Qty</th>"
@@ -538,3 +547,196 @@ def add(ctx, kind):
 
 def detail(ctx, kind):
     return finance.detail(ctx, kind, area=AREA)
+
+
+# ------------------------------------------------------------------ reports
+#
+# MMS reports (082, Dada 13 Oct 2026: "printing out reports for MMS"). The
+# reports exist on the report server; the desk lists them by area, asks the
+# server for each one's parameters, and shows the PDF on the page or hands
+# over the Excel. Staff never leave the desk and never touch SSRS.
+
+from ... import mms_reports, ssrs                     # noqa: E402 - below the module's own helpers on purpose
+
+SSRS_FACTORY = None          # the tests put a client with a fake transport here
+
+
+def _ssrs():
+    return (SSRS_FACTORY or ssrs.Ssrs)()
+
+
+def _reports(ctx):
+    from .. import Response
+    q = ctx.request.query
+    search = q.get("q", "")
+    area = q.get("area", "") if q.get("area", "") in mms_reports.AREAS else ""
+    seen = _seen(ctx)
+    if not mms_reports.ready(ctx.conn):
+        body = _head(ctx, "reports", q) + ("<div class=card><p class=muted>The desk cannot list reports until schema 082 "
+                                           "is applied on the host. Nothing else is affected.</p></div>")
+        return Response(body=t.page("Procurement · Reports", body, user=ctx.user, active=AREA))
+    rows = mms_reports.listed(ctx.conn, areas=[area] if area else seen, q=search)
+    chips = "".join(
+        f"<a class='{'on' if a == area else ''}' href='/procurement?{urllib.parse.urlencode({'tab': 'reports', 'q': search} | ({'area': a} if a else {}))}'>"
+        f"{t.esc(w)}</a>" for a, w in [("", "Every area")] + [(a, mms_reports.AREA_WORDS[a]) for a in seen])
+    groups = []
+    for a in (seen if not area else [area]):
+        here = [r for r in rows if r["area"] == a]
+        if not here:
+            continue
+        items = "".join(
+            f"<li><a class=rpt href='/procurement/report/{r['report_id']}'><b>{t.esc(r['title'])}</b>"
+            + (f"<span class=muted> · {t.esc(r['description'])}</span>" if r["description"] else "")
+            + (f"<div class=muted>Asks: {t.esc(', '.join(mms_reports.params_summary(r)))}</div>" if mms_reports.params_summary(r) else "")
+            + "</a></li>" for r in here)
+        groups.append(f"<div class=card><h3>{t.icon('reports')}{t.esc(mms_reports.AREA_WORDS[a])} · {len(here)}</h3><ul class='plain rptlist'>{items}</ul></div>")
+    total = ctx.conn.execute("SELECT COUNT(*) FROM mms_report WHERE present = 1").fetchone()[0]
+    empty = ("<div class=card><p class=muted>The desk has not read the report server's list yet. SQL01 runs the first read; "
+             "after that it is read on a schedule.</p></div>" if not total else
+             "<div class=card><p class=muted>No report matches.</p></div>")
+    body = (_head(ctx, "reports", q) + "<div class=card><form method=get action='/procurement' class='row schedbar'>"
+            "<input type=hidden name=tab value=reports>" + (f"<input type=hidden name=area value='{area}'>" if area else "")
+            + f"<div style='flex:1 1 260px'><input name=q value='{t.esc(search)}' placeholder='Search reports'></div>"
+            "<div style='flex:0 0 auto'><button class=ghost type=submit>Search</button></div></form>"
+            f"<div class=stabs style='margin:10px 0 0'>{chips}</div>"
+            "<p class=why>Each report is the report server's own, run with the values you choose here and shown as a PDF "
+            "on this page, or handed over as an Excel file. Every run is logged.</p></div>"
+            + ("".join(groups) or empty))
+    return Response(body=t.page("Procurement · Reports", body, user=ctx.user, active=AREA))
+
+
+def _report_or_404(ctx, report_id):
+    from .. import HttpError
+    r = mms_reports.get(ctx.conn, report_id) if mms_reports.ready(ctx.conn) else None
+    if r is None or not r["present"]:
+        raise HttpError("404 Not Found", "No such report.")
+    _gate(ctx, r["area"])
+    return r
+
+
+def _param_control(p: ssrs.Param, chosen) -> str:
+    """One parameter as the form shows it: the server's own list as a
+    dropdown (several at once when the report takes several), a date box,
+    a number, yes/no, or text; and a box to leave a nullable one empty."""
+    key = t.esc("p." + p.name)
+    label = t.esc(p.prompt) + ("" if p.required else " <span class=muted>(optional)</span>")
+    if chosen is None:
+        cur: list = []
+    else:
+        cur = [str(x) for x in (chosen if isinstance(chosen, list) else [chosen])]
+    if p.valid_values or p.query_based or p.multi:
+        # a list, even an empty one: a child dropdown waits for its parent's value before the server lists it
+        opts = "".join(f"<option value='{t.esc(v)}'{' selected' if v in cur else ''}>{t.esc(l)}</option>" for l, v in p.valid_values)
+        if p.multi:
+            n = min(max(len(p.valid_values), 3), 8)
+            ctl = (f"<select name='{key}' multiple size={n} data-param='{key}'{' data-cascade' if p.dependencies else ''}>{opts}</select>"
+                   f"<div class=muted>Hold Ctrl to pick several.</div>")
+        else:
+            ctl = (f"<select name='{key}' data-param='{key}'{' data-cascade' if p.dependencies else ''}>"
+                   + ("<option value=''>Choose…</option>" if not cur and not p.required else ("<option value=''>(none)</option>" if not p.required else ""))
+                   + opts + "</select>")
+    elif p.type == "DateTime":
+        ctl = f"<input type=date name='{key}' value='{t.esc(cur[0][:10] if cur else '')}'{' required' if p.required else ''}>"
+    elif p.type in ("Integer", "Float"):
+        ctl = f"<input type=number step={'1' if p.type == 'Integer' else 'any'} name='{key}' value='{t.esc(cur[0] if cur else '')}'{' required' if p.required else ''}>"
+    elif p.type == "Boolean":
+        ctl = (f"<select name='{key}'><option value='true'{' selected' if cur and cur[0].lower() == 'true' else ''}>Yes</option>"
+               f"<option value='false'{' selected' if cur and cur[0].lower() == 'false' else ''}>No</option></select>")
+    else:
+        ctl = f"<input name='{key}' value='{t.esc(cur[0] if cur else '')}' maxlength=400{' required' if p.required else ''}>"
+    if p.state == "HasOutstandingDependencies":
+        ctl += "<div class=muted>Choose the fields above first, then <i>Refresh choices</i>.</div>"
+    elif p.state == "DynamicValuesUnavailable":
+        ctl += "<div class=muted>The report server could not list the choices for this one.</div>"
+    null = (f"<label class=muted style='font-weight:400'><input type=checkbox name='{key}.null' value=1{' checked' if chosen is None and p.nullable and chosen is not False else ''}> leave empty</label>"
+            if p.nullable else "")
+    return f"<div><label>{label}</label>{ctl}{null}</div>"
+
+
+def report_page(ctx, report_id):
+    from .. import Response
+    r = _report_or_404(ctx, report_id)
+    q = ctx.request.query
+    rid = r["report_id"]
+    err, params = "", []
+    try:
+        client = _ssrs()
+        base = client.parameters(r["path"])
+        chosen, _ = mms_reports.values_from(base, q.get, ctx.request.query_list, require=False)
+        if not chosen and not q.get("refresh"):
+            chosen = mms_reports.last_values(ctx.conn, rid, ctx.user.id) or mms_reports.defaults_of(base)
+        params = client.parameters(r["path"], chosen) if chosen else base
+        mms_reports.remember_params(ctx.conn, rid, params)
+        ctx.conn.commit()
+    except (ssrs.Refused, ssrs.ServerError) as exc:
+        err = str(exc)
+        chosen = {}
+    want_run = q.get("run") == "1" and not err
+    values, missing = (mms_reports.values_from(params, q.get, ctx.request.query_list, require=True) if want_run else ({}, []))
+    asked = [p for p in params if p.prompt_user]
+    controls = "".join(_param_control(p, chosen.get(p.name, None if p.name in chosen else "")) for p in asked)
+    form = (f"<form method=get action='/procurement/report/{rid}' class=fields data-report>"
+            + (f"<div class=grid2>{controls}</div>" if asked else "<p class=muted>This report asks for nothing; run it as it is.</p>")
+            + "<div class='row' style='margin-top:12px;gap:8px;flex-wrap:wrap'>"
+            f"<div style='flex:0 0 auto'><button type=submit name=run value=1>{t.icon('reports')} Run and show the PDF</button></div>"
+            + ("<div style='flex:0 0 auto'><button class=ghost type=submit name=refresh value=1>Refresh choices</button></div>"
+               if any(p.dependencies for p in asked) else "")
+            + "</div></form>")
+    viewer = ""
+    if want_run and missing:
+        err = "Fill in: " + ", ".join(missing) + "."
+    elif want_run:
+        keep = [(k, v) for k, v in urllib.parse.parse_qsl(ctx.request.query_string) if k.startswith("p.")]
+        pdf = f"/procurement/report/{rid}/render?" + urllib.parse.urlencode(keep + [("format", "PDF")])
+        xls = f"/procurement/report/{rid}/render?" + urllib.parse.urlencode(keep + [("format", "EXCELOPENXML")])
+        viewer = (f"<div class=card><div class='row' style='justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'>"
+                  f"<h3 style='margin:0'>{t.icon('reports')}{t.esc(r['title'])}</h3><div class=row style='gap:8px'>"
+                  f"<a class='btn ghost' href='{pdf}' target=_blank rel=noopener>{t.icon('arrow')} Open in a new tab</a>"
+                  f"<a class='btn' href='{xls}'>{t.icon('arrow')} Download Excel</a></div></div>"
+                  f"<iframe class=rptframe src='{pdf}' title='{t.esc(r['title'])} as PDF'></iframe>"
+                  "<p class=muted>If the PDF does not show here, your browser blocks embedded PDFs: use <i>Open in a new tab</i>.</p></div>")
+    runs = mms_reports.recent_runs(ctx.conn, rid)
+    runs_html = ("<div class=card><h3>" + t.icon("clock") + "Recent runs</h3><ul class=plain>" + "".join(
+        f"<li>{t.esc(x['ran_at'])} · {t.esc(x['member'])} · {'Excel' if x['format'] == 'EXCELOPENXML' else 'PDF'} · "
+        + (f"<span class=muted>{x['millis']} ms</span>" if x["outcome"] == "OK" else f"<span class='chip sla-bad'>failed</span> <span class=muted>{t.esc(x['message'] or '')}</span>")
+        + "</li>" for x in runs) + "</ul></div>") if runs else ""
+    body = (_banners(q) + (f"<div class='banner err'>{t.esc(err)}</div>" if err else "")
+            + f"<a class=backbtn data-back href='/procurement?tab=reports' title='Back to reports'>{t.icon('left')}<span class=lbl>Back to reports</span></a>"
+            f"<h1>{t.esc(r['title'])}</h1><p class=sub>{t.esc(mms_reports.AREA_WORDS[r['area']])}"
+            + (f" · {t.esc(r['description'])}" if r["description"] else "")
+            + " · from the report server, run with the values below</p>"
+            + viewer + f"<div class=card><h3>{t.icon('edit')}" + ("Run it again with other values" if viewer else "Values") + f"</h3>{form}</div>"
+            + runs_html
+            + "<script>(function(){var f=document.querySelector('form[data-report]');if(!f)return;f.querySelectorAll('[data-cascade]').forEach(function(){});"
+              "f.querySelectorAll('select[data-param]').forEach(function(s){s.addEventListener('change',function(){"
+              "if(f.querySelector('[data-cascade]')){var b=document.createElement('input');b.type='hidden';b.name='refresh';b.value='1';f.appendChild(b);f.submit()}})})})()</script>")
+    return Response(body=t.page(r["title"], body, user=ctx.user, active=AREA))
+
+
+def report_render(ctx, report_id):
+    from .. import Response, redirect
+    r = _report_or_404(ctx, report_id)
+    q = ctx.request.query
+    fmt = q.get("format", "PDF")
+    if fmt not in ssrs.FORMATS:
+        fmt = "PDF"
+    rid = r["report_id"]
+    try:
+        client = _ssrs()
+        params = client.parameters(r["path"], mms_reports.values_from(client.parameters(r["path"]), q.get, ctx.request.query_list, require=False)[0])
+        values, missing = mms_reports.values_from(params, q.get, ctx.request.query_list, require=True)
+        if missing:
+            raise ssrs.Refused("Fill in: " + ", ".join(missing) + ".")
+        data, ctype, ext = client.render(r["path"], values, fmt)
+    except (ssrs.Refused, ssrs.ServerError) as exc:
+        mms_reports.log_run(ctx.conn, rid, member=ctx.user.id, at=ctx.now, fmt=fmt, values=q, ok=False, message=str(exc))
+        ctx.conn.commit()
+        keep = [(k, v) for k, v in urllib.parse.parse_qsl(ctx.request.query_string) if k.startswith("p.")]
+        return redirect(f"/procurement/report/{rid}?" + urllib.parse.urlencode(keep + [("err", f"Not run: {exc}")]))
+    mms_reports.log_run(ctx.conn, rid, member=ctx.user.id, at=ctx.now, fmt=fmt, values=values, ok=True,
+                        size=len(data), millis=getattr(client, "last_millis", None))
+    ctx.conn.commit()
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", r["title"]).strip("-") or "report"
+    name = f"{stem}-{ctx.now.strftime('%Y%m%d-%H%M')}.{ext}"
+    disposition = ("inline" if fmt == "PDF" else "attachment") + f"; filename=\"{name}\""
+    return Response(body=data, content_type=ctype, headers=[("Content-Disposition", disposition), ("Cache-Control", "no-store")])

@@ -522,6 +522,27 @@ def choices_from(conn, kind: str, field: str) -> str:
     return "what BizBox has used so far"
 
 
+def labels_for(conn, kind: str) -> dict:
+    """{field: {code: label}} for the kind's fields that have a list, so a
+    screen shows the word BizBox's own list gives a code (Dada, 13 Oct 2026:
+    a category read 1001 until SQL01's lookup view was read)."""
+    out = {}
+    for (k, field), lst in CHOICE_LIST.items():
+        if k != kind or lst == "vendor":
+            continue
+        pairs = choices(conn, kind, field)
+        if any(c != l for c, l in pairs):
+            out[field] = dict(pairs)
+    return out
+
+
+def word(labels: dict, field: str, value) -> str:
+    """The label for a stored value, or the value itself."""
+    if value is None:
+        return ""
+    return labels.get(field, {}).get(str(value), str(value))
+
+
 def check_choice(conn, kind: str, field: str, value) -> None:
     """Refuse what BizBox would refuse: a value off the field's list. With no
     list at all (an empty mirror) only a vendor is refused: a purchase order
