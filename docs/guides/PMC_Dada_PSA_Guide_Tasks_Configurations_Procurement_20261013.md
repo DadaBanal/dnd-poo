@@ -171,7 +171,72 @@ The desk sends every approved change to BizBox under one login, so these levels 
 rights used to be. Dada sets them on Setup › Security roles. If you expect to see something and cannot, that is the
 first place to ask.
 
-## 7. Common messages and what to do
+## 7. How to: step by step
+
+**Work a ticket's tasks**
+
+1. Open the ticket, click **Tasks**.
+2. Type the first task in *Add a task* (notes are optional), click **Add task**. Repeat, or use *Add from template*.
+3. Drag the handle at the left of a row to put tasks in order.
+4. For a task that needs a visit, click *Schedule…* on its row: who, which day, what time, how long, then **Book**.
+   It shows on Dispatch and the Schedule tab.
+5. When a task is done, tick **Done**, type how it was fixed under *Resolution*, press the tick at the right of the
+   row. The tab now reads *Tasks 1/3*.
+
+**Record a new printer and put it under its PC**
+
+1. **Configurations**, scroll to *New configuration*.
+2. Name (as the ward knows it), company, type *Printer*, tag number from the asset sticker, make, model, serial, a
+   line on where it is. **Add**.
+3. Open it, go to **Change**, choose its *Parent configuration* (the PC it hangs off), **Save**. The PC's page now
+   lists it under *Child configurations*.
+4. From its page, **Raise a ticket for this machine** opens a ticket already linked to it.
+
+**Change the status of several purchase orders**
+
+1. **Procurement**, Purchase orders tab. Filter by vendor or status if it helps.
+2. Tick the orders. The bar reads *N ticked*.
+3. Field *Status*; pick the new status from the dropdown; write why; **Send for approval**.
+4. The rows show *Status* under *Waiting*. Tell your approver.
+
+**Fix one wrong cell**
+
+1. On the grid, change the cell in the row: pick the vendor from the dropdown, or set the date.
+2. The lower bar reads *1 cell(s) edited*. Write why; **Send edited cells for approval**.
+
+**Raise a new purchase order**
+
+1. Purchase orders tab, **New purchase order**.
+2. Vendor from the dropdown; order date; currency (PHP is set); leave status to BizBox unless told otherwise.
+3. One line per item: start typing the item code and pick it; description; quantity; unit cost.
+4. Why; **Send for approval**. It appears on Changes as *New purchase order: <vendor>, N line(s)*. BizBox numbers
+   it once it is created there.
+
+**Add a new item**
+
+1. Products tab, **New item**.
+2. Leave the code empty unless the hospital has one; name; category and unit from the dropdowns; unit cost; why;
+   **Send for approval**.
+
+**Approve, or cancel, a batch** (needs *Approve* for that area)
+
+1. **Procurement**, Changes tab. The filter starts on *Waiting to be approved or sent*.
+2. Click the batch number to read each change and the reason.
+3. **Approve**, or **Cancel** with a word to the person who asked. You cannot approve your own; the row says so.
+4. An approved batch reads *Approved, waiting to be sent* until the link to BizBox is on.
+
+**See what happened to a change**
+
+1. Changes tab; set the filter to *Applied in BizBox*, *Refused by BizBox* or *All*; **Show**.
+2. BizBox's answer is under the state. A refusal names the reason; propose it again with that addressed.
+
+**Give a role its Procurement rights** (a system administrator)
+
+1. **Setup › Security roles**.
+2. On the role's row, set *Purchase orders*, *Receiving* and *Items* to None, See, Propose or Approve. **Save**.
+3. Under *Members*, put each person on the right role. The change shows in Setup › Audit.
+
+## 8. Common messages and what to do
 
 | The desk says | It means | Do |
 |---|---|---|
@@ -184,7 +249,7 @@ first place to ask.
 | *A change is approved by someone other than the person who asked for it* | You tried to approve your own | Ask a second approver. |
 | *Line 2: IT-9 is not an item BizBox has* | The item code is wrong | Pick the item from the list as you type. |
 
-## 8. Good habits
+## 9. Good habits
 
 - Write the **why** as if BizBox's owner will read it next month, because they may.
 - Tick and send one field at a time; one batch, one reason.
