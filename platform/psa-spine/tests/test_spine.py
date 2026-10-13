@@ -18030,9 +18030,35 @@ class CwShapeTest(unittest.TestCase):
         _, h, _ = self._call("POST", "/procurement/purchase_order/edits", cookie=self.alice,
                              form={"e:PO-2:vendor": "Vendor A", "reason": ""})
         self.assertIn("Say+why", dict(h)["Location"])
-        # a new purchase order with its lines, and a new item
+        # a new purchase order with its lines, and a new item: the window says what will be created first
         _, _, page = self._call("GET", "/procurement/purchase_order/new", cookie=self.alice)
         self.assertIn("<datalist id=items><option value='IT-1'>Toner</option></datalist>", page)
+        self.assertIn("<form method=post action='/procurement/purchase_order/add/review' class=fields>", page)
+        self.assertIn("Review and send", page)
+        status, _, page = self._call("POST", "/procurement/purchase_order/add/review", cookie=self.alice,
+                                     form={"vendor": "Vendor A", "line1_product_ref": "IT-9", "line1_quantity": "2", "reason": "ward 3 toner"})
+        self.assertTrue(status.startswith("200"), status)
+        self.assertIn("Not sent: Line 1: IT-9 is not an item BizBox has.", page)            # said on the page, the form kept
+        self.assertNotIn("<dialog open class=review", page)
+        self.assertIn("<option value='Vendor A' selected>", page)
+        self.assertIn("name='line1_product_ref' list=items maxlength=64 placeholder='item code' value='IT-9'", page)
+        self.assertIn("name=reason required maxlength=400 value='ward 3 toner'", page)
+        status, _, page = self._call("POST", "/procurement/purchase_order/add/review", cookie=self.alice,
+                                     form={"vendor": "Vendor A", "ordered_on": "2026-10-13", "currency": "PHP", "line1_product_ref": "IT-1",
+                                           "line1_description": "Toner black", "line1_quantity": "2", "line1_unit_cost": "500",
+                                           "line2_description": "Toner cyan", "line2_quantity": "1", "line2_unit_cost": "600", "reason": "ward 3 toner"})
+        self.assertTrue(status.startswith("200"), status)
+        self.assertIn("What will be created: a purchase order with 2 lines", page)
+        self.assertIn("<tr><td>Vendor</td><td><b>Vendor A</b></td></tr>", page)
+        self.assertIn("<tr><td>Status</td><td><span class=muted>Left to BizBox</span></td></tr>", page)
+        self.assertIn("<td>2</td><td></td><td>Toner cyan</td><td class=num>1</td>", page)
+        self.assertIn("<b>Lines total</b></td><td class=num><b>PHP 1,600.00</b>", page)
+        self.assertIn("<form method=post action='/procurement/purchase_order/add'>", page)
+        for hidden in ("<input type=hidden name='vendor' value='Vendor A'>", "<input type=hidden name='line1_product_ref' value='IT-1'>",
+                       "<input type=hidden name='line2_unit_cost' value='600'>", "<input type=hidden name='reason' value='ward 3 toner'>"):
+            self.assertIn(hidden, page, hidden)
+        self.assertIn("BizBox creates it, and gives it its number, only after that", page)
+        self.assertEqual(len(bizbox.batches(conn)), 2)                                        # nothing queued by the window
         _, h, _ = self._call("POST", "/procurement/purchase_order/add", cookie=self.alice,
                              form={"vendor": "Vendor A", "ordered_on": "2026-10-13", "currency": "PHP", "reason": "ward 3 toner"})
         self.assertIn("at+least+one+line", dict(h)["Location"])
@@ -18063,6 +18089,13 @@ class CwShapeTest(unittest.TestCase):
                              form={"name": "Drum unit", "unit": "pc", "unit_cost": "1,250.00", "reason": "new consumable"})
         self.assertIn("tab=changes", dict(h)["Location"])
         self.assertEqual(bizbox.payload_of(bizbox.batch(conn, 4))["record"], {"name": "Drum unit", "unit": "pc", "unit_cost": 1250.0})
+        _, _, page = self._call("POST", "/procurement/product/add/review", cookie=self.alice,
+                                form={"name": "Drum unit", "unit": "pc", "unit_cost": "1,250.00", "reason": "new consumable"})
+        self.assertIn("What will be created: the item Drum unit", page)
+        self.assertIn("<tr><td>Item code</td><td><span class=muted>BizBox numbers it</span></td></tr>", page)
+        self.assertIn("<tr><td>Unit cost</td><td>1,250.00</td></tr>", page)
+        self.assertIn("<input type=hidden name='unit_cost' value='1,250.00'>", page)
+        self.assertEqual(len(bizbox.batches(conn)), 4)
         # cancel one; push the approved one through a fake writer; nothing through NoWriter
         _, h, _ = self._call("POST", "/procurement/batch/4/cancel", cookie=self.alice)
         self.assertIn("cancelled", dict(h)["Location"])
@@ -18134,7 +18167,7 @@ class CwShapeTest(unittest.TestCase):
         self.assertTrue(status.startswith("200"), status)
         self.assertIn("<dialog open class=review", page)
         self.assertIn("What will change on PO-1", page)
-        self.assertIn("<td>Status</td><td>Approved</td><td aria-hidden=true>→</td><td><b>Ordered</b></td>", page)
+        self.assertIn("<td>Status</td><td>Approved</td><td class=arrow aria-hidden=true>→</td><td><b>Ordered</b></td>", page)
         self.assertNotIn("already so in BizBox", page)                                              # every field was posted; only the change is news
         self.assertIn("<b>Why:</b> sent to the supplier today", page)
         self.assertIn("<form method=post action='/finance/purchase_order/send'>", page)
@@ -18172,7 +18205,7 @@ class CwShapeTest(unittest.TestCase):
                                      form=[("refs", "PO-2"), ("refs", "PO-3"), ("field", "status"), ("nv:status", "Ordered"), ("reason", "both confirmed")])
         self.assertTrue(status.startswith("200"), status)
         self.assertIn("What will change on 1 purchase order", page)
-        self.assertIn("<td>PO-2</td><td>Status</td><td>Approved</td><td aria-hidden=true>→</td><td><b>Ordered</b></td>", page)
+        self.assertIn("<td>PO-2</td><td>Status</td><td>Approved</td><td class=arrow aria-hidden=true>→</td><td><b>Ordered</b></td>", page)
         self.assertIn("1 is already so in BizBox and stays as it is.", page)
         self.assertIn("<form method=post action='/procurement/purchase_order/bulk'>", page)
         for hidden in ("<input type=hidden name='refs' value='PO-2'>", "<input type=hidden name='refs' value='PO-3'>",
@@ -18194,7 +18227,7 @@ class CwShapeTest(unittest.TestCase):
                                            "reason": "vendor corrected"})
         self.assertTrue(status.startswith("200"), status)
         self.assertIn("What will change: 1 cell on 1 purchase order", page)
-        self.assertIn("<td>PO-2</td><td>Vendor</td><td>Vendor B</td><td aria-hidden=true>→</td><td><b>Vendor A</b></td>", page)
+        self.assertIn("<td>PO-2</td><td>Vendor</td><td>Vendor B</td><td class=arrow aria-hidden=true>→</td><td><b>Vendor A</b></td>", page)
         self.assertIn("<form method=post action='/procurement/purchase_order/edits'>", page)
         self.assertIn("<input type=hidden name='e:PO-2:vendor' value='Vendor A'>", page)
         self.assertNotIn("name='e:PO-3:vendor'", page.split("<dialog")[1].split("</dialog>")[0])

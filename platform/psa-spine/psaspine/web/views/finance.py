@@ -348,7 +348,8 @@ def _edit_control(ctx, kind: str, field: str, how: str, current, shown=None) -> 
     return f"<input name='{name}' value='{t.esc(val)}' data-was='{t.esc(cur)}' maxlength=400>"
 
 
-def review_dialog(title: str, preview: dict, *, action: str, hidden: list, show_ref: bool = False) -> str:
+def review_dialog(title: str, preview: dict, *, action: str, hidden: list, show_ref: bool = False,
+                  body: str = "", note: str = "") -> str:
     """The window that says what will change before anything is sent for
     approval (Dada, 13 Oct 2026): one line per change, from -> to in BizBox's
     words, the reason, and two ways out. "Send" posts the hidden copy of the
@@ -356,19 +357,21 @@ def review_dialog(title: str, preview: dict, *, action: str, hidden: list, show_
     leaving the form underneath as the person filled it. Modal when scripts
     run; still usable when they do not."""
     rows = "".join("<tr>" + (f"<td>{t.esc(r['ref'])}</td>" if show_ref else "")
-                   + f"<td>{t.esc(r['word'])}</td><td>{t.esc(r['old_word'])}</td><td aria-hidden=true>→</td><td><b>{t.esc(r['new_word'])}</b></td></tr>"
+                   + f"<td>{t.esc(r['word'])}</td><td>{t.esc(r['old_word'])}</td><td class=arrow aria-hidden=true>→</td><td><b>{t.esc(r['new_word'])}</b></td></tr>"
                    for r in preview["rows"])
     head = ("<th>Record</th>" if show_ref else "") + "<th>Field</th><th>Now in BizBox</th><th><span class=sr-only>becomes</span></th><th>After</th>"
     n = preview["same"]
     same = (f"<p class=muted>{n} {'is' if n == 1 else 'are'} already so in BizBox and {'stays' if n == 1 else 'stay'} as "
             f"{'it is' if n == 1 else 'they are'}.</p>" if n else "")
     fields = "".join(f"<input type=hidden name='{t.esc(k)}' value='{t.esc(v)}'>" for k, v in hidden)
+    table = body or f"<div class=tablewrap><table class=compact><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table></div>"
     return (f"<dialog open class=review aria-labelledby=review-title><h2 id=review-title>{t.icon('checks')}{t.esc(title)}</h2>"
-            f"<div class=tablewrap><table class=compact><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table></div>" + same
+            + table + same
             + f"<p><b>Why:</b> {t.esc(preview['reason'])}</p>"
-            "<p class=why>Sending it queues the change for a second person to approve. BizBox itself changes only after that, "
-            "when the approved change is pushed.</p>"
-            f"<div class=acts><form method=post action='{action}'>{fields}<button type=submit>{t.icon('check')} Send for approval</button></form>"
+            + (f"<p class=why>{note}</p>" if note else
+               "<p class=why>Sending it queues the change for a second person to approve. BizBox itself changes only after that, "
+               "when the approved change is pushed.</p>")
+            + f"<div class=acts><form method=post action='{action}'>{fields}<button type=submit>{t.icon('check')} Send for approval</button></form>"
             "<form method=dialog><button class=ghost type=submit>Go back and change it</button></form></div></dialog>"
             "<script>(function(){var d=document.querySelector('dialog.review');if(d&&d.showModal){d.removeAttribute('open');d.showModal()}})()</script>")
 

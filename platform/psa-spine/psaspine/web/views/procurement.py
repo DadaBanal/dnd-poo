@@ -571,54 +571,137 @@ def _pick(ctx, kind, field, name, chosen="", *, empty=None, required=False, fall
 
 
 def new_form(ctx, kind):
-    from .. import HttpError, Response
+    """GET: the New form; a refusal that came back as a redirect carries the
+    typed values in the query."""
+    from .. import HttpError
     _gate(ctx)
     if kind not in bizbox.ADDABLE:
         raise HttpError("404 Not Found", "Nothing of that kind is added from the desk.")
     _gate(ctx, kind, "WRITE")
     q = ctx.request.query
-    v = ctx.request.query
+    return _new_page(ctx, kind, posted={k: q.get(k, "") for k in q.keys()})
+
+
+def _new_page(ctx, kind, *, posted: dict | None = None, dialog: str = "", err: str = ""):
+    """The New form, prefilled from `posted` (the query on a GET, the form on
+    a review), with the review window on top or a refusal above."""
+    from .. import Response
+    q = ctx.request.query
+    v = posted or {}
+    g = lambda k: v.get(k, "") or ""
     if kind == "purchase_order":
-        vendors = "".join(f"<option value='{t.esc(x['name'])}'>" for x in bizbox.vendors(ctx.conn))
         items = "".join(f"<option value='{t.esc(p['ext_ref'])}'>{t.esc(p['name'])}</option>"
                         for p in bizbox.records(ctx.conn, "product", limit=2000))
-        line = lambda i: (f"<tr><td>{i}</td><td><input name='line{i}_product_ref' list=items maxlength=64 placeholder='item code'></td>"
-                          f"<td><input name='line{i}_description' maxlength=400></td>"
-                          f"<td><input name='line{i}_quantity' type=number step=any min=0 style='width:90px'></td>"
-                          f"<td><input name='line{i}_unit_cost' type=number step=any min=0 style='width:110px'></td></tr>")
+        line = lambda i: (f"<tr><td>{i}</td><td><input name='line{i}_product_ref' list=items maxlength=64 placeholder='item code'"
+                          f" value='{t.esc(g(f'line{i}_product_ref'))}'></td>"
+                          f"<td><input name='line{i}_description' maxlength=400 value='{t.esc(g(f'line{i}_description'))}'></td>"
+                          f"<td><input name='line{i}_quantity' type=number step=any min=0 style='width:90px' value='{t.esc(g(f'line{i}_quantity'))}'></td>"
+                          f"<td><input name='line{i}_unit_cost' type=number step=any min=0 style='width:110px' value='{t.esc(g(f'line{i}_unit_cost'))}'></td></tr>")
         currencies = bizbox.choices(ctx.conn, kind, "currency")
         php = "PHP" if any(c == "PHP" for c, _ in currencies) else (currencies[0][0] if currencies else "")
         fields = ("<div><label>Vendor</label>"
-                  + _pick(ctx, kind, "vendor", "vendor", v.get("vendor", ""), empty="Choose a vendor BizBox has", required=True,
-                          fallback="<input name=vendor required maxlength=400 placeholder='no vendor read from BizBox yet'>")
+                  + _pick(ctx, kind, "vendor", "vendor", g("vendor"), empty="Choose a vendor BizBox has", required=True,
+                          fallback=f"<input name=vendor required maxlength=400 value='{t.esc(g('vendor'))}' placeholder='no vendor read from BizBox yet'>")
                   + "</div>"
-                  f"<div><label>Order date</label><input type=date name=ordered_on value='{t.esc(v.get('ordered_on', ''))}'></div>"
+                  f"<div><label>Order date</label><input type=date name=ordered_on value='{t.esc(g('ordered_on'))}'></div>"
                   "<div><label>Currency</label>"
-                  + _pick(ctx, kind, "currency", "currency", v.get("currency") or php, fallback="<input name=currency maxlength=8 value='PHP'>")
+                  + _pick(ctx, kind, "currency", "currency", g("currency") or php, fallback=f"<input name=currency maxlength=8 value='{t.esc(g('currency') or 'PHP')}'>")
                   + "</div><div><label>Status</label>"
-                  + _pick(ctx, kind, "status", "status", "", empty="Leave to BizBox",
-                          fallback="<input name=status maxlength=32 placeholder='leave empty: BizBox decides'>")
+                  + _pick(ctx, kind, "status", "status", g("status"), empty="Leave to BizBox",
+                          fallback=f"<input name=status maxlength=32 value='{t.esc(g('status'))}' placeholder='leave empty: BizBox decides'>")
                   + "</div>"
                   "<div style='grid-column:1/-1'><label>Lines</label><div class=tablewrap><table class=compact><thead><tr><th>#</th><th>Item</th>"
                   "<th>Description</th><th>Qty</th><th>Unit cost</th></tr></thead><tbody>" + "".join(line(i) for i in range(1, 9))
                   + f"</tbody></table></div><datalist id=items>{items}</datalist></div>")
     else:
-        fields = ("<div><label>Item code</label><input name=ext_ref maxlength=64 placeholder='leave empty: BizBox numbers it'></div>"
-                  "<div><label>Name</label><input name=name required maxlength=400></div>"
+        fields = (f"<div><label>Item code</label><input name=ext_ref maxlength=64 value='{t.esc(g('ext_ref'))}' placeholder='leave empty: BizBox numbers it'></div>"
+                  f"<div><label>Name</label><input name=name required maxlength=400 value='{t.esc(g('name'))}'></div>"
                   "<div><label>Category</label>"
-                  + _pick(ctx, kind, "category", "category", v.get("category", ""), empty="(none)",
-                          fallback="<input name=category maxlength=400>")
+                  + _pick(ctx, kind, "category", "category", g("category"), empty="(none)",
+                          fallback=f"<input name=category maxlength=400 value='{t.esc(g('category'))}'>")
                   + "</div><div><label>Unit</label>"
-                  + _pick(ctx, kind, "unit", "unit", v.get("unit", ""), empty="(none)",
-                          fallback="<input name=unit maxlength=32 placeholder='pc, box, ream'>")
+                  + _pick(ctx, kind, "unit", "unit", g("unit"), empty="(none)",
+                          fallback=f"<input name=unit maxlength=32 value='{t.esc(g('unit'))}' placeholder='pc, box, ream'>")
                   + "</div>"
-                  "<div><label>Unit cost</label><input name=unit_cost type=number step=any min=0></div>")
-    body = (_banners(q) + f"<h1>{NEW_WORDS[kind]}</h1><p class=sub>This goes to the Changes tab for a second person to approve. Once it is approved and sent, BizBox "
+                  f"<div><label>Unit cost</label><input name=unit_cost type=number step=any min=0 value='{t.esc(g('unit_cost'))}'></div>")
+    banner = f"<div class='banner err' id=flash-err role=alert>{t.esc(err)}</div>" if err else ""
+    body = (banner + _banners(q) + dialog
+            + f"<h1>{NEW_WORDS[kind]}</h1><p class=sub>This goes to the Changes tab for a second person to approve. Once it is approved and sent, BizBox "
             f"creates it and gives it its number. <a href='/procurement?tab={kind}'>Back</a></p>"
-            f"<div class=card><form method=post action='/procurement/{kind}/add' class=fields{_described(q)}><div class=grid2>{fields}"
-            "<div style='grid-column:1/-1'><label>Why</label><input name=reason required maxlength=400 placeholder='What the approver needs to know'></div>"
-            f"</div><div style='margin-top:12px'><button type=submit>{t.icon('check')} Send for approval</button></div></form></div>")
+            f"<div class=card><form method=post action='/procurement/{kind}/add/review' class=fields{' aria-describedby=flash-err' if err else _described(q)}><div class=grid2>{fields}"
+            f"<div style='grid-column:1/-1'><label>Why</label><input name=reason required maxlength=400 value='{t.esc(g('reason'))}' placeholder='What the approver needs to know'></div>"
+            f"</div><div style='margin-top:12px'><button type=submit>{t.icon('checks')} Review and send</button> "
+            "<span class=muted>The window shows what will be created before it is sent.</span></div></form></div>")
     return Response(body=t.page(NEW_WORDS[kind], body, user=ctx.user, active=AREA))
+
+
+def _add_parts(f, kind) -> tuple:
+    record = {k: f.get(k, "") for k in bizbox.ADDABLE[kind]["fields"]}
+    lines = []
+    if bizbox.ADDABLE[kind]["lines"]:
+        for i in range(1, 9):
+            lines.append({k: f.get(f"line{i}_{k}", "") for k in bizbox.ADDABLE[kind]["lines"]})
+    return record, lines
+
+
+def _add_body(ctx, kind, checked: dict) -> str:
+    """The review window's table for a new record: each field as it will be
+    created, in BizBox's words, then the lines and their total."""
+    rec, lines = checked["record"], checked["lines"]
+    labels = bizbox.labels_for(ctx.conn, kind)
+    left = {"status": "Left to BizBox", "ext_ref": "BizBox numbers it", "category": "(none)", "unit": "(none)"}
+
+    def shown(field):
+        v = rec.get(field)
+        if v in (None, ""):
+            return f"<span class=muted>{t.esc(left.get(field, '—'))}</span>"
+        if field == "unit_cost":
+            return t.esc(finance._money(v))
+        return f"<b>{t.esc(bizbox.word(labels, field, v) or str(v))}</b>"
+    words = {"ext_ref": "Item code"} | bizbox.FIELD_WORDS
+    rows = "".join(f"<tr><td>{t.esc(words.get(f, f.replace('_', ' ').capitalize()))}</td><td>{shown(f)}</td></tr>"
+                   for f in bizbox.ADDABLE[kind]["fields"])
+    out = f"<div class=tablewrap><table class=compact><thead><tr><th>Field</th><th>Will be</th></tr></thead><tbody>{rows}</tbody></table></div>"
+    if bizbox.ADDABLE[kind]["lines"]:
+        cur = rec.get("currency")
+        total = sum(float(l.get("quantity") or 0) * float(l.get("unit_cost") or 0) for l in lines)
+        trs = "".join(f"<tr><td>{n}</td><td>{t.esc(l.get('product_ref') or '')}</td><td>{t.esc(l.get('description') or '')}</td>"
+                      f"<td class=num>{float(l.get('quantity') or 0):g}</td><td class=num>{t.esc(finance._money(l.get('unit_cost')))}</td>"
+                      f"<td class=num>{t.esc(finance._money(float(l.get('quantity') or 0) * float(l.get('unit_cost') or 0)))}</td></tr>"
+                      for n, l in enumerate(lines, 1))
+        out += (f"<p style='margin:10px 0 4px'><b>{len(lines)} line{'s' if len(lines) != 1 else ''}</b></p>"
+                "<div class=tablewrap><table class=compact><thead><tr><th>#</th><th>Item</th><th>Description</th><th class=num>Qty</th>"
+                f"<th class=num>Unit cost</th><th class=num>Extended</th></tr></thead><tbody>{trs}"
+                f"<tr><td colspan=5 class=num><b>Lines total</b></td><td class=num><b>{t.esc(finance._money(total, cur))}</b></td></tr></tbody></table></div>")
+    return out
+
+
+def review_add(ctx, kind):
+    """POST from a New form: the window that says what will be created.
+    Nothing is queued yet (Dada, 13 Oct 2026)."""
+    from .. import redirect
+    _gate(ctx)
+    if kind not in bizbox.ADDABLE:
+        return redirect("/procurement")
+    _gate(ctx, kind, "WRITE")
+    f = ctx.request.form()
+    posted = {k: f.get(k, "") for k in f.keys()}
+    record, lines = _add_parts(f, kind)
+    try:
+        checked = bizbox.check_add(ctx.conn, kind, record, lines, reason=f.get("reason", ""))
+    except bizbox.Refused as exc:
+        return _new_page(ctx, kind, posted=posted, err=f"Not sent: {exc}")
+    hidden = [(k, v) for k, v in record.items() if v] + [("reason", checked["reason"])]
+    for i, line in enumerate(lines, 1):
+        hidden += [(f"line{i}_{k}", v) for k, v in line.items() if v]
+    n = len(checked["lines"])
+    title = (f"What will be created: a purchase order with {n} line{'s' if n != 1 else ''}" if kind == "purchase_order"
+             else f"What will be created: the item {checked['record'].get('name', '')}")
+    dialog = finance.review_dialog(title, {"rows": [], "same": 0, "reason": checked["reason"]}, action=f"/procurement/{kind}/add",
+                                   hidden=hidden, body=_add_body(ctx, kind, checked),
+                                   note="Sending it queues the new record for a second person to approve. BizBox creates it, and "
+                                        "gives it its number, only after that, when the approved change is pushed.")
+    return _new_page(ctx, kind, posted=posted, dialog=dialog)
 
 
 def add(ctx, kind):
@@ -628,11 +711,7 @@ def add(ctx, kind):
         return redirect("/procurement")
     _gate(ctx, kind, "WRITE")
     f = ctx.request.form()
-    record = {k: f.get(k, "") for k in bizbox.ADDABLE[kind]["fields"]}
-    lines = []
-    if bizbox.ADDABLE[kind]["lines"]:
-        for i in range(1, 9):
-            lines.append({k: f.get(f"line{i}_{k}", "") for k in bizbox.ADDABLE[kind]["lines"]})
+    record, lines = _add_parts(f, kind)
     try:
         bid = bizbox.propose_add(ctx.conn, kind, record, lines, reason=f.get("reason", ""), at=ctx.now, actor=ctx.user.id)
         ctx.conn.commit()

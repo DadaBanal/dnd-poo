@@ -2598,10 +2598,14 @@ inside BizBox*.
   underneath keeps what was typed). Only then is a batch queued; the mirror and BizBox are untouched until it is
   approved and pushed. The grids take the same step: *Review and send* and *Review edited cells and send* open the
   window first (the record named on each line), and the grid underneath keeps the ticks, the field and the edited
-  cells. A value BizBox does not use, or nothing changed, is said on the page before any window opens. Nothing is
-  written while reviewing (`bizbox.preview_edits`, `preview_many`); the window's hidden copy of the change is what
-  *Send* posts (`/finance/<kind>/review` then `/send`; `/procurement/<kind>/bulk/review` then `/bulk`;
-  `/edits/review` then `/edits`). The window is a native `<dialog>`: modal with scripts, still a page without them.
+  cells. A value BizBox does not use, or nothing changed, is said on the page before any window opens. The New
+  forms take the same step: *Review and send* lists the record as it will be created (a status left to BizBox,
+  an item code BizBox will give) and, for a purchase order, its lines and their total; a refusal comes back on
+  the form with everything typed still there, lines included. Nothing is written while reviewing
+  (`bizbox.preview_edits`, `preview_many`, `check_add`); the window's hidden copy of the change is what *Send*
+  posts (`/finance/<kind>/review` then `/send`; `/procurement/<kind>/bulk/review` then `/bulk`; `/edits/review`
+  then `/edits`; `/add/review` then `/add`). The window is a native `<dialog>`: modal with scripts, still a page
+  without them.
 - A record's page is Finance's, served under this menu with its links kept here.
 - **Rights, per area** (Dada, 13 Oct 2026: *"rbac for the procurement module needs to be made as it will bypass the
   bizbox permissions"*). The desk will push every approved change under one BizBox login, so the desk keeps what

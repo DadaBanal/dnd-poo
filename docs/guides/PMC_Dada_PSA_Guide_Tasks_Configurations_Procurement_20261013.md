@@ -137,6 +137,11 @@ unit cost), and why. The item on a line must be an item BizBox has; the box offe
 
 **New item** (Products tab): code (leave empty and BizBox numbers it), name, category, unit, unit cost, why.
 
+Both end with **Review and send**: the window lists the record as it will be created (a status left to BizBox,
+a code BizBox will give) and, for an order, each line and the lines total. **Send for approval** queues it;
+**Go back and change it** returns you to the form with everything still typed in. A wrong line (an item BizBox
+does not have, a quantity of zero) is said above the form, with the form kept, before any window opens.
+
 Both go to the Changes tab as one batch. BizBox gives the record its number once it is created there.
 
 ### 4.6 The Changes tab, and approving
@@ -256,14 +261,14 @@ first place to ask.
 1. Purchase orders tab, **New purchase order**.
 2. Vendor from the dropdown; order date; currency (PHP is set); leave status to BizBox unless told otherwise.
 3. One line per item: start typing the item code and pick it; description; quantity; unit cost.
-4. Why; **Send for approval**. It appears on Changes as *New purchase order: <vendor>, N line(s)*. BizBox numbers
-   it once it is created there.
+4. Why; **Review and send**. Read the window: the order, each line, the lines total. **Send for approval**.
+5. It appears on Changes as *New purchase order: <vendor>, N line(s)*. BizBox numbers it once it is created there.
 
 **Add a new item**
 
 1. Products tab, **New item**.
 2. Leave the code empty unless the hospital has one; name; category and unit from the dropdowns; unit cost; why;
-   **Send for approval**.
+   **Review and send**, then **Send for approval** in the window.
 
 **Approve, or cancel, a batch** (needs *Approve* for that area)
 

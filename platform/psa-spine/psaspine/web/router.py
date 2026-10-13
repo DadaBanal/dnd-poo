@@ -124,6 +124,7 @@ ROUTES = [
     ("POST", "/procurement/batch/<batch_id>/approve", procurement_view.approve),
     ("POST", "/procurement/batch/<batch_id>/cancel", procurement_view.cancel),
     ("GET", "/procurement/<kind>/new", procurement_view.new_form),
+    ("POST", "/procurement/<kind>/add/review", procurement_view.review_add),     # what will be created, before it is sent
     ("POST", "/procurement/<kind>/add", procurement_view.add),
     ("POST", "/procurement/<kind>/bulk/review", procurement_view.review_bulk),   # the window first (13 Oct 2026)
     ("POST", "/procurement/<kind>/bulk", procurement_view.bulk),

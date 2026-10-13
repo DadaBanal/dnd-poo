@@ -821,11 +821,10 @@ def propose_edits(conn, kind: str, edits, *, reason: str, at: datetime, actor: s
     return {"batch_id": bid, "queued": queued}
 
 
-def propose_add(conn, kind: str, record: dict, lines=None, *, reason: str, at: datetime, actor: str) -> int:
-    """A new record for BizBox: a purchase order with its lines, or an item.
-    The record is checked field by field as the mirror checks a cell, kept
-    as JSON on the batch, and shown in the grid as NEW-<batch> until BizBox
-    answers with its own number. Returns the batch id."""
+def check_add(conn, kind: str, record: dict, lines=None, *, reason: str) -> dict:
+    """What propose_add would queue, for the review window (Dada, 13 Oct
+    2026): every check runs, nothing is written. Returns the record as it
+    would be kept, its lines, and the reason."""
     spec = ADDABLE.get(kind)
     if spec is None:
         raise Refused(f"A new {kind.replace('_', ' ')} cannot be added from the desk.")
@@ -862,6 +861,16 @@ def propose_add(conn, kind: str, record: dict, lines=None, *, reason: str, at: d
             kept_lines.append(row)
         if not kept_lines:
             raise Refused("A purchase order needs at least one line.")
+    return {"record": rec, "lines": kept_lines, "reason": reason}
+
+
+def propose_add(conn, kind: str, record: dict, lines=None, *, reason: str, at: datetime, actor: str) -> int:
+    """A new record for BizBox: a purchase order with its lines, or an item.
+    The record is checked field by field as the mirror checks a cell
+    (check_add), kept as JSON on the batch, and shown in the grid as
+    NEW-<batch> until BizBox answers with its own number. Returns the batch id."""
+    checked = check_add(conn, kind, record, lines, reason=reason)
+    rec, kept_lines, reason = checked["record"], checked["lines"], checked["reason"]
     payload = {"record": rec, "lines": kept_lines}
     bid = _new_batch(conn, kind, "ADD", reason, at=at, actor=actor, payload=payload)
     summary = rec.get("name") or rec.get("vendor") or "new record"

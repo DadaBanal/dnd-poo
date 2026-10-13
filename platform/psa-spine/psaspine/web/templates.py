@@ -478,7 +478,7 @@ dialog.review:not([open]){display:none}
 dialog.review::backdrop{background:rgb(10 12 18/.4);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
 dialog.review h2{margin:0 0 10px;display:flex;align-items:center;gap:8px;font-size:18px}
 dialog.review .tablewrap table{width:auto;min-width:min(100%,520px)}
-dialog.review table td:nth-last-child(2){color:var(--ink-3);text-align:center;padding:0 10px}
+dialog.review table td.arrow{color:var(--ink-3);text-align:center;padding:0 10px}
 dialog.review .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
 dialog.review .acts form{display:inline}
 .bulkbar{background:var(--surface-2);border-radius:var(--r);padding:8px 10px}
