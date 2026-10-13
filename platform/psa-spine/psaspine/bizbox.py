@@ -32,7 +32,7 @@ import json
 import os
 import re
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from . import db
@@ -59,7 +59,21 @@ KINDS = {
     "warehouse": ("ext_warehouse", {"ext_ref": "text", "name": "text", "group_name": "text", "active": "int"}),
     "medicine": ("ext_medicine", {"ext_ref": "text", "generic": "text", "dosage": "text", "controlled": "int",
                                   "doh_ref": "text", "mims_ref": "text", "admin_group": "text", "remarks": "text"}),
+    # 084: stock on hand (one row per warehouse and item that holds any; the
+    # key is made here as <warehouse>:<item> when the view has none), the item
+    # ledger inside the window SQL01's view keeps, and a receiving report's lines.
+    "stock": ("ext_stock", {"ext_ref": "text", "warehouse_ref": "text", "item_ref": "text", "quantity": "money",
+                            "unit_cost": "money", "as_of": "date"}),
+    "movement": ("ext_movement", {"ext_ref": "text", "item_ref": "text", "warehouse_ref": "text", "moved_on": "date",
+                                  "kind": "text", "doc_ref": "text", "qty_in": "money", "qty_out": "money",
+                                  "balance": "money", "unit_cost": "money", "remarks": "text"}),
+    "rr_line": ("ext_rr_line", {"ext_ref": "text", "rr_ref": "text", "line_no": "int", "product_ref": "text",
+                                "description": "text", "quantity": "money", "unit_cost": "money", "po_ref": "text"}),
 }
+# Kinds whose view is a window in time (Dada, 13 Oct 2026: "views based on
+# time or days or months"): a row the view no longer returns is deleted on
+# the next read, not kept absent. Nothing was lost in BizBox; the window moved.
+WINDOWED = {"movement"}
 LABEL = {"agreement": "Agreements", "product": "Products", "purchase_order": "Purchase orders", "invoice": "Invoices"}
 LINK_KIND = {"agreement": "AGREEMENT", "product": "PRODUCT", "purchase_order": "PURCHASE_ORDER", "invoice": "INVOICE"}
 REQUIRED = {"ext_ref", "name"}          # name only where the kind has one
@@ -80,7 +94,7 @@ MAX_TEXT = 400
 # status, currency and unit are CODE, NVARCHAR(32)). SQLite has no widths, so
 # without this a 37-character BizBox status would pass every test and fail the
 # host's insert with "string or binary data would be truncated".
-WIDTH = {"status": 32, "currency": 32, "unit": 32, "list": 32}
+WIDTH = {"status": 32, "currency": 32, "unit": 32, "list": 32, "kind": 32}
 PAGE = 100
 # The longest key the mirror accepts. SQL Server caps an index key at 900 bytes
 # and warned on the first apply (29 Sep 2026) that ext_link's and ext_po_line's
@@ -123,6 +137,10 @@ def check_map(data: dict) -> dict:
             # a list entry's key is <list>:<code>, made up by sync when the view has none
             if not isinstance(cols, dict) or "list" not in cols or "code" not in cols:
                 raise Refused("lookup: the map must name the columns for list and code")
+        elif kind == "stock":
+            # a stock row's key is <warehouse>:<item>, made up by sync when the view has none
+            if not isinstance(cols, dict) or not {"warehouse_ref", "item_ref", "quantity"} <= set(cols):
+                raise Refused("stock: the map must name the columns for warehouse_ref, item_ref and quantity")
         elif not isinstance(cols, dict) or "ext_ref" not in cols:
             raise Refused(f"{kind}: the map must name the column for ext_ref")
         fields = KINDS[kind][1]
@@ -137,6 +155,10 @@ def check_map(data: dict) -> dict:
             raise Refused(f"{kind}: the map must name the column for name")
         if kind == "po_line" and "po_ref" not in cols:
             raise Refused("po_line: the map must name the column for po_ref")
+        if kind == "rr_line" and "rr_ref" not in cols:
+            raise Refused("rr_line: the map must name the column for rr_ref")
+        if kind == "movement" and not {"item_ref", "moved_on"} <= set(cols):
+            raise Refused("movement: the map must name the columns for item_ref and moved_on")
     return data
 
 
@@ -264,11 +286,16 @@ def sync(conn: sqlite3.Connection, rows_by_kind: dict[str, list[dict]], *, at: d
             rec = {f: _value(raw.get(f), how, f"{kind}.{f}", WIDTH.get(f, MAX_TEXT)) for f, how in fields.items() if f in raw}
             if kind == "lookup" and not rec.get("ext_ref") and rec.get("list") and rec.get("code"):
                 rec = {"ext_ref": f"{rec['list']}:{rec['code']}"} | rec
+            if kind == "stock" and not rec.get("ext_ref") and rec.get("warehouse_ref") and rec.get("item_ref"):
+                rec = {"ext_ref": f"{rec['warehouse_ref']}:{rec['item_ref']}"} | rec
             ref = rec.get("ext_ref")
             if not ref or ("name" in fields and not rec.get("name")) or ref in seen \
                     or (kind == "po_line" and not rec.get("po_ref")) \
+                    or (kind == "rr_line" and not rec.get("rr_ref")) \
                     or (kind == "lookup" and not (rec.get("list") and rec.get("code"))) \
-                    or len(ref) > MAX_KEY or len(rec.get("po_ref") or "") > MAX_KEY:
+                    or (kind == "stock" and not (rec.get("warehouse_ref") and rec.get("item_ref") and rec.get("quantity") is not None)) \
+                    or (kind == "movement" and not (rec.get("item_ref") and rec.get("moved_on"))) \
+                    or len(ref) > MAX_KEY or len(rec.get("po_ref") or "") > MAX_KEY or len(rec.get("rr_ref") or "") > MAX_KEY:
                 c["skipped"] += 1
                 continue
             seen.add(ref)
@@ -294,6 +321,8 @@ def sync(conn: sqlite3.Connection, rows_by_kind: dict[str, list[dict]], *, at: d
             if ref not in seen:
                 c["absent"] += 1
                 conn.execute(f"UPDATE {table} SET present = 0 WHERE source_id = ? AND ext_ref = ?", (SOURCE, ref))
+        if kind in WINDOWED:
+            conn.execute(f"DELETE FROM {table} WHERE source_id = ? AND present = 0", (SOURCE,))
         counts[kind] = c
     words = "; ".join(f"{k}: {v['rows']} rows, {v['new']} new, {v['changed']} changed, {v['unchanged']} unchanged,"
                       f" {v['absent']} absent, {v['skipped']} skipped" for k, v in counts.items())
@@ -310,7 +339,8 @@ def sync(conn: sqlite3.Connection, rows_by_kind: dict[str, list[dict]], *, at: d
 
 READ_WORDS = {"purchase_order": "purchase orders", "po_line": "order lines", "product": "items",
               "invoice": "receiving reports", "agreement": "agreements", "lookup": "list entries",
-              "warehouse": "warehouses", "medicine": "medicines"}
+              "warehouse": "warehouses", "medicine": "medicines", "stock": "stock lines", "movement": "movements",
+              "rr_line": "receiving lines"}
 
 
 def read_words(result: str | None) -> str:
@@ -1092,3 +1122,118 @@ def medicine_of(conn, item_ref: str):
 def po_lines(conn, po_ref: str):
     return conn.execute("SELECT * FROM ext_po_line WHERE source_id = ? AND po_ref = ? AND present = 1"
                         " ORDER BY line_no, ext_ref", (SOURCE, po_ref)).fetchall()
+
+
+# ------------------------------------------------- stock and movements (084)
+
+# BizBox's movement kinds, as its ledger names them, in a person's words.
+MOVE_WORDS = {"RECEIPT": "Received", "RECEIVE": "Received", "RR": "Received", "ISSUE": "Issued", "ISSUANCE": "Issued",
+              "TRANSFER_IN": "Transferred in", "TRANSFER_OUT": "Transferred out", "TRANSFER": "Transferred",
+              "ADJUST": "Adjusted", "ADJUSTMENT": "Adjusted", "ADJ_IN": "Adjusted up", "ADJ_OUT": "Adjusted down",
+              "COUNT": "Counted", "RETURN": "Returned", "CONSUME": "Used", "SALE": "Sold", "PURCHASE": "Received"}
+
+
+def move_word(kind) -> str:
+    k = (kind or "").strip()
+    return MOVE_WORDS.get(k.upper().replace(" ", "_").replace("-", "_"), k.replace("_", " ").capitalize() or "Moved")
+
+
+_STOCK_FROM = (" FROM ext_stock s LEFT JOIN ext_product p ON p.source_id = s.source_id AND p.ext_ref = s.item_ref"
+               " LEFT JOIN ext_warehouse w ON w.source_id = s.source_id AND w.ext_ref = s.warehouse_ref"
+               " WHERE s.source_id = ? AND s.present = 1")
+_STOCK_COLS = ("s.ext_ref, s.warehouse_ref, s.item_ref, s.quantity, s.as_of, COALESCE(s.unit_cost, p.unit_cost) AS unit_cost,"
+               " s.quantity * COALESCE(s.unit_cost, p.unit_cost, 0) AS value, p.name AS item_name, p.unit, p.category,"
+               " p.present AS item_present, w.name AS warehouse_name, w.group_name")
+
+
+def stock(conn, *, warehouse: str = "", item: str = "", q: str = "", limit: int = PAGE, offset: int = 0) -> tuple[list, int]:
+    """Stock on hand: every line, or one warehouse's, or one item's, with the
+    item's and the warehouse's names and a value at the item's unit cost
+    when the view gives none. (rows, total)."""
+    sql, args = [_STOCK_FROM], [SOURCE]
+    if warehouse:
+        sql.append(" AND s.warehouse_ref = ?")
+        args.append(warehouse)
+    if item:
+        sql.append(" AND s.item_ref = ?")
+        args.append(item)
+    for word in (q or "").split()[:4]:
+        sql.append(" AND (LOWER(COALESCE(p.name, '')) LIKE ? ESCAPE '\\' OR LOWER(s.item_ref) LIKE ? ESCAPE '\\')")
+        args += [_like(word.lower())] * 2
+    where = "".join(sql)
+    total = conn.execute("SELECT COUNT(*)" + where, args).fetchone()[0]
+    rows = conn.execute(f"SELECT {_STOCK_COLS}" + where + " ORDER BY w.group_name, w.name, p.name, s.item_ref LIMIT ? OFFSET ?",
+                        [*args, limit, offset]).fetchall()
+    return rows, total
+
+
+def stock_of_item(conn, item_ref: str) -> list:
+    return conn.execute(f"SELECT {_STOCK_COLS}" + _STOCK_FROM + " AND s.item_ref = ? ORDER BY w.group_name, w.name",
+                        (SOURCE, item_ref)).fetchall()
+
+
+def stock_summary(conn) -> dict:
+    """Lines, items, warehouses holding stock, the value at unit cost, and
+    the newest as-of the view gave."""
+    r = conn.execute(
+        "SELECT COUNT(*) AS lines, COUNT(DISTINCT s.item_ref) AS items, COUNT(DISTINCT s.warehouse_ref) AS warehouses,"
+        " COALESCE(SUM(s.quantity * COALESCE(s.unit_cost, p.unit_cost, 0)), 0) AS value, MAX(s.as_of) AS as_of,"
+        " MAX(s.synced_at) AS synced_at"
+        " FROM ext_stock s LEFT JOIN ext_product p ON p.source_id = s.source_id AND p.ext_ref = s.item_ref"
+        " WHERE s.source_id = ? AND s.present = 1", (SOURCE,)).fetchone()
+    return {"lines": r["lines"], "items": r["items"], "warehouses": r["warehouses"], "value": float(r["value"] or 0),
+            "as_of": r["as_of"], "synced_at": r["synced_at"]}
+
+
+def stock_by_warehouse(conn) -> list:
+    """One row per warehouse holding stock: lines, items and value, largest first."""
+    return conn.execute(
+        "SELECT s.warehouse_ref, w.name AS warehouse_name, w.group_name, COUNT(*) AS n, COUNT(DISTINCT s.item_ref) AS items,"
+        " COALESCE(SUM(s.quantity * COALESCE(s.unit_cost, p.unit_cost, 0)), 0) AS value"
+        + _STOCK_FROM + " GROUP BY s.warehouse_ref, w.name, w.group_name ORDER BY value DESC, n DESC", (SOURCE,)).fetchall()
+
+
+def movements(conn, *, item: str = "", warehouse: str = "", days: int = 30, kind: str = "", now: datetime | None = None,
+              limit: int = PAGE, offset: int = 0) -> tuple[list, int]:
+    """The item ledger inside a window of days, newest first, for one item,
+    one warehouse, or every one; with the names. (rows, total)."""
+    since = ((now or datetime.now()).date() - timedelta(days=max(1, int(days)))).isoformat()
+    sql = [" FROM ext_movement m LEFT JOIN ext_product p ON p.source_id = m.source_id AND p.ext_ref = m.item_ref"
+           " LEFT JOIN ext_warehouse w ON w.source_id = m.source_id AND w.ext_ref = m.warehouse_ref"
+           " WHERE m.source_id = ? AND m.present = 1 AND m.moved_on >= ?"]
+    args: list = [SOURCE, since]
+    if item:
+        sql.append(" AND m.item_ref = ?")
+        args.append(item)
+    if warehouse:
+        sql.append(" AND m.warehouse_ref = ?")
+        args.append(warehouse)
+    if kind:
+        sql.append(" AND UPPER(COALESCE(m.kind, '')) = ?")
+        args.append(kind.upper())
+    where = "".join(sql)
+    total = conn.execute("SELECT COUNT(*)" + where, args).fetchone()[0]
+    rows = conn.execute(
+        "SELECT m.*, p.name AS item_name, p.unit, w.name AS warehouse_name, w.group_name" + where
+        + " ORDER BY m.moved_on DESC, m.ext_ref DESC LIMIT ? OFFSET ?", [*args, limit, offset]).fetchall()
+    return rows, total
+
+
+def movement_kinds(conn, *, days: int = 30, now: datetime | None = None) -> list:
+    """(kind, word, count) inside the window, most common first."""
+    since = ((now or datetime.now()).date() - timedelta(days=max(1, int(days)))).isoformat()
+    out = conn.execute("SELECT UPPER(COALESCE(kind, '')) AS k, COUNT(*) AS n FROM ext_movement WHERE source_id = ? AND present = 1"
+                       " AND moved_on >= ? GROUP BY UPPER(COALESCE(kind, '')) ORDER BY n DESC, k", (SOURCE, since)).fetchall()
+    return [(r["k"], move_word(r["k"]), r["n"]) for r in out]
+
+
+def movement_window(conn) -> tuple[str | None, str | None]:
+    """The oldest and newest movement the desk holds: what the view's window covers."""
+    r = conn.execute("SELECT MIN(moved_on) AS a, MAX(moved_on) AS b FROM ext_movement WHERE source_id = ? AND present = 1",
+                     (SOURCE,)).fetchone()
+    return (r["a"], r["b"]) if r else (None, None)
+
+
+def rr_lines(conn, rr_ref: str) -> list:
+    return conn.execute("SELECT * FROM ext_rr_line WHERE source_id = ? AND rr_ref = ? AND present = 1 ORDER BY line_no, ext_ref",
+                        (SOURCE, rr_ref)).fetchall()

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import urllib.parse
 
-from ... import agreements, bizbox, security
+from ... import agreements, bizbox, db, security
 from .. import templates as t
 from . import common
 
@@ -450,13 +450,28 @@ def _detail(ctx, kind, area, ext_ref, *, dialog: str = "", err: str = "", posted
                     or "<tr><td colspan=7 class=muted>No lines mirrored.</td></tr>")
                  + (f"<tr><td colspan=6 class=num><b>Lines total</b></td><td class=num><b>{t.esc(_money(total, rec['currency']))}</b></td></tr>" if lines else "")
                  + "</tbody></table></div></div>")
+    if kind == "invoice" and db.table_exists(ctx.conn, "ext_rr_line"):
+        lines = bizbox.rr_lines(ctx.conn, ext_ref)
+        total = sum(float(l["quantity"] or 0) * float(l["unit_cost"] or 0) for l in lines)
+        extra += ("<div class=card><h3>" + t.icon("rows") + "Lines received</h3><div class=tablewrap><table><thead><tr><th>#</th><th>Item</th>"
+                  "<th>Description</th><th class=num>Received</th><th class=num>Unit cost</th><th class=num>Extended</th><th>Order</th></tr></thead><tbody>"
+                  + ("".join(f"<tr><td>{t.esc(l['line_no'] if l['line_no'] is not None else '')}</td>"
+                             f"<td>{_ref_link('product', l['product_ref'], area)}</td><td>{t.esc(l['description'] or '')}</td>"
+                             f"<td class=num>{float(l['quantity'] or 0):g}</td><td class=num>{t.esc(_money(l['unit_cost']))}</td>"
+                             f"<td class=num>{t.esc(_money(float(l['quantity'] or 0) * float(l['unit_cost'] or 0)))}</td>"
+                             f"<td>{_ref_link('purchase_order', l['po_ref'], area)}</td></tr>" for l in lines)
+                     or "<tr><td colspan=7 class=muted>No lines read for this receiving report yet.</td></tr>")
+                  + (f"<tr><td colspan=5 class=num><b>Lines total</b></td><td class=num><b>{t.esc(_money(total, rec['currency']))}</b></td><td></td></tr>" if lines else "")
+                  + "</tbody></table></div></div>")
     proposals = bizbox.changes(ctx.conn, kind, ext_ref)
     changes_card = ("<div class=card><h3>" + t.icon("note") + "Changes waiting for BizBox</h3><p class=why>A change sent from "
                     "this page is approved by a second person, then pushed to BizBox once that link is switched on; until "
                     "then it waits here, and BizBox itself has not changed.</p>"
                     + _changes_table(ctx, proposals, with_record=False) + "</div>" if proposals else "")
     from . import agreements as agreements_view
-    extra = agreements_view.covering_card(ctx, kind, ext_ref) + medicine_card(ctx, kind, ext_ref) + extra + changes_card
+    from . import procurement as procurement_view
+    extra = (agreements_view.covering_card(ctx, kind, ext_ref) + medicine_card(ctx, kind, ext_ref)
+             + procurement_view.stock_card(ctx, kind, ext_ref) + procurement_view.movements_card(ctx, kind, ext_ref) + extra + changes_card)
     q = ctx.request.query
     body = ((f"<div class='banner ok' id=flash-ok role=status aria-live=polite>{t.esc(q.get('msg', ''))}</div>" if q.get("msg") else "")
             + (f"<div class='banner err' id=flash-err role=alert>{t.esc(err or q.get('err', ''))}</div>" if (err or q.get("err")) else "")

@@ -2696,6 +2696,59 @@ rights area**.
 
 Tests: `WarehousesAndDrugsTest`.
 
+## BizBox's MMS in full: the overview, stock on hand, movements, receiving lines (13 Oct 2026, schema 084)
+
+Dada, 13 Oct 2026, evening: *"a full render of the bizbox mms app into the procurement module but make it better …
+whichever is more efficient: views based on time or days or months"*. SQL01's measurement the same afternoon (Part
+81): of `dbo.iwWareitem`'s 591,369 rows only **4,358** carry a quantity, in 25 of the 73 warehouses; so stock is
+mirrored hourly like everything else, never read live, and the ledger comes through a view SQL01 keeps to a window.
+
+- **Overview** (`/procurement`, the first tab): tiles for the areas the role sees (orders and receiving with this
+  month's count, items, stock at unit cost, movements in the last 7 days, changes waiting), then stock by warehouse
+  (a bar per warehouse), what moved in the last 7 days by kind, what waits for approval, the latest orders and
+  receiving, and the reports people run most. A role with drugs alone still lands on Drugs.
+- **Stock on hand** (`tab=stock`): one line per warehouse and item that holds any, with the item's and the
+  warehouse's names, quantity in the item's unit, unit cost and value (quantity at the item's unit cost when the
+  view gives none), BizBox's as-of and the desk's read time; a warehouse filter and a search; six tiles. Kind
+  `stock` (`ext_stock`): the key is `<warehouse>:<item>`, made by the read when the view has none, so the map names
+  `warehouse_ref`, `item_ref` and `quantity` and may leave `ext_ref` out. `bizbox.stock`, `stock_of_item`,
+  `stock_summary`, `stock_by_warehouse`.
+- **Movements** (`tab=movement`): the item ledger inside a window the person picks, days then months (7, 30, 90,
+  6 months, 12 months), by warehouse, by item, by kind (chips with counts; BizBox's own code made a person's word by
+  `bizbox.move_word`), with the document that moved it, in, out and the balance after. Kind `movement`
+  (`ext_movement`) is **windowed** (`bizbox.WINDOWED`): the view returns the last N days, and a row it stops
+  returning is deleted on the next read, not kept absent; the page says what the desk holds and that older
+  movements are in the reports. `bizbox.movements`, `movement_kinds`, `movement_window`.
+- **Receiving lines**: a receiving report's page gains *Lines received* (item, description, quantity, unit cost,
+  extended, the order each came from) from kind `rr_line` (`ext_rr_line`), as a purchase order's lines were.
+- **An item's page** gains *Stock on hand* (by warehouse, with the total and the value), *Movements, last 30 days*,
+  and *Raise a ticket about this item*: the PSA side of the MMS. `/ticket/new` takes `summary`, `bizbox_kind` and
+  `bizbox_ref` from the query, says which record the ticket is about, and links it when the ticket is created (any
+  mirrored kind). A warehouse on the Warehouses tab says how many items it holds and their value, and links into
+  the stock tab. The menu gains *Stock on hand* and *Stock movements* (PROC_ITEM).
+- The three views are SQL01's (`docs/handoffs/HANDOFF-cloud-sql01-WS36-20261013-mms-stock-084.md`):
+  `psa.vw_stock_on_hand` (the non-zero rows), `psa.vw_item_ledger` (kept to a window; the read refuses over 50,000
+  rows), `psa.vw_receiving_line`. Until the map names them the two tabs say so in words and the rest of Procurement
+  is unchanged. The next pieces of the full render (requisitions, issuances, transfers, adjustments, counts, purchase
+  requests, the supplier master) wait on the BizBox session naming the tables and their monthly volumes; the handoff
+  carries that request (§5), and nothing of 085 is built before the volumes are known.
+- **The report server without pywin32** (SQL01, Part 81): the server speaks only Negotiate and NTLM, and pywin32
+  cannot be installed on the host. `ssrs.transport()` tries Windows' HTTP stack (pywin32) first, then **Windows'
+  own `curl.exe` with `--negotiate`**, which sends the process's identity with nothing installed
+  (`ssrs.CurlTransport`; proven end to end by SQL01: the list, a PDF, an Excel), then Python's own client, which
+  has no identity to send. `PSA_SSRS_CURL` names a curl elsewhere. A 401 now names the right fix: with curl or
+  pywin32 in use it is the Browser role; with Python's client it is that no Windows identity could be presented.
+- **The intake guard made honest** (SQL01, Part 82: sender + subject + 24 h filed **30** genuine requests as
+  resends, because PMC's departments send every case under one standing subject line; 4 against a mail that
+  arrived later, 1 across mailboxes). Dada's rule: a resend is the same sender, the same subject **and the same
+  words**. The words are kept as a hash (`intake_message.body_hash`), never as text; the window is bounded at both
+  ends; the match stays inside the mailbox; a drop is imported in the order the mail arrived, not file-name order. A
+  resend is said on the ticket (*Sent again N minute(s) after the mail that opened this ticket…*) and counted on
+  Setup › Email connector as `INTAKE_RESEND`. `intake-split-duplicates <db> [--since] [--apply]` raises each mail
+  filed as a resend of another's ticket as its own ticket, dated when it arrived, on its mailbox's board,
+  cross-linked both ways, with the words taken back from the note the import left; preview by default. Dada, for
+  the 30: raise them.
+
 ## Changing a booking in place, and your own Outlook entries (9 Oct 2026, schema 077)
 
 Dada, 9 Oct 2026: *"u can dispatch but when changing a schedule there is no modify on calendars and dispatch portal"*,

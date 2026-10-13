@@ -3804,12 +3804,81 @@ class EmailIntakeTest(unittest.TestCase):
     def test_a_resend_with_no_thread_header_inside_the_window_is_a_duplicate(self):
         self._msg(subject="Printer offline")
         self._run()
-        self._msg(subject="Printer offline")          # no In-Reply-To
+        self._msg(subject="Printer offline")          # no In-Reply-To, the same words
         counts = self._run(run_id="i2")
         self.assertEqual(counts["duplicate"], 1)
         self.assertEqual(counts["new"], 0)
         self.assertEqual(self.conn.execute(
             "SELECT COUNT(*) c FROM ticket").fetchone()["c"], 1)
+
+    def test_a_second_request_under_a_standing_subject_line_is_its_own_ticket(self):
+        """SQL01, Part 82 (13 Oct 2026): sender + subject + 24 h filed 30 genuine
+        requests as resends; PMC's departments send every case under one
+        standing subject line. Dada: a resend is the same words too."""
+        self._msg(subject="Request for assistance", body="Doctor A's clinic PC is off.", date="Tue, 13 Oct 2026 11:31:00 +0800")
+        self._msg(subject="Request for assistance", body="Doctor B needs a printer.", date="Tue, 13 Oct 2026 16:43:00 +0800")
+        counts = self._run()
+        self.assertEqual((counts["new"], counts["duplicate"]), (2, 0))
+        # the same words again, 77 minutes later: a resend, filed on the second doctor's ticket and said so
+        self._msg(subject="Request for assistance", body="Doctor B  needs a printer.", date="Tue, 13 Oct 2026 18:00:00 +0800")
+        counts = self._run(run_id="i2")
+        self.assertEqual((counts["new"], counts["duplicate"]), (0, 1))
+        rows = self._rows()
+        self.assertEqual([r["disposition"] for r in rows], ["NEW_TICKET", "NEW_TICKET", "DUPLICATE"])
+        self.assertEqual(rows[2]["duplicate_of"], rows[1]["message_id"])
+        self.assertTrue(rows[2]["body_hash"] and rows[2]["body_hash"] == rows[1]["body_hash"] != rows[0]["body_hash"])
+        self.assertFalse(any("printer" in (r["body_hash"] or "").lower() for r in rows))        # a hash, never the words
+        note = self.conn.execute("SELECT detail FROM ticket_event WHERE kind = 'INTAKE_REPLY' ORDER BY ticket_event_id DESC LIMIT 1").fetchone()["detail"]
+        self.assertIn("(Sent again 77 minute(s) after the mail that opened this ticket: the same sender, subject and words, "
+                      "so no second ticket was raised.)", note)
+        flag = self.conn.execute("SELECT detail, severity FROM data_quality WHERE code = 'INTAKE_RESEND'").fetchone()
+        self.assertEqual(flag["severity"], "INFO")
+        self.assertIn("77 minute(s) later; filed as a note there, no second ticket", flag["detail"])
+
+    def test_a_resend_is_matched_only_to_a_mail_that_came_before_it_in_the_same_mailbox(self):
+        """SQL01, Part 82: 4 of the 30 were filed against a mail that arrived
+        later (the drop was walked by file name), 1 across mailboxes."""
+        # the later mail is named to sort first
+        self._msg(subject="Stone pass", body="Please send the stone pass.", date="Thu, 1 Oct 2026 07:22:00 +0800", name="a.eml")
+        self._msg(subject="Stone pass", body="Please send the stone pass.", date="Thu, 1 Oct 2026 06:34:00 +0800", name="b.eml")
+        counts = self._run()
+        self.assertEqual((counts["new"], counts["duplicate"]), (1, 1))
+        rows = self._rows()
+        self.assertEqual([(r["received_at"][11:], r["disposition"]) for r in rows], [("06:34", "NEW_TICKET"), ("07:22", "DUPLICATE")])
+        self.assertEqual(rows[1]["duplicate_of"], rows[0]["message_id"])                        # the earlier one opened the ticket
+        # the same words to another mailbox: another board's request, never absorbed
+        self._msg(subject="Stone pass", body="Please send the stone pass.", date="Thu, 1 Oct 2026 07:40:00 +0800", name="c.eml")
+        counts = intake.import_drop(self.conn, self.drop, run_id="i2", at=self.at, channel="support")
+        self.assertEqual(counts["duplicate"], 0)
+        self.assertNotEqual(self._rows()[2]["disposition"], "DUPLICATE")
+
+    def test_a_mail_filed_as_a_resend_can_be_raised_as_its_own_ticket_cross_linked(self):
+        """Dada, 13 Oct 2026, for SQL01's 30: "raise each as its own ticket,
+        cross-linked", dated when it arrived; preview first."""
+        from psaspine import itil
+        self._msg(subject="Request", body="Doctor A's PC.", date="Tue, 13 Oct 2026 11:31:00 +0800")
+        self._msg(subject="Request", body="Doctor A's PC.", date="Tue, 13 Oct 2026 16:43:00 +0800")
+        self._run()
+        parent = self._rows()[0]["work_item_id"]
+        before = self.conn.execute("SELECT COUNT(*) c FROM ticket").fetchone()["c"]
+        plan = intake.split_duplicates(self.conn, at=self.at, actor="sql01")
+        self.assertEqual(len(plan), 1)
+        self.assertEqual((plan[0]["parent"], plan[0]["summary"], plan[0]["has_words"]), (parent, "Request", True))
+        self.assertNotIn("ticket", plan[0])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) c FROM ticket").fetchone()["c"], before)      # preview wrote nothing
+        done = intake.split_duplicates(self.conn, at=self.at, actor="sql01", apply=True)
+        new = done[0]["ticket"]
+        one = "SELECT * FROM work_item w JOIN ticket t ON t.work_item_id = w.work_item_id WHERE w.work_item_id = ?"
+        tk, pa = self.conn.execute(one, (new,)).fetchone(), self.conn.execute(one, (parent,)).fetchone()
+        self.assertEqual((tk["name"], tk["requested_by"], tk["board_id"]), ("Request", "ward3@pmcne.ph", pa["board_id"]))
+        self.assertIn(parent, [v for l in itil.links_of(self.conn, new) for v in dict(l).values() if isinstance(v, str)])
+        row = self._rows()[1]
+        self.assertEqual((row["disposition"], row["work_item_id"], row["duplicate_of"]), ("NEW_TICKET", new, self._rows()[0]["message_id"]))
+        said = [r["detail"] for r in self.conn.execute("SELECT detail FROM ticket_event WHERE work_item_id IN (?, ?) AND note_flag = 'INTERNAL'", (new, parent))]
+        self.assertTrue(any("first filed as a note on " + parent in d for d in said), said)
+        self.assertTrue(any("raised as its own ticket " + new in d for d in said), said)
+        self.assertTrue(self.conn.execute("SELECT 1 FROM audit_event WHERE action = 'INTAKE_SPLIT' AND subject_id = ?", (new,)).fetchone())
+        self.assertEqual(intake.split_duplicates(self.conn, at=self.at, actor="sql01", apply=True), [])      # nothing left to split
 
     def test_the_same_subject_long_afterwards_is_a_new_request(self):
         """A printer that breaks twice in a month is two tickets, not one."""
@@ -17994,7 +18063,7 @@ class CwShapeTest(unittest.TestCase):
         self.assertTrue(status.startswith("403"), status)
         # a service manager: tick rows, change them together, in one batch
         self._manager()
-        _, _, page = self._call("GET", "/procurement", cookie=self.alice)
+        _, _, page = self._call("GET", "/procurement", query="tab=purchase_order", cookie=self.alice)
         self.assertIn("Review and send", page)
         self.assertIn("<select form=grid name='e:PO-1:vendor'", page)                            # editable in place, from BizBox's vendors
         self.assertIn("<select form=grid name='e:PO-1:status'", page)
@@ -18009,7 +18078,7 @@ class CwShapeTest(unittest.TestCase):
         [b] = bizbox.batches(conn)
         self.assertEqual((b["status"], b["change_kind"], b["n"], b["requested_by"]), ("PENDING", "EDIT", 2, "alice"))
         self.assertEqual(bizbox.get(conn, "purchase_order", "PO-1")["status"], "Approved")      # the mirror is untouched
-        _, _, page = self._call("GET", "/procurement", cookie=self.alice)
+        _, _, page = self._call("GET", "/procurement", query="tab=purchase_order", cookie=self.alice)
         self.assertIn("<span class='chip sla-warn'>Status</span>", page)                        # the row says a change waits
         _, _, page = self._call("GET", "/procurement", query="tab=changes", cookie=self.alice)
         self.assertIn("2 purchase orders changed", page)
@@ -18252,7 +18321,7 @@ class CwShapeTest(unittest.TestCase):
         self.assertEqual(bizbox.choices(conn, "purchase_order", "ordered_on"), [])                 # a date stays free
         self.assertEqual(bizbox.choices_from(conn, "purchase_order", "status"), "what BizBox has used so far")
         # the grid: a dropdown in the cell and in the bulk bar, a date box for a date
-        _, _, page = self._call("GET", "/procurement", cookie=self.alice)
+        _, _, page = self._call("GET", "/procurement", query="tab=purchase_order", cookie=self.alice)
         self.assertIn("<select form=grid name='e:PO-1:status' data-was='Approved' aria-label='Status of PO-1'>"
                       "<option value='Approved' selected>Approved</option><option value='Ordered'>Ordered</option></select>", page)
         self.assertIn("<select form=grid name='e:PO-1:vendor' data-was='Vendor A' aria-label='Vendor of PO-1'>", page)
@@ -18313,7 +18382,7 @@ class CwShapeTest(unittest.TestCase):
         _, h, _ = self._call("POST", "/procurement/purchase_order/bulk", cookie=self.alice,
                              form={"refs": "PO-2", "field": "status", "nv:status": "Shipped", "reason": "left the depot"})
         self.assertIn("Batch+%232+queued", dict(h)["Location"])
-        _, _, page = self._call("GET", "/procurement", cookie=self.alice)
+        _, _, page = self._call("GET", "/procurement", query="tab=purchase_order", cookie=self.alice)
         self.assertIn("<option value='Shipped'>Shipped by supplier</option>", page)
         self.assertIn("Read from BizBox 2026-09-29 10:00 · 5 list entries (5 new)", page)          # the banner, in words
         # every screen shows the list's word for a stored code, never the code (the category that read 1001)
@@ -18324,7 +18393,7 @@ class CwShapeTest(unittest.TestCase):
         self.assertIn("<option value='Ordered' selected>Ordered from supplier</option>", page)   # the record's own field, a dropdown
         _, _, page = self._call("GET", "/procurement/purchase_order", query="ref=PO-3", cookie=self._cookie_for("carol"))
         self.assertIn("<dd>Ordered from supplier</dd>", page)                                    # a reader: the word, plain
-        _, _, page = self._call("GET", "/procurement", cookie=self.alice)
+        _, _, page = self._call("GET", "/procurement", query="tab=purchase_order", cookie=self.alice)
         self.assertIn("<option value='Ordered'>Ordered from supplier</option>", page)             # the filter and the cells
         _, _, page = self._call("GET", "/procurement/batch/2", cookie=self.alice)
         self.assertIn("Approved → <b>Shipped by supplier</b>", page)
@@ -18359,7 +18428,7 @@ class CwShapeTest(unittest.TestCase):
         self.assertIn("<option value=READ selected>See</option>", page)
         self.assertIn("never one's own", page)
         # the buyer: sees orders and items, never receiving; proposes on orders only
-        _, _, page = self._call("GET", "/procurement", cookie=self.alice)
+        _, _, page = self._call("GET", "/procurement", query="tab=purchase_order", cookie=self.alice)
         for words in ("Purchase orders · 3", "Products · 1", "Vendors · 2", "Changes · 0", "Review and send", "New purchase order"):
             self.assertIn(words, page, words)
         self.assertNotIn("Receiving ·", page)
@@ -18538,6 +18607,58 @@ class MmsReportsTest(unittest.TestCase):
         counts = mms_reports.sync(conn, client.list_reports(), at=self.at, actor="root")
         return conn, client, fake, counts
 
+
+    CURL_STUB = (
+        "import sys\n"
+        "a = sys.argv[1:]\n"
+        "out = a[a.index('-o') + 1]; url = a[-1]\n"
+        "assert '--negotiate' in a and a[a.index('-u') + 1] == ':' and '-sS' in a\n"
+        "if '401' in url:\n"
+        "    open(out, 'wb').write(b'denied'); print('401\\ntext/html'); sys.exit(0)\n"
+        "method = a[a.index('-X') + 1]\n"
+        "body = open(a[a.index('--data-binary') + 1][1:], 'rb').read() if '--data-binary' in a else b''\n"
+        "hdrs = ' '.join(a[i + 1].split(':')[0] for i, x in enumerate(a) if x == '-H')\n"
+        "open(out, 'wb').write(b'negotiate ' + method.encode() + b' ' + body + b' ' + hdrs.encode())\n"
+        "print('200\\ntext/xml; charset=utf-8')\n")
+
+    def test_the_desk_signs_in_through_windows_curl_and_a_refusal_names_the_right_fix(self):
+        """SQL01, Part 81 (13 Oct 2026): the report server speaks only Negotiate
+        and NTLM; pywin32 cannot be installed; Windows' own curl.exe with
+        --negotiate sends the process identity, proven end to end. And a 401
+        must not send the reader to a Browser role that was already granted."""
+        import sys as _sys
+        from psaspine import ssrs
+        stub = Path(self.tmp.name) / "curl_stub.py"
+        stub.write_text(self.CURL_STUB, encoding="utf-8")
+        tr = ssrs.CurlTransport(exe=[_sys.executable, str(stub)])
+        self.assertEqual(tr.name, "curl")
+        status, ctype, data = tr.request("POST", "http://reports.invalid/ReportService2010.asmx",
+                                         headers={"Content-Type": "text/xml", "SOAPAction": '"x"'}, body=b"<env/>")
+        self.assertEqual((status, ctype, data), (200, "text/xml; charset=utf-8", b"negotiate POST <env/> Content-Type SOAPAction"))
+        status, _, data = tr.request("GET", "http://reports.invalid/ReportServer?rs:Command=Render&401")
+        self.assertEqual((status, data), (401, b"denied"))
+
+        class Always401:
+            def __init__(self, name):
+                self.name = name
+
+            def request(self, method, url, *, headers=None, body=None):
+                return 401, "text/html", b""
+        with self.assertRaises(ssrs.ServerError) as cm:
+            ssrs.Ssrs("http://reports.invalid/ReportServer", transport_=Always401("curl")).list_reports()
+        self.assertIn("the account PSA-Desk runs under. SQL01 gives that account the Browser role", str(cm.exception))
+        with self.assertRaises(ssrs.ServerError) as cm:
+            ssrs.Ssrs("http://reports.invalid/ReportServer", transport_=Always401("urllib")).render("/BizBox MMS Reports/x", {}, "PDF")
+        self.assertIn("could not present a Windows identity", str(cm.exception))
+        self.assertIn("curl.exe", str(cm.exception))
+        self.assertNotIn("Browser role", str(cm.exception))
+        # a curl that fails is one sentence, not a traceback
+        bad = ssrs.CurlTransport(exe=[_sys.executable, "-c", "import sys; sys.stderr.write('curl: (6) Could not resolve host: x\\n'); sys.exit(6)"])
+        with self.assertRaises(ssrs.ServerError) as cm:
+            bad.request("GET", "http://reports.invalid/ReportServer")
+        self.assertIn("Could not resolve host", str(cm.exception))
+        with self.assertRaises(ImportError):
+            ssrs.CurlTransport(exe="")                      # nothing to run: the next transport is tried
     def test_the_catalogue_is_the_servers_folder_in_words_by_area(self):
         from psaspine import mms_reports, ssrs
         conn, client, fake, counts = self._catalogue()
@@ -18640,9 +18761,9 @@ class MmsReportsTest(unittest.TestCase):
         fake.status = 401
         status, headers, _ = self._call("GET", f"/procurement/report/{rid}/render", query=q + "&format=PDF", cookie=self.alice)
         self.assertTrue(status.startswith("303"))
-        self.assertIn("refused+the+desk%27s+sign-in", dict(headers)["Location"])
+        self.assertIn("refused+the+sign-in+of+the+account+PSA-Desk+runs+under", dict(headers)["Location"])
         _, _, page = self._call("GET", f"/procurement/report/{rid}", cookie=self.alice)
-        self.assertIn("refused the desk&#x27;s sign-in", page.replace("&#39;", "&#x27;"))
+        self.assertIn("refused the sign-in of the account PSA-Desk runs under", page)
         self.assertEqual(conn.execute("SELECT outcome FROM mms_report_run ORDER BY run_id DESC LIMIT 1").fetchone()[0], "ERROR")
         fake.status = 200
         # rights: a role with See on purchase orders only sees that area's reports and nothing of items
@@ -18677,6 +18798,166 @@ class MmsReportsTest(unittest.TestCase):
         _, h, _ = self._call("POST", "/admin/mms-reports/sync", cookie=self.root)
         self.assertIn("4+reports+listed", dict(h)["Location"])
         self.assertEqual(conn.execute("SELECT area FROM mms_report WHERE report_id = ?", (po,)).fetchone()[0], "invoice")   # the set area survives a read
+
+
+class StockAndMovementsTest(unittest.TestCase):
+    """084 (Dada, 13 Oct 2026: "a full render of the bizbox mms app into the
+    procurement module, but make it better"): stock on hand and the item
+    ledger read hourly from views SQL01 keeps small or keeps to a window,
+    receiving lines, an overview, and the item page's stock and movements."""
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+    _csvs = ModulesTest._csvs
+    _conn = ModulesTest._conn
+    setUp = ModulesTest.setUp
+
+    STOCK = "WarehouseCode,ItemCode,ActualQty,UnitCost,AsOf\r\nW1,IT-1,12,,2026-09-29\r\nW2,IT-1,3,4000,2026-09-29\r\nW1,MD-1,500,,2026-09-29\r\n"
+    MOVES = ("LedgerID,ItemCode,WarehouseCode,TranDate,TranType,DocNo,QtyIn,QtyOut,Balance,UnitCost,Remarks\r\n"
+             "L1,IT-1,W1,2026-09-27,RECEIPT,RR-1,10,,12,4250,\r\nL2,IT-1,W2,2026-09-28,ISSUE,ISS-7,,2,3,,Ward 3\r\n"
+             "L3,MD-1,W1,2026-08-20,ADJUST,ADJ-2,,5,500,,count\r\n")
+    MAP2 = {"objects": {
+        "warehouse": {"view": "psa.vw_warehouse", "columns": {"ext_ref": "WarehouseCode", "name": "WarehouseName", "group_name": "GroupName", "active": "IsActive"}},
+        "stock": {"view": "psa.vw_stock_on_hand", "columns": {"warehouse_ref": "WarehouseCode", "item_ref": "ItemCode", "quantity": "ActualQty",
+                                                              "unit_cost": "UnitCost", "as_of": "AsOf"}},
+        "movement": {"view": "psa.vw_item_ledger", "columns": {"ext_ref": "LedgerID", "item_ref": "ItemCode", "warehouse_ref": "WarehouseCode",
+                                                               "moved_on": "TranDate", "kind": "TranType", "doc_ref": "DocNo", "qty_in": "QtyIn",
+                                                               "qty_out": "QtyOut", "balance": "Balance", "unit_cost": "UnitCost", "remarks": "Remarks"}},
+        "rr_line": {"view": "psa.vw_receiving_line", "columns": {"ext_ref": "LineID", "rr_ref": "RRNo", "line_no": "LineNo", "product_ref": "ItemCode",
+                                                                 "description": "Description", "quantity": "QtyReceived", "unit_cost": "UnitCost", "po_ref": "PONo"}}}}
+
+    def _mirror(self, moves=None):
+        from psaspine import bizbox
+        conn = self._conn()
+        folder = self._csvs("PONo,VendorName,PODate,Status,TotalAmount,Currency\r\nPO-1,Vendor A,2026-09-02,Approved,42500,PHP\r\n")
+        (folder / "product.csv").write_text("ItemCode,ItemName,Category,Unit,UnitCost\r\nIT-1,Toner,Consumables,pc,4250\r\n"
+                                            "MD-1,Paracetamol 500 mg tablet,Drugs,tab,2.5\r\n", encoding="utf-8")
+        (folder / "invoice.csv").write_text("ReceivingNo,SupplierInvoiceNo,VendorName,InvoiceDate,DueDate,Status,TotalAmount,Currency,AgreementNo\r\n"
+                                            "INV-1,SI-1,Vendor A,2026-09-10,2026-10-10,Posted,42500,PHP,\r\n", encoding="utf-8")
+        m = bizbox.check_map(bizbox.load_map(Path(__file__).parent.parent / "bizbox" / "bizbox-map.sample.json"))
+        bizbox.sync(conn, bizbox.read_csv_dir(folder, m), at=self.at, actor="t", apply=True)
+        (folder / "warehouse.csv").write_text("WarehouseCode,WarehouseName,GroupName,IsActive\r\nW1,Central store,Admin,1\r\nW2,Ward 3 store,Nursing Service,1\r\n"
+                                              "W3,Old pharmacy,Ancillary,0\r\n", encoding="utf-8")
+        (folder / "stock.csv").write_text(self.STOCK, encoding="utf-8")
+        (folder / "movement.csv").write_text(moves if moves is not None else self.MOVES, encoding="utf-8")
+        (folder / "rr_line.csv").write_text("LineID,RRNo,LineNo,ItemCode,Description,QtyReceived,UnitCost,PONo\r\nRL-1,INV-1,1,IT-1,Toner black,10,4250,PO-1\r\n", encoding="utf-8")
+        counts = bizbox.sync(conn, bizbox.read_csv_dir(folder, bizbox.check_map(self.MAP2)), at=self.at, actor="t", apply=True)
+        return conn, folder, counts
+
+    def test_stock_movements_and_receiving_lines_are_read_hourly_and_the_window_moves(self):
+        from psaspine import bizbox
+        conn, folder, counts = self._mirror()
+        self.assertEqual((counts["stock"]["new"], counts["movement"]["new"], counts["rr_line"]["new"]), (3, 3, 1))
+        self.assertIn("3 stock lines (3 new) · 3 movements (3 new) · 1 receiving lines (1 new)", bizbox.read_words(bizbox.status(conn)["last_result"]))
+        s = bizbox.stock_summary(conn)
+        self.assertEqual((s["lines"], s["items"], s["warehouses"], s["value"], s["as_of"]), (3, 2, 2, 64250.0, "2026-09-29"))   # 12×4250 + 3×4000 + 500×2.5
+        rows, total = bizbox.stock(conn)
+        self.assertEqual(total, 3)
+        self.assertEqual([(r["warehouse_name"], r["item_ref"], r["quantity"], r["unit_cost"], r["value"]) for r in rows],
+                         [("Central store", "MD-1", 500.0, 2.5, 1250.0), ("Central store", "IT-1", 12.0, 4250.0, 51000.0), ("Ward 3 store", "IT-1", 3.0, 4000.0, 12000.0)])
+        self.assertEqual(bizbox.stock(conn, warehouse="W2")[1], 1)
+        self.assertEqual(bizbox.stock(conn, q="paracet")[1], 1)
+        self.assertEqual([r["warehouse_ref"] for r in bizbox.stock_of_item(conn, "IT-1")], ["W1", "W2"])
+        self.assertEqual([(r["warehouse_name"], r["items"]) for r in bizbox.stock_by_warehouse(conn)], [("Central store", 2), ("Ward 3 store", 1)])
+        at = datetime(2026, 9, 29, 10, 0)
+        self.assertEqual(bizbox.movements(conn, days=30, now=at)[1], 2)                     # the August adjustment is outside 30 days
+        self.assertEqual(bizbox.movements(conn, days=90, now=at)[1], 3)
+        self.assertEqual([r["ext_ref"] for r in bizbox.movements(conn, days=90, now=at)[0]], ["L2", "L1", "L3"])      # newest first
+        self.assertEqual(bizbox.movements(conn, item="IT-1", warehouse="W2", days=30, now=at)[0][0]["doc_ref"], "ISS-7")
+        self.assertEqual(bizbox.movements(conn, kind="issue", days=30, now=at)[1], 1)
+        self.assertEqual(bizbox.movement_kinds(conn, days=90, now=at), [("ADJUST", "Adjusted", 1), ("ISSUE", "Issued", 1), ("RECEIPT", "Received", 1)])
+        self.assertEqual(bizbox.movement_window(conn), ("2026-08-20", "2026-09-28"))
+        self.assertEqual([(l["product_ref"], l["quantity"], l["po_ref"]) for l in bizbox.rr_lines(conn, "INV-1")], [("IT-1", 10.0, "PO-1")])
+        # the view's window moved on: a movement it no longer returns leaves the desk, nothing is kept absent
+        (folder / "movement.csv").write_text(self.MOVES.rsplit("L3,", 1)[0], encoding="utf-8")
+        counts = bizbox.sync(conn, bizbox.read_csv_dir(folder, bizbox.check_map(self.MAP2)), at=self.at, actor="t", apply=True)
+        self.assertEqual((counts["movement"]["rows"], counts["movement"]["absent"]), (2, 1))
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM ext_movement").fetchone()[0], 2)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM ext_stock WHERE present = 1").fetchone()[0], 3)         # stock is kept absent like the rest
+        # the map fence: a stock view needs its three columns; a price table is never read
+        with self.assertRaises(bizbox.Refused):
+            bizbox.check_map({"objects": {"stock": {"view": "psa.vw_stock", "columns": {"item_ref": "ItemCode"}}}})
+        with self.assertRaises(bizbox.Refused):
+            bizbox.check_map({"objects": {"movement": {"view": "psa.vw_ledger", "columns": {"ext_ref": "LedgerID", "item_ref": "ItemCode"}}}})
+
+    def test_the_overview_the_stock_and_movements_tabs_and_the_item_and_receiving_pages(self):
+        conn, _, _ = self._mirror()
+        # Procurement opens on the overview: tiles, stock by warehouse, what moved, latest orders and receiving
+        status, _, page = self._call("GET", "/procurement", cookie=self.alice)
+        self.assertTrue(status.startswith("200"), status)
+        self.assertIn("<a class='on' href='/procurement?tab=home'>Overview</a>", page)
+        for words in ("Stock on hand · 3", "Movements · ", "purchase orders · ", "receiving reports · ", "stock on hand at unit cost · 3 lines",
+                      "movements in the last 7 days", "changes waiting for approval", "Stock by warehouse", "Central store", "<div class=bar>",
+                      "Moved in the last 7 days", "Latest purchase orders", "Latest receiving", "Waiting for approval · 0",
+                      "Nothing waits. BizBox has not changed from here."):
+            self.assertIn(words, page, words)
+        self.assertIn("64,250.00", page)
+        # the stock tab: every line, one warehouse, a search
+        _, _, page = self._call("GET", "/procurement", query="tab=stock", cookie=self.alice)
+        for words in ("<div class=n>3</div><div class=l>stock lines</div>", "<div class=n>2</div><div class=l>items in stock</div>",
+                      "<div class=n>64,250.00</div><div class=l>value at unit cost</div>", "<option value='W1'>Central store (Admin)</option>",
+                      "<td class=num>12 pc</td>", "<td class=num>500 tab</td>", "<td class=num>51,000.00</td>", "3 line(s)."):
+            self.assertIn(words, page, words)
+        _, _, page = self._call("GET", "/procurement", query="tab=stock&warehouse=W2", cookie=self.alice)
+        self.assertIn("<option value='W2' selected>", page)
+        self.assertIn("<td class=num>3 pc</td>", page)
+        self.assertNotIn("<td class=num>12 pc</td>", page)
+        _, _, page = self._call("GET", "/procurement", query="tab=stock&q=paracet", cookie=self.alice)
+        self.assertIn("Paracetamol", page)
+        self.assertNotIn("<td>Toner</td>", page)
+        # movements: a window of days or months, a kind, an item, a warehouse
+        _, _, page = self._call("GET", "/procurement", query="tab=movement&days=90", cookie=self.alice)
+        for words in ("<option value=90 selected>Last 90 days</option>", "<option value=183>Last 6 months</option>", "All · 3",
+                      "Received · 1", "Issued · 1", "Adjusted · 1", "<td>2026-09-28</td>", "<td>ISS-7</td>", "<td class=num>2</td>",
+                      "The desk holds 2026-08-20 to 2026-09-28"):
+            self.assertIn(words, page, words)
+        _, _, page = self._call("GET", "/procurement", query="tab=movement&days=90&kind=ISSUE", cookie=self.alice)
+        self.assertIn("<td>Issued</td>", page)
+        self.assertNotIn("<td>Received</td>", page)
+        self.assertIn("1 movement(s).", page)
+        _, _, page = self._call("GET", "/procurement", query="tab=movement&days=90&item=MD-1&warehouse=W1", cookie=self.alice)
+        self.assertIn("<td>ADJ-2</td>", page)
+        self.assertNotIn("<td>RR-1</td>", page)
+        # the item's page: stock by warehouse, its movements, a ticket about it
+        _, _, page = self._call("GET", "/procurement/product", query="ref=IT-1", cookie=self.alice)
+        for words in ("Stock on hand</h3>", "<td>Central store <span class=muted>· Admin</span></td><td class=num>12 pc</td>",
+                      "<td><b>All warehouses</b></td><td class=num><b>15</b></td><td class=num><b>63,000.00</b></td>",
+                      "href='/ticket/new?summary=Toner+%28IT-1%29%3A+&bizbox_kind=product&bizbox_ref=IT-1'", "Raise a ticket about this item",
+                      "Movements, last 30 days · ", "<td>ISS-7</td>"):
+            self.assertIn(words, page, words)
+        # the receiving report's lines, with the order each came from
+        _, _, page = self._call("GET", "/procurement/invoice", query="ref=INV-1", cookie=self.alice)
+        for words in ("Lines received</h3>", "<td>Toner black</td>", "<td class=num>10</td>", "<a href='/procurement/purchase_order?ref=PO-1'>PO-1</a>",
+                      "<b>Lines total</b></td><td class=num><b>PHP 42,500.00</b>"):
+            self.assertIn(words, page, words)
+        # the warehouses say what they hold, and point at the stock tab
+        _, _, page = self._call("GET", "/procurement", query="tab=warehouse", cookie=self.alice)
+        self.assertIn("href='/procurement?tab=stock&warehouse=W1'>2 items in stock · 52,250.00</a>", page)
+        self.assertIn("href='/procurement?tab=stock&warehouse=W2'>1 item in stock · 12,000.00</a>", page)
+        self.assertNotIn("Old pharmacy</b> <span class=muted>· W3</span> <span class=pill>inactive</span> <a", page)
+        # the menu
+        self.assertIn("Stock on hand", page)
+        self.assertIn("Stock movements", page)
+
+    def test_a_ticket_raised_from_an_item_is_linked_to_it(self):
+        """The PSA side of the MMS (Dada: "integrating it with the psa as
+        well"): from an item's stock card to a ticket that carries the item."""
+        from psaspine import bizbox
+        conn, _, _ = self._mirror()
+        _, _, page = self._call("GET", "/ticket/new", cookie=self.alice, query="summary=Toner+%28IT-1%29%3A+&bizbox_kind=product&bizbox_ref=IT-1")
+        self.assertIn("About the BizBox record <b>IT-1</b> (Toner); it is linked when the ticket is created.", page)
+        self.assertIn("<input type=hidden name=bizbox_kind value='product'><input type=hidden name=bizbox_ref value='IT-1'>", page)
+        self.assertIn("value='Toner (IT-1): '", page)
+        _, _, page = self._call("GET", "/ticket/new", cookie=self.alice, query="bizbox_kind=product&bizbox_ref=IT-9")
+        self.assertNotIn("About the BizBox record", page)                                   # a record BizBox has not got: no link offered
+        status, headers, _ = self._call("POST", "/ticket/new", cookie=self.alice, form={
+            "board_id": "IT_HELP", "summary": "Toner (IT-1): ward 3 printer out, none in stock", "impact": "I3", "urgency": "U3",
+            "source": "PHONE", "entity_id": "PMC", "bizbox_kind": "product", "bizbox_ref": "IT-1"})
+        self.assertTrue(status.startswith("303"), status)
+        wid = dict(headers)["Location"].split("/ticket/")[1].split("?")[0]
+        self.assertEqual([(l["kind"], l["ext_ref"]) for l in bizbox.links(conn, "TICKET", wid)], [("product", "IT-1")])
+        _, _, page = self._call("GET", "/procurement/product", query="ref=IT-1", cookie=self.alice)
+        self.assertIn(f"Ticket <a href='/ticket/{wid}'>{wid}</a>", page)                    # the item's page shows the work on it
 
 
 class WarehousesAndDrugsTest(unittest.TestCase):
@@ -18806,7 +19087,7 @@ class AccessibilityTest(unittest.TestCase):
         security.ensure_roles(conn)
         security.assign(conn, "alice", "SERVICE_MANAGER", at=self.at, actor="root")
         conn.commit()
-        _, _, page = self._call("GET", "/procurement", query="err=Not+queued%3A+say+why", cookie=self.alice)
+        _, _, page = self._call("GET", "/procurement", query="tab=purchase_order&err=Not+queued%3A+say+why", cookie=self.alice)
         self.assertIn("<div class='banner err' id=flash-err role=alert>Not queued: say why</div>", page)
         self.assertIn("data-valuepick aria-describedby=flash-err>", page)
         self.assertIn("<div style='flex:0 0 auto' aria-live=polite><b><span data-ticked>0</span> ticked</b>", page)

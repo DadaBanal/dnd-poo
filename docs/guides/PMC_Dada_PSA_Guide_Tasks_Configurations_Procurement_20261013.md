@@ -163,6 +163,40 @@ look at every change before it reaches the hospital's purchasing system.
 **Nothing is sent to BizBox automatically yet.** The Changes tab says so in its own words. Approved changes wait
 there until the link is built and switched on, which Dada and BizBox's owner decide.
 
+### 4.8 The overview, stock on hand and movements (13 Oct, evening)
+
+**Procurement now opens on an overview**: how many orders and receiving reports there are and how many this month,
+the items, the value of stock on hand, what moved in the last 7 days, what waits for approval; then stock by
+warehouse, what moved and of what kind, the latest orders and receiving, and the reports people run most. Click any
+tile or line to get to the thing itself.
+
+**Stock on hand** lists every warehouse-and-item line BizBox holds a quantity for: the warehouse and its group, the
+item, its name and category, what is on hand in the item's unit, the unit cost and the value, and BizBox's own
+as-of date. Pick a warehouse, or search by item code or name. A warehouse or item that is not here holds nothing.
+The value is quantity at the item's unit cost; BizBox's own valuation is the *Perpetual inventory* report.
+
+**Movements** is the item ledger: every receipt, issue, transfer, adjustment and count BizBox recorded, with the
+document that moved it, what came in, what went out and the balance after. Choose a **window** (7, 30 or 90 days,
+6 or 12 months), a warehouse, an item, and click a kind (*Issued · 4*) to narrow it. The line under the filters
+says what the desk holds; older movements are in the reports.
+
+**An item's page** now shows what each warehouse holds of it, its last 30 days of movements, and **Raise a ticket
+about this item**: the ticket opens with the item named and is linked to it when created, so the item's page lists
+the work on it. A receiving report's page shows its lines and the order each came from. The Warehouses tab says how
+many items each warehouse holds and their value, and links into Stock on hand.
+
+Until SQL01 has built the views these read from, the Stock on hand and Movements tabs say so in words; the rest of
+Procurement is as before.
+
+### 4.9 Email: a mail with the same subject is not the same request
+
+From 13 Oct, a second mail from the same sender under the same subject line is its own ticket unless the **words**
+are the same too. Departments that send every case under one standing subject (Billing, Radiology, Admitting) get a
+ticket per case. A true resend, same words minutes or hours later, is still filed on the ticket it repeats, and the
+ticket says so: *(Sent again 77 minute(s) after the mail that opened this ticket: the same sender, subject and words,
+so no second ticket was raised.)* The requests filed the old way are being raised as their own tickets, cross-linked
+with the ticket they were filed on; each carries a note saying when it arrived and where it was first filed.
+
 ## 5. Dropdowns: why you cannot type a status
 
 BizBox only accepts its own values. So on the desk a purchase order's status, vendor and currency, a receiving

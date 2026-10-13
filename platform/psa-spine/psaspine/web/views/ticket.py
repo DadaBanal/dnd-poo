@@ -22,7 +22,7 @@ import re
 import urllib.parse
 from datetime import datetime, timedelta
 
-from ... import board as engine
+from ... import bizbox, board as engine
 from ... import departments as _departments
 from ... import origin as _origin
 from ... import phi, tickets
@@ -1173,8 +1173,16 @@ def update(ctx, work_item_id):
 def new_form(ctx, *, error: str = "", values: dict | None = None):
     from .. import Response
     # From a company or contact page the link carries who is asking.
-    v = values or {k: ctx.request.query[k] for k in ("board_id", "entity_id", "requested_by", "configuration_id")
+    v = values or {k: ctx.request.query[k] for k in ("board_id", "entity_id", "requested_by", "configuration_id",
+                                                         "summary", "bizbox_kind", "bizbox_ref")
                    if ctx.request.query.get(k)}
+    # From a BizBox record's page (084): the item, order or receiving report
+    # the ticket is about is linked when it is created.
+    record = None
+    if v.get("bizbox_kind") in bizbox.LINK_KIND and v.get("bizbox_ref"):
+        record = bizbox.get(ctx.conn, v["bizbox_kind"], v["bizbox_ref"])
+        if record is None:
+            v.pop("bizbox_kind"), v.pop("bizbox_ref")
     machine = None
     if v.get("configuration_id"):
         machine = ctx.conn.execute("SELECT configuration_id, name FROM configuration WHERE configuration_id = ?",
@@ -1217,7 +1225,11 @@ def new_form(ctx, *, error: str = "", values: dict | None = None):
            if v.get("template_id") else "")
         + (f"<input type=hidden name=configuration_id value='{t.esc(machine['configuration_id'])}'>"
            f"<p class=why style='margin:0 0 8px'>{t.icon('monitor')} For the machine <b>{t.esc(machine['name'])}</b>; "
-           "it is attached when the ticket is created.</p>" if machine else "") + "<div class=grid2>"
+           "it is attached when the ticket is created.</p>" if machine else "")
+        + (f"<input type=hidden name=bizbox_kind value='{t.esc(v['bizbox_kind'])}'><input type=hidden name=bizbox_ref value='{t.esc(v['bizbox_ref'])}'>"
+           f"<p class=why style='margin:0 0 8px'>{t.icon('cart')} About the BizBox record <b>{t.esc(v['bizbox_ref'])}</b>"
+           + (f" ({t.esc(record['name'])})" if 'name' in record.keys() and record['name'] else "") + "; it is linked when the ticket is created.</p>" if record else "")
+        + "<div class=grid2>"
         f"<div><label>Board</label><select name=board_id>{_options([(b['board_id'], b['display_name']) for b in boards], v.get('board_id', ''))}</select></div>"
         f"<div><label>Source</label><select name=source>{_options(SOURCES, v.get('source', 'PHONE'))}</select></div>"
         "<input type=hidden name=fields value=1>"
@@ -1297,6 +1309,11 @@ def new_create(ctx):
                 cmdb.attach(ctx.conn, wid, f["configuration_id"], at=ctx.now, actor=ctx.user.id)
             except LookupError:
                 pass                               # a machine that vanished is not a reason to lose the ticket
+        if f.get("bizbox_kind") and f.get("bizbox_ref"):
+            try:
+                bizbox.link(ctx.conn, "TICKET", wid, f["bizbox_kind"], f["bizbox_ref"], at=ctx.now, actor=ctx.user.id)
+            except (bizbox.Refused, KeyError):
+                pass                               # a record that vanished is not a reason to lose the ticket
         ctx.conn.commit()
     except Exception as exc:                                 # noqa: BLE001
         ctx.conn.rollback()

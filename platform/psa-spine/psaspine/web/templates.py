@@ -481,6 +481,8 @@ dialog.review .tablewrap table{width:auto;min-width:min(100%,520px)}
 dialog.review table td.arrow{color:var(--ink-3);text-align:center;padding:0 10px}
 dialog.review .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
 dialog.review .acts form{display:inline}
+.home2{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}@media (max-width:900px){.home2{grid-template-columns:1fr}}
+.bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;min-width:60px}.bar i{display:block;height:100%;background:var(--accent);border-radius:3px}
 .bulkbar{background:var(--surface-2);border-radius:var(--r);padding:8px 10px}
 .pill.dept{display:inline-flex;align-items:center;gap:4px;font-weight:600;color:var(--ink);--c:#0ea5e9;
   background:color-mix(in srgb,var(--c) 14%,var(--surface));border:1px solid color-mix(in srgb,var(--c) 50%,transparent)}
@@ -3014,7 +3016,9 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
             ("procurement", "/procurement", "Procurement", "Purchase orders, receiving, items and vendors from BizBox"),
             ("pochanges", "/procurement?tab=changes", "Changes to BizBox", "What waits for approval or the push"),
             ("poreports", "/procurement?tab=reports", "MMS reports", "The report server's reports, as PDF or Excel"),
-            ("podrugs", "/procurement?tab=medicine", "Drugs and medicines", "Every item BizBox marks as a medicine, controlled ones flagged")]),
+            ("podrugs", "/procurement?tab=medicine", "Drugs and medicines", "Every item BizBox marks as a medicine, controlled ones flagged"),
+            ("postock", "/procurement?tab=stock", "Stock on hand", "What each warehouse holds, from BizBox's stock ledger"),
+            ("pomoves", "/procurement?tab=movement", "Stock movements", "Received, issued, transferred, adjusted: the item ledger by window")]),
         ("reports", "Reports", [
             ("reports", "/reports", "Reports", "KPIs, monthly charts, the writer"),
             ("uplift", "/uplift", "Uplift", "The programme's evidence")]),
@@ -3024,7 +3028,8 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
     levels = getattr(user, "modules", None) or {}
     gate = {"schedule": "SCHEDULE", "projects": "PROJECTS", "kb": "KNOWLEDGE", "reports": "REPORTS",
             "finance": "FINANCE", "sales": "FINANCE", "time": "TIME", "calendar": "SCHEDULE",
-            "procurement": "PROCUREMENT", "pochanges": "PROCUREMENT", "poreports": "PROCUREMENT", "podrugs": "PROC_DRUG"}
+            "procurement": "PROCUREMENT", "pochanges": "PROCUREMENT", "poreports": "PROCUREMENT", "podrugs": "PROC_DRUG",
+            "postock": "PROC_ITEM", "pomoves": "PROC_ITEM"}
     groups = [(g, label, [pg for pg in pages if pg[0] not in gate or levels.get(gate[pg[0]], "READ") != "NONE"])
               for g, label, pages in groups]
     # 073: the desk's Chat is for chat operators (Dada, 7 Oct 2026).
@@ -3042,7 +3047,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
     icons = {"admin": "setup", "schedule": "grip", "projects": "layers", "kb": "note", "finance": "tag", "sales": "briefcase",
              "help": "note", "time": "clock", "approvals": "check", "service": "ticket", "configurations": "monitor",
              "chat": "note", "cfgnew": "plus", "cfgcsv": "reports", "cfgtypes": "setup", "cfgint": "link",
-             "procurement": "cart", "pochanges": "checks", "poreports": "reports", "podrugs": "tag"}
+             "procurement": "cart", "pochanges": "checks", "poreports": "reports", "podrugs": "tag", "postock": "layers", "pomoves": "rows"}
 
     def one(key, href, label, cls="", current=False):
         return (f'<a href="{esc(href)}" title="{esc(label)}" class="{cls}{" on" if current else ""}"'
