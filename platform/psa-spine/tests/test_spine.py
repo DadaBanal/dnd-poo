@@ -3218,9 +3218,10 @@ class WebWSGITest(unittest.TestCase):
         # the detail: every field, the edit that the desk owns, and the history
         _, _, page = self._call("GET", f"/configuration/{cid}", cookie=alice)
         for needle in ("<dt>Manufacturer</dt><dd>HP</dd>", "<dt>Model</dt><dd>M479</dd>", "typed in by hand",
-                       "Raise a ticket for this machine", "name=name", "name=description", "History",
-                       "create: PRN-WARD3-01 (printer) at PMC, by hand"):
+                       "Raise a ticket for this machine", "name=name", "name=description", "History"):
             self.assertIn(needle, page, needle)
+        _, _, page = self._call("GET", f"/configuration/{cid}", cookie=alice, query="tab=history")    # its own tab (13 Oct 2026)
+        self.assertIn("create: PRN-WARD3-01 (printer) at PMC, by hand", page)
         _, headers, _ = self._call("POST", f"/configuration/{cid}/update", cookie=alice, form={
             "config_type": "PRINTER", "status": "ACTIVE", "contact_id": "", "manufacturer": "HP",
             "model": "M479dw", "serial_number": "SN123", "name": "PRN-WARD3-01", "description": "Ward 3, by the lift",
@@ -3251,8 +3252,11 @@ class WebWSGITest(unittest.TestCase):
                                       (wid,)).fetchone()[0], "CF-1")
         conn.close()
         _, _, page = self._call("GET", "/configuration/CF-1", cookie=alice)
-        self.assertIn(wid, page)                     # under Open tickets and in the history
-        self.assertIn("attached", page)
+        self.assertIn("Tickets <span class=tcount>1</span>", page)      # the count on the tab (13 Oct 2026: tabs)
+        _, _, page = self._call("GET", "/configuration/CF-1", cookie=alice, query="tab=tickets")
+        self.assertIn(wid, page)                     # under Open tickets
+        _, _, page = self._call("GET", "/configuration/CF-1", cookie=alice, query="tab=history")
+        self.assertIn("attached", page)              # and in the history
 
     def test_a_configuration_page_never_lists_a_restricted_ticket(self):
         self._add_configuration()
@@ -3264,6 +3268,9 @@ class WebWSGITest(unittest.TestCase):
         conn.commit()
         conn.close()
         _, _, body = self._call("GET", "/configuration/CF-1", cookie=self._cookie_for("alice"))
+        self.assertNotIn("ITO-9", body)
+        self.assertIn("Tickets <span class=tcount>1</span>", body)      # the restricted one is not counted either
+        _, _, body = self._call("GET", "/configuration/CF-1", cookie=self._cookie_for("alice"), query="tab=tickets")
         self.assertIn("ITO-1", body)
         self.assertNotIn("ITO-9", body)
         self.assertIn("1 more on restricted boards", body)
@@ -7984,16 +7991,23 @@ class ModulesTest(unittest.TestCase):
                              form={"ref": "PO-1", "field": "status", "new_value": "Closed", "reason": "again"})
         self.assertIn("already+pending", dict(h)["Location"])
         _, h, _ = self._call("POST", "/finance/purchase_order/propose", cookie=self.alice,
-                             form={"ref": "PO-1", "field": "vendor", "new_value": "x", "reason": "y"})
+                             form={"ref": "PO-1", "field": "total", "new_value": "x", "reason": "y"})
         self.assertIn("err=", dict(h)["Location"])                                              # not an editable field
         conn = self._conn()
         self.assertEqual(bizbox.get(conn, "purchase_order", "PO-1")["status"], "Approved")    # BizBox's value stands
-        self.assertEqual(bizbox.push(conn, at=self.at), {"applied": 0, "rejected": 0, "pending": 1})
+        self.assertEqual(bizbox.push(conn, at=self.at), {"applied": 0, "rejected": 0, "pending": 0})
 
         class Fake(bizbox.Writer):
             def apply(self, change):
                 return "applied by the test writer"
+        # 080: a change reaches the writer only once a second person has approved its batch
+        self.assertEqual(bizbox.push(conn, Fake(), at=self.at), {"applied": 0, "rejected": 0, "pending": 0})
+        [b] = bizbox.batches(conn, status="PENDING")
+        with self.assertRaises(bizbox.Refused):
+            bizbox.approve(conn, b["batch_id"], at=self.at, actor="alice")                  # not by the asker
+        bizbox.approve(conn, b["batch_id"], at=self.at, actor="root")
         self.assertEqual(bizbox.push(conn, Fake(), at=self.at), {"applied": 1, "rejected": 0, "pending": 0})
+        self.assertEqual(bizbox.batch(conn, b["batch_id"])["status"], "APPLIED")
         conn.commit()
         _, _, page = self._call("GET", "/finance", cookie=self.alice, query="tab=changes&status=APPLIED")
         self.assertIn("Delivered to ward 3 today", page)
@@ -17758,6 +17772,353 @@ class DepartmentCompanyAndWordsTest(unittest.TestCase):
                                               "You can read it on the PMC Requests portal from any PMC computer.")
         for (subject, body) in list(outbox.DEFAULTS.values()) + list(outbox.STATUS_DEFAULTS.values()):
             self.assertNotIn("as of {date}", body)
+
+
+
+class CwShapeTest(unittest.TestCase):
+    """080 (Dada, 13 Oct 2026): the Tasks tab, the Configurations list and
+    screen in the reference PSA's shape, and BizBox's MMS as a Procurement
+    module whose edits and adds are batches: approved by a second person,
+    pushed by a procedure inside BizBox, never written by the desk."""
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+    _csvs = ModulesTest._csvs
+    _conn = ModulesTest._conn
+    setUp = ModulesTest.setUp
+
+    def _mirror(self):
+        from psaspine import bizbox
+        conn = self._conn()
+        m = bizbox.check_map(bizbox.load_map(Path(__file__).parent.parent / "bizbox" / "bizbox-map.sample.json"))
+        bizbox.sync(conn, bizbox.read_csv_dir(self._csvs(
+            "PONo,VendorName,PODate,Status,TotalAmount,Currency\r\nPO-1,Vendor A,2026-09-02,Approved,1000,PHP\r\n"
+            "PO-2,Vendor B,2026-09-03,Approved,250,PHP\r\n"), m), at=self.at, actor="t", apply=True)
+        return conn
+
+    def _manager(self, who="alice"):
+        from psaspine import security
+        conn = self._conn()
+        security.assign(conn, who, "SERVICE_MANAGER", at=self.at, actor="root")
+        conn.commit()
+
+    # ------------------------------------------------------------------ tasks
+    def test_the_tasks_tab_is_a_grid_edited_in_place_reordered_and_scheduled(self):
+        from psaspine import tasks
+        add = lambda text, notes="": self._call("POST", "/ticket/ITO-1/task/add", cookie=self.alice, form={"text": text, "notes": notes})
+        add("Back up the old PC", "user profile")
+        add("Join new PC to domain")
+        add("Install BizBox client")
+        conn = self._conn()
+        rows = tasks.tasks_of(conn, "ITO-1")
+        self.assertEqual([(r["priority"], r["text"], r["notes"]) for r in rows],
+                         [(1, "Back up the old PC", "user profile"), (2, "Join new PC to domain", None), (3, "Install BizBox client", None)])
+        a, b, c = [r["task_id"] for r in rows]
+        _, _, page = self._call("GET", "/ticket/ITO-1/tasks", cookie=self.alice)
+        self.assertIn("<th>Done</th><th class=num>Pri</th><th>Task</th><th>Notes</th><th>Resolution</th><th>Schedule</th>", page)
+        self.assertIn(f"name=text value='Back up the old PC'", page)
+        self.assertIn("Schedule…", page)
+        self.assertIn("Add task", page)
+        self.assertIn("Tasks <span class=tcount>0/3</span>", page)                                # the count shows as soon as there are tasks
+        # save a row: words, notes and resolution, one history line
+        _, h, _ = self._call("POST", "/ticket/ITO-1/task/save", cookie=self.alice,
+                             form={"task_id": str(a), "text": "Back up the old PC", "notes": "user profile, 8 GB", "resolution": "done"})
+        self.assertIn("Task+saved%3A+notes%2C+resolution", dict(h)["Location"])
+        self.assertEqual(tuple(tasks.task_of(conn, a))[:1], (a,))
+        self.assertEqual((tasks.task_of(conn, a)["notes"], tasks.task_of(conn, a)["resolution"]), ("user profile, 8 GB", "done"))
+        self.assertTrue(conn.execute("SELECT 1 FROM ticket_event WHERE work_item_id = 'ITO-1' AND kind = 'TASK'"
+                                     " AND detail LIKE 'task 1 notes, resolution changed%'").fetchone())
+        # reorder: by a drag (the order), and by the arrows
+        _, h, _ = self._call("POST", "/ticket/ITO-1/task/order", cookie=self.alice, form={"order": f"{c},{a},{b}"})
+        self.assertIn("reordered", dict(h)["Location"])
+        self.assertEqual([r["task_id"] for r in tasks.tasks_of(conn, "ITO-1")], [c, a, b])
+        self.assertEqual([r["priority"] for r in tasks.tasks_of(conn, "ITO-1")], [1, 2, 3])
+        _, h, _ = self._call("POST", "/ticket/ITO-1/task/order", cookie=self.alice, form={"order": f"{c},{a}"})
+        self.assertIn("err=", dict(h)["Location"])                                              # not every task named
+        self._call("POST", "/ticket/ITO-1/task/move", cookie=self.alice, form={"task_id": str(b), "dir": "up"})
+        self.assertEqual([r["task_id"] for r in tasks.tasks_of(conn, "ITO-1")], [c, b, a])
+        _, h, _ = self._call("POST", "/ticket/ITO-1/task/move", cookie=self.alice, form={"task_id": str(c), "dir": "up"})
+        self.assertIn("Already", dict(h)["Location"])
+        # done: the count on the tab reads 1/3
+        self._call("POST", "/ticket/ITO-1/task/toggle", cookie=self.alice, form={"task_id": str(c), "done": "1"})
+        _, _, page = self._call("GET", "/ticket/ITO-1/tasks", cookie=self.alice)
+        self.assertIn("Tasks <span class=tcount>1/3</span>", page)
+        _, _, page = self._call("GET", "/ticket/ITO-1", cookie=self.alice)
+        self.assertIn("Tasks <span class=tcount>1/3</span>", page)
+        # schedule a task to a member: a visit on the ticket, remembered on the task
+        _, h, _ = self._call("POST", "/ticket/ITO-1/task/schedule", cookie=self.alice,
+                             form={"task_id": str(b), "member": "alice", "day": "2026-09-18", "time": "09:00", "hours": "1.5"})
+        self.assertIn("Booked+for+alice", dict(h)["Location"])
+        v = conn.execute("SELECT s.member, s.starts_at, s.ends_at, s.note FROM ticket_schedule s JOIN ticket_task k"
+                         " ON k.schedule_id = s.schedule_id WHERE k.task_id = ?", (b,)).fetchone()
+        self.assertEqual(tuple(v), ("alice", "2026-09-18 09:00", "2026-09-18 10:30", "Task 2: Join new PC to domain"))
+        _, _, page = self._call("GET", "/ticket/ITO-1/tasks", cookie=self.alice)
+        self.assertIn("alice, 09-18 09:00", page)
+        _, h, _ = self._call("POST", "/ticket/ITO-1/task/schedule", cookie=self.alice,
+                             form={"task_id": str(b), "member": "alice", "day": "2026-09-19", "time": "09:00", "hours": "1"})
+        self.assertIn("already+scheduled", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/ticket/ITO-1/task/schedule", cookie=self.alice,
+                             form={"task_id": str(a), "member": "nobody", "day": "2026-09-19", "time": "09:00", "hours": "1"})
+        self.assertIn("works+this+board", dict(h)["Location"])
+        # remove: the list renumbers; the visit stays
+        self._call("POST", "/ticket/ITO-1/task/remove", cookie=self.alice, form={"task_id": str(a)})
+        self.assertEqual([(r["priority"], r["text"]) for r in tasks.tasks_of(conn, "ITO-1")],
+                         [(1, "Install BizBox client"), (2, "Join new PC to domain")])
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM ticket_schedule WHERE work_item_id = 'ITO-1'").fetchone()[0], 1)
+        # a reader sees the grid and none of its forms
+        status, _, page = self._call("GET", "/ticket/ITO-1/tasks", cookie=self._cookie_for("carol"))
+        self.assertTrue(status.startswith("200"))
+        self.assertNotIn("task/save", page)
+        status, _, _ = self._call("POST", "/ticket/ITO-1/task/save", cookie=self._cookie_for("carol"),
+                                  form={"task_id": str(b), "text": "x"})
+        self.assertTrue(status.startswith("404"), status)             # as time and notes: absence, not a hint
+
+    # --------------------------------------------------------- configurations
+    def test_configurations_list_has_chosen_columns_sorts_and_changes_ticked_rows_together(self):
+        from psaspine import configurations as cmdb
+        conn = self._conn()
+        pc = cmdb.create(conn, name="WARD3-PC-01", entity_id="PMC", config_type="WORKSTATION", at=self.at, actor="t", tag_number="PMC-0412")
+        prn = cmdb.create(conn, name="WARD3-PRN-01", entity_id="PMC", config_type="PRINTER", at=self.at, actor="t", tag_number="PMC-0501")
+        er = cmdb.create(conn, name="ER-PC-04", entity_id="PMC", config_type="WORKSTATION", at=self.at, actor="t")
+        cmdb.update(conn, pc, at=self.at, actor="t", vendor="Accent Micro", model="EliteDesk")
+        conn.commit()
+        _, _, page = self._call("GET", "/configurations", cookie=self.alice)
+        for col in ("Name", "Type", "Status", "Company", "Site", "Contact", "Serial #", "Model", "Tag #", "Vendor", "Last login"):
+            self.assertIn(f">{col}</a></th>", page, col)
+        self.assertNotIn(">Manufacturer</a></th>", page)                                        # not in the default set
+        self.assertIn("<td>PMC-0412</td>", page)
+        self.assertIn("Columns</summary>", page)
+        self.assertIn("Apply to ticked", page)
+        _, _, page = self._call("GET", "/configurations", query="cols=name,manufacturer", cookie=self.alice)
+        self.assertIn(">Manufacturer</a></th>", page)
+        self.assertNotIn(">Tag #</a></th>", page)
+        _, _, page = self._call("GET", "/configurations", query="sort=tag", cookie=self.alice)
+        self.assertLess(page.index("WARD3-PC-01"), page.index("WARD3-PRN-01"))                 # PMC-0412 before PMC-0501
+        _, _, page = self._call("GET", "/configurations", query="q=PMC-05", cookie=self.alice)
+        self.assertIn("WARD3-PRN-01", page)
+        self.assertNotIn("WARD3-PC-01", page)
+        # the same change on every ticked row, each audited on its own
+        _, h, _ = self._call("POST", "/configurations/bulk", cookie=self.alice,
+                             form=[("ids", prn), ("ids", er), ("status", "INACTIVE"), ("config_type", ""), ("contact_id", ""),
+                                   ("back", "/configurations?status=ALL")])
+        self.assertIn("2+changed", dict(h)["Location"])
+        self.assertTrue(dict(h)["Location"].startswith("/configurations?status=ALL&"))
+        self.assertEqual([r[0] for r in conn.execute("SELECT status FROM configuration WHERE configuration_id IN (?, ?)", (prn, er))],
+                         ["INACTIVE", "INACTIVE"])
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_event WHERE action = 'CONFIGURATION_UPDATE'"
+                                      " AND detail LIKE '%status ACTIVE -> INACTIVE%'").fetchone()[0], 2)
+        _, h, _ = self._call("POST", "/configurations/bulk", cookie=self.alice, form=[("ids", pc), ("status", ""), ("config_type", ""), ("contact_id", "")])
+        self.assertIn("choose+something", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/configurations/bulk", cookie=self.alice,
+                             form=[("ids", pc), ("ids", "CF-NOPE"), ("status", "RETIRED"), ("config_type", ""), ("contact_id", "")])
+        self.assertIn("1+changed", dict(h)["Location"])
+        self.assertIn("1+refused", dict(h)["Location"])
+        status, _, _ = self._call("POST", "/configurations/bulk", cookie=self._cookie_for("carol"), form=[("ids", pc), ("status", "ACTIVE")])
+        self.assertTrue(status.startswith("403"), status)
+
+    def test_a_configuration_screen_has_tabs_pods_a_tag_a_parent_and_children(self):
+        from psaspine import configurations as cmdb
+        conn = self._conn()
+        pc = cmdb.create(conn, name="WARD3-PC-01", entity_id="PMC", config_type="WORKSTATION", at=self.at, actor="t")
+        mon = cmdb.create(conn, name="WARD3-MON-01", entity_id="PMC", config_type="OTHER", at=self.at, actor="t")
+        conn.commit()
+        _, h, _ = self._call("POST", f"/configuration/{mon}/update", cookie=self.alice,
+                             form={"config_type": "OTHER", "status": "ACTIVE", "tag_number": "PMC-0777", "installed_by": "Jun Reyes",
+                                   "notes": "24-inch, VESA arm", "parent_configuration_id": pc, "contact_id": "", "agreement_id": ""})
+        self.assertIn("Saved", dict(h)["Location"])
+        row = conn.execute("SELECT tag_number, installed_by, notes, parent_configuration_id FROM configuration WHERE configuration_id = ?", (mon,)).fetchone()
+        self.assertEqual(tuple(row), ("PMC-0777", "Jun Reyes", "24-inch, VESA arm", pc))
+        _, _, page = self._call("GET", f"/configuration/{mon}", cookie=self.alice)
+        self.assertIn("Configuration tabs", page)
+        self.assertIn("<dt>Tag #</dt><dd>PMC-0777</dd>", page)
+        self.assertIn(f"<dt>Parent</dt><dd><a href='/configuration/{pc}'>WARD3-PC-01</a></dd>", page)
+        self.assertIn("<dt>Installed by</dt><dd>Jun Reyes</dd>", page)
+        self.assertIn("24-inch, VESA arm", page)
+        self.assertIn("Child configurations · 0", page)
+        _, _, page = self._call("GET", f"/configuration/{pc}", cookie=self.alice)
+        self.assertIn("Child configurations · 1", page)
+        self.assertIn(f"<a href='/configuration/{mon}'>WARD3-MON-01</a>", page)
+        for tab, word in (("tickets", "Open tickets"), ("history", "History")):
+            _, _, page = self._call("GET", f"/configuration/{pc}", query=f"tab={tab}", cookie=self.alice)
+            self.assertIn(word, page)
+            self.assertNotIn("<dt>Tag #</dt>", page)
+        # a cycle is refused at any depth, and so is itself
+        _, h, _ = self._call("POST", f"/configuration/{pc}/update", cookie=self.alice,
+                             form={"config_type": "WORKSTATION", "status": "ACTIVE", "parent_configuration_id": mon, "contact_id": "", "agreement_id": ""})
+        self.assertIn("under+itself", dict(h)["Location"])
+        with self.assertRaises(ValueError):
+            cmdb.update(conn, pc, at=self.at, actor="t", parent_configuration_id=pc)
+        self.assertEqual([k["name"] for k in cmdb.children(conn, pc)], ["WARD3-MON-01"])
+
+    # ------------------------------------------------------------ procurement
+    def test_procurement_is_its_own_module_with_grids_bulk_changes_edits_adds_and_approval(self):
+        from psaspine import bizbox
+        conn = self._mirror()
+        # a technician (Finance READ) reads Procurement at the same level, and may not change
+        _, _, page = self._call("GET", "/", cookie=self.alice)
+        self.assertIn('href="/procurement"', page)
+        _, _, page = self._call("GET", "/procurement", cookie=self.alice)
+        self.assertIn("Purchase orders · 2", page)
+        self.assertIn("Receiving · 1", page)
+        self.assertIn("Products · 1", page)
+        self.assertIn("Vendors · 2", page)
+        self.assertIn("<a href='/procurement/purchase_order?ref=PO-1'>PO-1</a>", page)
+        self.assertNotIn("Queue for BizBox", page)
+        # every tab answers; an item has no status, so its first filter is the category
+        for tab_name in ("purchase_order", "invoice", "product", "vendor", "changes"):
+            status, _, page = self._call("GET", "/procurement", query=f"tab={tab_name}", cookie=self.alice)
+            self.assertTrue(status.startswith("200"), (tab_name, status))
+        self.assertIn("Any category", page := self._call("GET", "/procurement", query="tab=product", cookie=self.alice)[2])
+        self.assertIn("<option value='Consumables'>", page)
+        _, _, page = self._call("GET", "/procurement", query="tab=product&status=Consumables", cookie=self.alice)
+        self.assertIn("ref=IT-1'", page)
+        _, _, page = self._call("GET", "/procurement", query="tab=product&status=Furniture", cookie=self.alice)
+        self.assertNotIn("ref=IT-1'", page)
+        _, _, page = self._call("GET", "/procurement", query="tab=vendor", cookie=self.alice)
+        self.assertIn("<b>Vendor A</b>", page)
+        _, _, page = self._call("GET", "/procurement", query="tab=purchase_order&vendor=Vendor+B", cookie=self.alice)
+        self.assertIn("PO-2", page)
+        self.assertNotIn("ref=PO-1'", page)
+        _, _, page = self._call("GET", "/procurement/purchase_order", query="ref=PO-1", cookie=self.alice)
+        self.assertIn("Toner black", page)
+        self.assertIn("<a href='/procurement/product?ref=IT-1'>IT-1</a>", page)                  # links stay in Procurement
+        status, _, _ = self._call("POST", "/procurement/purchase_order/bulk", cookie=self.alice,
+                                  form={"refs": "PO-1", "field": "status", "new_value": "Closed", "reason": "x"})
+        self.assertTrue(status.startswith("403"), status)
+        # a service manager: tick rows, change them together, in one batch
+        self._manager()
+        _, _, page = self._call("GET", "/procurement", cookie=self.alice)
+        self.assertIn("Queue for BizBox", page)
+        self.assertIn("name='e:PO-1:vendor'", page)                                              # editable in place
+        self.assertIn("New purchase order", page)
+        _, h, _ = self._call("POST", "/procurement/purchase_order/bulk", cookie=self.alice,
+                             form=[("refs", "PO-1"), ("refs", "PO-2"), ("field", "status"), ("new_value", "Approved"), ("reason", "all approved today")])
+        self.assertIn("Every+ticked+record+already+has+that+value", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/procurement/purchase_order/bulk", cookie=self.alice,
+                             form=[("refs", "PO-1"), ("refs", "PO-2"), ("field", "status"), ("new_value", "Ordered"), ("reason", "both sent to the suppliers")])
+        self.assertIn("Batch+%231+queued%3A+2+record", dict(h)["Location"])
+        [b] = bizbox.batches(conn)
+        self.assertEqual((b["status"], b["change_kind"], b["n"], b["requested_by"]), ("PENDING", "EDIT", 2, "alice"))
+        self.assertEqual(bizbox.get(conn, "purchase_order", "PO-1")["status"], "Approved")      # the mirror is untouched
+        _, _, page = self._call("GET", "/procurement", cookie=self.alice)
+        self.assertIn("<span class='chip sla-warn'>Status</span>", page)                        # the row says a change waits
+        _, _, page = self._call("GET", "/procurement", query="tab=changes", cookie=self.alice)
+        self.assertIn("2 purchase orders changed", page)
+        self.assertIn("yours: someone else approves", page)
+        _, h, _ = self._call("POST", "/procurement/batch/1/approve", cookie=self.alice)
+        self.assertIn("someone+other+than", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/procurement/batch/1/approve", cookie=self.root)
+        self.assertIn("approved", dict(h)["Location"])
+        self.assertEqual(bizbox.batch(conn, 1)["approved_by"], "root")
+        # cells edited in place and saved together: only the cells that differ
+        _, h, _ = self._call("POST", "/procurement/purchase_order/edits", cookie=self.alice,
+                             form={"e:PO-1:vendor": "Vendor A", "e:PO-2:vendor": "Vendor C", "e:PO-2:ordered_on": "2026-09-03",
+                                   "reason": "vendor renamed"})
+        self.assertIn("Batch+%232+queued%3A+1+cell", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/procurement/purchase_order/edits", cookie=self.alice,
+                             form={"e:PO-1:vendor": "Vendor A", "reason": "nothing"})
+        self.assertIn("every+cell+still+reads", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/procurement/purchase_order/edits", cookie=self.alice,
+                             form={"e:PO-2:vendor": "Vendor D", "reason": ""})
+        self.assertIn("Say+why", dict(h)["Location"])
+        # a new purchase order with its lines, and a new item
+        _, _, page = self._call("GET", "/procurement/purchase_order/new", cookie=self.alice)
+        self.assertIn("<datalist id=items><option value='IT-1'>Toner</option></datalist>", page)
+        _, h, _ = self._call("POST", "/procurement/purchase_order/add", cookie=self.alice,
+                             form={"vendor": "Vendor A", "ordered_on": "2026-10-13", "currency": "PHP", "reason": "ward 3 toner"})
+        self.assertIn("at+least+one+line", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/procurement/purchase_order/add", cookie=self.alice,
+                             form={"vendor": "Vendor A", "line1_product_ref": "IT-9", "line1_quantity": "2", "reason": "ward 3 toner"})
+        self.assertIn("not+an+item+BizBox+has", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/procurement/purchase_order/add", cookie=self.alice,
+                             form={"vendor": "Vendor A", "ordered_on": "2026-10-13", "currency": "PHP", "line1_product_ref": "IT-1",
+                                   "line1_description": "Toner black", "line1_quantity": "2", "line1_unit_cost": "500",
+                                   "line2_description": "Toner cyan", "line2_quantity": "1", "line2_unit_cost": "600", "reason": "ward 3 toner"})
+        self.assertIn("tab=changes", dict(h)["Location"])
+        b = bizbox.batch(conn, 3)
+        self.assertEqual((b["change_kind"], b["status"]), ("ADD", "PENDING"))
+        self.assertEqual(bizbox.payload_of(b)["record"], {"vendor": "Vendor A", "ordered_on": "2026-10-13", "currency": "PHP"})
+        lines = bizbox.payload_of(b)["lines"]
+        self.assertEqual((len(lines), lines[0]["product_ref"], lines[0]["quantity"], lines[1]["description"]), (2, "IT-1", 2.0, "Toner cyan"))
+        [ch] = bizbox.batch_changes(conn, 3)
+        self.assertEqual((ch["ext_ref"], ch["field"], ch["new_value"]), ("NEW-3", "NEW", "Vendor A (2 line(s))"))
+        _, _, page = self._call("GET", "/procurement/batch/3", cookie=self.alice)
+        self.assertIn("New purchase order: Vendor A, 2 line(s)", page)
+        self.assertIn("Toner cyan", page)
+        _, h, _ = self._call("POST", "/procurement/product/add", cookie=self.alice, form={"name": "", "reason": "x"})
+        self.assertIn("Name+is+needed", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/procurement/product/add", cookie=self.alice,
+                             form={"ext_ref": "IT-1", "name": "Toner again", "reason": "x"})
+        self.assertIn("already+has+IT-1", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/procurement/product/add", cookie=self.alice,
+                             form={"name": "Drum unit", "unit": "pc", "unit_cost": "1,250.00", "reason": "new consumable"})
+        self.assertIn("tab=changes", dict(h)["Location"])
+        self.assertEqual(bizbox.payload_of(bizbox.batch(conn, 4))["record"], {"name": "Drum unit", "unit": "pc", "unit_cost": 1250.0})
+        # cancel one; push the approved one through a fake writer; nothing through NoWriter
+        _, h, _ = self._call("POST", "/procurement/batch/4/cancel", cookie=self.alice)
+        self.assertIn("cancelled", dict(h)["Location"])
+        self.assertEqual(bizbox.batch(conn, 4)["status"], "CANCELLED")
+        self.assertEqual(bizbox.push(conn, at=self.at), {"applied": 0, "rejected": 0, "pending": 2})   # NoWriter: batch 1 waits
+        seen = []
+
+        class Fake(bizbox.Writer):
+            name = "fake"
+
+            def apply(self, change):
+                seen.append((change["ext_ref"], change["field"], change["new_value"], change["change_kind"], change["approved_by"]))
+                if change["ext_ref"] == "PO-2":
+                    raise RuntimeError("PO-2 is closed in BizBox")
+                return "done"
+        self.assertEqual(bizbox.push(conn, Fake(), at=self.at), {"applied": 1, "rejected": 1, "pending": 0})
+        self.assertEqual(seen, [("PO-1", "status", "Ordered", "EDIT", "root"), ("PO-2", "status", "Ordered", "EDIT", "root")])
+        b = bizbox.batch(conn, 1)
+        self.assertEqual((b["status"], b["answer"]), ("REJECTED", "done; PO-2 is closed in BizBox"))
+        conn.commit()
+        _, _, page = self._call("GET", "/procurement", query="tab=changes&status=REJECTED", cookie=self.alice)
+        self.assertIn("PO-2 is closed in BizBox", page)
+        # the write login is fenced like the read one
+        with self.assertRaises(bizbox.Refused):
+            bizbox.write_odbc_string("")
+        with self.assertRaises(bizbox.Refused):
+            bizbox.write_odbc_string("Driver={x};Server=y;UID=sa;PWD=z")
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"PSA_BIZBOX_ODBC": "Driver={x};Server=y;UID=psa_reader;PWD=z"}):
+            with self.assertRaises(bizbox.Refused):
+                bizbox.write_odbc_string("Driver={x};Server=y;UID=psa_reader;PWD=z")
+            self.assertEqual(bizbox.write_odbc_string("Driver={x};Server=y;UID=psa_writer;PWD=z;ApplicationIntent=ReadOnly"),
+                             "Driver={x};Server=y;UID=psa_writer;PWD=z")
+        with mock.patch.dict(os.environ, {"PSA_BIZBOX_WRITE_ODBC": ""}):
+            self.assertEqual(bizbox.writer_in_force().name, "none")
+        with self.assertRaises(bizbox.Refused):
+            bizbox.ProcedureWriter("Driver={x};UID=w;PWD=z", procedure="psa.sp; DROP TABLE x")
+        # the push on the host: preview says what waits and sends nothing
+        import contextlib
+        from psaspine.__main__ import main
+        out = _io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(main(["bizbox-push", self.db_path]), 0)
+        self.assertIn("approved and waiting: 0 change(s)", out.getvalue())
+        self.assertIn("PREVIEW", out.getvalue())
+
+    def test_a_role_with_no_finance_and_no_procurement_row_sees_neither(self):
+        from psaspine import security
+        conn = self._conn()
+        rid = security.add_role(conn, "Wards only", at=self.at, actor="root")
+        security.save_grants(conn, rid, {"FINANCE": "NONE"}, at=self.at, actor="root")
+        security.assign(conn, "alice", rid, at=self.at, actor="root")
+        conn.commit()
+        self.assertEqual(security.level(conn, webauth.User(id="alice", name="alice"), "PROCUREMENT"), "NONE")
+        status, _, _ = self._call("GET", "/procurement", cookie=self.alice)
+        self.assertTrue(status.startswith("403"), status)
+        _, _, page = self._call("GET", "/", cookie=self.alice)
+        self.assertNotIn('href="/procurement"', page)
+        security.save_grants(conn, rid, {"PROCUREMENT": "READ"}, at=self.at, actor="root")     # its own level, apart from Finance
+        conn.commit()
+        self.assertEqual(security.level(conn, webauth.User(id="alice", name="alice"), "PROCUREMENT"), "READ")
+        status, _, _ = self._call("GET", "/procurement", cookie=self.alice)
+        self.assertTrue(status.startswith("200"), status)
+        status, _, _ = self._call("GET", "/finance", cookie=self.alice)
+        self.assertTrue(status.startswith("403"), status)
 
 
 if __name__ == "__main__":

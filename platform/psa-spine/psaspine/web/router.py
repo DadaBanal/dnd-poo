@@ -14,7 +14,7 @@ from .views import recurring as recurring_view
 from .views import approvals as approvals_view
 from .views import paging as paging_view
 from .views import agreements as agreements_view
-from .views import finance as finance_view
+from .views import finance as finance_view, procurement as procurement_view
 from .views import sales as sales_view
 from .views import members as members_view
 from .views import calendar as calendar_view
@@ -68,6 +68,11 @@ ROUTES = [
     ("POST", "/ticket/<work_item_id>/page/<page_id>/stop", paging_view.stop),
     ("POST", "/ticket/<work_item_id>/task/add", ticket.task_add),
     ("POST", "/ticket/<work_item_id>/task/toggle", ticket.task_toggle),
+    ("POST", "/ticket/<work_item_id>/task/save", ticket.task_save),
+    ("POST", "/ticket/<work_item_id>/task/move", ticket.task_move),
+    ("POST", "/ticket/<work_item_id>/task/order", ticket.task_order),
+    ("POST", "/ticket/<work_item_id>/task/remove", ticket.task_remove),
+    ("POST", "/ticket/<work_item_id>/task/schedule", ticket.task_schedule),
     ("POST", "/ticket/<work_item_id>/template", ticket.template_apply),
     ("POST", "/ticket/<work_item_id>/link", ticket.link),
     ("POST", "/ticket/<work_item_id>/portal-link", ticket.portal_link),
@@ -98,6 +103,7 @@ ROUTES = [
     ("GET", "/configurations/maintenance.csv", configurations.maintenance_csv_all),
     ("GET", "/configuration/<configuration_id>/maintenance.csv", configurations.maintenance_csv),
     ("POST", "/configurations/new", configurations.create),
+    ("POST", "/configurations/bulk", configurations.bulk),
     ("GET", "/configuration/<configuration_id>", configurations.detail),
     ("POST", "/configuration/<configuration_id>/update", configurations.update),
     ("POST", "/configuration/<configuration_id>/answers", configurations.answers),
@@ -108,6 +114,15 @@ ROUTES = [
     ("POST", "/time/decide", timesheets_view.decide),
     ("POST", "/time/reopen", timesheets_view.reopen),
     ("POST", "/time/capacity", timesheets_view.capacity),
+    ("GET", "/procurement", procurement_view.index),
+    ("GET", "/procurement/batch/<batch_id>", procurement_view.batch_page),
+    ("POST", "/procurement/batch/<batch_id>/approve", procurement_view.approve),
+    ("POST", "/procurement/batch/<batch_id>/cancel", procurement_view.cancel),
+    ("GET", "/procurement/<kind>/new", procurement_view.new_form),
+    ("POST", "/procurement/<kind>/add", procurement_view.add),
+    ("POST", "/procurement/<kind>/bulk", procurement_view.bulk),
+    ("POST", "/procurement/<kind>/edits", procurement_view.edits),
+    ("GET", "/procurement/<kind>", procurement_view.detail),             # ?ref=<BizBox reference>
     ("GET", "/finance", finance_view.index),
     ("GET", "/finance/<kind>", finance_view.detail),                    # ?ref=<BizBox reference>
     ("POST", "/finance/<kind>/propose", finance_view.propose),

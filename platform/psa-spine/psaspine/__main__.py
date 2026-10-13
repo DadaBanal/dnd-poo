@@ -184,6 +184,12 @@ def main(argv: list[str] | None = None) -> int:
                      help="read the mapped views through the read-only connection string in PSA_BIZBOX_ODBC")
     pbz.add_argument("--apply", action="store_true", help="write; without it nothing is changed")
 
+    pbp = sub.add_parser("bizbox-push",
+                         help="13 Oct 2026: offer every APPROVED change to the BizBox writer. With "
+                              "PSA_BIZBOX_WRITE_ODBC set the writer calls psa.sp_apply_change in BizBox (SQL01's "
+                              "procedure, a login of its own); unset, nothing moves. Preview unless --apply")
+    pbp.add_argument("database", help=DB_HELP)
+    pbp.add_argument("--apply", action="store_true", help="call the writer; without this nothing is sent")
     pbc = sub.add_parser("bizbox-changes",
                          help="list the changes proposed to BizBox records as JSON, or close one with --decide "
                               "after it was done in BizBox; nothing here writes to BizBox")
@@ -747,6 +753,28 @@ def _run(conn, a) -> int:
             print(f"{kind}: {c['rows']} rows, {c['new']} new, {c['changed']} changed, {c['unchanged']} unchanged, "
                   f"{c['absent']} absent, {c['returned']} returned, {c['skipped']} skipped")
         print("applied" if a.apply else "preview only: nothing was written (add --apply)")
+        return 0
+
+    if a.cmd == "bizbox-push":
+        from . import bizbox
+        due = bizbox.pushable(conn)
+        kinds = {}
+        for ch in due:
+            kinds[ch["kind"]] = kinds.get(ch["kind"], 0) + 1
+        print(f"approved and waiting: {len(due)} change(s)" + (" (" + ", ".join(f"{k.lower()} {n}" for k, n in sorted(kinds.items())) + ")" if kinds else ""))
+        if not a.apply:
+            print("PREVIEW: nothing sent; re-run with --apply")
+            conn.rollback()
+            return 0
+        try:
+            writer = bizbox.writer_in_force()
+        except bizbox.Refused as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        counts = bizbox.push(conn, writer, at=datetime.now(), actor=f"writer:{writer.name}")
+        conn.commit()
+        print(f"writer {writer.name}: {counts['applied']} applied, {counts['rejected']} refused by BizBox, "
+              f"{counts['pending']} still waiting")
         return 0
 
     if a.cmd == "bizbox-changes":

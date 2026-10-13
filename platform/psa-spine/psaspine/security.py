@@ -21,7 +21,12 @@ from datetime import datetime
 from . import db
 
 MODULES = {"KNOWLEDGE": "Knowledge base", "PROJECTS": "Projects", "REPORTS": "Reports",
-           "SCHEDULE": "Schedule", "FINANCE": "Finance (BizBox)", "TIME": "Timesheets"}
+           "SCHEDULE": "Schedule", "FINANCE": "Finance (BizBox)", "TIME": "Timesheets",
+           "PROCUREMENT": "Procurement (BizBox)"}
+# 13 Oct 2026: Procurement is a module of its own, so a role can one day hold
+# it apart from Finance; a role with no row for it takes its Finance level, so
+# nothing changes for anyone the day it appears.
+FALLBACK = {"PROCUREMENT": "FINANCE"}
 # A module added after a role was written has no row for that role; the role
 # keeps working at this level until Setup says otherwise. Timesheets: everyone
 # keeps their own (WRITE); deciding them is ADMIN, given in Setup.
@@ -32,11 +37,11 @@ RANK = {level: i for i, level in enumerate(LEVELS)}
 # The starter roles, only into an empty table: once a person edits them they are theirs.
 STARTER = (
     ("TECHNICIAN", "Technician", 1, {"KNOWLEDGE": "WRITE", "PROJECTS": "WRITE", "REPORTS": "READ",
-                                    "SCHEDULE": "WRITE", "FINANCE": "READ", "TIME": "WRITE"}),
+                                    "SCHEDULE": "WRITE", "FINANCE": "READ", "TIME": "WRITE", "PROCUREMENT": "READ"}),
     ("SERVICE_MANAGER", "Service manager", 0, {"KNOWLEDGE": "ADMIN", "PROJECTS": "ADMIN", "REPORTS": "ADMIN",
-                                               "SCHEDULE": "ADMIN", "FINANCE": "WRITE", "TIME": "ADMIN"}),
+                                               "SCHEDULE": "ADMIN", "FINANCE": "WRITE", "TIME": "ADMIN", "PROCUREMENT": "WRITE"}),
     ("READ_ONLY", "Read only", 0, {"KNOWLEDGE": "READ", "PROJECTS": "READ", "REPORTS": "READ",
-                                   "SCHEDULE": "READ", "FINANCE": "NONE", "TIME": "READ"}),
+                                   "SCHEDULE": "READ", "FINANCE": "NONE", "TIME": "READ", "PROCUREMENT": "NONE"}),
 )
 
 
@@ -92,7 +97,11 @@ def level(conn, user, module: str) -> str:
         return "NONE"
     row = conn.execute("SELECT level FROM role_grant WHERE role_id = ? AND module = ?",
                        (rid, module)).fetchone()
-    return row[0] if row else DEFAULT_LEVEL.get(module, "NONE")
+    if row:
+        return row[0]
+    if module in FALLBACK:
+        return level(conn, user, FALLBACK[module])
+    return DEFAULT_LEVEL.get(module, "NONE")
 
 
 def levels(conn, user) -> dict[str, str]:
@@ -106,7 +115,11 @@ def levels(conn, user) -> dict[str, str]:
     if rid is None:
         return {m: "NONE" for m in MODULES}
     got = {r[0]: r[1] for r in conn.execute("SELECT module, level FROM role_grant WHERE role_id = ?", (rid,))}
-    return {m: got.get(m, DEFAULT_LEVEL.get(m, "NONE")) for m in MODULES}
+    out = {m: got.get(m, DEFAULT_LEVEL.get(m, "NONE")) for m in MODULES}
+    for m, parent in FALLBACK.items():
+        if m not in got:
+            out[m] = out[parent]
+    return out
 
 
 def allows(conn, user, module: str, need: str = "READ") -> bool:

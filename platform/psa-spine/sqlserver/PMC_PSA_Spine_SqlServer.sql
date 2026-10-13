@@ -250,6 +250,7 @@ BEGIN
     PRINT N'    psa.portal_tile';
     PRINT N'    psa.portal_tile_question';
     PRINT N'    psa.portal_answer';
+    PRINT N'    psa.ext_batch';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -319,13 +320,16 @@ BEGIN
     PRINT N'    psa.ix_portal_tile_parent';
     PRINT N'    psa.ix_portal_tile_question_tile';
     PRINT N'    psa.ix_ticket_department';
+    PRINT N'    psa.ix_configuration_parent';
+    PRINT N'    psa.ix_ext_batch_status';
+    PRINT N'    psa.ix_ext_change_batch';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  152 tables, 68 indexes, 4 triggers.';
+    PRINT N'  153 tables, 71 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -3866,6 +3870,45 @@ CREATE TABLE psa.[portal_answer] (
 END;
 
 -- --------------------------------------------------------------------------
+-- ext_batch   (from schema/080_cw_shape.sql)
+-- 3. Changes to BizBox in batches. 043's ext_change is one field on one
+--    record; a bulk edit on ticked rows, an edit of many cells saved at once,
+--    or a new record (a purchase order with its lines, an item) is a batch:
+--    one reason, one approval, one answer from BizBox. A batch is PENDING
+--    (waiting for a person with Procurement WRITE, never the one who asked),
+--    APPROVED (waiting for the push), then APPLIED, REJECTED or CANCELLED.
+--    ADD carries the new record as JSON in payload; its one ext_change row
+--    has field NEW and ext_ref NEW-<batch> until BizBox answers with its own
+--    number. Nothing here reaches BizBox: the push (bizbox.push) hands each
+--    change to the writer in force, which until SQL01 builds the procedure
+--    is NoWriter.
+IF OBJECT_ID(N'psa.[ext_batch]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_batch] (
+    [batch_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_ext_batch] PRIMARY KEY,
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_batch_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [kind] NVARCHAR(32) NOT NULL CONSTRAINT [CK_ext_batch_01] CHECK (kind IN ('AGREEMENT', 'PRODUCT', 'PURCHASE_ORDER', 'INVOICE')),
+    [change_kind] NVARCHAR(32) NOT NULL CONSTRAINT [CK_ext_batch_02] CHECK (change_kind IN ('EDIT', 'ADD')),
+    [reason] NVARCHAR(MAX) NOT NULL,
+    [status] NVARCHAR(32) NOT NULL CONSTRAINT [DF_ext_batch_status] DEFAULT ('PENDING') CONSTRAINT [CK_ext_batch_03] CHECK (status IN ('PENDING', 'APPROVED', 'APPLIED', 'REJECTED', 'CANCELLED')),
+    [payload] NVARCHAR(MAX) NULL,
+    [requested_at] NVARCHAR(64) NOT NULL,
+    [requested_by] NVARCHAR(200) NOT NULL,
+    [approved_at] NVARCHAR(64) NULL,
+    [approved_by] NVARCHAR(200) NULL,
+    [decided_at] NVARCHAR(64) NULL,
+    [decided_by] NVARCHAR(200) NULL,
+    [answer] NVARCHAR(MAX) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [requested_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [requested_at], 126), CASE WHEN [requested_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [requested_at], 112) END)),
+    [approved_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [approved_at], 126), CASE WHEN [approved_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [approved_at], 112) END)),
+    [decided_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [decided_at], 126), CASE WHEN [decided_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [decided_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -4481,6 +4524,40 @@ ALTER TABLE psa.[ticket] ADD [portal_tile_id] INT NULL CONSTRAINT [FK_ticket_por
 IF COL_LENGTH(N'psa.[ticket]', N'department') IS NULL
 ALTER TABLE psa.[ticket] ADD [department] NVARCHAR(400) NULL;
 
+-- 1. A ticket's tasks as the reference PSA's grid: Done, Priority, Task,
+--    Notes, Resolution, Schedule. A task scheduled to a member is a visit on
+--    the ticket (ticket_schedule), and the task remembers which.
+IF COL_LENGTH(N'psa.[ticket_task]', N'priority') IS NULL
+ALTER TABLE psa.[ticket_task] ADD [priority] INT NULL;
+
+IF COL_LENGTH(N'psa.[ticket_task]', N'notes') IS NULL
+ALTER TABLE psa.[ticket_task] ADD [notes] NVARCHAR(MAX) NULL;
+
+IF COL_LENGTH(N'psa.[ticket_task]', N'resolution') IS NULL
+ALTER TABLE psa.[ticket_task] ADD [resolution] NVARCHAR(MAX) NULL;
+
+IF COL_LENGTH(N'psa.[ticket_task]', N'schedule_id') IS NULL
+ALTER TABLE psa.[ticket_task] ADD [schedule_id] INT NULL CONSTRAINT [FK_ticket_task_schedule_id] REFERENCES psa.[ticket_schedule]([schedule_id]);
+
+-- 2. A configuration as the reference PSA keeps it: a tag number (the
+--    hospital's asset tag, not the serial), who installed it, free notes, and
+--    a parent (a monitor under its PC, a card under its server). One level or
+--    many; a cycle is refused by the code.
+IF COL_LENGTH(N'psa.[configuration]', N'tag_number') IS NULL
+ALTER TABLE psa.[configuration] ADD [tag_number] NVARCHAR(400) NULL;
+
+IF COL_LENGTH(N'psa.[configuration]', N'installed_by') IS NULL
+ALTER TABLE psa.[configuration] ADD [installed_by] NVARCHAR(200) NULL;
+
+IF COL_LENGTH(N'psa.[configuration]', N'notes') IS NULL
+ALTER TABLE psa.[configuration] ADD [notes] NVARCHAR(MAX) NULL;
+
+IF COL_LENGTH(N'psa.[configuration]', N'parent_configuration_id') IS NULL
+ALTER TABLE psa.[configuration] ADD [parent_configuration_id] NVARCHAR(64) NULL CONSTRAINT [FK_configuration_parent_configuration_id] REFERENCES psa.[configuration]([configuration_id]);
+
+IF COL_LENGTH(N'psa.[ext_change]', N'batch_id') IS NULL
+ALTER TABLE psa.[ext_change] ADD [batch_id] INT NULL CONSTRAINT [FK_ext_change_batch_id] REFERENCES psa.[ext_batch]([batch_id]);
+
 IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
 ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
 
@@ -4707,6 +4784,15 @@ CREATE INDEX [ix_portal_tile_question_tile] ON psa.[portal_tile_question] ([tile
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ticket_department' AND object_id = OBJECT_ID(N'psa.[ticket]'))
 CREATE INDEX [ix_ticket_department] ON psa.[ticket] ([department]);
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_configuration_parent' AND object_id = OBJECT_ID(N'psa.[configuration]'))
+CREATE INDEX [ix_configuration_parent] ON psa.[configuration] ([parent_configuration_id]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_batch_status' AND object_id = OBJECT_ID(N'psa.[ext_batch]'))
+CREATE INDEX [ix_ext_batch_status] ON psa.[ext_batch] ([source_id], [status]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_change_batch' AND object_id = OBJECT_ID(N'psa.[ext_change]'))
+CREATE INDEX [ix_ext_change_batch] ON psa.[ext_change] ([batch_id]);
+
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
@@ -4842,10 +4928,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 152 OR @Triggers <> 4 OR @Indexes < 68
+IF @Tables <> 153 OR @Triggers <> 4 OR @Indexes < 71
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 152), %d triggers (expected 4), %d indexes (expected at least 68). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 153), %d triggers (expected 4), %d indexes (expected at least 71). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -4873,6 +4959,9 @@ PRINT N'target is enforced until somebody with the authority says so.';
     DROP TRIGGER IF EXISTS psa.[ticket_close_requires_a_variation];
     DROP TRIGGER IF EXISTS psa.[patient_reference_needs_a_restricted_board];
     DROP TRIGGER IF EXISTS psa.[patient_reference_stays_on_a_restricted_board];
+    ALTER TABLE psa.[ext_change] DROP CONSTRAINT IF EXISTS [FK_ext_change_batch_id];
+    ALTER TABLE psa.[configuration] DROP CONSTRAINT IF EXISTS [FK_configuration_parent_configuration_id];
+    ALTER TABLE psa.[ticket_task] DROP CONSTRAINT IF EXISTS [FK_ticket_task_schedule_id];
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_portal_tile_id];
     ALTER TABLE psa.[entity] DROP CONSTRAINT IF EXISTS [FK_entity_type_id];
     ALTER TABLE psa.[entity] DROP CONSTRAINT IF EXISTS [FK_entity_status_id];
@@ -4902,6 +4991,7 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[ext_batch];
     DROP TABLE IF EXISTS psa.[portal_answer];
     DROP TABLE IF EXISTS psa.[portal_tile_question];
     DROP TABLE IF EXISTS psa.[portal_tile];

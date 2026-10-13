@@ -445,6 +445,25 @@ textarea{min-height:90px;resize:vertical;line-height:1.5}
   background:color-mix(in srgb,var(--c) 16%,var(--surface));border:1px solid color-mix(in srgb,var(--c) 55%,transparent)}
 .pill.came .ic{width:12px;height:12px;margin:0;opacity:1;color:var(--c)}
 .came-chat{--c:#14b8a6}.came-portal{--c:#8b5cf6}.came-email{--c:#f59e0b}.came-desk{--c:#64748b}.came-other{--c:#9ca3af}
+/* 080: the Configurations list (13 Oct 2026): the column chooser */
+details.colpick{position:relative}details.colpick summary{list-style:none;cursor:pointer}details.colpick summary::-webkit-details-marker{display:none}
+details.colpick .colmenu{position:absolute;right:0;top:calc(100% + 6px);z-index:30;min-width:200px;padding:10px 12px;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 28px rgba(0,0,0,.25);display:flex;flex-direction:column;gap:4px}
+details.colpick .colopt{display:flex;align-items:center;gap:6px;font-size:13px;white-space:nowrap}details.colpick .colmenu button{margin-top:6px;align-self:flex-start}
+table.cfglist td,table.cfglist th{white-space:nowrap}table.cfglist td:nth-child(n+1){max-width:220px;overflow:hidden;text-overflow:ellipsis}
+.hdr .acts .btn{margin-left:4px}
+/* 080: the Tasks grid (13 Oct 2026) */
+table.tgrid td.handle{width:18px;cursor:grab;color:var(--ink-3)}table.tgrid tr.dragging{opacity:.4}
+table.tgrid td input{width:100%;min-width:80px;padding:3px 6px;font-size:12.5px;border:1px solid transparent;background:transparent}
+table.tgrid td input:hover,table.tgrid td input:focus{border-color:var(--line-2);background:var(--surface)}
+table.tgrid tr.tdone td input[name=text]{text-decoration:line-through;color:var(--ink-3)}
+table.tgrid td.tacts{white-space:nowrap}table.tgrid td.tacts form{display:inline}table.tgrid .tick{font-size:15px;line-height:1}
+table.tgrid details.tsched summary{display:inline-block;cursor:pointer;list-style:none}table.tgrid details.tsched form{margin-top:6px}
+table.tgrid details.tsched form>*{margin:2px 0}.ttabs .tcount{font-size:11px;padding:0 6px;border-radius:999px;background:var(--surface-2);color:var(--ink-2)}
+/* 080: the Procurement grids (13 Oct 2026): a cell edited in place, the bulk bar */
+table.pgrid td.ecell input{width:100%;min-width:90px;padding:3px 6px;font-size:12.5px;border:1px solid transparent;background:transparent}
+table.pgrid td.ecell input:hover,table.pgrid td.ecell input:focus{border-color:var(--line-2);background:var(--surface)}
+table.pgrid td.ecell input.edited{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,var(--surface))}
+.bulkbar{background:var(--surface-2);border-radius:var(--r);padding:8px 10px}
 .pill.dept{display:inline-flex;align-items:center;gap:4px;font-weight:600;color:var(--ink);--c:#0ea5e9;
   background:color-mix(in srgb,var(--c) 14%,var(--surface));border:1px solid color-mix(in srgb,var(--c) 50%,transparent)}
 .pill.dept .ic{width:12px;height:12px;margin:0;opacity:1;color:var(--c)}
@@ -2282,6 +2301,7 @@ ICONS = {
     "inbox": "M3 13h5l2 3h4l2-3h5M3 13l2.5-8h13L21 13v6H3z",
     "users": "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8",
     "tag": "M3 12V4h8l9 9-8 8zM7.5 8h.01",
+    "cart": "M3 4h2l2.4 11.2a1 1 0 0 0 1 .8h9.8a1 1 0 0 0 1-.8L21 8H6.5M9 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2M17 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2",
     "alert": "M12 3 2 20h20zM12 10v4M12 17h.01",
     "flag": "M5 21V4M5 4h13l-2 4 2 4H5",
     "x": "M6 6l12 12M18 6 6 18",
@@ -2969,6 +2989,10 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         ("projects", "Projects", [("projects", "/projects", "Projects", "")]),
         ("time", "Time", [("time", "/time", "Time", "")]),
         ("finance", "Finance", [("finance", "/finance", "Finance", "")]),
+        # 13 Oct 2026: BizBox's MMS as its own Procurement module (Dada).
+        ("procurement", "Procurement", [
+            ("procurement", "/procurement", "Procurement", "Purchase orders, receiving, items and vendors from BizBox"),
+            ("pochanges", "/procurement?tab=changes", "Changes to BizBox", "What waits for approval or the push")]),
         ("reports", "Reports", [
             ("reports", "/reports", "Reports", "KPIs, monthly charts, the writer"),
             ("uplift", "/uplift", "Uplift", "The programme's evidence")]),
@@ -2977,7 +3001,8 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
     ]
     levels = getattr(user, "modules", None) or {}
     gate = {"schedule": "SCHEDULE", "projects": "PROJECTS", "kb": "KNOWLEDGE", "reports": "REPORTS",
-            "finance": "FINANCE", "sales": "FINANCE", "time": "TIME", "calendar": "SCHEDULE"}
+            "finance": "FINANCE", "sales": "FINANCE", "time": "TIME", "calendar": "SCHEDULE",
+            "procurement": "PROCUREMENT", "pochanges": "PROCUREMENT"}
     groups = [(g, label, [pg for pg in pages if pg[0] not in gate or levels.get(gate[pg[0]], "READ") != "NONE"])
               for g, label, pages in groups]
     # 073: the desk's Chat is for chat operators (Dada, 7 Oct 2026).
@@ -2994,7 +3019,8 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
     nav_items = [(key, href, name) for _, _, pages in groups for key, href, name, _ in pages]   # the phone's quick bar
     icons = {"admin": "setup", "schedule": "grip", "projects": "layers", "kb": "note", "finance": "tag", "sales": "briefcase",
              "help": "note", "time": "clock", "approvals": "check", "service": "ticket", "configurations": "monitor",
-             "chat": "note", "cfgnew": "plus", "cfgcsv": "reports", "cfgtypes": "setup", "cfgint": "link"}
+             "chat": "note", "cfgnew": "plus", "cfgcsv": "reports", "cfgtypes": "setup", "cfgint": "link",
+             "procurement": "cart", "pochanges": "checks"}
 
     def one(key, href, label, cls="", current=False):
         return (f'<a href="{esc(href)}" title="{esc(label)}" class="{cls}{" on" if current else ""}"'

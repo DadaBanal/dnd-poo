@@ -2551,6 +2551,60 @@ and a second run finds nothing to do.
 
 Tests: `DepartmentCompanyAndWordsTest`.
 
+## Tasks, Configurations and Procurement in the reference PSA's shape (13 Oct 2026, schema 080)
+
+Dada, 13 Oct 2026: *"i need to revamp tasks and configurations to look like the connectwise build and also i want you
+to make sure that the mms module is mirrored in a spearate procurement module on connectwise where it will be easier
+for them to do edits and adds on the bizbox system and easier for them to do multiple edits as well"*. Four choices
+were put to him first and he took each as recommended: the full Tasks grid; the Configurations list and screen both;
+a Procurement menu of its own with four tabs; and, for edits to BizBox, *approve on the desk, push by a procedure
+inside BizBox*.
+
+**The Tasks tab** (`/ticket/<id>/tasks`) is a grid: Done, Pri, Task, Notes, Resolution, Schedule.
+- Each row is edited in place and saved with its own tick; the task's words, notes and resolution each get a history
+  line when they change.
+- Pri is the task's place in the list, kept in step with the order. Drag the handle to reorder; the arrows do the same
+  with no script.
+- *Schedule…* on a row books a visit on the ticket for a member (the usual `schedule.add`, with its conflict check) and
+  the row remembers it; the tab reads *Tasks 2/5* (done of all) as soon as the ticket has a task.
+- A reader sees the grid and none of its forms. Removing a task leaves its visit on the ticket.
+
+**Configurations.**
+- The list has the reference PSA's columns (Name, Type, Status, Company, Site, Contact, Serial #, Model, Tag #,
+  Manufacturer, Vendor, OS, Last login, Warranty, Open), chosen under *Columns* and carried in `?cols=`; every column
+  sorts; the search reads the tag too. Warranty stays among the default columns, as the tiles count it.
+- Tick rows, then *Apply to ticked*: one status, type or contact on all of them, each through `configurations.update`
+  and so each audited on its own; a row that refuses is named in the message.
+- The screen is a header, then tabs: *Configuration* (pods: Configuration, Details, Notes, Child configurations,
+  Questions, Contact, Change), *Tickets* and *History*.
+- New fields: tag number (the asset tag, not the serial), installed by, notes, and a parent configuration. A parent is
+  at the same company and never the configuration itself or anything under it; the parent's page lists its children.
+
+**Procurement** (`/procurement`): BizBox's MMS, the same mirror Finance shows, as a module of its own.
+- Tabs: Purchase orders, Receiving (BizBox's receiving reports, which Finance calls invoices), Products, Vendors (the
+  names on orders and receipts, with counts and sums; a vendor's own record stays in BizBox's people table), Changes.
+- Each grid: search, a status filter (an item's is its category) and a vendor filter; tick rows then *Queue for BizBox* with one field, one value and a
+  reason (a batch); edit cells in place and *Queue edited cells* (a batch of only the cells that differ); *New
+  purchase order* (with up to eight lines, each an item BizBox has) and *New item*.
+- A record's page is Finance's, served under this menu with its links kept here.
+- Rights: a **PROCUREMENT** module in Security roles. A role with no row for it takes its Finance level, so nothing
+  changed for anyone the day it appeared; it can be set apart later.
+
+**Changes to BizBox, now in batches (080).**
+- A batch is one reason and one approval over many changes: a bulk edit, a set of edited cells, or a new record
+  (ADD, carried as JSON on the batch; its one change row reads `NEW-<batch>` until BizBox answers with its number).
+- PENDING waits for a person with Procurement WRITE **other than the one who asked**; APPROVED waits for the push;
+  then APPLIED, REJECTED (BizBox's words kept) or CANCELLED. A batch ends when its last change has.
+- `bizbox.push` offers only changes whose batch is approved. The writer in force is `NoWriter` until the host names
+  `PSA_BIZBOX_WRITE_ODBC`; then `ProcedureWriter` calls `psa.sp_apply_change` inside BizBox, under a login that can do
+  nothing but EXECUTE it, and BizBox's own procedure checks and writes the MMS tables. **The desk never writes a BizBox
+  table.** The write login is refused when it is `sa`, missing, or the same login as the read-only one.
+- `python -m psaspine bizbox-push <db> [--apply]`: preview says what waits; `--apply` calls the writer.
+- The procedure, its login and its contract are SQL01's to build and BizBox's owner's to approve; the handoff of
+  13 Oct 2026 spells them out. Until then every approved batch waits, visibly, on the Changes tab.
+
+Tests: `CwShapeTest`.
+
 ## Changing a booking in place, and your own Outlook entries (9 Oct 2026, schema 077)
 
 Dada, 9 Oct 2026: *"u can dispatch but when changing a schedule there is no modify on calendars and dispatch portal"*,

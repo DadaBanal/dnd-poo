@@ -406,10 +406,67 @@ def save_answers(conn: sqlite3.Connection, configuration_id: str, values: dict, 
     return changed
 
 
+def cw_shape(conn: sqlite3.Connection) -> bool:
+    """Whether the store has taken 080: tag number, installed by, notes, parent."""
+    return db.column_exists(conn, "configuration", "tag_number")
+
+
+def children(conn: sqlite3.Connection, configuration_id: str) -> list[sqlite3.Row]:
+    """The configurations under this one (a monitor under its PC), 080."""
+    if not cw_shape(conn):
+        return []
+    return conn.execute("SELECT * FROM configuration WHERE parent_configuration_id = ? ORDER BY name",
+                        (configuration_id,)).fetchall()
+
+
+def _check_parent(conn, configuration_id: str, parent_id: str) -> None:
+    """A parent must exist, be at the same company, and not be this
+    configuration or anything under it (no cycles, at any depth)."""
+    me = conn.execute("SELECT entity_id FROM configuration WHERE configuration_id = ?", (configuration_id,)).fetchone()
+    p = conn.execute("SELECT configuration_id, entity_id, parent_configuration_id FROM configuration"
+                     " WHERE configuration_id = ?", (parent_id,)).fetchone()
+    if p is None:
+        raise LookupError("no such parent configuration")
+    if p["entity_id"] != me["entity_id"]:
+        raise LookupError("a parent is at the same company")
+    seen = set()
+    cur = p
+    while cur is not None:
+        if cur["configuration_id"] == configuration_id:
+            raise ValueError("that would put the configuration under itself")
+        if cur["configuration_id"] in seen or not cur["parent_configuration_id"]:
+            break
+        seen.add(cur["configuration_id"])
+        cur = conn.execute("SELECT configuration_id, entity_id, parent_configuration_id FROM configuration"
+                           " WHERE configuration_id = ?", (cur["parent_configuration_id"],)).fetchone()
+
+
+def bulk_update(conn: sqlite3.Connection, ids, *, at: datetime, actor: str, status: str | None = None,
+                config_type: str | None = None, contact_id: str | None = None) -> dict:
+    """The same change on every ticked configuration (13 Oct 2026): a status,
+    a type, a contact, any or all. Each one goes through update(), so each is
+    audited on its own; one that refuses the change is counted and named."""
+    ids = [i for i in dict.fromkeys(str(x).strip() for x in ids) if i]
+    if not ids:
+        raise ValueError("tick at least one configuration")
+    if status is None and config_type is None and contact_id is None:
+        raise ValueError("choose something to change")
+    out = {"changed": 0, "unchanged": 0, "refused": []}
+    for cid in ids:
+        try:
+            changed = update(conn, cid, at=at, actor=actor, status=status, config_type=config_type, contact_id=contact_id)
+        except (LookupError, ValueError) as exc:
+            out["refused"].append(f"{cid}: {exc}")
+            continue
+        out["changed" if changed else "unchanged"] += 1
+    return out
+
+
 def create(conn: sqlite3.Connection, *, name: str, entity_id: str, config_type: str,
            at: datetime, actor: str, contact_id: str | None = None, serial_number: str | None = None,
            manufacturer: str | None = None, model: str | None = None, description: str | None = None,
-           site_id: str | None = None, remote_session_id: str | None = None) -> str:
+           site_id: str | None = None, remote_session_id: str | None = None,
+           tag_number: str | None = None, notes: str | None = None) -> str:
     """A configuration typed in by hand (source MANUAL): a printer, a network
     device, a machine AD does not know. AD's own machines arrive by import and
     are never typed. The name must be new on the company."""
@@ -444,6 +501,9 @@ def create(conn: sqlite3.Connection, *, name: str, entity_id: str, config_type: 
         (cid, entity_id, name, config_type, contact_id or None, site_id or None,
          (manufacturer or "").strip() or None, (model or "").strip() or None,
          (serial_number or "").strip() or None, (description or "").strip() or None, session, stamp, type_id))
+    if cw_shape(conn) and ((tag_number or "").strip() or (notes or "").strip()):
+        conn.execute("UPDATE configuration SET tag_number = ?, notes = ? WHERE configuration_id = ?",
+                     ((tag_number or "").strip()[:60] or None, (notes or "").strip()[:2000] or None, cid))
     db.audit(conn, at=at.isoformat(sep=" ", timespec="minutes"), actor=actor,
              action="CONFIGURATION_CREATE", subject_kind="configuration", subject_id=cid,
              detail=f"{name} ({config_type.lower()}) at {entity_id}, by hand")
@@ -466,7 +526,8 @@ def update(conn: sqlite3.Connection, configuration_id: str, *, at: datetime, act
            description: str | None = None, purchased_on: str | None = None,
            warranty_ends_on: str | None = None, installed_on: str | None = None,
            vendor: str | None = None, purchase_ref: str | None = None, location: str | None = None,
-           agreement_id: str | None = None) -> list[str]:
+           agreement_id: str | None = None, tag_number: str | None = None, installed_by: str | None = None,
+           notes: str | None = None, parent_configuration_id: str | None = None) -> list[str]:
     """Change what the desk owns about a configuration, and audit it.
 
     `contact_id=""` clears the contact; `None` leaves any field as it is. A
@@ -547,6 +608,15 @@ def update(conn: sqlite3.Connection, configuration_id: str, *, at: datetime, act
                                          (agreement_id,)).fetchone() is None:
             raise LookupError("no such agreement")
         changes["agreement_id"] = agreement_id or None
+    # 080: the reference PSA's tag number, installed by, notes and parent
+    if cw_shape(conn):
+        for key, value, width in (("tag_number", tag_number, 60), ("installed_by", installed_by, 100), ("notes", notes, 2000)):
+            if value is not None and (value.strip()[:width] or None) != row[key]:
+                changes[key] = value.strip()[:width] or None
+        if parent_configuration_id is not None and (parent_configuration_id or None) != row["parent_configuration_id"]:
+            if parent_configuration_id:
+                _check_parent(conn, configuration_id, parent_configuration_id)
+            changes["parent_configuration_id"] = parent_configuration_id or None
     if changes:
         conn.execute("UPDATE configuration SET " + ", ".join(f"{k} = ?" for k in changes)
                      + " WHERE configuration_id = ?", list(changes.values()) + [configuration_id])

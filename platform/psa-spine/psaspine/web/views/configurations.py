@@ -88,8 +88,19 @@ TYPE_WORDS = {"WORKSTATION": "Workstations", "LAPTOP": "Laptops", "SERVER": "Ser
 SORTS = {"name": "c.name", "type": "c.config_type, c.name", "os": "c.os_name, c.name",
          "contact": "ct.display_name, c.name", "seen": "c.last_seen_at DESC, c.name",
          "tickets": "open_tickets DESC, c.name", "company": "c.entity_id, c.name",
-         "warranty": "c.warranty_ends_on, c.name"}
+         "warranty": "c.warranty_ends_on, c.name", "status": "c.status, c.name", "site": "s.name, c.name",
+         "serial": "c.serial_number, c.name", "model": "c.model, c.name", "tag": "c.tag_number, c.name",
+         "manufacturer": "c.manufacturer, c.name", "vendor": "c.vendor, c.name"}
 WARRANTY_FILTERS = ("expiring", "expired")
+# 13 Oct 2026 (Dada: "revamp ... configurations to look like the connectwise
+# build"): the reference PSA's list columns, chosen per person. Name is always
+# first; the rest are ticked under Columns. The default set is its default.
+LIST_COLUMNS = (("name", "Name"), ("type", "Type"), ("status", "Status"), ("company", "Company"), ("site", "Site"),
+                ("contact", "Contact"), ("serial", "Serial #"), ("model", "Model"), ("tag", "Tag #"),
+                ("manufacturer", "Manufacturer"), ("vendor", "Vendor"), ("os", "OS"), ("seen", "Last login"),
+                ("warranty", "Warranty"), ("tickets", "Open"))
+DEFAULT_COLUMNS = ("name", "type", "status", "company", "site", "contact", "serial", "model", "tag", "vendor", "seen", "warranty", "tickets")
+CW_SORTS = {"tag", "manufacturer", "vendor", "serial", "model", "site", "status"}
 
 
 def _warranty_cell(ctx, row) -> str:
@@ -112,11 +123,17 @@ def _list_filters(ctx):
         status = "ACTIVE"
     entity = q.get("company", "")
     sort = q.get("sort", "name") if q.get("sort", "name") in SORTS else "name"
+    if sort == "tag" and not cmdb.cw_shape(ctx.conn):
+        sort = "name"
     warranty = q.get("warranty", "") if q.get("warranty", "") in WARRANTY_FILTERS else ""
     where, params = ["1 = 1"], []
     if text:
-        where.append("(c.name LIKE ? OR c.serial_number LIKE ? OR c.description LIKE ? OR c.dns_name LIKE ?)")
-        params += [f"%{text}%"] * 4
+        if cmdb.cw_shape(ctx.conn):
+            where.append("(c.name LIKE ? OR c.serial_number LIKE ? OR c.description LIKE ? OR c.dns_name LIKE ? OR c.tag_number LIKE ?)")
+            params += [f"%{text}%"] * 5
+        else:
+            where.append("(c.name LIKE ? OR c.serial_number LIKE ? OR c.description LIKE ? OR c.dns_name LIKE ?)")
+            params += [f"%{text}%"] * 4
     if kind:
         where.append("COALESCE(c.type_id, c.config_type) = ?"); params.append(kind)
     if status != "ALL":
@@ -137,32 +154,47 @@ def _opts(pairs, sel):
                    for k, v in pairs)
 
 
+def _columns_chosen(ctx) -> list[str]:
+    """The columns this list shows: ?cols=a,b,c, else the default set. Name
+    always; a column the store cannot fill yet (080 not taken) is dropped."""
+    raw = ctx.request.query.get("cols", "")
+    keys = [k for k in raw.split(",") if k in dict(LIST_COLUMNS)] if raw else list(DEFAULT_COLUMNS)
+    if not cmdb.cw_shape(ctx.conn):
+        keys = [k for k in keys if k != "tag"]
+    return ["name"] + [k for k in dict.fromkeys(keys) if k != "name"]
+
+
 def index(ctx):
-    """Dada PSA's Configurations list: counts by type that filter, status
-    and company filters, a search box, every column sorts, and how many open
-    tickets each machine has. Below it, the form for a machine typed in by
-    hand (AD's own arrive by import)."""
+    """The reference PSA's Configurations list (13 Oct 2026): its columns,
+    chosen under Columns; counts by type that filter; search, status, company
+    and warranty filters; every column sorts; rows ticked and changed
+    together. Below it, the form for a machine typed in by hand (AD's own
+    arrive by import)."""
     from .. import Response
     _fulfiller(ctx)
     q = ctx.request.query
     text, kind, status, entity, sort, warranty, where, params = _list_filters(ctx)
+    cols = _columns_chosen(ctx)
+    cw = cmdb.cw_shape(ctx.conn)
     rows = ctx.conn.execute(
-        "SELECT c.*, ct.display_name AS contact_name, e.name AS entity_name,"
+        "SELECT c.*, ct.display_name AS contact_name, e.name AS entity_name, s.name AS site_name,"
         "       (SELECT COUNT(*) FROM ticket_configuration tc JOIN ticket t ON t.work_item_id = tc.work_item_id"
         "         WHERE tc.configuration_id = c.configuration_id"
         "           AND t.state NOT IN ('RESOLVED','CLOSED','CANCELLED')) AS open_tickets"
         "  FROM configuration c JOIN entity e ON e.entity_id = c.entity_id"
-        "  LEFT JOIN contact ct ON ct.contact_id = c.contact_id"
+        "  LEFT JOIN contact ct ON ct.contact_id = c.contact_id LEFT JOIN site s ON s.site_id = c.site_id"
         f" WHERE {' AND '.join(where)} ORDER BY {SORTS[sort]} LIMIT 500", params).fetchall()
     total = ctx.conn.execute(f"SELECT COUNT(*) FROM configuration c WHERE {' AND '.join(where)}", params).fetchone()[0]
     counts = {r["k"]: r["n"] for r in ctx.conn.execute(
         "SELECT COALESCE(type_id, config_type) AS k, COUNT(*) AS n FROM configuration WHERE status = 'ACTIVE' GROUP BY COALESCE(type_id, config_type)")}
     active = sum(counts.values())
+    colspec = ",".join(cols)
 
     def keep(**kw):
-        d = {"q": text, "type": kind, "status": status, "company": entity, "sort": sort, "warranty": warranty}
+        d = {"q": text, "type": kind, "status": status, "company": entity, "sort": sort, "warranty": warranty, "cols": colspec}
         d.update(kw)
-        return "/configurations?" + urllib.parse.urlencode({k: v for k, v in d.items() if v and not (k == "status" and v == "ACTIVE")})
+        return "/configurations?" + urllib.parse.urlencode({k: v for k, v in d.items() if v and not (k == "status" and v == "ACTIVE")
+                                                            and not (k == "cols" and v == ",".join(_columns_chosen_default(ctx)))})
     tiles = (f"<a class='tile{' on' if not kind else ''}' href='{keep(type='')}'><div class=n>{active}</div><div class=l>Active, all types</div></a>"
              + "".join(f"<a class='tile{' on' if kind == ty['type_id'] else ''}' href='{keep(type=ty['type_id'])}'><div class=n>{counts.get(ty['type_id'], 0)}</div>"
                        f"<div class=l>{t.esc(TYPE_WORDS.get(ty['type_id'], ty['name']))}</div></a>"
@@ -173,43 +205,88 @@ def index(ctx):
               f"<a class='tile{' on' if warranty == 'expired' else ''}' href='{keep(warranty='' if warranty == 'expired' else 'expired')}'>"
               f"<div class=n>{wc['expired']}</div><div class=l>Out of warranty</div></a>")
     companies = ctx.conn.execute("SELECT entity_id, name FROM entity ORDER BY name").fetchall()
+    picks = "".join(f"<label class=colopt><input type=checkbox name=col value='{k}'{' checked' if k in cols else ''}{' disabled' if k == 'name' else ''}> {t.esc(v)}</label>"
+                    for k, v in LIST_COLUMNS if cw or k != "tag")
     filters = (
-        "<form method=get class=row style='margin-bottom:10px'>"
+        "<form method=get class='row schedbar' id=cfgfilter style='margin-bottom:10px'>"
         f"<input type=hidden name=type value='{t.esc(kind)}'><input type=hidden name=sort value='{t.esc(sort)}'>"
-        f"<div><input name=q value='{t.esc(text)}' placeholder='name, DNS name, serial or description'></div>"
-        f"<div style='flex:0 0 auto'><select name=status>{_opts([('ACTIVE', 'Active'), ('INACTIVE', 'Inactive'), ('RETIRED', 'Retired'), ('ALL', 'All statuses')], status)}</select></div>"
-        f"<div style='flex:0 0 auto'><select name=company>{_opts([('', 'Every company')] + [(e['entity_id'], e['name']) for e in companies], entity)}</select></div>"
-        "<div style='flex:0 0 auto'><button type=submit>Filter</button></div></form>")
+        f"<input type=hidden name=cols value='{t.esc(colspec)}' data-cols>"
+        f"<div style='flex:1 1 220px'><input name=q value='{t.esc(text)}' placeholder='name, DNS name, serial, tag or description'></div>"
+        f"<div style='flex:0 0 auto'><select name=status aria-label=Status>{_opts([('ACTIVE', 'Active'), ('INACTIVE', 'Inactive'), ('RETIRED', 'Retired'), ('ALL', 'All statuses')], status)}</select></div>"
+        f"<div style='flex:0 0 auto'><select name=company aria-label=Company>{_opts([('', 'Every company')] + [(e['entity_id'], e['name']) for e in companies], entity)}</select></div>"
+        "<div style='flex:0 0 auto'><button type=submit>Filter</button></div>"
+        f"<div style='flex:0 0 auto'><details class=colpick><summary class='btn ghost'>{t.icon('rows')} Columns</summary>"
+        f"<div class=colmenu>{picks}<button class='small' type=submit data-applycols>Apply</button></div></details></div></form>")
 
     def th(key, label):
-        return f"<th><a href='{keep(sort=key)}'{' class=on' if sort == key else ''}>{label}</a></th>"
+        cls = " class=num" if key in ("tickets",) else ""
+        return f"<th{cls}><a href='{keep(sort=key)}'{' class=on' if sort == key else ''}>{label}</a></th>"
+
+    def cell(r, key):
+        if key == "name":
+            return (f"<td><a href='/configuration/{t.esc(r['configuration_id'])}'>{t.esc(r['name'])}</a>"
+                    + (" <span class=muted>by hand</span>" if r["source"] == "MANUAL" else "") + "</td>")
+        if key == "type":
+            return f"<td>{t.esc(cmdb.type_word(ctx.conn, r))}</td>"
+        if key == "status":
+            w = cmdb.status_word(ctx.conn, r)
+            return f"<td>{t.esc(w) if r['status'] == 'ACTIVE' else '<span class=chip>' + t.esc(w.lower()) + '</span>'}</td>"
+        if key == "company":
+            return f"<td>{t.esc(r['entity_name'])}</td>"
+        if key == "site":
+            return f"<td>{t.esc(r['site_name'] or '—')}</td>"
+        if key == "contact":
+            return f"<td>{t.esc(r['contact_name'] or '—')}</td>"
+        if key == "seen":
+            return f"<td>{t.esc((r['last_seen_at'] or '—')[:10])}</td>"
+        if key == "warranty":
+            return f"<td>{_warranty_cell(ctx, r)}</td>"
+        if key == "tickets":
+            return f"<td class=num>{r['open_tickets'] or ''}</td>"
+        if key == "tag":
+            return f"<td>{t.esc((r['tag_number'] if cw else None) or '—')}</td>"
+        col = {"serial": "serial_number", "model": "model", "manufacturer": "manufacturer", "vendor": "vendor", "os": "os_name"}[key]
+        return f"<td>{t.esc(r[col] or '—')}</td>"
+    can = _may_work(ctx)
     body_rows = "".join(
-        f"<tr><td><a href='/configuration/{t.esc(r['configuration_id'])}'>{t.esc(r['name'])}</a>"
-        + (f" <span class=chip>{t.esc(cmdb.status_word(ctx.conn, r).lower())}</span>" if r["status"] != "ACTIVE" else "")
-        + (" <span class=muted>by hand</span>" if r["source"] == "MANUAL" else "") + "</td>"
-        f"<td>{t.esc(r['entity_name'])}</td><td>{t.esc(cmdb.type_word(ctx.conn, r))}</td>"
-        f"<td>{t.esc(r['os_name'] or '—')}</td><td>{t.esc(r['contact_name'] or '—')}</td>"
-        f"<td>{t.esc((r['last_seen_at'] or '—')[:10])}</td><td>{_warranty_cell(ctx, r)}</td>"
-        f"<td class=num>{r['open_tickets'] or ''}</td><td>{links_html(ctx, 'CONFIGURATION', r)}</td></tr>" for r in rows)
-    table = ("<div class=tablewrap><table><thead><tr>" + th("name", "Name") + th("company", "Company") + th("type", "Type")
-             + th("os", "OS") + th("contact", "Contact") + th("seen", "Last seen") + th("warranty", "Warranty") + th("tickets", "Open")
-             + "<th></th></tr></thead><tbody>" + body_rows + "</tbody></table></div>"
+        f"<tr>" + (f"<td><input type=checkbox form=cfgbulk name=ids value='{t.esc(r['configuration_id'])}' aria-label='Tick {t.esc(r['name'])}'></td>" if can else "")
+        + "".join(cell(r, k) for k in cols) + f"<td>{links_html(ctx, 'CONFIGURATION', r)}</td></tr>" for r in rows)
+    table = ("<div class=tablewrap><table class=cfglist><thead><tr>" + ("<th><input type=checkbox data-tickall aria-label='Tick every row'></th>" if can else "")
+             + "".join(th(k, dict(LIST_COLUMNS)[k]) for k in cols) + "<th></th></tr></thead><tbody>" + body_rows + "</tbody></table></div>"
              if rows else "<div class=muted>Nothing matches. Import machines from AD: psaspine import-computers; "
                           "or add one by hand below.</div>")
+    bulk = ""
+    if can and rows:
+        bulk = (f"<form id=cfgbulk method=post action='/configurations/bulk' class='row schedbar bulkbar' style='margin-top:10px'>"
+                f"<input type=hidden name=back value='{t.esc(keep())}'>"
+                "<div style='flex:0 0 auto'><b><span data-ticked>0</span> ticked:</b></div>"
+                f"<div style='flex:0 0 170px'><select name=status aria-label='Change status'>{_opts([('', 'Status: leave')] + [(x['status_id'], x['name']) for x in cmdb.statuses(ctx.conn)], '')}</select></div>"
+                f"<div style='flex:0 0 170px'><select name=config_type aria-label='Change type'>{_opts([('', 'Type: leave')] + [(x['type_id'], x['name']) for x in cmdb.types(ctx.conn)], '')}</select></div>"
+                f"<div style='flex:0 0 200px'><select name=contact_id aria-label='Change contact'>{_opts([('', 'Contact: leave'), ('-', 'Contact: clear')] + [(p['contact_id'], p['display_name']) for p in ctx.conn.execute('SELECT contact_id, display_name FROM contact WHERE inactive = 0 ORDER BY display_name LIMIT 2000')], '')}</select></div>"
+                f"<div style='flex:0 0 auto'><button type=submit>{t.icon('check')} Apply to ticked</button></div></form>")
+    script = ("<script>(function(){var f=document.getElementById('cfgfilter');if(f){var h=f.querySelector('[data-cols]');"
+              "f.addEventListener('submit',function(){var c=Array.prototype.filter.call(f.querySelectorAll('input[name=col]'),function(i){return i.checked||i.disabled}).map(function(i){return i.value});h.value=c.join(',')});"
+              "f.querySelectorAll('input[name=col]').forEach(function(i){i.removeAttribute('name');i.setAttribute('name','col')})}"
+              "var tick=document.querySelector('[data-tickall]');var n=document.querySelector('[data-ticked]');"
+              "var boxes=function(){return Array.prototype.slice.call(document.querySelectorAll('input[form=cfgbulk][name=ids]'))};"
+              "function count(){if(n)n.textContent=boxes().filter(function(b){return b.checked}).length}"
+              "if(tick)tick.addEventListener('change',function(){boxes().forEach(function(b){b.checked=tick.checked});count()});"
+              "boxes().forEach(function(b){b.addEventListener('change',count)});count()})()</script>")
     export = keep().replace("/configurations?", "/configurations/maintenance.csv?")
     shown = ((f"<p class=why>{len(rows)} of {total} shown." if total > len(rows) else f"<p class=why>{total} configuration(s).")
              + f" <a href='{export}'>Maintenance record (CSV) for these</a>: every ticket on them, with hours and visits.</p>")
     add = ""
-    if _may_work(ctx):
+    if can:
         add = (
-            "<div class=card id=cfgnew><h3>" + t.icon("plus") + "Add a configuration by hand</h3><p class=sub>A printer, a network "
+            "<div class=card id=cfgnew><h3>" + t.icon("plus") + "New configuration</h3><p class=sub>A printer, a network "
             "device, a machine Active Directory does not know. AD's own machines arrive by import and are never typed.</p>"
             "<form method=post action='/configurations/new' class=fields><div class=grid2>"
             "<div><label>Name</label><input name=name required maxlength=100 placeholder='PRN-WARD3-01'></div>"
             f"<div><label>Company</label><select name=entity_id>{_opts([(e['entity_id'], e['name']) for e in companies], 'PMC')}</select></div>"
             f"<div><label>Type</label><select name=config_type>{_opts([(x['type_id'], x['name']) for x in cmdb.types(ctx.conn)], 'PRINTER')}</select></div>"
-            "<div><label>Serial</label><input name=serial_number maxlength=100></div>"
-            "<div><label>Manufacturer</label><input name=manufacturer maxlength=100></div>"
+            "<div><label>Serial #</label><input name=serial_number maxlength=100></div>"
+            + ("<div><label>Tag #</label><input name=tag_number maxlength=60 placeholder='the asset tag'></div>" if cw else "")
+            + "<div><label>Manufacturer</label><input name=manufacturer maxlength=100></div>"
             "<div><label>Model</label><input name=model maxlength=100></div>"
             "<div style='grid-column:1/-1'><label>Description</label><input name=description maxlength=400 placeholder='where it is, what it does'></div>"
             "</div><div style='margin-top:10px'><button type=submit>Add</button></div></form></div>")
@@ -217,12 +294,42 @@ def index(ctx):
     body = (
         (f"<div class='banner ok'>{t.esc(msg)}</div>" if msg else "")
         + (f"<div class='banner err'>{t.esc(err)}</div>" if err else "")
-        + "<h1>Configurations</h1><p class=sub>The machines and devices the desk supports, as Dada PSA's "
-          "Configurations: from Active Directory, or typed in by hand. Open one to launch its remote session, "
-          "see its tickets and its history, or raise a ticket for it.</p>"
+        + "<h1>Configurations</h1><p class=sub>Every machine, printer and device the desk supports, in the reference PSA's "
+          "Configurations list: choose the columns, sort any of them, tick rows to change their status, type or contact together. "
+          "Open one for its tickets, its history and its remote session.</p>"
         + f"<div class='tiles' style='grid-template-columns:repeat(auto-fit,minmax(112px,1fr))'>{tiles}</div>"
-        + "<div class=card>" + filters + table + shown + "</div>" + add)
+        + "<div class=card>" + filters + table + bulk + shown + "</div>" + add + script)
     return Response(body=t.page("Configurations", body, user=ctx.user, active="configurations"))
+
+
+def _columns_chosen_default(ctx) -> list[str]:
+    keys = list(DEFAULT_COLUMNS)
+    if not cmdb.cw_shape(ctx.conn):
+        keys = [k for k in keys if k != "tag"]
+    return keys
+
+
+def bulk(ctx):
+    """POST /configurations/bulk: the same change on every ticked row."""
+    from .. import HttpError, redirect
+    _fulfiller(ctx)
+    if not _may_work(ctx):
+        raise HttpError("403 Forbidden", "Changing a configuration takes WORK on a board.")
+    f = ctx.request.form()
+    back = f.get("back") if (f.get("back") or "").startswith("/configurations") else "/configurations"
+    sep = "&" if "?" in back else "?"
+    contact = f.get("contact_id", "")
+    try:
+        out = cmdb.bulk_update(ctx.conn, ctx.request.form_list("ids"), at=ctx.now, actor=ctx.user.id,
+                               status=f.get("status") or None, config_type=f.get("config_type") or None,
+                               contact_id=None if not contact else ("" if contact == "-" else contact))
+    except ValueError as exc:
+        return redirect(back + sep + urllib.parse.urlencode({"err": f"Nothing changed: {exc}"}))
+    ctx.conn.commit()
+    words = f"{out['changed']} changed, {out['unchanged']} already so"
+    if out["refused"]:
+        words += f"; {len(out['refused'])} refused: " + "; ".join(out["refused"][:5])
+    return redirect(back + sep + urllib.parse.urlencode({"msg": words}))
 
 
 def create(ctx):
@@ -235,7 +342,7 @@ def create(ctx):
         cid = cmdb.create(ctx.conn, name=f.get("name", ""), entity_id=f.get("entity_id", ""),
                           config_type=f.get("config_type", ""), at=ctx.now, actor=ctx.user.id,
                           serial_number=f.get("serial_number"), manufacturer=f.get("manufacturer"),
-                          model=f.get("model"), description=f.get("description"))
+                          model=f.get("model"), description=f.get("description"), tag_number=f.get("tag_number"))
     except (ValueError, LookupError) as exc:
         return redirect("/configurations?" + urllib.parse.urlencode({"err": str(exc)}))
     ctx.conn.commit()
@@ -262,21 +369,76 @@ def _history(ctx, configuration_id: str) -> str:
         f"<li><span class=muted>{t.esc(when)} · {t.esc(who)}</span> · {what}</li>" for when, who, what in lines[:50]) + "</ul>"
 
 
+CFG_TABS = (("", "Configuration"), ("tickets", "Tickets"), ("history", "History"))
+
+
 def detail(ctx, configuration_id: str):
+    """The reference PSA's configuration screen (13 Oct 2026): a header, then
+    tabs; the Configuration tab is pods (Configuration, Details, Questions,
+    Children, Contact, Change), Tickets the open and recently closed ones,
+    History what the desk did to it."""
     from .. import HttpError, Response
     boards = _fulfiller(ctx)
+    cw = cmdb.cw_shape(ctx.conn)
     c = ctx.conn.execute(
         "SELECT c.*, e.name AS entity_name, ct.display_name AS contact_name, ct.email AS contact_email,"
-        "       ct.department AS contact_department, s.name AS site_name, ag.name AS agreement_name FROM configuration c"
+        "       ct.department AS contact_department, s.name AS site_name, ag.name AS agreement_name"
+        + (", p.name AS parent_name" if cw else ", NULL AS parent_name") + " FROM configuration c"
         " JOIN entity e ON e.entity_id = c.entity_id"
         " LEFT JOIN contact ct ON ct.contact_id = c.contact_id"
         " LEFT JOIN site s ON s.site_id = c.site_id"
         " LEFT JOIN agreement ag ON ag.agreement_id = c.agreement_id"
-        " WHERE c.configuration_id = ?", (configuration_id,)).fetchone()
+        + (" LEFT JOIN configuration p ON p.configuration_id = c.parent_configuration_id" if cw else "")
+        + " WHERE c.configuration_id = ?", (configuration_id,)).fetchone()
     if c is None:
         raise HttpError("404 Not Found", "No such configuration.")
-    msg = ctx.request.query.get("msg", "")
-    err = ctx.request.query.get("err", "")
+    q = ctx.request.query
+    tab = q.get("tab", "") if q.get("tab", "") in dict(CFG_TABS) else ""
+    msg, err = q.get("msg", ""), q.get("err", "")
+    cid = t.esc(configuration_id)
+    raise_qs = urllib.parse.urlencode({k: v for k, v in {
+        "configuration_id": configuration_id, "entity_id": c["entity_id"],
+        "requested_by": (c["contact_email"] or "")}.items() if v})
+    # The count on the Tickets tab reads only the boards the Tickets tab lists:
+    # a ticket on a restricted board is neither listed nor counted here.
+    from .companies import _open_boards
+    shown_boards, _ = _open_boards(ctx, boards) if boards else ([], 0)
+    open_n = ctx.conn.execute(
+        "SELECT COUNT(*) FROM ticket_configuration tc JOIN ticket t ON t.work_item_id = tc.work_item_id"
+        " WHERE tc.configuration_id = ? AND t.state NOT IN ('RESOLVED','CLOSED','CANCELLED')"
+        f" AND t.board_id IN ({','.join('?' * len(shown_boards))})",
+        [configuration_id] + shown_boards).fetchone()[0] if shown_boards else 0
+    tabs = ("<nav class='tabs ttabs' aria-label='Configuration tabs'>" + "".join(
+        f"<a href='/configuration/{cid}" + (f"?tab={k}" if k else "") + "'" + (" class=on aria-current=page" if k == tab else "")
+        + f">{v}" + (f" <span class=tcount>{open_n}</span>" if k == "tickets" and open_n else "") + "</a>" for k, v in CFG_TABS) + "</nav>")
+    sub = " · ".join(x for x in (
+        f"<a href='/company/{t.esc(c['entity_id'])}'>{t.esc(c['entity_name'])}</a>",
+        t.esc(c["site_name"]) if c["site_name"] else "", t.esc(c["location"]) if c["location"] else "",
+        f"<a href='/contact/{t.esc(c['contact_id'])}'>{t.esc(c['contact_name'])}</a>" if c["contact_id"] else "",
+        "typed in by hand" if c["source"] == "MANUAL" else "from Active Directory") if x)
+    head = ((f"<div class='banner ok toast'>{t.icon('check')} {t.esc(msg)}</div>" if msg else "")
+            + (f"<div class='banner err toast'>{t.icon('alert')} {t.esc(err)}</div>" if err else "")
+            + "<a class=backbtn data-back href='/configurations' title='Back to Configurations'>" + t.icon("left")
+            + "<span class=lbl>Back to Configurations</span></a>"
+            f"<div class=hdr><div class=grow><h1 class=sumline>{t.esc(c['name'])}"
+            f" <span class=chip>{t.esc(cmdb.type_word(ctx.conn, c))}</span>"
+            + (f" <span class=chip>{t.esc(cmdb.status_word(ctx.conn, c).lower())}</span>" if c["status"] != "ACTIVE" else "")
+            + (f" <span class=pill title='Tag number'>{t.icon('tag')}{t.esc(c['tag_number'])}</span>" if cw and c["tag_number"] else "")
+            + f"</h1><p class=sub>{sub}</p></div><div class=acts>"
+            + links_html(ctx, "CONFIGURATION", c)
+            + (f" <a class='btn' href='/ticket/new?{raise_qs}'>{t.icon('plus')} Raise a ticket for this machine</a>" if _may_work(ctx) else "")
+            + f" <a class='btn ghost' href='/configuration/{cid}/maintenance.csv'>{t.icon('arrow')} Maintenance record</a>"
+            "</div></div>" + tabs)
+    if tab == "tickets":
+        body = _cfg_tickets(ctx, boards, configuration_id)
+    elif tab == "history":
+        body = f"<div class=card><h3>{t.icon('clock')}History</h3>{_history(ctx, configuration_id)}</div>"
+    else:
+        body = _cfg_overview(ctx, c, cw)
+    return Response(body=t.page(c["name"], head + body, user=ctx.user, active="configurations"))
+
+
+def _cfg_tickets(ctx, boards, configuration_id: str) -> str:
     tickets_html, hidden = _tickets(
         ctx, boards, where="t.work_item_id IN (SELECT work_item_id FROM ticket_configuration"
                            " WHERE configuration_id = ?)", params=[configuration_id])
@@ -290,32 +452,49 @@ def detail(ctx, configuration_id: str):
             " JOIN work_item w ON w.work_item_id = t.work_item_id JOIN board b ON b.board_id = t.board_id"
             " JOIN ticket_configuration tc ON tc.work_item_id = t.work_item_id"
             f" WHERE tc.configuration_id = ? AND t.board_id IN ({marks})"
-            " AND t.state IN ('RESOLVED','CLOSED','CANCELLED') ORDER BY t.closed_at DESC LIMIT 10",
+            " AND t.state IN ('RESOLVED','CLOSED','CANCELLED') ORDER BY t.closed_at DESC LIMIT 20",
             [configuration_id] + shown_boards).fetchall()
     closed_html = ("<ul class=plain>" + "".join(
         f"<li><a href='/ticket/{t.esc(r['work_item_id'])}'>{t.esc(r['work_item_id'])}</a> {t.esc(r['summary'])} "
         f"<span class=muted>· {t.esc(r['board_name'])} · closed {t.esc((r['closed_at'] or '')[:10])}</span></li>"
         for r in closed) + "</ul>") if closed else "<div class=muted>None.</div>"
-    facts = (f"<dt>Type</dt><dd>{t.esc(cmdb.type_word(ctx.conn, c))}</dd><dt>Status</dt><dd>{t.esc(cmdb.status_word(ctx.conn, c))}</dd>"
-             + "".join(f"<dt>{label}</dt><dd>{t.esc(str(c[key]) if c[key] else '—')}</dd>" for label, key in (
-        ("DNS name", "dns_name"), ("Operating system", "os_name"),
-        ("OS version", "os_version"), ("Manufacturer", "manufacturer"), ("Model", "model"), ("Serial", "serial_number"),
-        ("Description", "description"), ("Site", "site_name"), ("ScreenConnect session", "remote_session_id"),
-        ("AD object", "ad_object_guid"), ("Source", "source"), ("Added", "created_at"),
-        ("Last synced from AD", "last_synced_at"), ("Last seen in AD", "last_seen_at"))))
-    facts += (f"<dt>Vendor</dt><dd>{t.esc(c['vendor'] or '—')}</dd><dt>Purchased</dt><dd>{t.esc(c['purchased_on'] or '—')}</dd>"
-              f"<dt>Warranty ends</dt><dd>{_warranty_cell(ctx, c)}</dd><dt>Installed</dt><dd>{t.esc(c['installed_on'] or '—')}</dd>"
-              f"<dt>Purchase ref</dt><dd>{t.esc(c['purchase_ref'] or '—')}</dd><dt>Location</dt><dd>{t.esc(c['location'] or '—')}</dd>"
-              "<dt>Agreement</dt><dd>" + (f"<a href='/agreement/{t.esc(c['agreement_id'])}'>{t.esc(c['agreement_id'])}</a> {t.esc(c['agreement_name'] or '')}"
-                                          if c["agreement_id"] else "—") + "</dd>")
+    return (f"<div class=card><h3>{t.icon('ticket')}Open tickets</h3>{tickets_html}{_hidden_note(hidden)}</div>"
+            f"<div class=card><h3>{t.icon('check')}Recently closed</h3>{closed_html}</div>")
+
+
+def _cfg_overview(ctx, c, cw: bool) -> str:
+    configuration_id = c["configuration_id"]
+    cid = t.esc(configuration_id)
+    kids = cmdb.children(ctx.conn, configuration_id)
+    dash = lambda v: t.esc(str(v)) if v else "—"
+    pod1 = (f"<dt>Type</dt><dd>{t.esc(cmdb.type_word(ctx.conn, c))}</dd><dt>Status</dt><dd>{t.esc(cmdb.status_word(ctx.conn, c))}</dd>"
+            f"<dt>Company</dt><dd><a href='/company/{t.esc(c['entity_id'])}'>{t.esc(c['entity_name'])}</a></dd>"
+            f"<dt>Site</dt><dd>{dash(c['site_name'])}</dd><dt>Location</dt><dd>{dash(c['location'])}</dd>"
+            "<dt>Contact</dt><dd>" + (f"<a href='/contact/{t.esc(c['contact_id'])}'>{t.esc(c['contact_name'])}</a>" if c["contact_id"] else "—") + "</dd>"
+            + (f"<dt>Tag #</dt><dd>{dash(c['tag_number'])}</dd>"
+               "<dt>Parent</dt><dd>" + (f"<a href='/configuration/{t.esc(c['parent_configuration_id'])}'>{t.esc(c['parent_name'] or c['parent_configuration_id'])}</a>"
+                                       if c["parent_configuration_id"] else "—") + "</dd>" if cw else ""))
+    pod2 = "".join(f"<dt>{label}</dt><dd>{dash(c[key])}</dd>" for label, key in (
+        ("Manufacturer", "manufacturer"), ("Model", "model"), ("Serial #", "serial_number"), ("Vendor", "vendor"),
+        ("Purchased", "purchased_on"), ("Installed", "installed_on")))
+    pod2 += (f"<dt>Installed by</dt><dd>{dash(c['installed_by'])}</dd>" if cw else "")
+    pod2 += (f"<dt>Warranty ends</dt><dd>{_warranty_cell(ctx, c)}</dd><dt>Purchase ref</dt><dd>{dash(c['purchase_ref'])}</dd>"
+             "<dt>Agreement</dt><dd>" + (f"<a href='/agreement/{t.esc(c['agreement_id'])}'>{t.esc(c['agreement_id'])}</a> {t.esc(c['agreement_name'] or '')}"
+                                         if c["agreement_id"] else "—") + "</dd>")
+    pod2 += "".join(f"<dt>{label}</dt><dd>{dash(c[key])}</dd>" for label, key in (
+        ("DNS name", "dns_name"), ("Operating system", "os_name"), ("OS version", "os_version"), ("Description", "description"),
+        ("ScreenConnect session", "remote_session_id"), ("AD object", "ad_object_guid"), ("Source", "source"),
+        ("Added", "created_at"), ("Last synced from AD", "last_synced_at"), ("Last login", "last_seen_at")))
+    notes = (f"<div class=card><h3>{t.icon('note')}Notes</h3><div class=note>{t.esc(c['notes'])}</div></div>" if cw and c["notes"] else "")
+    kids_html = ("<div class=card><h3>" + t.icon("layers") + f"Child configurations · {len(kids)}</h3>"
+                 + ("<ul class=plain>" + "".join(f"<li><a href='/configuration/{t.esc(k['configuration_id'])}'>{t.esc(k['name'])}</a> "
+                                                 f"<span class=muted>· {t.esc(cmdb.type_word(ctx.conn, k))}</span></li>" for k in kids) + "</ul>"
+                    if kids else "<div class=muted>None. A configuration names its parent in Change.</div>") + "</div>") if cw else ""
     person = ""
     if c["contact_id"]:
         bits = " · ".join(t.esc(x) for x in (c["contact_department"], c["contact_email"]) if x)
         person = (f"<div class=card><h3>{t.icon('users')}Contact</h3><p><a href='/contact/{t.esc(c['contact_id'])}'>"
                   f"{t.esc(c['contact_name'])}</a>" + (f"<br><span class=muted>{bits}</span>" if bits else "") + "</p></div>")
-    raise_qs = urllib.parse.urlencode({k: v for k, v in {
-        "configuration_id": configuration_id, "entity_id": c["entity_id"],
-        "requested_by": (c["contact_email"] or "")}.items() if v})
     edit = ""
     if _may_work(ctx):
         people = ctx.conn.execute(
@@ -325,48 +504,38 @@ def detail(ctx, configuration_id: str):
                                  (c["entity_id"],)).fetchall()
         manual = c["source"] == "MANUAL"
         deals = ctx.conn.execute("SELECT agreement_id, name FROM agreement WHERE status <> 'CANCELLED' ORDER BY name").fetchall()
+        parents = ctx.conn.execute("SELECT configuration_id, name FROM configuration WHERE entity_id = ? AND configuration_id <> ?"
+                                   " AND status <> 'RETIRED' ORDER BY name LIMIT 2000", (c["entity_id"], configuration_id)).fetchall() if cw else []
         edit = (
-            f"<div class=card><h3>{t.icon('flag')}Change</h3><form method=post action='/configuration/"
-            f"{t.esc(configuration_id)}/update' class=fields>"
-            + (f"<label>Name</label><input name=name value='{t.esc(c['name'])}' maxlength=100>" if manual else "")
-            + f"<label>Type</label><select name=config_type>{_opts([(x['type_id'], x['name']) for x in cmdb.types(ctx.conn)], c['type_id'] or c['config_type'])}</select>"
-            f"<label>Status</label><select name=status>{_opts([(x['status_id'], x['name']) for x in cmdb.statuses(ctx.conn)], c['status_id'] or c['status'])}</select>"
-            f"<label>Contact</label><select name=contact_id>{_opts([('', '(none)')] + [(p['contact_id'], p['display_name']) for p in people], c['contact_id'] or '')}</select>"
-            + (f"<label>Site</label><select name=site_id>{_opts([('', '(none)')] + [(x['site_id'], x['name']) for x in sites], c['site_id'] or '')}</select>" if sites else "")
-            + f"<label>Manufacturer</label><input name=manufacturer value='{t.esc(c['manufacturer'] or '')}' maxlength=100>"
-            f"<label>Model</label><input name=model value='{t.esc(c['model'] or '')}' maxlength=100>"
-            f"<label>Serial</label><input name=serial_number value='{t.esc(c['serial_number'] or '')}' maxlength=100>"
-            f"<label>Vendor</label><input name=vendor value='{t.esc(c['vendor'] or '')}' maxlength=100>"
-            f"<label>Purchased on</label><input type=date name=purchased_on value='{t.esc(c['purchased_on'] or '')}'>"
-            f"<label>Warranty ends on</label><input type=date name=warranty_ends_on value='{t.esc(c['warranty_ends_on'] or '')}'>"
-            f"<label>Installed on</label><input type=date name=installed_on value='{t.esc(c['installed_on'] or '')}'>"
-            f"<label>Purchase ref (the PO)</label><input name=purchase_ref value='{t.esc(c['purchase_ref'] or '')}' maxlength=60>"
-            f"<label>Location</label><input name=location value='{t.esc(c['location'] or '')}' maxlength=120 placeholder='Ward 3, room 302'>"
-            f"<label>Agreement</label><select name=agreement_id>{_opts([('', '(none)')] + [(a['agreement_id'], a['agreement_id'] + ' ' + a['name']) for a in deals], c['agreement_id'] or '')}</select>"
-            + (f"<label>Description</label><input name=description value='{t.esc(c['description'] or '')}' maxlength=400>" if manual else
-               "<p class=why style='margin:8px 0 0'>Name, DNS name, OS and description are Active Directory's: change them there and re-import.</p>")
-            + f"<label>ScreenConnect session id</label><input name=remote_session_id "
-            f"value='{t.esc(c['remote_session_id'] or '')}' placeholder='the GUID in the session URL'>"
-            "<div style='margin-top:12px'><button type=submit>Save</button></div></form></div>")
-    body = (
-        (f"<div class='banner ok'>{t.esc(msg)}</div>" if msg else "")
-        + (f"<div class='banner err'>{t.esc(err)}</div>" if err else "")
-        + f"<h1>{t.esc(c['name'])} <span class=chip>{t.esc(cmdb.type_word(ctx.conn, c))}</span>"
-        + (f" <span class=chip>{t.esc(cmdb.status_word(ctx.conn, c).lower())}</span>" if c["status"] != "ACTIVE" else "")
-        + "</h1>"
-        f"<p class=sub><a href='/company/{t.esc(c['entity_id'])}'>{t.esc(c['entity_name'])}</a>"
-        + (f" · <a href='/contact/{t.esc(c['contact_id'])}'>{t.esc(c['contact_name'])}</a>" if c["contact_id"] else "")
-        + (f" · {t.esc(c['os_name'])}" if c["os_name"] else "")
-        + (" · typed in by hand" if c["source"] == "MANUAL" else " · from Active Directory") + "</p>"
-        + f"<p>{links_html(ctx, 'CONFIGURATION', c)} "
-        + (f"<a class='btn' href='/ticket/new?{raise_qs}'>{t.icon('plus')} Raise a ticket for this machine</a> " if _may_work(ctx) else "")
-        + f"<a class='btn ghost' href='/configuration/{t.esc(configuration_id)}/maintenance.csv'>{t.icon('arrow')} Maintenance record (CSV)</a>"
-        + "</p><div class=rail>"
-        f"<div><div class=card><h3>{t.icon('ticket')}Open tickets</h3>{tickets_html}{_hidden_note(hidden)}</div>"
-        f"<div class=card><h3>{t.icon('check')}Recently closed</h3>{closed_html}</div>"
-        f"<div class=card><h3>{t.icon('clock')}History</h3>{_history(ctx, configuration_id)}</div></div>"
-        f"<div><div class=card><h3>{t.icon('monitor')}Configuration</h3><dl class=kv>{facts}</dl></div>{_answers_card(ctx, c)}{person}{edit}</div></div>")
-    return Response(body=t.page(c["name"], body, user=ctx.user, active="configurations"))
+            f"<div class=card><h3>{t.icon('edit')}Change</h3><form method=post action='/configuration/{cid}/update' class=fields>"
+            "<div class=grid2>"
+            + (f"<div><label>Name</label><input name=name value='{t.esc(c['name'])}' maxlength=100></div>" if manual else "")
+            + f"<div><label>Type</label><select name=config_type>{_opts([(x['type_id'], x['name']) for x in cmdb.types(ctx.conn)], c['type_id'] or c['config_type'])}</select></div>"
+            f"<div><label>Status</label><select name=status>{_opts([(x['status_id'], x['name']) for x in cmdb.statuses(ctx.conn)], c['status_id'] or c['status'])}</select></div>"
+            f"<div><label>Contact</label><select name=contact_id>{_opts([('', '(none)')] + [(p['contact_id'], p['display_name']) for p in people], c['contact_id'] or '')}</select></div>"
+            + (f"<div><label>Site</label><select name=site_id>{_opts([('', '(none)')] + [(x['site_id'], x['name']) for x in sites], c['site_id'] or '')}</select></div>" if sites else "")
+            + f"<div><label>Location</label><input name=location value='{t.esc(c['location'] or '')}' maxlength=120 placeholder='Ward 3, room 302'></div>"
+            + (f"<div><label>Tag #</label><input name=tag_number value='{t.esc(c['tag_number'] or '')}' maxlength=60></div>"
+               f"<div><label>Parent configuration</label><select name=parent_configuration_id>{_opts([('', '(none)')] + [(p['configuration_id'], p['name']) for p in parents], c['parent_configuration_id'] or '')}</select></div>" if cw else "")
+            + f"<div><label>Manufacturer</label><input name=manufacturer value='{t.esc(c['manufacturer'] or '')}' maxlength=100></div>"
+            f"<div><label>Model</label><input name=model value='{t.esc(c['model'] or '')}' maxlength=100></div>"
+            f"<div><label>Serial #</label><input name=serial_number value='{t.esc(c['serial_number'] or '')}' maxlength=100></div>"
+            f"<div><label>Vendor</label><input name=vendor value='{t.esc(c['vendor'] or '')}' maxlength=100></div>"
+            f"<div><label>Purchased on</label><input type=date name=purchased_on value='{t.esc(c['purchased_on'] or '')}'></div>"
+            f"<div><label>Installed on</label><input type=date name=installed_on value='{t.esc(c['installed_on'] or '')}'></div>"
+            + (f"<div><label>Installed by</label><input name=installed_by value='{t.esc(c['installed_by'] or '')}' maxlength=100></div>" if cw else "")
+            + f"<div><label>Warranty ends on</label><input type=date name=warranty_ends_on value='{t.esc(c['warranty_ends_on'] or '')}'></div>"
+            f"<div><label>Purchase ref (the PO)</label><input name=purchase_ref value='{t.esc(c['purchase_ref'] or '')}' maxlength=60></div>"
+            f"<div><label>Agreement</label><select name=agreement_id>{_opts([('', '(none)')] + [(a['agreement_id'], a['agreement_id'] + ' ' + a['name']) for a in deals], c['agreement_id'] or '')}</select></div>"
+            f"<div><label>ScreenConnect session id</label><input name=remote_session_id value='{t.esc(c['remote_session_id'] or '')}' placeholder='the GUID in the session URL'></div>"
+            + (f"<div style='grid-column:1/-1'><label>Description</label><input name=description value='{t.esc(c['description'] or '')}' maxlength=400></div>" if manual else
+               "<div style='grid-column:1/-1'><p class=why style='margin:8px 0 0'>Name, DNS name, OS and description are Active Directory's: change them there and re-import.</p></div>")
+            + (f"<div style='grid-column:1/-1'><label>Notes</label><textarea name=notes rows=3 maxlength=2000>{t.esc(c['notes'] or '')}</textarea></div>" if cw else "")
+            + "</div><div style='margin-top:12px'><button type=submit>Save</button></div></form></div>")
+    return ("<div class=rail>"
+            f"<div><div class=card><h3>{t.icon('monitor')}Configuration</h3><dl class=kv>{pod1}</dl></div>"
+            f"<div class=card><h3>{t.icon('info')}Details</h3><dl class=kv>{pod2}</dl></div>{notes}{kids_html}</div>"
+            f"<div>{_answers_card(ctx, c)}{person}{edit}</div></div>")
 
 
 def _answers_card(ctx, c) -> str:
@@ -430,7 +599,8 @@ def update(ctx, configuration_id: str):
             site_id=f.get("site_id", None), name=f.get("name"), description=f.get("description"),
             purchased_on=f.get("purchased_on"), warranty_ends_on=f.get("warranty_ends_on"), installed_on=f.get("installed_on"),
             vendor=f.get("vendor"), purchase_ref=f.get("purchase_ref"), location=f.get("location"),
-            agreement_id=f.get("agreement_id", None))
+            agreement_id=f.get("agreement_id", None), tag_number=f.get("tag_number"), installed_by=f.get("installed_by"),
+            notes=f.get("notes"), parent_configuration_id=f.get("parent_configuration_id", None))
     except LookupError as exc:
         if "no configuration" in str(exc):
             raise HttpError("404 Not Found", "No such configuration.")

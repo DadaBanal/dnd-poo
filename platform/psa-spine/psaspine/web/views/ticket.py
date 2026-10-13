@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import re
 import urllib.parse
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from ... import board as engine
 from ... import departments as _departments
@@ -731,7 +731,7 @@ def detail(ctx, work_item_id):
                 + finance_views.ticket_card(ctx, tk, can_work=can_work))
     header = header.replace("%%TEBUTTON%%", (" " + te_button) if te_button else "")
     from . import paging as paging_view
-    body = te_dialog + composer + header + _tab_bar(wid, "") + strip + paging_view.banner(ctx, tk, can_work=can_work) + pod_dialog + (
+    body = te_dialog + composer + header + _tab_bar(wid, "", _tab_counts(ctx, work_item_id)) + strip + paging_view.banner(ctx, tk, can_work=can_work) + pod_dialog + (
         f"<div class=rail>{left}<div class=pods data-col=right data-order='ticket,time,change,approval,family,"
                              f"schedule,tasks,files,links,configurations,project,knowledge,finance,commercial,details'>{fields}{time_card}{configs}"
                              f"{commercial}{details}</div></div>")
@@ -1797,37 +1797,97 @@ def unlink(ctx, work_item_id):
 # ------------------------------------------------------------------ tasks
 
 def _tasks_card(ctx, tk, *, can_work: bool) -> str:
-    """Dada PSA's Tasks tab: the ticket's checklist, and templates to fill it."""
-    from ... import tasks
+    """The reference PSA's Tasks tab (Dada, 13 Oct 2026: "revamp tasks ... to
+    look like the connectwise build"): a grid of Done, Priority, Task, Notes,
+    Resolution and Schedule; each row edited in place and saved on its own;
+    drag the handle to reorder, or the arrows without a script; a task is
+    scheduled to a member, which books a visit on the ticket."""
+    from ... import board as _board, members as _members, tasks
     wid = t.esc(tk["work_item_id"])
     rows = tasks.tasks_of(ctx.conn, tk["work_item_id"])
     done, total = tasks.progress(ctx.conn, tk["work_item_id"])
+    grid = tasks._grid(ctx.conn)
+    visits = tasks.visits_of(ctx.conn, tk["work_item_id"])
     dis = "" if can_work else " disabled"
-    items = "".join(
-        f"<li><form method=post action='/ticket/{wid}/task/toggle' style='display:inline'>"
-        f"<input type=hidden name=task_id value='{r['task_id']}'>"
-        f"<input type=hidden name=done value='{0 if r['done_at'] else 1}'>"
-        f"<button class='ghost small' type=submit{dis} aria-label='{'Reopen' if r['done_at'] else 'Done'}: "
-        f"{t.esc(r['text'])}'>{'☑' if r['done_at'] else '☐'}</button></form> "
-        + (f"<s>{t.esc(r['text'])}</s> <span class=muted>{t.esc(r['done_by'])}</span>" if r["done_at"]
-           else t.esc(r["text"])) + "</li>" for r in rows)
+    people = _board._working_members(ctx.conn, tk["board_id"]) if can_work else []
+    popts = "".join(f"<option value='{t.esc(m)}'{' selected' if m.lower() == (ctx.user.id or '').lower() else ''}>"
+                    f"{t.esc(_members.name_of(ctx.conn, m))}</option>" for m in people)
+    tomorrow = (ctx.now + timedelta(days=1)).date().isoformat()
+
+    def sched_cell(r):
+        v = visits.get(r["schedule_id"]) if grid and r["schedule_id"] else None
+        if v:
+            when = f"{t.esc(_members.name_of(ctx.conn, v['member']))}, {t.esc(v['starts_at'][5:16].replace('T', ' '))}"
+            return (f"<a href='/ticket/{wid}/schedule' title='On the Schedule tab'>{when}</a>"
+                    + (" <span class=chip>done</span>" if v["done_at"] else ""))
+        if not can_work or not grid:
+            return "<span class=muted>—</span>"
+        return (f"<details class=tsched><summary class='ghost small'>Schedule…</summary>"
+                f"<form method=post action='/ticket/{wid}/task/schedule' class=stack>"
+                f"<input type=hidden name=task_id value='{r['task_id']}'>"
+                f"<select name=member aria-label='Who'>{popts}</select>"
+                f"<input type=date name=day value='{tomorrow}' aria-label='Day'> <input type=time name=time value='09:00' aria-label='Time'>"
+                " <input type=number name=hours value='1' min='0.25' max='12' step='0.25' style='width:70px' aria-label='Hours'> h"
+                f"<button class=small type=submit>Book</button></form></details>")
+
+    def row(r, n):
+        text, notes, res = r["text"], (r["notes"] if grid else None) or "", (r["resolution"] if grid else None) or ""
+        ticked = bool(r["done_at"])
+        return (f"<tr class='trow{' tdone' if ticked else ''}' data-task='{r['task_id']}'{' draggable=true' if can_work else ''}>"
+                f"<td class=handle title='Drag to reorder'>{t.icon('grip') if can_work else ''}</td>"
+                f"<td><form method=post action='/ticket/{wid}/task/toggle' class=inline><input type=hidden name=task_id value='{r['task_id']}'>"
+                f"<input type=hidden name=done value='{0 if ticked else 1}'>"
+                f"<button class='ghost small tick' type=submit{dis} aria-label='{'Reopen' if ticked else 'Done'}: {t.esc(text)}'>{'☑' if ticked else '☐'}</button></form>"
+                + (f"<div class=muted title='{t.esc(r['done_at'] or '')}'>{t.esc(r['done_by'] or '')}</div>" if ticked else "") + "</td>"
+                f"<td class=num>{n}</td>"
+                + (f"<td><input form='tsave{r['task_id']}' name=text value='{t.esc(text)}' required maxlength=400 aria-label='Task'></td>"
+                   f"<td><input form='tsave{r['task_id']}' name=notes value='{t.esc(notes)}' maxlength=2000 aria-label='Notes' placeholder='notes'></td>"
+                   f"<td><input form='tsave{r['task_id']}' name=resolution value='{t.esc(res)}' maxlength=2000 aria-label='Resolution' placeholder='resolution'></td>"
+                   if can_work and grid else
+                   f"<td>{('<s>' + t.esc(text) + '</s>') if ticked else t.esc(text)}</td><td>{t.esc(notes)}</td><td>{t.esc(res)}</td>")
+                + f"<td class=tsch>{sched_cell(r)}</td>"
+                + ("<td class=tacts>"
+                   f"<form id='tsave{r['task_id']}' method=post action='/ticket/{wid}/task/save' class=inline><input type=hidden name=task_id value='{r['task_id']}'>"
+                   f"<button class='ghost small' type=submit title='Save this row'>{t.icon('check')}</button></form>"
+                   f"<form method=post action='/ticket/{wid}/task/move' class=inline><input type=hidden name=task_id value='{r['task_id']}'><input type=hidden name=dir value=up>"
+                   f"<button class='ghost small' type=submit aria-label='Move up'>{t.icon('up')}</button></form>"
+                   f"<form method=post action='/ticket/{wid}/task/move' class=inline><input type=hidden name=task_id value='{r['task_id']}'><input type=hidden name=dir value=down>"
+                   f"<button class='ghost small' type=submit aria-label='Move down'>{t.icon('down')}</button></form>"
+                   f"<form method=post action='/ticket/{wid}/task/remove' class=inline><input type=hidden name=task_id value='{r['task_id']}'>"
+                   f"<button class='ghost small' type=submit aria-label='Remove' title='Remove this task'>{t.icon('x')}</button></form></td>"
+                   if can_work else "<td></td>") + "</tr>")
+    trs = "".join(row(r, n) for n, r in enumerate(rows, 1))
     add = ""
     if can_work:
         tpls = ctx.conn.execute("SELECT template_id, name FROM ticket_template WHERE board_id = ?"
                                 " AND inactive = 0 ORDER BY name", (tk["board_id"],)).fetchall()
-        add = (f"<form method=post action='/ticket/{wid}/task/add' class=row style='margin-top:8px'>"
-               "<div><input name=text required placeholder='Add a task'></div>"
-               "<div style='flex:0 0 auto'><button class=ghost type=submit><svg class=ic aria-hidden=true><use href=#i-plus></use></svg> Add</button></div></form>")
+        add = (f"<form method=post action='/ticket/{wid}/task/add' class='row schedbar' style='margin-top:10px'>"
+               "<div style='flex:1 1 220px'><input name=text required maxlength=400 placeholder='Add a task'></div>"
+               + ("<div style='flex:1 1 180px'><input name=notes maxlength=2000 placeholder='notes (optional)'></div>" if grid else "")
+               + f"<div style='flex:0 0 auto'><button type=submit>{t.icon('plus')} Add task</button></div></form>")
         if tpls:
-            add += (f"<form method=post action='/ticket/{wid}/template' class=row style='margin-top:6px'>"
-                    "<div><select name=template_id>"
+            add += (f"<form method=post action='/ticket/{wid}/template' class='row schedbar' style='margin-top:6px'>"
+                    "<div style='flex:0 0 260px'><select name=template_id aria-label='Template'>"
                     + _options([(x["template_id"], x["name"]) for x in tpls], "") +
                     "</select></div><div style='flex:0 0 auto'><button class=ghost type=submit>"
-                    "Apply template</button></div></form>")
-    head = f"Tasks · {done} of {total}" if total else "Tasks"
+                    "Add from template</button></div></form>")
+    head = f"Tasks · {done} of {total} done" if total else "Tasks"
+    order_form = (f"<form id=torder method=post action='/ticket/{wid}/task/order' hidden><input type=hidden name=order value=''></form>" if can_work else "")
+    script = ("<script>(function(){var tb=document.querySelector('table.tgrid tbody');if(!tb)return;var drag=null;"
+              "tb.querySelectorAll('tr[draggable]').forEach(function(tr){var h=tr.querySelector('.handle');"
+              "tr.addEventListener('dragstart',function(e){if(!h||!h.contains(e.target)&&e.target!==tr){e.preventDefault();return}drag=tr;tr.classList.add('dragging')});"
+              "tr.addEventListener('dragend',function(){tr.classList.remove('dragging')});"
+              "tr.addEventListener('dragover',function(e){e.preventDefault();if(!drag||drag===tr)return;var r=tr.getBoundingClientRect();"
+              "var after=(e.clientY-r.top)>r.height/2;tb.insertBefore(drag,after?tr.nextSibling:tr)});"
+              "tr.addEventListener('drop',function(e){e.preventDefault();var f=document.getElementById('torder');if(!f)return;"
+              "f.querySelector('[name=order]').value=Array.prototype.map.call(tb.querySelectorAll('tr[data-task]'),function(x){return x.getAttribute('data-task')}).join(',');f.submit()})});"
+              "tb.querySelectorAll('.handle').forEach(function(h){h.addEventListener('mousedown',function(){h.closest('tr').setAttribute('draggable','true')})})})()</script>"
+              if can_work else "")
     return (f"<div class=card data-pod=tasks><h3><svg class=ic aria-hidden=true><use href=#i-checks></use></svg>{head}</h3>"
-            + (f"<ul class=plain>{items}</ul>" if items else "<div class=muted>No tasks.</div>")
-            + add + "</div>")
+            + (("<div class=tablewrap><table class='compact tgrid'><thead><tr><th></th><th>Done</th><th class=num>Pri</th><th>Task</th>"
+                "<th>Notes</th><th>Resolution</th><th>Schedule</th><th></th></tr></thead><tbody>" + trs + "</tbody></table></div>")
+               if rows else "<div class=muted>No tasks.</div>")
+            + add + order_form + script + "</div>")
 
 
 def task_add(ctx, work_item_id):
@@ -1835,8 +1895,9 @@ def task_add(ctx, work_item_id):
     tk = _load(ctx, work_item_id)
     common.require_board(ctx, tk["board_id"], need="WORK")
     try:
-        tasks.add_task(ctx.conn, work_item_id, ctx.request.form().get("text", ""),
-                       actor=ctx.user.id, at=ctx.now)
+        f = ctx.request.form()
+        tasks.add_task(ctx.conn, work_item_id, f.get("text", ""), actor=ctx.user.id, at=ctx.now,
+                       notes=f.get("notes") if "notes" in f else None)
         ctx.conn.commit()
     except ValueError as exc:
         return _back(work_item_id, err=f"Not added: {exc}")
@@ -1874,6 +1935,93 @@ def template_apply(ctx, work_item_id):
                  else "That template is already on this ticket")
 
 
+def _task_on(ctx, work_item_id, f):
+    """The task named in the form, on this ticket, or a 404."""
+    from .. import HttpError
+    from ... import tasks
+    task_id = int(f["task_id"]) if f.get("task_id", "").isdigit() else -1
+    row = tasks.task_of(ctx.conn, task_id)
+    if row is None or row["work_item_id"] != work_item_id:
+        raise HttpError("404 Not Found", "No such task on this ticket.")
+    return row
+
+
+def task_save(ctx, work_item_id):
+    from ... import tasks
+    tk = _load(ctx, work_item_id)
+    common.require_board(ctx, tk["board_id"], need="WORK")
+    f = ctx.request.form()
+    row = _task_on(ctx, work_item_id, f)
+    try:
+        changed = tasks.update_task(ctx.conn, row["task_id"], actor=ctx.user.id, at=ctx.now, text=f.get("text"),
+                                    notes=f.get("notes") if "notes" in f else None,
+                                    resolution=f.get("resolution") if "resolution" in f else None)
+        ctx.conn.commit()
+    except ValueError as exc:
+        return _back(work_item_id, err=f"Not saved: {exc}")
+    return _back(work_item_id, msg=("Task saved: " + ", ".join(changed)) if changed else "Nothing changed on that task")
+
+
+def task_move(ctx, work_item_id):
+    from ... import tasks
+    tk = _load(ctx, work_item_id)
+    common.require_board(ctx, tk["board_id"], need="WORK")
+    f = ctx.request.form()
+    row = _task_on(ctx, work_item_id, f)
+    moved = tasks.move_task(ctx.conn, row["task_id"], "up" if f.get("dir") == "up" else "down", actor=ctx.user.id, at=ctx.now)
+    ctx.conn.commit()
+    return _back(work_item_id, msg="Task moved" if moved else "Already at the end")
+
+
+def task_order(ctx, work_item_id):
+    from ... import tasks
+    tk = _load(ctx, work_item_id)
+    common.require_board(ctx, tk["board_id"], need="WORK")
+    ids = [x for x in ctx.request.form().get("order", "").split(",") if x.strip()]
+    try:
+        tasks.reorder(ctx.conn, work_item_id, ids, actor=ctx.user.id, at=ctx.now)
+        ctx.conn.commit()
+    except ValueError as exc:
+        return _back(work_item_id, err=f"Not reordered: {exc}")
+    return _back(work_item_id, msg="Tasks reordered")
+
+
+def task_remove(ctx, work_item_id):
+    from ... import tasks
+    tk = _load(ctx, work_item_id)
+    common.require_board(ctx, tk["board_id"], need="WORK")
+    row = _task_on(ctx, work_item_id, ctx.request.form())
+    tasks.remove_task(ctx.conn, row["task_id"], actor=ctx.user.id, at=ctx.now)
+    ctx.conn.commit()
+    return _back(work_item_id, msg="Task removed")
+
+
+def task_schedule(ctx, work_item_id):
+    from ... import board as _board, schedule, tasks
+    tk = _load(ctx, work_item_id)
+    common.require_board(ctx, tk["board_id"], need="WORK")
+    f = ctx.request.form()
+    row = _task_on(ctx, work_item_id, f)
+    member = (f.get("member") or "").strip()
+    if member.lower() not in {m.lower() for m in _board._working_members(ctx.conn, tk["board_id"])}:
+        return _back(work_item_id, err="Not booked: pick someone who works this board")
+    try:
+        starts = datetime.fromisoformat(f"{f.get('day', '')}T{f.get('time', '09:00') or '09:00'}")
+        hours = float(f.get("hours") or 1)
+        if not 0.25 <= hours <= 12:
+            raise ValueError("between a quarter of an hour and twelve")
+    except ValueError as exc:
+        return _back(work_item_id, err=f"Not booked: a day, a time and the hours are needed ({exc})")
+    try:
+        tasks.schedule_task(ctx.conn, row["task_id"], member=member, starts_at=starts,
+                            ends_at=starts + timedelta(hours=hours), actor=ctx.user.id, at=ctx.now)
+        ctx.conn.commit()
+    except (ValueError, schedule.Refused) as exc:
+        ctx.conn.rollback()
+        return _back(work_item_id, err=f"Not booked: {exc}")
+    return _back(work_item_id, msg=f"Booked for {member}, {starts:%d %b %H:%M}; it is on the Schedule tab")
+
+
 def _template_picker(ctx, selected: str) -> str:
     """Dada PSA's "new ticket from template": a plain GET, so it works with no script."""
     rows = ctx.conn.execute(
@@ -1905,11 +2053,20 @@ TICKET_TABS = (("", "Ticket"), ("tasks", "Tasks"), ("configurations", "Configura
                ("finance", "Finance"), ("audit", "Audit trail"), ("survey", "Survey"))
 
 
-def _tab_bar(wid: str, current: str) -> str:
+def _tab_bar(wid: str, current: str, counts: dict | None = None) -> str:
+    """The tabs; a count beside Tasks reads "2/5" (13 Oct 2026)."""
+    counts = counts or {}
     return ("<nav class='tabs ttabs' aria-label='Ticket tabs'>" + "".join(
         f"<a href='/ticket/{wid}" + (f"/{key}" if key else "") + "'"
-        + (" class=on aria-current=page" if key == current else "") + f">{label}</a>" for key, label in TICKET_TABS)
+        + (" class=on aria-current=page" if key == current else "") + f">{label}"
+        + (f" <span class=tcount>{t.esc(counts[key])}</span>" if counts.get(key) else "") + "</a>" for key, label in TICKET_TABS)
         + "</nav>")
+
+
+def _tab_counts(ctx, work_item_id) -> dict:
+    from ... import tasks
+    done, total = tasks.progress(ctx.conn, work_item_id)
+    return {"tasks": f"{done}/{total}"} if total else {}
 
 
 def tab(ctx, work_item_id, tab):
@@ -1935,7 +2092,7 @@ def tab(ctx, work_item_id, tab):
             f"<div class=hdr><div class=grow><h1 class=sumline>{wid}<span class=sumtext> · {t.esc(tk['summary'])}</span></h1>"
             f"<p class=sub>{t.esc(tk['board_name'])} · {common.came_badge(_origin.one(ctx.conn, wid), link=True)} · "
             f"{t.chip(tk['status_name'] or tk['state'].replace('_', ' ').title())} · "
-            f"{t.badge(tk['priority'])} · {t.esc(tk['entity'] or 'no company')}</p></div></div>" + _tab_bar(wid, tab))
+            f"{t.badge(tk['priority'])} · {t.esc(tk['entity'] or 'no company')}</p></div></div>" + _tab_bar(wid, tab, _tab_counts(ctx, work_item_id)))
     label = dict(TICKET_TABS)[tab]
     return Response(body=t.page(f"{work_item_id} · {label}", head + body, user=ctx.user, active="board",
                                 live=f"ticket:{work_item_id}"))
