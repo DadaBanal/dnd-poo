@@ -3770,3 +3770,28 @@ So the diagnosis is no longer an inference from a stack trace:
 **Therefore pywin32 is structurally required, not merely preferred.** The only alternative would be enabling `RSWindowsBasic`, which would send credentials over plain HTTP on this server and is a security downgrade; **not proposed, not done**.
 
 **For Cloud Build:** the refusal sentence should distinguish the two cases. When the transport in use is the urllib fallback, it should say the desk could not present a Windows identity and name pywin32 - not tell SQL01 to grant a Browser role that, here, was already granted. As written it sends the reader to the wrong fix.
+
+**Part 81, third update (16:50 +08:00): there is a package-free route, and it is proven end to end. pywin32 is no longer needed.** MEASURED.
+
+The Bizbox Reporting SSRS session answered (Dada: *"find out from the bizbox chat as to why it errors"*). It confirmed the authentication diagnosis independently and supplied the fix: **Windows ships `C:\Windows\System32\curl.exe`, which speaks SSPI NTLM and SPNEGO and sends the calling process's own identity.** Under the PSA-Desk task that identity is `psa_desk`. Verified here rather than taken on trust:
+
+| Probe | Result |
+|---|---|
+| `curl.exe --version` | **8.13.0**, Windows, Schannel |
+| **control:** ListChildren with no credentials | **401** |
+| ListChildren with `--negotiate -u :` | **200, 26,890 bytes, 163 report names** |
+| Render `MMS_ListOfVendorsOrSuppliers` to PDF | **200, 253,320 bytes, `%PDF-`, 30 pages, letter** |
+| Render `MMS_ADHOC_CriticalInventoryLevel` to PDF | **200, 60,286 bytes, 1 page** |
+| Render the same to `rs:Format=EXCELOPENXML` | **200, 78,887 bytes, magic `504b` - a real .xlsx** |
+
+So listing, PDF rendering and Excel rendering all work today with nothing installed. **The pywin32 blocker is dissolved**; it remains the tidier transport, but it is no longer required and need not be forced through the allow-list for this.
+
+Also measured while proving it: rendering `MMS_PerpetualInventory` and `MMS_ReorderPoint` without parameters returns **HTTP 500 `ParameterInfoCollection.ThrowParameterValueNotSet`** - the report engine asking for input, *not* an authentication failure. Authentication had already succeeded at that point.
+
+**Parameters, measured from `ReportServer.dbo.Catalog.Parameter` across all 164:** exactly **2** have every parameter defaulted or optional (`MMS_ADHOC_CriticalInventoryLevel`, `MMS_ListOfVendorsOrSuppliers`); the other **162 need at least one value typed**. That matches the Bizbox session's count independently.
+
+**What that session reported, kept separate because it is theirs and I have not re-measured it:** of the 164 reports only **52 have ever run** since 9 Aug (21,673 runs, 121 users); the heaviest are `MMS_ADHOC_ExpRequisition` 3,229, `StockReq` 3,023, `DelReceiveRep` 2,982, `POSLIP` 2,979, `ExpIssuance` 2,445. Trouble list: `MMS_ElectronicStockCard` 90 failures and up to 294 s, `MMS_PerpetualInventoryPerItemGroup` fails every time (4 of 4), `POSLIP` 12 failures, `InvMstrLstperCateg` up to 200 s. Their suggestion, which I agree with: surface the 52 that are used and hide the 112 that never have been. Most ADHOC reports want a BizBox document number, so they belong on a record's page rather than in a general list.
+
+**Two findings from that session for Dada, neither mine to act on:**
+1. `\Everyone` (S-1-1-0) holds Browser, **Content Manager**, My Reports, Publisher and Report Builder on the **root and every BizBox folder**, plus the system roles **System Administrator and System User**. Any authenticated account can publish, delete or change server settings. Vendor-set, not PMC-set. Flagged, not changed.
+2. **The SSRS service runs as `pmcne\dada.banal`** - Dada's own account, not a service account. A password change on it stops the report server.
