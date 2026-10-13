@@ -3999,3 +3999,29 @@ Bizbox Chat sent a fourth note, `docs/bizbox-mms-rule3-concurrency-20261014.md`,
 Their script is `scripts/Measure-BizBoxMMS-11_rowversion-20261014.py`, control passed. Their §8 contract item stays unread, stated once to Dada by each of us, and neither of us is re-raising it. The save-path count remains unmeasured, theirs, and on his word — now also the count of procedure branches, which makes it the one number gating estimating.
 
 Filed as `docs/bizbox-mms-rule3-concurrency-20261014.md` (verbatim, theirs) and `docs/handoffs/HANDOFF-sql01-cloud-WS36-20261014-write-contract-two-gaps.md` (mine). **`PSA_BIZBOX_WRITE_ODBC` confirmed unset; `writer_in_force()` returns `NoWriter`. Nothing changed on any host.**
+
+---
+
+**Part 89, ruling (14 Oct 2026): `bizboxsa` is the credential for the MMS build — for everything it needs. SQL01 does not hold it and never will.**
+
+Dada, in sequence, on Part 87 saying he would have to create a write login:
+
+> *"there is already bizboxsa"* · *"ask bizbox chat"* · *"for everythung u need"*
+
+Read as, and acted on: **an existing login `bizboxsa` is the credential for whatever the MMS build needs against BizBox — not only the write path — and the BizBox session is the one to ask about it rather than SQL01 probing it.**
+
+**I had a read-only probe of `bizboxsa` written and did not run it.** He sent the question to the Bizbox Chat session instead, which is the same correction he made earlier with *"the bozbox chat can get to it"*. BizBox measuring is theirs; nothing of mine will collide. The probe stays unrun in the scratchpad.
+
+**What was asked of them**, so the answer is on the record as theirs when it comes: whether the login exists and is enabled; what server roles it holds and what database roles in `LiveDB_PMC`; whether it maps to `dbo` or owns the database; **whose account it actually is** — whether the BizBox client, a service or a scheduled job authenticates as it, because if BizBox itself uses it then its password is not ours to touch and the desk's writes become indistinguishable from the vendor client's in any audit; and whether, if it is over-privileged, BizBox tolerates an extra login holding nothing but `EXECUTE`. **Counts, roles and names only — no password, no connection string.**
+
+**What the code already says about it, MEASURED.** `write_odbc_string()` in `psaspine/bizbox.py` refuses the write string when it is missing, when the login is **exactly** `sa`, and when it is the **same login as the read-only one**. The sa test is anchored — `(^|;)\s*(uid|user id|user)\s*=\s*\{?\s*sa\s*\}?\s*(;|$)` — so **`bizboxsa` passes it; it is not caught by name.** The code will accept it provided the read login differs.
+
+**Stated once, because it is the one thing his ruling does not by itself settle, and then it is his.** Part 87's design says the write login *"may do nothing but EXECUTE"* the procedure. If `bizboxsa` turns out to be `sysadmin` or `db_owner`, then that string carries far more than EXECUTE — it could write any table in `LiveDB_PMC`, including the patient tables the whole `PATIENT_WORDS` fence exists to keep away from.
+
+**But his decision is defensible on the architecture, and this is worth recording rather than leaving as a worry.** `ProcedureWriter.apply` only ever executes `psa.sp_apply_change` — it issues no table SQL and has no code path that could. So **the blast radius of the desk's write path is bounded by what the procedure does, not by what the login could do.** A wide login matters only if something other than the desk uses that string, or if the procedure itself is written loosely. Both are SQL01's to control: the procedure is mine to write and mine to keep narrow, and the string lives only in the PSA-Desk task's environment. **The mitigation is the procedure, and it was already the design.**
+
+**SQL01 does not hold `bizboxsa` and will not.** Dada enters it himself, as he does every credential — the standing rule is unchanged. Until `PSA_BIZBOX_WRITE_ODBC` is set on the host, `writer_in_force()` returns `NoWriter` and the desk pushes nothing.
+
+**Nothing changes for WS36.** Part 87 already told them the credential is Dada's to set; it still is, and which login it names is not their concern. The two gaps from Part 88 are still in front of any write regardless of the credential: **no concurrency token anywhere in the write path** (theirs, confirmed by me against the code), and **no MMS kind in `CK_ext_change_01` or `CK_ext_batch_01`**, so no MMS change can be recorded today let alone written (mine).
+
+**Nothing changed on any host. `PSA_BIZBOX_WRITE_ODBC` confirmed unset.**
