@@ -1659,13 +1659,15 @@ def roles_setup(ctx):
     roles = security.roles(ctx.conn)
     ctx.conn.commit()
     head = "".join(f"<th>{t.esc(v)}</th>" for v in security.MODULES.values())
-    words = {"NONE": "None", "READ": "Read", "WRITE": "Add and edit", "ADMIN": "All"}
+    generic = {"NONE": "None", "READ": "Read", "WRITE": "Add and edit", "ADMIN": "All"}
+    # Procurement's three areas read See / Propose / Approve (13 Oct 2026)
+    words = lambda m: security.AREA_WORDS if m in security.PROCUREMENT_AREAS else generic
     rows = []
     for r in roles:
         rid = t.esc(r["role_id"])
         cells = "".join(
             f"<td><select form='f-{rid}' name='{m}' aria-label='{t.esc(security.MODULES[m])} for {t.esc(r['name'])}'>"
-            + "".join(f"<option value={lv}{' selected' if r['grants'][m] == lv else ''}>{words[lv]}</option>" for lv in security.LEVELS)
+            + "".join(f"<option value={lv}{' selected' if r['grants'][m] == lv else ''}>{words(m)[lv]}</option>" for lv in security.LEVELS)
             + "</select></td>" for m in security.MODULES)
         flags = ("<span class='pill live'>default</span>" if r["is_default"] else "") + (" <span class=pill>retired</span>" if r["inactive"] else "")
         acts = []
@@ -1692,6 +1694,10 @@ def roles_setup(ctx):
             + "<h1>Security roles</h1><p class=sub>What each role may do in the modules that are not boards. A board's "
               "tickets are still governed by board membership, and a role never opens a restricted board. A member with "
               "no role has the default role; a system administrator has everything. <a href='/admin'>Setup</a></p>"
+              "<p class=why><b>Procurement</b> is three areas, as BizBox grants purchasing, receiving and inventory apart, and "
+              "each reads <i>See</i> (look), <i>Propose</i> (queue edits and new records for approval) or <i>Approve</i> "
+              "(approve what someone else proposed; never one's own). The desk pushes to BizBox under one login, so these "
+              "rows are what BizBox's own per-person rights used to be: a role that has nothing here sees no Procurement.</p>"
             + f"<div class=card><div class=tablewrap><table><thead><tr><th>Role</th>{head}<th></th></tr></thead><tbody>{''.join(rows)}</tbody></table></div>"
               "<form method=post action='/admin/roles/add' class=row style='margin-top:10px'>"
               "<div><input name=name required maxlength=60 placeholder='e.g. Biomedical engineer'></div>"

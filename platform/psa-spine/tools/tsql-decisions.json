@@ -1211,6 +1211,12 @@
     "ext_batch.approved_by": "PERSON",
     "ext_batch.decided_at": "TIMESTAMP_TEXT",
     "ext_batch.decided_by": "PERSON",
-    "ext_batch.answer": "FREE"
+    "ext_batch.answer": "FREE",
+    "ext_lookup.source_id": "ID",
+    "ext_lookup.ext_ref": "REF",
+    "ext_lookup.list": "CODE",
+    "ext_lookup.code": "NAME",
+    "ext_lookup.label": "NAME",
+    "ext_lookup.synced_at": "TIMESTAMP_TEXT"
   }
 }

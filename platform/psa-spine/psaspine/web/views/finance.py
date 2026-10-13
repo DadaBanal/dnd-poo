@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import urllib.parse
 
-from ... import agreements, bizbox
+from ... import agreements, bizbox, security
 from .. import templates as t
 from . import common
 
@@ -104,6 +104,45 @@ def _cell(rec, field, area: str = "finance") -> str:
     return f"<td>{t.esc(v or '')}</td>"
 
 
+def module_for(kind: str, area: str) -> str:
+    """The security module a record page answers to: Finance's, or, under the
+    Procurement menu, the area the kind belongs to (13 Oct 2026)."""
+    return security.PROCUREMENT_AREA_OF.get(kind, "PROC_PO") if area == "procurement" else "FINANCE"
+
+
+def value_inputs(ctx, kind: str, fields: list, *, name: str = "new_value") -> str:
+    """The "new value" control for a form whose field is chosen beside it: one
+    dropdown per field that has BizBox's choices (named nv:<field>), and one
+    text input for the rest. A script shows the one for the chosen field; the
+    server reads nv:<field> first, so without the script the right one still
+    wins (picked_value)."""
+    out, first = [], fields[0] if fields else ""
+    for f in fields:
+        opts = bizbox.choices(ctx.conn, kind, f)
+        if not opts:
+            continue
+        out.append(f"<select name='nv:{f}' data-for='{f}' aria-label='New {t.esc(bizbox.FIELD_WORDS.get(f, f).lower())}'"
+                   f"{'' if f == first else ' hidden disabled'}>"
+                   + "".join(f"<option value='{t.esc(c)}'>{t.esc(l)}</option>" for c, l in opts) + "</select>")
+    has_first = any(f"data-for='{first}'" in x for x in out)
+    out.append(f"<input name={name} maxlength=200 placeholder='the new value' data-for=''{' hidden disabled' if has_first else ' required'}>")
+    return "".join(out)
+
+
+def picked_value(form, field: str, *, name: str = "new_value") -> str:
+    """The value a value_inputs form sent for the chosen field."""
+    v = form.get(f"nv:{field}")
+    return v if v is not None else form.get(name, "")
+
+
+VALUE_PICK_SCRIPT = ("<script>(function(){document.querySelectorAll('form[data-valuepick]').forEach(function(fm){"
+                     "var fs=fm.querySelector('select[name=field]');if(!fs)return;function pick(){var any=false;"
+                     "fm.querySelectorAll('[data-for]').forEach(function(el){var on=el.getAttribute('data-for')===fs.value;"
+                     "if(on)any=true;if(el.getAttribute('data-for')!==''){el.hidden=!on;el.disabled=!on}});"
+                     "var tx=fm.querySelector(\"[data-for='']\");if(tx){tx.hidden=any;tx.disabled=any;tx.required=!any}}"
+                     "fs.addEventListener('change',pick);pick()})})()</script>")
+
+
 def _changes_table(ctx, rows, *, with_record: bool = True, pending_word: str = "Waiting for BizBox") -> str:
     """`pending_word`: what a PENDING change is waiting for. Inside a batch
     (080) that is its batch's word (approval first), not BizBox's."""
@@ -185,7 +224,7 @@ def index(ctx):
              + (f"<a class='ghost small' href='/finance?{urllib.parse.urlencode(keep | {'page': page_no + 1})}'>Next ›</a>" if last < total_n else "")
              + "</div></div>") if total_n > bizbox.PAGE else ""
     st = bizbox.status(ctx.conn)
-    sync = (f"Last synced {t.esc(st['last_sync_at'])} by {t.esc(st['last_sync_by'])}: {t.esc(st['last_result'] or '')}"
+    sync = (f"Read from BizBox {t.esc(st['last_sync_at'])} by {t.esc(st['last_sync_by'])}{t.esc(bizbox.read_words(st['last_result']))}"
             if st and st["last_sync_at"] else "Not synced yet. SQL01 runs <code>psaspine sync-bizbox</code> once the "
             "read-only BizBox views exist.")
     body = ("<h1>Finance</h1><p class=sub>Agreements, purchase orders, products and invoices, as BizBox holds them. "
@@ -259,7 +298,7 @@ def changes_page(ctx):
 
 def detail(ctx, kind, *, area: str = "finance"):
     from .. import HttpError, Response
-    common.require_module(ctx, "PROCUREMENT" if area == "procurement" else "FINANCE")
+    common.require_module(ctx, module_for(kind, area))
     ext_ref = ctx.request.query.get("ref", "")
     if kind not in bizbox.LINK_KIND or not ext_ref:
         raise HttpError("404 Not Found", "No such record.")
@@ -310,19 +349,18 @@ def detail(ctx, kind, *, area: str = "finance"):
                     or "<tr><td colspan=7 class=muted>No lines mirrored.</td></tr>")
                  + (f"<tr><td colspan=6 class=num><b>Lines total</b></td><td class=num><b>{t.esc(_money(total, rec['currency']))}</b></td></tr>" if lines else "")
                  + "</tbody></table></div></div>")
-    module = "PROCUREMENT" if area == "procurement" else "FINANCE"
-    can_edit = common.allows(ctx, module, "WRITE") and kind in bizbox.EDITABLE
+    can_edit = common.allows(ctx, module_for(kind, area), "WRITE") and kind in bizbox.EDITABLE
     proposals = bizbox.changes(ctx.conn, kind, ext_ref)
     form = ""
     if can_edit:
         fields = "".join(f"<option value={f}>{bizbox.FIELD_WORDS[f]}</option>" for f in bizbox.EDITABLE[kind])
-        form = (f"<form method=post action='/finance/{kind}/propose' class=grid2 style='margin-top:10px'>"
+        form = (f"<form method=post action='/finance/{kind}/propose' class=grid2 style='margin-top:10px' data-valuepick>"
                 f"<input type=hidden name=ref value='{t.esc(ext_ref)}'><input type=hidden name=area value='{area}'>"
                 f"<div><label>Field</label><select name=field>{fields}</select></div>"
-                "<div><label>New value</label><input name=new_value required maxlength=200 placeholder='e.g. Approved, or 2026-12-31'></div>"
+                f"<div><label>New value</label>{value_inputs(ctx, kind, list(bizbox.EDITABLE[kind]))}</div>"
                 "<div style='grid-column:1/-1'><label>Why</label><input name=reason required maxlength=400 "
                 "placeholder='What the person applying it in BizBox needs to know'></div>"
-                "<div><button class=ghost type=submit>Propose the change</button></div></form>")
+                "<div><button class=ghost type=submit>Propose the change</button></div></form>" + VALUE_PICK_SCRIPT)
     changes_card = ("<div class=card><h3>" + t.icon("note") + "Changes to BizBox</h3><p class=why>BizBox is where this record "
                     "changes. A change proposed here is approved by a second person, then pushed to BizBox by its own "
                     "procedure once SQL01 has switched that on; until then it waits here, and BizBox itself has not changed.</p>"
@@ -400,13 +438,13 @@ def propose(ctx, kind):
     from .. import redirect
     f = ctx.request.form()
     area = f.get("area", "finance") if f.get("area", "finance") in AREAS else "finance"
-    common.require_module(ctx, "PROCUREMENT" if area == "procurement" else "FINANCE", "WRITE")
+    common.require_module(ctx, module_for(kind, area), "WRITE")
     ext_ref = f.get("ref", "")
     if kind not in bizbox.LINK_KIND or not ext_ref:
         return redirect(f"/{area}")
     back = _url(kind, ext_ref, area)
     try:
-        cid = bizbox.propose(ctx.conn, kind, ext_ref, f.get("field", ""), f.get("new_value", ""), reason=f.get("reason", ""),
+        cid = bizbox.propose(ctx.conn, kind, ext_ref, f.get("field", ""), picked_value(f, f.get("field", "")), reason=f.get("reason", ""),
                              at=ctx.now, actor=ctx.user.id)
         ctx.conn.commit()
     except bizbox.Refused as exc:

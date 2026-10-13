@@ -251,6 +251,7 @@ BEGIN
     PRINT N'    psa.portal_tile_question';
     PRINT N'    psa.portal_answer';
     PRINT N'    psa.ext_batch';
+    PRINT N'    psa.ext_lookup';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -323,13 +324,14 @@ BEGIN
     PRINT N'    psa.ix_configuration_parent';
     PRINT N'    psa.ix_ext_batch_status';
     PRINT N'    psa.ix_ext_change_batch';
+    PRINT N'    psa.ix_ext_lookup_list';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  153 tables, 71 indexes, 4 triggers.';
+    PRINT N'  154 tables, 72 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -3909,6 +3911,27 @@ CREATE TABLE psa.[ext_batch] (
 END;
 
 -- --------------------------------------------------------------------------
+-- ext_lookup   (from schema/081_bizbox_lookup.sql)
+IF OBJECT_ID(N'psa.[ext_lookup]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_lookup] (
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_lookup_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [list] NVARCHAR(32) NOT NULL,
+    [code] NVARCHAR(400) NOT NULL,
+    [label] NVARCHAR(400) NULL,
+    [sort_no] INT NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_ext_lookup_present] DEFAULT (1) CONSTRAINT [CK_ext_lookup_01] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END)),
+    CONSTRAINT [PK_ext_lookup] PRIMARY KEY ([source_id], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -4793,6 +4816,9 @@ CREATE INDEX [ix_ext_batch_status] ON psa.[ext_batch] ([source_id], [status]);
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_change_batch' AND object_id = OBJECT_ID(N'psa.[ext_change]'))
 CREATE INDEX [ix_ext_change_batch] ON psa.[ext_change] ([batch_id]);
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_lookup_list' AND object_id = OBJECT_ID(N'psa.[ext_lookup]'))
+CREATE INDEX [ix_ext_lookup_list] ON psa.[ext_lookup] ([source_id], [list], [present]);
+
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
@@ -4928,10 +4954,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 153 OR @Triggers <> 4 OR @Indexes < 71
+IF @Tables <> 154 OR @Triggers <> 4 OR @Indexes < 72
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 153), %d triggers (expected 4), %d indexes (expected at least 71). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 154), %d triggers (expected 4), %d indexes (expected at least 72). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -4991,6 +5017,7 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[ext_lookup];
     DROP TABLE IF EXISTS psa.[ext_batch];
     DROP TABLE IF EXISTS psa.[portal_answer];
     DROP TABLE IF EXISTS psa.[portal_tile_question];

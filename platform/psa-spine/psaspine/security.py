@@ -22,11 +22,24 @@ from . import db
 
 MODULES = {"KNOWLEDGE": "Knowledge base", "PROJECTS": "Projects", "REPORTS": "Reports",
            "SCHEDULE": "Schedule", "FINANCE": "Finance (BizBox)", "TIME": "Timesheets",
-           "PROCUREMENT": "Procurement (BizBox)"}
-# 13 Oct 2026: Procurement is a module of its own, so a role can one day hold
-# it apart from Finance; a role with no row for it takes its Finance level, so
-# nothing changes for anyone the day it appears.
-FALLBACK = {"PROCUREMENT": "FINANCE"}
+           "PROC_PO": "Procurement: purchase orders", "PROC_RR": "Procurement: receiving",
+           "PROC_ITEM": "Procurement: items"}
+# Procurement, 13 Oct 2026. Dada: "rbac for the procurement module needs to be
+# made as it will bypass the bizbox permissions". One BizBox login will push
+# every approved change, so the desk keeps what BizBox's per-user rights did,
+# per area, as BizBox grants Purchasing, Warehouse and Inventory apart. The
+# levels read differently in these three: READ is see, WRITE is propose (edits
+# and adds), ADMIN is approve, and never one's own. There is no fallback to
+# Finance: a role sees an area only once Setup says so (a live desk's roles
+# start at NONE; the starter roles below are only written into an empty table).
+PROCUREMENT_AREAS = ("PROC_PO", "PROC_RR", "PROC_ITEM")
+PROCUREMENT_AREA_OF = {"purchase_order": "PROC_PO", "invoice": "PROC_RR", "product": "PROC_ITEM"}
+AREA_WORDS = {"NONE": "None", "READ": "See", "WRITE": "Propose", "ADMIN": "Approve"}
+# A module that is the highest of several: PROCUREMENT (the menu, the Changes
+# and Vendors tabs) is whichever area the role holds highest.
+UMBRELLA = {"PROCUREMENT": PROCUREMENT_AREAS}
+MODULE_WORDS = MODULES | {"PROCUREMENT": "Procurement"}        # for a refusal's sentence
+FALLBACK: dict[str, str] = {}
 # A module added after a role was written has no row for that role; the role
 # keeps working at this level until Setup says otherwise. Timesheets: everyone
 # keeps their own (WRITE); deciding them is ADMIN, given in Setup.
@@ -37,11 +50,14 @@ RANK = {level: i for i, level in enumerate(LEVELS)}
 # The starter roles, only into an empty table: once a person edits them they are theirs.
 STARTER = (
     ("TECHNICIAN", "Technician", 1, {"KNOWLEDGE": "WRITE", "PROJECTS": "WRITE", "REPORTS": "READ",
-                                    "SCHEDULE": "WRITE", "FINANCE": "READ", "TIME": "WRITE", "PROCUREMENT": "READ"}),
+                                    "SCHEDULE": "WRITE", "FINANCE": "READ", "TIME": "WRITE",
+                                    "PROC_PO": "READ", "PROC_RR": "READ", "PROC_ITEM": "READ"}),
     ("SERVICE_MANAGER", "Service manager", 0, {"KNOWLEDGE": "ADMIN", "PROJECTS": "ADMIN", "REPORTS": "ADMIN",
-                                               "SCHEDULE": "ADMIN", "FINANCE": "WRITE", "TIME": "ADMIN", "PROCUREMENT": "WRITE"}),
+                                               "SCHEDULE": "ADMIN", "FINANCE": "WRITE", "TIME": "ADMIN",
+                                               "PROC_PO": "ADMIN", "PROC_RR": "ADMIN", "PROC_ITEM": "ADMIN"}),
     ("READ_ONLY", "Read only", 0, {"KNOWLEDGE": "READ", "PROJECTS": "READ", "REPORTS": "READ",
-                                   "SCHEDULE": "READ", "FINANCE": "NONE", "TIME": "READ", "PROCUREMENT": "NONE"}),
+                                   "SCHEDULE": "READ", "FINANCE": "NONE", "TIME": "READ",
+                                   "PROC_PO": "NONE", "PROC_RR": "NONE", "PROC_ITEM": "NONE"}),
 )
 
 
@@ -92,6 +108,8 @@ def level(conn, user, module: str) -> str:
         return "ADMIN"
     if getattr(user, "requester", False):
         return "NONE"
+    if module in UMBRELLA:
+        return max((level(conn, user, m) for m in UMBRELLA[module]), key=RANK.__getitem__)
     rid = role_of(conn, user.id)
     if rid is None:
         return "NONE"
@@ -108,17 +126,19 @@ def levels(conn, user) -> dict[str, str]:
     """Every module's level for the user in one role lookup, for the request
     shell: five calls of level() resolved the same role five times."""
     if getattr(user, "is_sysadmin", False):
-        return {m: "ADMIN" for m in MODULES}
+        return {m: "ADMIN" for m in (*MODULES, *UMBRELLA)}
     if getattr(user, "requester", False):
-        return {m: "NONE" for m in MODULES}
+        return {m: "NONE" for m in (*MODULES, *UMBRELLA)}
     rid = role_of(conn, user.id)
     if rid is None:
-        return {m: "NONE" for m in MODULES}
+        return {m: "NONE" for m in (*MODULES, *UMBRELLA)}
     got = {r[0]: r[1] for r in conn.execute("SELECT module, level FROM role_grant WHERE role_id = ?", (rid,))}
     out = {m: got.get(m, DEFAULT_LEVEL.get(m, "NONE")) for m in MODULES}
     for m, parent in FALLBACK.items():
         if m not in got:
             out[m] = out[parent]
+    for m, parts in UMBRELLA.items():
+        out[m] = max((out[p] for p in parts), key=RANK.__getitem__)
     return out
 
 

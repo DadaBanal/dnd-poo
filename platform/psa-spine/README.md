@@ -2590,8 +2590,23 @@ inside BizBox*.
   a change waits *for approval* and then *to be sent*, a configuration was *typed in by hand* (Dada, 13 Oct 2026:
   *"make sure its user friendly and easy to understand"*, *"dont go by column names or db names or variables"*).
 - A record's page is Finance's, served under this menu with its links kept here.
-- Rights: a **PROCUREMENT** module in Security roles. A role with no row for it takes its Finance level, so nothing
-  changed for anyone the day it appeared; it can be set apart later.
+- **Rights, per area** (Dada, 13 Oct 2026: *"rbac for the procurement module needs to be made as it will bypass the
+  bizbox permissions"*). The desk will push every approved change under one BizBox login, so the desk keeps what
+  BizBox's per-person rights did. Security roles has three Procurement rows, as BizBox grants purchasing, receiving
+  and inventory apart: *Purchase orders*, *Receiving*, *Items*, each at **None**, **See**, **Propose** (queue edits
+  and new records) or **Approve** (approve what someone else proposed; never one's own; cancel anyone's). The menu,
+  the Vendors tab and the Changes tab open for a role with any area, and show only its areas. There is no fallback
+  from Finance: a role that has nothing set sees no Procurement, so on the live desk nobody does until Setup says
+  so. `security.PROCUREMENT_AREAS`, `PROCUREMENT_AREA_OF`; the umbrella `PROCUREMENT` is the highest of the three.
+- **Dropdowns of what BizBox accepts** (Dada, 13 Oct 2026: *"status or fields that needs a drop down to match bizbox
+  choices must be done; all fields must not error when importing into bizbox"*). A purchase order's status, vendor
+  and currency, a receiving report's status, an item's unit and category are dropdowns, in the cell, on the bulk
+  bar, on the record page and on the New forms. The list is BizBox's own once SQL01 maps one read-only lookup view
+  (kind `lookup`, schema 081 `ext_lookup`: list, code, label, order; read by `sync-bizbox` like any kind, absent
+  rows leave the list); until then it is what BizBox has used on real records, and a vendor is always one BizBox has
+  named on an order or receipt. A value off the list is refused before any batch opens (`bizbox.check_choice`), so
+  what reaches approval is something BizBox will take. A date is a date box, an amount a number; a PO line's item
+  must be an item BizBox has. `bizbox.choices(conn, kind, field)` is the one place the lists come from.
 
 **Changes to BizBox, now in batches (080).**
 - A batch is one reason and one approval over many changes: a bulk edit, a set of edited cells, or a new record
@@ -2606,7 +2621,7 @@ inside BizBox*.
 - The procedure, its login and its contract are SQL01's to build and BizBox's owner's to approve; the handoff of
   13 Oct 2026 spells them out. Until then every approved batch waits, visibly, on the Changes tab.
 
-Tests: `CwShapeTest`.
+Tests: `CwShapeTest`, including the choices and the per-area rights.
 
 ## Changing a booking in place, and your own Outlook entries (9 Oct 2026, schema 077)
 

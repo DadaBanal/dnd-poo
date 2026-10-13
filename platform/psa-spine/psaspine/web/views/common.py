@@ -127,7 +127,7 @@ def require_module(ctx, module: str, need: str = "READ"):
     if not allows(ctx, module, need):
         words = {"READ": "see", "WRITE": "change", "ADMIN": "administer"}[need]
         raise HttpError("403 Forbidden", f"Your security role does not let you {words} "
-                                         f"{security.MODULES[module].lower()}. Ask your service manager.")
+                                         f"{security.MODULE_WORDS.get(module, module).lower()}. Ask your service manager.")
 
 
 def require_sysadmin(ctx):

@@ -53,6 +53,8 @@ KINDS = {
     "po_line": ("ext_po_line", {"ext_ref": "text", "po_ref": "text", "line_no": "int", "product_ref": "text",
                                 "description": "text", "quantity": "money", "received_qty": "money",
                                 "unit_cost": "money"}),
+    # 081: BizBox's own code lists, one row per entry; see choices() below.
+    "lookup": ("ext_lookup", {"ext_ref": "text", "list": "text", "code": "text", "label": "text", "sort_no": "int"}),
 }
 LABEL = {"agreement": "Agreements", "product": "Products", "purchase_order": "Purchase orders", "invoice": "Invoices"}
 LINK_KIND = {"agreement": "AGREEMENT", "product": "PRODUCT", "purchase_order": "PURCHASE_ORDER", "invoice": "INVOICE"}
@@ -74,7 +76,7 @@ MAX_TEXT = 400
 # status, currency and unit are CODE, NVARCHAR(32)). SQLite has no widths, so
 # without this a 37-character BizBox status would pass every test and fail the
 # host's insert with "string or binary data would be truncated".
-WIDTH = {"status": 32, "currency": 32, "unit": 32}
+WIDTH = {"status": 32, "currency": 32, "unit": 32, "list": 32}
 PAGE = 100
 # The longest key the mirror accepts. SQL Server caps an index key at 900 bytes
 # and warned on the first apply (29 Sep 2026) that ext_link's and ext_po_line's
@@ -113,7 +115,11 @@ def check_map(data: dict) -> dict:
         if PATIENT_WORDS.search(view):
             raise Refused(f"{kind}: {view!r} looks like a patient table; it is never read")
         cols = (spec or {}).get("columns")
-        if not isinstance(cols, dict) or "ext_ref" not in cols:
+        if kind == "lookup":
+            # a list entry's key is <list>:<code>, made up by sync when the view has none
+            if not isinstance(cols, dict) or "list" not in cols or "code" not in cols:
+                raise Refused("lookup: the map must name the columns for list and code")
+        elif not isinstance(cols, dict) or "ext_ref" not in cols:
             raise Refused(f"{kind}: the map must name the column for ext_ref")
         fields = KINDS[kind][1]
         for field, col in cols.items():
@@ -252,9 +258,12 @@ def sync(conn: sqlite3.Connection, rows_by_kind: dict[str, list[dict]], *, at: d
         seen = set()
         for raw in rows:
             rec = {f: _value(raw.get(f), how, f"{kind}.{f}", WIDTH.get(f, MAX_TEXT)) for f, how in fields.items() if f in raw}
+            if kind == "lookup" and not rec.get("ext_ref") and rec.get("list") and rec.get("code"):
+                rec = {"ext_ref": f"{rec['list']}:{rec['code']}"} | rec
             ref = rec.get("ext_ref")
             if not ref or ("name" in fields and not rec.get("name")) or ref in seen \
                     or (kind == "po_line" and not rec.get("po_ref")) \
+                    or (kind == "lookup" and not (rec.get("list") and rec.get("code"))) \
                     or len(ref) > MAX_KEY or len(rec.get("po_ref") or "") > MAX_KEY:
                 c["skipped"] += 1
                 continue
@@ -293,6 +302,25 @@ def sync(conn: sqlite3.Connection, rows_by_kind: dict[str, list[dict]], *, at: d
     else:
         conn.rollback()
     return counts
+
+
+READ_WORDS = {"purchase_order": "purchase orders", "po_line": "order lines", "product": "items",
+              "invoice": "receiving reports", "agreement": "agreements", "lookup": "list entries"}
+
+
+def read_words(result: str | None) -> str:
+    """The read's own summary ("purchase_order: 5 rows, 5 new, ...") in words:
+    what BizBox holds, and what changed since the read before. No kind or
+    table name reaches a screen (Dada, 13 Oct 2026)."""
+    parts = []
+    for m in re.finditer(r"(\w+): (\d+) rows, (\d+) new, (\d+) changed, (\d+) unchanged, (\d+) absent", result or ""):
+        kind, rows, new, changed, _, gone = m.group(1), *map(int, m.groups()[1:])
+        if not rows and not gone:
+            continue
+        bits = ", ".join(b for b in (f"{new} new" if new else "", f"{changed} changed" if changed else "",
+                                     f"{gone} gone" if gone else "") if b)
+        parts.append(f"{rows} {READ_WORDS.get(kind, kind.replace('_', ' '))}" + (f" ({bits})" if bits else ""))
+    return (" · " + " · ".join(parts)) if parts else ""
 
 
 # ------------------------------------------------------------ reading, links
@@ -445,6 +473,71 @@ ADDABLE = {
     "product": {"fields": {"ext_ref": "text", "name": "text", "category": "text", "unit": "text", "unit_cost": "money"},
                 "required": ("name",), "lines": None},
 }
+# ---------------------------------------------------------- choices (081)
+# Fields whose value must be one BizBox accepts (Dada, 13 Oct 2026: "status or
+# fields that needs a drop down to match bizbox choices must be done; all
+# fields must not error when importing into bizbox"). Each names a list:
+# BizBox's own code list once the host's lookup view is mapped and read
+# (ext_lookup), else the values the mirror has seen on real records. A vendor
+# is always one BizBox has named on an order or a receipt.
+CHOICE_LIST = {("purchase_order", "status"): "po_status", ("purchase_order", "currency"): "currency",
+               ("purchase_order", "vendor"): "vendor", ("invoice", "status"): "rr_status",
+               ("product", "unit"): "unit", ("product", "category"): "category"}
+SEEN_IN = {"po_status": ("ext_purchase_order", "status"), "rr_status": ("ext_invoice", "status"),
+           "currency": ("ext_purchase_order", "currency"), "unit": ("ext_product", "unit"),
+           "category": ("ext_product", "category")}
+LIST_WORDS = {"po_status": "a status BizBox uses on purchase orders", "rr_status": "a status BizBox uses on receiving reports",
+              "currency": "a currency BizBox uses", "unit": "a unit BizBox uses", "category": "a category BizBox uses",
+              "vendor": "a vendor BizBox has"}
+
+
+def choices(conn, kind: str, field: str) -> list[tuple[str, str]]:
+    """(code, label) pairs the field may take; [] when the field is free text."""
+    lst = CHOICE_LIST.get((kind, field))
+    if lst is None:
+        return []
+    if lst == "vendor":
+        return [(v["name"], v["name"]) for v in vendors(conn)]
+    if db.table_exists(conn, "ext_lookup"):
+        rows = conn.execute("SELECT code, label FROM ext_lookup WHERE source_id = ? AND list = ? AND present = 1"
+                            " ORDER BY sort_no, label, code", (SOURCE, lst)).fetchall()
+        if rows:
+            return [(r[0], r[1] or r[0]) for r in rows]
+    table, col = SEEN_IN[lst]
+    return [(r[0], r[0]) for r in conn.execute(
+        f"SELECT DISTINCT {col} FROM {table} WHERE source_id = ? AND present = 1 AND {col} IS NOT NULL ORDER BY {col}",
+        (SOURCE,))]
+
+
+def choices_from(conn, kind: str, field: str) -> str:
+    """Where a field's list comes from, in words for the screen."""
+    lst = CHOICE_LIST.get((kind, field))
+    if lst is None:
+        return ""
+    if lst == "vendor":
+        return "the vendors BizBox has named"
+    if db.table_exists(conn, "ext_lookup") and conn.execute(
+            "SELECT 1 FROM ext_lookup WHERE source_id = ? AND list = ? AND present = 1 LIMIT 1", (SOURCE, lst)).fetchone():
+        return "BizBox's own list"
+    return "what BizBox has used so far"
+
+
+def check_choice(conn, kind: str, field: str, value) -> None:
+    """Refuse what BizBox would refuse: a value off the field's list. With no
+    list at all (an empty mirror) only a vendor is refused: a purchase order
+    for a vendor BizBox has never named cannot be created there."""
+    lst = CHOICE_LIST.get((kind, field))
+    if lst is None or value in (None, ""):
+        return
+    opts = choices(conn, kind, field)
+    if not opts:
+        if lst == "vendor":
+            raise Refused("No vendor has been read from BizBox yet, so none can be named here.")
+        return
+    if str(value) not in {c for c, _ in opts}:
+        raise Refused(f"That is not {LIST_WORDS[lst]}; pick one from the list.")
+
+
 BATCH_WORDS = {"PENDING": "Waiting for approval", "APPROVED": "Approved, waiting to be sent", "APPLIED": "Applied in BizBox",
                "REJECTED": "Refused by BizBox", "CANCELLED": "Cancelled"}
 MAX_BATCH = 500
@@ -561,17 +654,30 @@ def _new_batch(conn, kind: str, change_kind: str, reason: str, *, at: datetime, 
     return cur.lastrowid
 
 
-def _edit_row(conn, kind: str, rec, field: str, new_value, *, reason: str, batch_id: int, at: datetime, actor: str):
+_SAME = object()      # the cell already reads so: not a change
+
+
+def _edit_check(conn, kind: str, rec, field: str, new_value):
+    """Every refusal an edit can meet, before any row is written: the field,
+    the value's shape, BizBox's choices, a change already waiting. Returns the
+    value to store, or _SAME. Checked first so a refused batch never opens:
+    SQL Server keeps a burnt identity number on rollback where SQLite does
+    not, and CI run 92 (13 Oct 2026) read "Batch #2" where the desk said #1."""
     how = EDITABLE.get(kind, {}).get(field)
     if how is None:
         raise Refused(f"{field} is not a field that can be changed on this record.")
     value = _value(new_value, how, f"{kind}.{field}", WIDTH.get(field, MAX_TEXT))
-    old = rec[field]
-    if value == old:
-        return None
+    if value == rec[field]:
+        return _SAME
+    check_choice(conn, kind, field, value)
     if conn.execute("SELECT 1 FROM ext_change WHERE source_id = ? AND kind = ? AND ext_ref = ? AND field = ?"
                     " AND status = 'PENDING'", (SOURCE, LINK_KIND[kind], rec["ext_ref"], field)).fetchone():
         raise Refused(f"A change to {FIELD_WORDS[field].lower()} on {rec['ext_ref']} is already pending; cancel it first.")
+    return value
+
+
+def _edit_insert(conn, kind: str, rec, field: str, value, *, reason: str, batch_id: int, at: datetime, actor: str) -> int:
+    old = rec[field]
     cur = conn.execute(
         "INSERT INTO ext_change (source_id, kind, ext_ref, field, old_value, new_value, reason, status, requested_at,"
         " requested_by, batch_id) VALUES (?,?,?,?,?,?,?, 'PENDING', ?,?,?)",
@@ -587,13 +693,11 @@ def propose(conn, kind: str, ext_ref: str, field: str, new_value: str, *, reason
     if rec is None:
         raise Refused("No such record in the BizBox mirror.")
     reason = _reason(reason)
-    if EDITABLE.get(kind, {}).get(field) is None:
-        raise Refused(f"{field} is not a field that can be changed on this record.")
-    value = _value(new_value, EDITABLE[kind][field], f"{kind}.{field}", WIDTH.get(field, MAX_TEXT))
-    if value == rec[field]:
+    value = _edit_check(conn, kind, rec, field, new_value)
+    if value is _SAME:
         raise Refused("That is the value BizBox already has.")
     bid = _new_batch(conn, kind, "EDIT", reason, at=at, actor=actor)
-    cid = _edit_row(conn, kind, rec, field, new_value, reason=reason, batch_id=bid, at=at, actor=actor)
+    cid = _edit_insert(conn, kind, rec, field, value, reason=reason, batch_id=bid, at=at, actor=actor)
     db.audit(conn, at=_stamp(at), actor=actor, action="BIZBOX_CHANGE", subject_kind="ext_change", subject_id=str(cid),
              detail=f"proposed (batch {bid}): {LINK_KIND[kind].lower()} {ext_ref} {field} {rec[field]!r} -> {value!r}")
     return cid
@@ -610,22 +714,22 @@ def propose_many(conn, kind: str, refs, field: str, new_value: str, *, reason: s
     reason = _reason(reason)
     if EDITABLE.get(kind, {}).get(field) is None:
         raise Refused(f"{field} is not a field that can be changed on these records.")
-    recs = []
+    todo, same = [], 0
     for ref in refs:
         rec = get(conn, kind, ref)
         if rec is None:
             raise Refused(f"{ref} is not in the BizBox mirror.")
-        recs.append(rec)
-    bid = _new_batch(conn, kind, "EDIT", reason, at=at, actor=actor)
-    queued = same = 0
-    for rec in recs:
-        if _edit_row(conn, kind, rec, field, new_value, reason=reason, batch_id=bid, at=at, actor=actor) is None:
+        value = _edit_check(conn, kind, rec, field, new_value)
+        if value is _SAME:
             same += 1
         else:
-            queued += 1
-    if not queued:
-        conn.execute("DELETE FROM ext_batch WHERE batch_id = ?", (bid,))
+            todo.append((rec, value))
+    if not todo:
         raise Refused("Every ticked record already has that value in BizBox.")
+    bid = _new_batch(conn, kind, "EDIT", reason, at=at, actor=actor)
+    for rec, value in todo:
+        _edit_insert(conn, kind, rec, field, value, reason=reason, batch_id=bid, at=at, actor=actor)
+    queued = len(todo)
     db.audit(conn, at=_stamp(at), actor=actor, action="BIZBOX_BATCH", subject_kind="ext_batch", subject_id=str(bid),
              detail=f"proposed: {LINK_KIND[kind].lower()} {field} on {queued} record(s) ({same} already so)")
     return {"batch_id": bid, "queued": queued, "same": same}
@@ -636,22 +740,22 @@ def propose_edits(conn, kind: str, edits, *, reason: str, at: datetime, actor: s
     new_value) triples, one batch. A cell left as BizBox has it is not a
     change."""
     reason = _reason(reason)
+    if len(edits) > MAX_BATCH:
+        raise Refused(f"At most {MAX_BATCH} cells in one batch.")
     todo = []
     for ref, field, value in edits:
         rec = get(conn, kind, str(ref).strip())
         if rec is None:
             raise Refused(f"{ref} is not in the BizBox mirror.")
-        todo.append((rec, field, value))
-    if len(todo) > MAX_BATCH:
-        raise Refused(f"At most {MAX_BATCH} cells in one batch.")
-    bid = _new_batch(conn, kind, "EDIT", reason, at=at, actor=actor)
-    queued = 0
-    for rec, field, value in todo:
-        if _edit_row(conn, kind, rec, field, value, reason=reason, batch_id=bid, at=at, actor=actor) is not None:
-            queued += 1
-    if not queued:
-        conn.execute("DELETE FROM ext_batch WHERE batch_id = ?", (bid,))
+        kept = _edit_check(conn, kind, rec, field, value)
+        if kept is not _SAME:
+            todo.append((rec, field, kept))
+    if not todo:
         raise Refused("Nothing was changed: every cell still reads what BizBox has.")
+    bid = _new_batch(conn, kind, "EDIT", reason, at=at, actor=actor)
+    for rec, field, value in todo:
+        _edit_insert(conn, kind, rec, field, value, reason=reason, batch_id=bid, at=at, actor=actor)
+    queued = len(todo)
     db.audit(conn, at=_stamp(at), actor=actor, action="BIZBOX_BATCH", subject_kind="ext_batch", subject_id=str(bid),
              detail=f"proposed: {LINK_KIND[kind].lower()} {queued} cell(s) edited")
     return {"batch_id": bid, "queued": queued}
@@ -674,6 +778,8 @@ def propose_add(conn, kind: str, record: dict, lines=None, *, reason: str, at: d
     for f in spec["required"]:
         if rec.get(f) in (None, ""):
             raise Refused(f"{FIELD_WORDS.get(f, f.replace('_', ' ').capitalize())} is needed.")
+    for f, v in rec.items():
+        check_choice(conn, kind, f, v)
     if "ext_ref" in rec:
         if len(rec["ext_ref"]) > MAX_KEY or not re.fullmatch(r"[A-Za-z0-9._/-]+", rec["ext_ref"]):
             raise Refused("An item code is letters, digits, dots, dashes or slashes, up to 64 of them.")

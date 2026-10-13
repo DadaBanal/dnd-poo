@@ -6456,7 +6456,7 @@ class ModulesTest(unittest.TestCase):
         self.assertTrue(status.startswith("403"))
         self.assertEqual(self._conn().execute("SELECT COUNT(*) FROM audit_event WHERE action = 'SECURITY_ROLE'").fetchone()[0], 3)
         conn = self._conn()
-        self.assertEqual(security.levels(conn, alice), {m: security.level(conn, alice, m) for m in security.MODULES})
+        self.assertEqual(security.levels(conn, alice), {m: security.level(conn, alice, m) for m in (*security.MODULES, *security.UMBRELLA)})
         security.assign(conn, "alice", "READ_ONLY", at=self.at, actor="root")                 # SCHEDULE READ: may look, not book
         conn.commit()
         status, _, _ = self._call("GET", "/schedule", cookie=self.alice)
@@ -7977,6 +7977,12 @@ class ModulesTest(unittest.TestCase):
         self.assertIn("err=", dict(h)["Location"])
         _, _, page = self._call("GET", "/finance", cookie=self.alice, query="tab=purchase_order")
         self.assertIn("<a href='/ticket/ITO-1'>ITO-1</a>", page)                               # the Linked column, one query for the page
+        # 081: BizBox's own status list, as SQL01's lookup view would feed it; a status off it is refused below
+        conn.executemany("INSERT INTO ext_lookup (source_id, ext_ref, list, code, label, sort_no, present, synced_at)"
+                         " VALUES ('BIZBOX', ?, 'po_status', ?, ?, ?, 1, '2026-10-13 09:00')",
+                         [("po_status:Approved", "Approved", "Approved", 1), ("po_status:Received", "Received", "Received", 2),
+                          ("po_status:Closed", "Closed", "Closed", 3)])
+        conn.commit()
         status, _, _ = self._call("POST", "/finance/purchase_order/propose", cookie=self.alice,
                                   form={"ref": "PO-1", "field": "status", "new_value": "Received", "reason": "x"})
         self.assertTrue(status.startswith("403"), status)                                      # but may not propose
@@ -17793,12 +17799,13 @@ class CwShapeTest(unittest.TestCase):
         m = bizbox.check_map(bizbox.load_map(Path(__file__).parent.parent / "bizbox" / "bizbox-map.sample.json"))
         bizbox.sync(conn, bizbox.read_csv_dir(self._csvs(
             "PONo,VendorName,PODate,Status,TotalAmount,Currency\r\nPO-1,Vendor A,2026-09-02,Approved,1000,PHP\r\n"
-            "PO-2,Vendor B,2026-09-03,Approved,250,PHP\r\n"), m), at=self.at, actor="t", apply=True)
+            "PO-2,Vendor B,2026-09-03,Approved,250,PHP\r\nPO-3,Vendor B,2026-08-20,Ordered,300,PHP\r\n"), m), at=self.at, actor="t", apply=True)
         return conn
 
     def _manager(self, who="alice"):
         from psaspine import security
         conn = self._conn()
+        security.ensure_roles(conn)                 # before any request has written the starter roles
         security.assign(conn, who, "SERVICE_MANAGER", at=self.at, actor="root")
         conn.commit()
 
@@ -17958,7 +17965,7 @@ class CwShapeTest(unittest.TestCase):
         _, _, page = self._call("GET", "/", cookie=self.alice)
         self.assertIn('href="/procurement"', page)
         _, _, page = self._call("GET", "/procurement", cookie=self.alice)
-        self.assertIn("Purchase orders · 2", page)
+        self.assertIn("Purchase orders · 3", page)
         self.assertIn("Receiving · 1", page)
         self.assertIn("Products · 1", page)
         self.assertIn("Vendors · 2", page)
@@ -17989,7 +17996,9 @@ class CwShapeTest(unittest.TestCase):
         self._manager()
         _, _, page = self._call("GET", "/procurement", cookie=self.alice)
         self.assertIn("Send for approval", page)
-        self.assertIn("name='e:PO-1:vendor'", page)                                              # editable in place
+        self.assertIn("<select form=grid name='e:PO-1:vendor'", page)                            # editable in place, from BizBox's vendors
+        self.assertIn("<select form=grid name='e:PO-1:status'", page)
+        self.assertIn("<input form=grid type=date name='e:PO-1:ordered_on'", page)
         self.assertIn("New purchase order", page)
         _, h, _ = self._call("POST", "/procurement/purchase_order/bulk", cookie=self.alice,
                              form=[("refs", "PO-1"), ("refs", "PO-2"), ("field", "status"), ("new_value", "Approved"), ("reason", "all approved today")])
@@ -18012,14 +18021,14 @@ class CwShapeTest(unittest.TestCase):
         self.assertEqual(bizbox.batch(conn, 1)["approved_by"], "root")
         # cells edited in place and saved together: only the cells that differ
         _, h, _ = self._call("POST", "/procurement/purchase_order/edits", cookie=self.alice,
-                             form={"e:PO-1:vendor": "Vendor A", "e:PO-2:vendor": "Vendor C", "e:PO-2:ordered_on": "2026-09-03",
-                                   "reason": "vendor renamed"})
+                             form={"e:PO-1:vendor": "Vendor A", "e:PO-2:vendor": "Vendor A", "e:PO-2:ordered_on": "2026-09-03",
+                                   "reason": "vendor corrected"})
         self.assertIn("Batch+%232+queued%3A+1+cell", dict(h)["Location"])
         _, h, _ = self._call("POST", "/procurement/purchase_order/edits", cookie=self.alice,
                              form={"e:PO-1:vendor": "Vendor A", "reason": "nothing"})
         self.assertIn("every+cell+still+reads", dict(h)["Location"])
         _, h, _ = self._call("POST", "/procurement/purchase_order/edits", cookie=self.alice,
-                             form={"e:PO-2:vendor": "Vendor D", "reason": ""})
+                             form={"e:PO-2:vendor": "Vendor A", "reason": ""})
         self.assertIn("Say+why", dict(h)["Location"])
         # a new purchase order with its lines, and a new item
         _, _, page = self._call("GET", "/procurement/purchase_order/new", cookie=self.alice)
@@ -18100,26 +18109,199 @@ class CwShapeTest(unittest.TestCase):
         self.assertIn("approved and waiting: 0 change(s)", out.getvalue())
         self.assertIn("PREVIEW", out.getvalue())
 
-    def test_a_role_with_no_finance_and_no_procurement_row_sees_neither(self):
+    # ----------------------------------------------------- choices and rights (081)
+    def test_fields_with_bizbox_choices_are_dropdowns_and_a_value_off_the_list_is_refused(self):
+        from psaspine import bizbox
+        conn = self._mirror()
+        self._manager()
+        # what BizBox has shown so far is the list: statuses on real orders, vendors on orders and receipts, an item's unit
+        self.assertEqual(bizbox.choices(conn, "purchase_order", "status"), [("Approved", "Approved"), ("Ordered", "Ordered")])
+        self.assertEqual(bizbox.choices(conn, "purchase_order", "vendor"), [("Vendor A", "Vendor A"), ("Vendor B", "Vendor B")])
+        self.assertEqual(bizbox.choices(conn, "purchase_order", "currency"), [("PHP", "PHP")])
+        self.assertEqual(bizbox.choices(conn, "invoice", "status"), [("Posted", "Posted")])
+        self.assertEqual(bizbox.choices(conn, "product", "unit"), [("pc", "pc")])
+        self.assertEqual(bizbox.choices(conn, "product", "category"), [("Consumables", "Consumables")])
+        self.assertEqual(bizbox.choices(conn, "purchase_order", "ordered_on"), [])                 # a date stays free
+        self.assertEqual(bizbox.choices_from(conn, "purchase_order", "status"), "what BizBox has used so far")
+        # the grid: a dropdown in the cell and in the bulk bar, a date box for a date
+        _, _, page = self._call("GET", "/procurement", cookie=self.alice)
+        self.assertIn("<select form=grid name='e:PO-1:status' data-was='Approved' aria-label='Status of PO-1'>"
+                      "<option value='Approved' selected>Approved</option><option value='Ordered'>Ordered</option></select>", page)
+        self.assertIn("<select form=grid name='e:PO-1:vendor' data-was='Vendor A' aria-label='Vendor of PO-1'>", page)
+        self.assertIn("<input form=grid type=date name='e:PO-1:ordered_on'", page)
+        self.assertIn("<select name='nv:status' data-for='status' aria-label='New status'>", page)
+        self.assertIn("<select name='nv:vendor' data-for='vendor' aria-label='New vendor' hidden disabled>", page)
+        self.assertIn("<input name=new_value maxlength=200 placeholder='the new value' data-for='' hidden disabled>", page)
+        _, _, page = self._call("GET", "/procurement", query="tab=invoice", cookie=self.alice)
+        self.assertIn("<select form=grid name='e:INV-1:status' data-was='Posted'", page)
+        _, _, page = self._call("GET", "/procurement/purchase_order/new", cookie=self.alice)
+        self.assertIn("<select name=vendor required><option value=''>Choose a vendor BizBox has</option><option value='Vendor A'>Vendor A</option>", page)
+        self.assertIn("<select name=currency><option value='PHP' selected>PHP</option></select>", page)
+        self.assertIn("<select name=status><option value=''>Leave to BizBox</option><option value='Approved'>Approved</option>", page)
+        _, _, page = self._call("GET", "/procurement/product/new", cookie=self.alice)
+        self.assertIn("<select name=unit><option value=''>(none)</option><option value='pc'>pc</option></select>", page)
+        # a value off a list never becomes a change: bulk, a cell, the record page, a new order, a new item
+        refusals = (
+            ("/procurement/purchase_order/bulk", {"refs": "PO-1", "field": "status", "nv:status": "Shipped", "reason": "x"}, "not+a+status+BizBox+uses+on+purchase+orders"),
+            ("/procurement/purchase_order/edits", {"e:PO-2:vendor": "Vendor Z", "reason": "x"}, "not+a+vendor+BizBox+has"),
+            ("/finance/purchase_order/propose", {"ref": "PO-1", "field": "status", "nv:status": "Done", "reason": "x", "area": "procurement"}, "not+a+status+BizBox+uses"),
+            ("/procurement/purchase_order/add", {"vendor": "Vendor Z", "line1_product_ref": "IT-1", "line1_quantity": "1", "reason": "x"}, "not+a+vendor+BizBox+has"),
+            ("/procurement/purchase_order/add", {"vendor": "Vendor A", "currency": "USD", "line1_product_ref": "IT-1", "line1_quantity": "1", "reason": "x"}, "not+a+currency+BizBox+uses"),
+            ("/procurement/product/add", {"name": "Drum", "unit": "kg", "reason": "x"}, "not+a+unit+BizBox+uses"),
+            ("/procurement/product/add", {"name": "Drum", "category": "Toys", "reason": "x"}, "not+a+category+BizBox+uses"),
+        )
+        for path, form, words in refusals:
+            _, h, _ = self._call("POST", path, cookie=self.alice, form=form)
+            self.assertIn(words, dict(h)["Location"], path)
+            self.assertIn("pick+one+from+the+list", dict(h)["Location"], path)
+        self.assertEqual(bizbox.batches(conn), [])                                                  # and no batch was opened
+        with self.assertRaises(bizbox.Refused):
+            bizbox.propose_many(conn, "purchase_order", ["PO-1"], "status", "Shipped", reason="x", at=self.at, actor="alice")
+        # a value on the list goes through; the bulk bar's dropdown is what the server reads for the chosen field
+        _, h, _ = self._call("POST", "/procurement/purchase_order/bulk", cookie=self.alice,
+                             form=[("refs", "PO-1"), ("refs", "PO-3"), ("field", "status"), ("nv:status", "Ordered"), ("nv:vendor", "Vendor B"),
+                                   ("new_value", "ignored"), ("reason", "confirmed by phone")])
+        self.assertIn("Batch+%231+queued%3A+1+record%28s%29%2C+1+already+so", dict(h)["Location"])
+        [ch] = bizbox.batch_changes(conn, 1)
+        self.assertEqual((ch["ext_ref"], ch["field"], ch["new_value"]), ("PO-1", "status", "Ordered"))
+        # BizBox's own list, once SQL01's lookup view is mapped: labels and all, and the list it names takes over
+        folder = self._csvs()
+        (folder / "lookup.csv").write_text("ListName,Code,Label,SortNo\r\npo_status,Approved,Approved,1\r\npo_status,Ordered,Ordered,2\r\n"
+                                           "po_status,Shipped,Shipped by supplier,3\r\ncurrency,PHP,Philippine peso,1\r\ncurrency,USD,US dollar,2\r\n",
+                                           encoding="utf-8")
+        lookup = {"lookup": {"view": "psa.vw_lookup", "columns": {"list": "ListName", "code": "Code", "label": "Label", "sort_no": "SortNo"}}}
+        with self.assertRaises(bizbox.Refused):
+            bizbox.check_map({"objects": {"lookup": {"view": "psa.vw_lookup", "columns": {"list": "ListName"}}}})   # needs list and code
+        m = bizbox.check_map({"objects": lookup})
+        counts = bizbox.sync(conn, bizbox.read_csv_dir(folder, m), at=self.at, actor="t", apply=True)
+        self.assertEqual((counts["lookup"]["rows"], counts["lookup"]["new"]), (5, 5))
+        self.assertEqual(conn.execute("SELECT ext_ref FROM ext_lookup WHERE code = 'Shipped'").fetchone()[0], "po_status:Shipped")
+        self.assertIn("5 list entries (5 new)", bizbox.read_words(bizbox.status(conn)["last_result"]))
+        self.assertEqual(bizbox.choices(conn, "purchase_order", "status"),
+                         [("Approved", "Approved"), ("Ordered", "Ordered"), ("Shipped", "Shipped by supplier")])
+        self.assertEqual(bizbox.choices(conn, "purchase_order", "currency"), [("PHP", "Philippine peso"), ("USD", "US dollar")])
+        self.assertEqual(bizbox.choices_from(conn, "purchase_order", "status"), "BizBox's own list")
+        self.assertEqual(bizbox.choices(conn, "invoice", "status"), [("Posted", "Posted")])         # a list not fed stays as seen
+        _, h, _ = self._call("POST", "/procurement/purchase_order/bulk", cookie=self.alice,
+                             form={"refs": "PO-2", "field": "status", "nv:status": "Shipped", "reason": "left the depot"})
+        self.assertIn("Batch+%232+queued", dict(h)["Location"])
+        _, _, page = self._call("GET", "/procurement", cookie=self.alice)
+        self.assertIn("<option value='Shipped'>Shipped by supplier</option>", page)
+        self.assertIn("Read from BizBox 2026-09-29 10:00 · 5 list entries (5 new)", page)          # the banner, in words
+        # a second read with the same rows changes nothing; one that drops Shipped marks it absent, and it leaves the list
+        self.assertEqual(bizbox.sync(conn, bizbox.read_csv_dir(folder, m), at=self.at, actor="t", apply=True)["lookup"]["unchanged"], 5)
+        (folder / "lookup.csv").write_text("ListName,Code,Label,SortNo\r\npo_status,Approved,Approved,1\r\npo_status,Ordered,Ordered,2\r\n", encoding="utf-8")
+        self.assertEqual(bizbox.sync(conn, bizbox.read_csv_dir(folder, m), at=self.at, actor="t", apply=True)["lookup"]["absent"], 3)
+        self.assertEqual(bizbox.choices(conn, "purchase_order", "status"), [("Approved", "Approved"), ("Ordered", "Ordered")])
+        self.assertEqual(bizbox.choices(conn, "purchase_order", "currency"), [("PHP", "PHP")])     # back to what was seen
+
+    def test_procurement_rights_are_per_area_see_propose_approve_and_never_ones_own(self):
+        from psaspine import bizbox, security
+        conn = self._mirror()
+        buyer = security.add_role(conn, "Buyer", at=self.at, actor="root")
+        security.save_grants(conn, buyer, {"PROC_PO": "WRITE", "PROC_RR": "NONE", "PROC_ITEM": "READ"}, at=self.at, actor="root")
+        checker = security.add_role(conn, "Approver", at=self.at, actor="root")
+        security.save_grants(conn, checker, {"PROC_PO": "ADMIN", "PROC_RR": "ADMIN", "PROC_ITEM": "NONE"}, at=self.at, actor="root")
+        security.assign(conn, "alice", buyer, at=self.at, actor="root")
+        security.assign(conn, "carol", checker, at=self.at, actor="root")   # carol reads IT Help: a member, not a requester
+        conn.commit()
+        carol = self._cookie_for("carol")
+        # Setup names the three areas, in their own words
+        _, _, page = self._call("GET", "/admin/roles", cookie=self.root)
+        self.assertIn("<th>Procurement: purchase orders</th><th>Procurement: receiving</th><th>Procurement: items</th>", page)
+        self.assertIn("<option value=ADMIN selected>Approve</option>", page)
+        self.assertIn("<option value=WRITE selected>Propose</option>", page)
+        self.assertIn("<option value=READ selected>See</option>", page)
+        self.assertIn("never one's own", page)
+        # the buyer: sees orders and items, never receiving; proposes on orders only
+        _, _, page = self._call("GET", "/procurement", cookie=self.alice)
+        for words in ("Purchase orders · 3", "Products · 1", "Vendors · 2", "Changes · 0", "Send for approval", "New purchase order"):
+            self.assertIn(words, page, words)
+        self.assertNotIn("Receiving ·", page)
+        for path, query in (("/procurement", "tab=invoice"), ("/procurement/invoice", "ref=INV-1"), ("/procurement/product/new", "")):
+            status, _, _ = self._call("GET", path, query=query, cookie=self.alice)
+            self.assertTrue(status.startswith("403"), (path, status))
+        _, _, page = self._call("GET", "/procurement", query="tab=product", cookie=self.alice)
+        self.assertNotIn("Send for approval", page)
+        self.assertNotIn("New item", page)
+        self.assertNotIn("<select form=grid", page)
+        status, _, _ = self._call("POST", "/procurement/product/bulk", cookie=self.alice,
+                                  form={"refs": "IT-1", "field": "unit", "nv:unit": "pc", "reason": "x"})
+        self.assertTrue(status.startswith("403"), status)
+        _, h, _ = self._call("POST", "/procurement/purchase_order/bulk", cookie=self.alice,
+                             form={"refs": "PO-1", "field": "status", "nv:status": "Ordered", "reason": "confirmed"})
+        self.assertIn("Batch+%231+queued", dict(h)["Location"])
+        # proposing is not approving: the buyer cannot approve at all, the approver never their own
+        status, _, _ = self._call("POST", "/procurement/batch/1/approve", cookie=self.alice)
+        self.assertTrue(status.startswith("403"), status)
+        _, _, page = self._call("GET", "/procurement", query="tab=changes", cookie=self.alice)
+        self.assertIn("yours: someone else approves", page)
+        self.assertNotIn("Approve</button>", page)
+        _, _, page = self._call("GET", "/procurement", query="tab=changes", cookie=carol)
+        self.assertIn("Approve</button>", page)
+        _, h, _ = self._call("POST", "/procurement/batch/1/approve", cookie=carol)
+        self.assertIn("approved", dict(h)["Location"])
+        self.assertEqual(bizbox.batch(conn, 1)["approved_by"], "carol")
+        _, h, _ = self._call("POST", "/procurement/purchase_order/bulk", cookie=carol,
+                             form={"refs": "PO-2", "field": "status", "nv:status": "Ordered", "reason": "carol's own"})
+        self.assertIn("Batch+%232+queued", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/procurement/batch/2/approve", cookie=carol)
+        self.assertIn("someone+other+than", dict(h)["Location"])
+        status, _, _ = self._call("POST", "/procurement/batch/2/approve", cookie=self.alice)
+        self.assertTrue(status.startswith("403"), status)
+        # cancel: the person who asked, or an approver of the area; a batch in an area one may not see is not shown
+        status, _, _ = self._call("POST", "/procurement/batch/2/cancel", cookie=self.alice)
+        self.assertTrue(status.startswith("403"), status)
+        _, h, _ = self._call("POST", "/procurement/batch/2/cancel", cookie=carol)
+        self.assertIn("cancelled", dict(h)["Location"])
+        _, h, _ = self._call("POST", "/procurement/product/edits", cookie=self.root,
+                             form={"e:IT-1:name": "Toner black", "reason": "its full name"})
+        self.assertIn("Batch+%233+queued", dict(h)["Location"])
+        _, _, page = self._call("GET", "/procurement", query="tab=changes&status=ALL", cookie=carol)
+        self.assertIn("#1</a>", page)
+        self.assertNotIn("#3</a>", page)                                                           # items: not carol's area
+        status, _, _ = self._call("GET", "/procurement/batch/3", cookie=carol)
+        self.assertTrue(status.startswith("403"), status)
+        status, _, page = self._call("GET", "/procurement/batch/3", cookie=self.alice)             # items: see only
+        self.assertTrue(status.startswith("200"), status)
+        self.assertNotIn("Approve</button>", page)
+        self.assertNotIn("Cancel</button>", page)
+        # the nav: the menu for anyone with an area; none for a role with none; a sysadmin has it all
+        self.assertEqual(security.levels(conn, webauth.User(id="alice", name="alice"))["PROCUREMENT"], "WRITE")
+        self.assertEqual(security.levels(conn, webauth.User(id="carol", name="carol"))["PROCUREMENT"], "ADMIN")
+        self.assertEqual(security.levels(conn, webauth.User(id="x", name="x", is_sysadmin=True))["PROC_RR"], "ADMIN")
+        security.save_grants(conn, buyer, {"PROC_PO": "NONE", "PROC_ITEM": "NONE"}, at=self.at, actor="root")
+        conn.commit()
+        status, _, body = self._call("GET", "/procurement", cookie=self.alice)
+        self.assertTrue(status.startswith("403"), status)
+        self.assertIn("does not let you see procurement", body)
+        _, _, page = self._call("GET", "/", cookie=self.alice)
+        self.assertNotIn('href="/procurement"', page)
+
+    def test_a_role_sees_a_procurement_area_only_when_setup_says_so_never_from_finance(self):
         from psaspine import security
         conn = self._conn()
         rid = security.add_role(conn, "Wards only", at=self.at, actor="root")
-        security.save_grants(conn, rid, {"FINANCE": "NONE"}, at=self.at, actor="root")
+        security.save_grants(conn, rid, {"FINANCE": "WRITE"}, at=self.at, actor="root")       # Finance alone opens nothing here
         security.assign(conn, "alice", rid, at=self.at, actor="root")
         conn.commit()
-        self.assertEqual(security.level(conn, webauth.User(id="alice", name="alice"), "PROCUREMENT"), "NONE")
+        alice = webauth.User(id="alice", name="alice")
+        self.assertEqual([security.level(conn, alice, m) for m in ("PROC_PO", "PROC_RR", "PROC_ITEM", "PROCUREMENT")],
+                         ["NONE", "NONE", "NONE", "NONE"])
         status, _, _ = self._call("GET", "/procurement", cookie=self.alice)
         self.assertTrue(status.startswith("403"), status)
         _, _, page = self._call("GET", "/", cookie=self.alice)
         self.assertNotIn('href="/procurement"', page)
-        security.save_grants(conn, rid, {"PROCUREMENT": "READ"}, at=self.at, actor="root")     # its own level, apart from Finance
+        security.save_grants(conn, rid, {"PROC_ITEM": "READ"}, at=self.at, actor="root")      # one area opens the menu
         conn.commit()
-        self.assertEqual(security.level(conn, webauth.User(id="alice", name="alice"), "PROCUREMENT"), "READ")
-        status, _, _ = self._call("GET", "/procurement", cookie=self.alice)
+        self.assertEqual(security.level(conn, alice, "PROCUREMENT"), "READ")
+        self.assertEqual(security.levels(conn, alice)["PROCUREMENT"], "READ")
+        status, _, page = self._call("GET", "/procurement", cookie=self.alice)
         self.assertTrue(status.startswith("200"), status)
+        self.assertIn("Products · ", page)                                                   # lands on the one area it may see
+        self.assertNotIn("Purchase orders · ", page)
         status, _, _ = self._call("GET", "/finance", cookie=self.alice)
-        self.assertTrue(status.startswith("403"), status)
-
+        self.assertTrue(status.startswith("200"), status)                                    # Finance is still Finance's
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

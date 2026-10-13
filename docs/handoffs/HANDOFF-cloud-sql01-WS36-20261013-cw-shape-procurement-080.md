@@ -6,6 +6,10 @@ specified here (§5) but is NOT to be built until Dada and BizBox's owner say so
 
 This follows `…-20261012-warm-emails-department-079.md`. It supersedes nothing.
 
+**Superseded in part, later on 13 Oct 2026:** `…-20261013-procurement-rights-lookups-081.md` adds schema 081 and the
+Procurement rights to the same window. Run its §3 instead of §3 below (it includes 080); §4 and §5 here still apply,
+except that the Procurement menu now shows for nobody until the three rows are set on Setup › Security roles.
+
 Branch: `claude/psa-ticketing-build`. Pull the head that carries this file, **once CI is green on it**.
 
 ---

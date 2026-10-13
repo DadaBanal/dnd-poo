@@ -12,15 +12,22 @@ a procedure inside BizBox (bizbox.ProcedureWriter).
 The records are the same mirror Finance shows (043); a record's own page is
 Finance's, served here under this menu. What changes here never touches the
 mirror: every edit or add is a batch (080) that waits for a second person's
-approval and then for the push. Rights: the PROCUREMENT level in Security
-roles, which falls back to the Finance level.
+approval and then for the push.
+
+Rights (Dada, 13 Oct 2026: "rbac for the procurement module needs to be made
+as it will bypass the bizbox permissions"): three areas in Security roles,
+purchase orders, receiving and items, each at See, Propose or Approve
+(security.PROCUREMENT_AREAS). Every page and action here asks the area the
+record belongs to; the menu, Vendors and Changes ask the highest of the three.
+Fields with BizBox's choices (status, currency, vendor, unit, category) are
+dropdowns and a value off the list is refused (bizbox.check_choice), so what
+is approved is something BizBox will take.
 """
 from __future__ import annotations
 
-import re
 import urllib.parse
 
-from ... import bizbox
+from ... import bizbox, security
 from .. import templates as t
 from . import common, finance
 
@@ -37,12 +44,24 @@ FILTER_COL = {"purchase_order": "status", "invoice": "status", "product": "categ
 FILTER_WORD = {"status": "status", "category": "category"}
 
 
-def _gate(ctx, need: str = "READ"):
-    common.require_module(ctx, "PROCUREMENT", need)
+BACK_KIND = {v: k for k, v in bizbox.LINK_KIND.items()}
 
 
-def _can_write(ctx) -> bool:
-    return common.allows(ctx, "PROCUREMENT", "WRITE")
+def _gate(ctx, kind: str | None = None, need: str = "READ"):
+    """The area's module for a kind; the highest of the three for the menu."""
+    common.require_module(ctx, security.PROCUREMENT_AREA_OF[kind] if kind else "PROCUREMENT", need)
+
+
+def _may(ctx, kind: str, need: str = "READ") -> bool:
+    return common.allows(ctx, security.PROCUREMENT_AREA_OF[kind], need)
+
+
+def _can_write(ctx, kind: str) -> bool:
+    return _may(ctx, kind, "WRITE")
+
+
+def _seen(ctx) -> list:
+    return [k for k in KINDS if _may(ctx, k)]
 
 
 def _banners(q) -> str:
@@ -51,37 +70,22 @@ def _banners(q) -> str:
 
 
 def _tabs(ctx, on: str) -> str:
+    seen = _seen(ctx)
     counts = {k: ctx.conn.execute(f"SELECT COUNT(*) FROM {bizbox.KINDS[k][0]} WHERE source_id = ? AND present = 1",
-                                  (bizbox.SOURCE,)).fetchone()[0] for k in KINDS}
-    counts["vendor"] = len(bizbox.vendors(ctx.conn))
-    counts["changes"] = ctx.conn.execute("SELECT COUNT(*) FROM ext_batch WHERE source_id = ? AND status IN ('PENDING', 'APPROVED')",
-                                         (bizbox.SOURCE,)).fetchone()[0]
+                                  (bizbox.SOURCE,)).fetchone()[0] for k in seen}
+    if "purchase_order" in seen or "invoice" in seen:
+        counts["vendor"] = len(bizbox.vendors(ctx.conn))
+    marks = ",".join("?" * len(seen))
+    counts["changes"] = ctx.conn.execute(
+        "SELECT COUNT(*) FROM ext_batch WHERE source_id = ? AND status IN ('PENDING', 'APPROVED')"
+        f" AND kind IN ({marks})", [bizbox.SOURCE, *(bizbox.LINK_KIND[k] for k in seen)]).fetchone()[0] if seen else 0
     return ("<div class=stabs>" + "".join(
-        f"<a class='{'on' if k == on else ''}' href='/procurement?tab={k}'>{v} · {counts[k]}</a>" for k, v in TABS) + "</div>")
-
-
-READ_WORDS = {"purchase_order": "purchase orders", "po_line": "order lines", "product": "items",
-              "invoice": "receiving reports", "agreement": "agreements"}
-
-
-def _read_words(result: str) -> str:
-    """The read's own summary ("purchase_order: 5 rows, 5 new, ...") in words:
-    what BizBox holds, and what changed since the read before. No kind or
-    table name reaches the screen (Dada, 13 Oct 2026)."""
-    parts = []
-    for m in re.finditer(r"(\w+): (\d+) rows, (\d+) new, (\d+) changed, (\d+) unchanged, (\d+) absent", result or ""):
-        kind, rows, new, changed, _, gone = m.group(1), *map(int, m.groups()[1:])
-        if not rows and not gone:
-            continue
-        bits = ", ".join(b for b in (f"{new} new" if new else "", f"{changed} changed" if changed else "",
-                                     f"{gone} gone" if gone else "") if b)
-        parts.append(f"{rows} {READ_WORDS.get(kind, kind.replace('_', ' '))}" + (f" ({bits})" if bits else ""))
-    return (" · " + " · ".join(parts)) if parts else ""
+        f"<a class='{'on' if k == on else ''}' href='/procurement?tab={k}'>{v} · {counts[k]}</a>" for k, v in TABS if k in counts) + "</div>")
 
 
 def _head(ctx, on: str, q) -> str:
     st = bizbox.status(ctx.conn)
-    sync = (f"Read from BizBox {t.esc(st['last_sync_at'])}{t.esc(_read_words(st['last_result']))}" if st and st["last_sync_at"]
+    sync = (f"Read from BizBox {t.esc(st['last_sync_at'])}{t.esc(bizbox.read_words(st['last_result']))}" if st and st["last_sync_at"]
             else "Not read from BizBox yet: the hourly read has not run.")
     return (_banners(q) + "<h1>Procurement</h1><p class=sub>Everything here is read from BizBox: purchase orders, "
             "receiving, items and vendors. To change something, tick rows and set one thing on all of them, or edit "
@@ -94,13 +98,16 @@ def index(ctx):
     from .. import Response
     _gate(ctx)
     q = ctx.request.query
-    tab = q.get("tab", "purchase_order")
+    tab = q.get("tab", "")
     if tab == "vendor":
         return _vendors(ctx)
     if tab == "changes":
         return _changes(ctx)
     if tab not in KINDS:
-        tab = "purchase_order"
+        tab = (_seen(ctx) or ["changes"])[0]               # the first area the person may see
+        if tab == "changes":
+            return _changes(ctx)
+    _gate(ctx, tab)
     return Response(body=t.page("Procurement", _head(ctx, tab, q) + _grid(ctx, tab), user=ctx.user, active=AREA))
 
 
@@ -136,8 +143,9 @@ def _grid(ctx, kind) -> str:
     # Finance's columns, in Procurement's words: the receiving report's
     # counterparty is the vendor here, never "party" (Dada, 13 Oct 2026).
     columns = [(f, "Vendor" if f == "party" else lab) for f, lab in finance._columns(ctx, kind)]
-    can = _can_write(ctx)
+    can = _can_write(ctx, kind)
     editable = bizbox.EDITABLE.get(kind, {}) if can else {}
+    choice = {f: bizbox.choices(ctx.conn, kind, f) for f in editable}     # [] for a free-text field
     lines = {}
     if kind == "purchase_order" and rows:
         refs = [r["ext_ref"] for r in rows]
@@ -159,9 +167,19 @@ def _grid(ctx, kind) -> str:
             v = r[f]
             if f == "unit_cost" and v is not None:
                 v = f"{float(v):g}"
+            cur = "" if v is None else str(v)
+            label = f"{bizbox.FIELD_WORDS.get(f, f)} of {r['ext_ref']}"
+            if choice[f]:
+                # a dropdown of what BizBox accepts; the row's own value stays
+                # choosable even when BizBox no longer lists it
+                options = "".join(f"<option value='{t.esc(c)}'{' selected' if c == cur else ''}>{t.esc(l)}</option>" for c, l in choice[f])
+                if cur and cur not in {c for c, _ in choice[f]}:
+                    options = f"<option value='{t.esc(cur)}' selected>{t.esc(cur)} (as in BizBox)</option>" + options
+                return (f"<td class=ecell><select form=grid name='e:{t.esc(r['ext_ref'])}:{f}' data-was='{t.esc(cur)}'"
+                        f" aria-label='{t.esc(label)}'>{options}</select></td>")
             typ = "date" if editable[f] == "date" else "text"
             return (f"<td class='ecell{' num' if f == 'unit_cost' else ''}'><input form=grid type={typ} name='e:{t.esc(r['ext_ref'])}:{f}'"
-                    f" value='{t.esc('' if v is None else str(v))}' data-was='{t.esc('' if v is None else str(v))}' aria-label='{t.esc(bizbox.FIELD_WORDS.get(f, f))} of {t.esc(r['ext_ref'])}'></td>")
+                    f" value='{t.esc(cur)}' data-was='{t.esc(cur)}' aria-label='{t.esc(label)}'></td>")
         return finance._cell(r, f, AREA)
     trs = []
     for r in rows:
@@ -193,10 +211,10 @@ def _grid(ctx, kind) -> str:
     tools = ""
     if can and editable:
         fopts = "".join(f"<option value={f}>{t.esc(bizbox.FIELD_WORDS[f])}</option>" for f in editable)
-        tools = (f"<form id=bulk method=post action='/procurement/{kind}/bulk' class='row schedbar bulkbar' style='margin-top:10px'>"
+        tools = (f"<form id=bulk method=post action='/procurement/{kind}/bulk' class='row schedbar bulkbar' style='margin-top:10px' data-valuepick>"
                  "<div style='flex:0 0 auto'><b><span data-ticked>0</span> ticked</b> · change</div>"
                  f"<div style='flex:0 0 170px'><select name=field aria-label='Field to change'>{fopts}</select></div>"
-                 "<div style='flex:1 1 160px'><input name=new_value required maxlength=200 placeholder='to this new value'></div>"
+                 f"<div style='flex:1 1 160px'>{finance.value_inputs(ctx, kind, list(editable))}</div>"
                  "<div style='flex:1 1 200px'><input name=reason required maxlength=400 placeholder='Why? The approver sees this'></div>"
                  f"<div style='flex:0 0 auto'><button type=submit>{t.icon('check')} Send for approval</button></div></form>"
                  f"<form id=grid method=post action='/procurement/{kind}/edits' class='row schedbar' style='margin-top:6px'>"
@@ -208,9 +226,10 @@ def _grid(ctx, kind) -> str:
               "function count(){if(n)n.textContent=boxes().filter(function(b){return b.checked}).length}"
               "if(tick)tick.addEventListener('change',function(){boxes().forEach(function(b){b.checked=tick.checked});count()});"
               "boxes().forEach(function(b){b.addEventListener('change',count)});"
-              "var e=document.querySelector('[data-edited]');function edited(){var c=0;document.querySelectorAll('td.ecell input').forEach(function(i){"
+              "var e=document.querySelector('[data-edited]');function edited(){var c=0;document.querySelectorAll('td.ecell input,td.ecell select').forEach(function(i){"
               "if(i.value!==i.getAttribute('data-was')){c++;i.classList.add('edited')}else{i.classList.remove('edited')}});if(e)e.textContent=c}"
-              "document.querySelectorAll('td.ecell input').forEach(function(i){i.addEventListener('input',edited)});edited();count()})()</script>")
+              "document.querySelectorAll('td.ecell input,td.ecell select').forEach(function(i){i.addEventListener('input',edited);i.addEventListener('change',edited)});edited();count()})()</script>"
+              + finance.VALUE_PICK_SCRIPT)
     return ("<div class=card>" + filters + tools + f"<div class=tablewrap><table class='compact pgrid'><thead><tr>{head}</tr></thead><tbody>"
             + ("".join(trs) or f"<tr><td colspan={ncol} class=muted>Nothing here yet.</td></tr>") + "</tbody></table></div>" + pager
             + "</div>" + script)
@@ -255,16 +274,22 @@ def _batch_what(b) -> str:
 
 
 def _batch_actions(ctx, b) -> str:
-    if not _can_write(ctx) or b["status"] not in ("PENDING", "APPROVED"):
+    """Approve: the area's Approve level, never one's own. Cancel: the person
+    who asked, or an approver of the area."""
+    if b["status"] not in ("PENDING", "APPROVED"):
         return ""
+    kind = BACK_KIND[b["kind"]]
+    mine = (b["requested_by"] or "").lower() == (ctx.user.id or "").lower()
+    approver = _may(ctx, kind, "ADMIN")
     out = ""
-    if b["status"] == "PENDING" and (b["requested_by"] or "").lower() != (ctx.user.id or "").lower():
+    if b["status"] == "PENDING" and approver and not mine:
         out += (f"<form method=post action='/procurement/batch/{b['batch_id']}/approve' class=inline>"
                 f"<button class=small type=submit>{t.icon('check')} Approve</button></form> ")
-    elif b["status"] == "PENDING":
+    elif b["status"] == "PENDING" and mine:
         out += "<span class=muted>yours: someone else approves</span> "
-    out += (f"<form method=post action='/procurement/batch/{b['batch_id']}/cancel' class=inline>"
-            "<button class='ghost small' type=submit>Cancel</button></form>")
+    if mine or approver:
+        out += (f"<form method=post action='/procurement/batch/{b['batch_id']}/cancel' class=inline>"
+                "<button class='ghost small' type=submit>Cancel</button></form>")
     return out
 
 
@@ -275,8 +300,8 @@ def _changes(ctx):
     if status not in ("OPEN", "PENDING", "APPROVED", "APPLIED", "REJECTED", "CANCELLED", "ALL"):
         status = "OPEN"
     rows = bizbox.batches(ctx.conn, status=None if status in ("OPEN", "ALL") else status)
-    if status == "OPEN":
-        rows = [b for b in rows if b["status"] in ("PENDING", "APPROVED")]
+    seen = {bizbox.LINK_KIND[k] for k in _seen(ctx)}
+    rows = [b for b in rows if b["kind"] in seen and (status != "OPEN" or b["status"] in ("PENDING", "APPROVED"))]
     opts = "".join(f"<option value={k}{' selected' if k == status else ''}>{v}</option>" for k, v in (
         ("OPEN", "Waiting to be approved or sent"), ("PENDING", "Waiting for approval"), ("APPROVED", "Approved, waiting to be sent"),
         ("APPLIED", "Applied in BizBox"), ("REJECTED", "Refused by BizBox"), ("CANCELLED", "Cancelled"), ("ALL", "All")))
@@ -310,6 +335,7 @@ def batch_page(ctx, batch_id):
     b = bizbox.batch(ctx.conn, int(batch_id) if str(batch_id).isdigit() else -1)
     if b is None:
         raise HttpError("404 Not Found", "No such batch.")
+    _gate(ctx, BACK_KIND[b["kind"]])
     rows = bizbox.batch_changes(ctx.conn, b["batch_id"])
     b = dict(b) | {"n": len(rows)}
     kind = {v: k for k, v in bizbox.LINK_KIND.items()}[b["kind"]]
@@ -339,9 +365,18 @@ def batch_page(ctx, batch_id):
     return Response(body=t.page(f"Batch #{b['batch_id']}", body, user=ctx.user, active=AREA))
 
 
+def _batch_or_404(ctx, batch_id):
+    from .. import HttpError
+    b = bizbox.batch(ctx.conn, int(batch_id) if str(batch_id).isdigit() else -1)
+    if b is None:
+        raise HttpError("404 Not Found", "No such batch.")
+    return b
+
+
 def approve(ctx, batch_id):
     from .. import redirect
-    _gate(ctx, "WRITE")
+    _gate(ctx)
+    _gate(ctx, BACK_KIND[_batch_or_404(ctx, batch_id)["kind"]], "ADMIN")
     try:
         bizbox.approve(ctx.conn, int(batch_id) if str(batch_id).isdigit() else -1, at=ctx.now, actor=ctx.user.id)
         ctx.conn.commit()
@@ -353,7 +388,10 @@ def approve(ctx, batch_id):
 
 def cancel(ctx, batch_id):
     from .. import redirect
-    _gate(ctx, "WRITE")
+    _gate(ctx)
+    b = _batch_or_404(ctx, batch_id)
+    if (b["requested_by"] or "").lower() != (ctx.user.id or "").lower():
+        _gate(ctx, BACK_KIND[b["kind"]], "ADMIN")
     try:
         n = bizbox.cancel_batch(ctx.conn, int(batch_id) if str(batch_id).isdigit() else -1, at=ctx.now, actor=ctx.user.id)
         ctx.conn.commit()
@@ -371,12 +409,14 @@ def _back(kind, **extra) -> str:
 
 def bulk(ctx, kind):
     from .. import redirect
-    _gate(ctx, "WRITE")
+    _gate(ctx)
     if kind not in KINDS:
         return redirect("/procurement")
+    _gate(ctx, kind, "WRITE")
     f = ctx.request.form()
     try:
-        out = bizbox.propose_many(ctx.conn, kind, ctx.request.form_list("refs"), f.get("field", ""), f.get("new_value", ""),
+        out = bizbox.propose_many(ctx.conn, kind, ctx.request.form_list("refs"), f.get("field", ""),
+                                  finance.picked_value(f, f.get("field", "")),
                                   reason=f.get("reason", ""), at=ctx.now, actor=ctx.user.id)
         ctx.conn.commit()
     except bizbox.Refused as exc:
@@ -388,9 +428,10 @@ def bulk(ctx, kind):
 
 def edits(ctx, kind):
     from .. import redirect
-    _gate(ctx, "WRITE")
+    _gate(ctx)
     if kind not in KINDS:
         return redirect("/procurement")
+    _gate(ctx, kind, "WRITE")
     f = ctx.request.form()
     triples = []
     for key in f.keys():
@@ -412,11 +453,23 @@ def edits(ctx, kind):
 
 # ---------------------------------------------------------------------- adds
 
+def _pick(ctx, kind, field, name, chosen="", *, empty=None, required=False, fallback=""):
+    """A dropdown of BizBox's choices for the field, or the plain input when
+    there is no list yet."""
+    opts = bizbox.choices(ctx.conn, kind, field)
+    if not opts:
+        return fallback
+    o = (f"<option value=''>{t.esc(empty)}</option>" if empty is not None else "") + "".join(
+        f"<option value='{t.esc(c)}'{' selected' if c == chosen else ''}>{t.esc(l)}</option>" for c, l in opts)
+    return f"<select name={name}{' required' if required else ''}>{o}</select>"
+
+
 def new_form(ctx, kind):
     from .. import HttpError, Response
-    _gate(ctx, "WRITE")
+    _gate(ctx)
     if kind not in bizbox.ADDABLE:
         raise HttpError("404 Not Found", "Nothing of that kind is added from the desk.")
+    _gate(ctx, kind, "WRITE")
     q = ctx.request.query
     v = ctx.request.query
     if kind == "purchase_order":
@@ -427,19 +480,32 @@ def new_form(ctx, kind):
                           f"<td><input name='line{i}_description' maxlength=400></td>"
                           f"<td><input name='line{i}_quantity' type=number step=any min=0 style='width:90px'></td>"
                           f"<td><input name='line{i}_unit_cost' type=number step=any min=0 style='width:110px'></td></tr>")
-        fields = (f"<div><label>Vendor</label><input name=vendor list=vendors required maxlength=400 value='{t.esc(v.get('vendor', ''))}'>"
-                  f"<datalist id=vendors>{vendors}</datalist></div>"
+        currencies = bizbox.choices(ctx.conn, kind, "currency")
+        php = "PHP" if any(c == "PHP" for c, _ in currencies) else (currencies[0][0] if currencies else "")
+        fields = ("<div><label>Vendor</label>"
+                  + _pick(ctx, kind, "vendor", "vendor", v.get("vendor", ""), empty="Choose a vendor BizBox has", required=True,
+                          fallback="<input name=vendor required maxlength=400 placeholder='no vendor read from BizBox yet'>")
+                  + "</div>"
                   f"<div><label>Order date</label><input type=date name=ordered_on value='{t.esc(v.get('ordered_on', ''))}'></div>"
-                  "<div><label>Currency</label><input name=currency maxlength=8 value='PHP'></div>"
-                  "<div><label>Status</label><input name=status maxlength=32 placeholder='leave empty: BizBox decides'></div>"
+                  "<div><label>Currency</label>"
+                  + _pick(ctx, kind, "currency", "currency", v.get("currency") or php, fallback="<input name=currency maxlength=8 value='PHP'>")
+                  + "</div><div><label>Status</label>"
+                  + _pick(ctx, kind, "status", "status", "", empty="Leave to BizBox",
+                          fallback="<input name=status maxlength=32 placeholder='leave empty: BizBox decides'>")
+                  + "</div>"
                   "<div style='grid-column:1/-1'><label>Lines</label><div class=tablewrap><table class=compact><thead><tr><th>#</th><th>Item</th>"
                   "<th>Description</th><th>Qty</th><th>Unit cost</th></tr></thead><tbody>" + "".join(line(i) for i in range(1, 9))
                   + f"</tbody></table></div><datalist id=items>{items}</datalist></div>")
     else:
         fields = ("<div><label>Item code</label><input name=ext_ref maxlength=64 placeholder='leave empty: BizBox numbers it'></div>"
                   "<div><label>Name</label><input name=name required maxlength=400></div>"
-                  "<div><label>Category</label><input name=category maxlength=400></div>"
-                  "<div><label>Unit</label><input name=unit maxlength=32 placeholder='pc, box, ream'></div>"
+                  "<div><label>Category</label>"
+                  + _pick(ctx, kind, "category", "category", v.get("category", ""), empty="(none)",
+                          fallback="<input name=category maxlength=400>")
+                  + "</div><div><label>Unit</label>"
+                  + _pick(ctx, kind, "unit", "unit", v.get("unit", ""), empty="(none)",
+                          fallback="<input name=unit maxlength=32 placeholder='pc, box, ream'>")
+                  + "</div>"
                   "<div><label>Unit cost</label><input name=unit_cost type=number step=any min=0></div>")
     body = (_banners(q) + f"<h1>{NEW_WORDS[kind]}</h1><p class=sub>This goes to the Changes tab for a second person to approve. Once it is approved and sent, BizBox "
             f"creates it and gives it its number. <a href='/procurement?tab={kind}'>Back</a></p>"
@@ -451,9 +517,10 @@ def new_form(ctx, kind):
 
 def add(ctx, kind):
     from .. import redirect
-    _gate(ctx, "WRITE")
+    _gate(ctx)
     if kind not in bizbox.ADDABLE:
         return redirect("/procurement")
+    _gate(ctx, kind, "WRITE")
     f = ctx.request.form()
     record = {k: f.get(k, "") for k in bizbox.ADDABLE[kind]["fields"]}
     lines = []

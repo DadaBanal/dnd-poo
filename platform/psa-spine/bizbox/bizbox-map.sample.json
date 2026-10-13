@@ -1,62 +1,63 @@
 {
-  "_comment": [
-    "Which BizBox views and columns Dada PSA mirrors, read-only. As SQL01 built them on 29 Sep 2026 (MEASURED from its Reply in",
-    "docs/handoffs/HANDOFF-cloud-sql01-WS36-20260929-bizbox.md): schema psa in the BizBox database, four views, a login that can",
-    "read only those. The real map lives on the host (D:\\psa\\bizbox-map.json), not in the repo; this copy is the shape.",
-    "psaspine refuses any name that looks like a patient table or field.",
-    "There is no agreement kind: BizBox holds no supplier agreements (its contract tables are patient coverage). If a source is",
-    "ever named, add {\"agreement\": {\"view\": ..., \"columns\": {\"ext_ref\", \"name\", \"party\", \"starts_on\", \"ends_on\", \"status\",",
-    "\"amount\", \"currency\"}}} and, on the invoice, \"agreement_ref\". The Finance page shows the Agreements tab once rows exist.",
-    "An invoice here is BizBox's receiving report (its key is the receiving number); supplier_ref is the supplier's own invoice",
-    "number, which staff type and which repeats, so it is never the key. Status is BizBox's own word; paid is not knowable there."
-  ],
-  "objects": {
-    "product": {
-      "view": "psa.vw_product",
-      "columns": {
-        "ext_ref": "ItemCode",
-        "name": "ItemName",
-        "category": "Category",
-        "unit": "Unit",
-        "unit_cost": "UnitCost"
-      }
-    },
-    "purchase_order": {
-      "view": "psa.vw_purchase_order",
-      "columns": {
-        "ext_ref": "PONo",
-        "vendor": "VendorName",
-        "ordered_on": "PODate",
-        "status": "Status",
-        "total": "TotalAmount",
-        "currency": "Currency"
-      }
-    },
-    "po_line": {
-      "view": "psa.vw_purchase_order_line",
-      "columns": {
-        "ext_ref": "LineID",
-        "po_ref": "PONo",
-        "line_no": "LineNo",
-        "product_ref": "ItemCode",
-        "description": "Description",
-        "quantity": "QtyOrdered",
-        "received_qty": "QtyReceived",
-        "unit_cost": "UnitCost"
-      }
-    },
-    "invoice": {
-      "view": "psa.vw_invoice",
-      "columns": {
-        "ext_ref": "ReceivingNo",
-        "supplier_ref": "SupplierInvoiceNo",
-        "party": "VendorName",
-        "invoiced_on": "InvoiceDate",
-        "due_on": "DueDate",
-        "status": "Status",
-        "total": "TotalAmount",
-        "currency": "Currency"
-      }
-    }
+ "_comment": [
+  "Which BizBox views and columns Dada PSA mirrors, read-only. As SQL01 built them on 29 Sep 2026 (MEASURED from its Reply in",
+  "docs/handoffs/HANDOFF-cloud-sql01-WS36-20260929-bizbox.md): schema psa in the BizBox database, four views, a login that can",
+  "read only those. The real map lives on the host (D:\\psa\\bizbox-map.json), not in the repo; this copy is the shape.",
+  "psaspine refuses any name that looks like a patient table or field.",
+  "There is no agreement kind: BizBox holds no supplier agreements (its contract tables are patient coverage). If a source is",
+  "ever named, add {\"agreement\": {\"view\": ..., \"columns\": {\"ext_ref\", \"name\", \"party\", \"starts_on\", \"ends_on\", \"status\",",
+  "\"amount\", \"currency\"}}} and, on the invoice, \"agreement_ref\". The Finance page shows the Agreements tab once rows exist.",
+  "An invoice here is BizBox's receiving report (its key is the receiving number); supplier_ref is the supplier's own invoice",
+  "number, which staff type and which repeats, so it is never the key. Status is BizBox's own word; paid is not knowable there.",
+  "Optional, 13 Oct 2026 (081): a \"lookup\" object reads BizBox's own code lists for the desk's dropdowns, e.g. {\"lookup\": {\"view\": \"psa.vw_lookup\", \"columns\": {\"list\": \"ListName\", \"code\": \"Code\", \"label\": \"Label\", \"sort_no\": \"SortNo\"}}}; list is one of po_status, rr_status, currency, unit, category. Not in this sample, so a desk without the view reads as before."
+ ],
+ "objects": {
+  "product": {
+   "view": "psa.vw_product",
+   "columns": {
+    "ext_ref": "ItemCode",
+    "name": "ItemName",
+    "category": "Category",
+    "unit": "Unit",
+    "unit_cost": "UnitCost"
+   }
+  },
+  "purchase_order": {
+   "view": "psa.vw_purchase_order",
+   "columns": {
+    "ext_ref": "PONo",
+    "vendor": "VendorName",
+    "ordered_on": "PODate",
+    "status": "Status",
+    "total": "TotalAmount",
+    "currency": "Currency"
+   }
+  },
+  "po_line": {
+   "view": "psa.vw_purchase_order_line",
+   "columns": {
+    "ext_ref": "LineID",
+    "po_ref": "PONo",
+    "line_no": "LineNo",
+    "product_ref": "ItemCode",
+    "description": "Description",
+    "quantity": "QtyOrdered",
+    "received_qty": "QtyReceived",
+    "unit_cost": "UnitCost"
+   }
+  },
+  "invoice": {
+   "view": "psa.vw_invoice",
+   "columns": {
+    "ext_ref": "ReceivingNo",
+    "supplier_ref": "SupplierInvoiceNo",
+    "party": "VendorName",
+    "invoiced_on": "InvoiceDate",
+    "due_on": "DueDate",
+    "status": "Status",
+    "total": "TotalAmount",
+    "currency": "Currency"
+   }
   }
+ }
 }
