@@ -4025,3 +4025,29 @@ Read as, and acted on: **an existing login `bizboxsa` is the credential for what
 **Nothing changes for WS36.** Part 87 already told them the credential is Dada's to set; it still is, and which login it names is not their concern. The two gaps from Part 88 are still in front of any write regardless of the credential: **no concurrency token anywhere in the write path** (theirs, confirmed by me against the code), and **no MMS kind in `CK_ext_change_01` or `CK_ext_batch_01`**, so no MMS change can be recorded today let alone written (mine).
 
 **Nothing changed on any host. `PSA_BIZBOX_WRITE_ODBC` confirmed unset.**
+
+**Part 89, addition (14 Oct 2026): Bizbox Chat is the standing route for everything BizBox. SQL01 does not probe BizBox.**
+
+Dada, completing the sequence in five fragments: *"there is already bizboxsa"* · *"ask bizbox chat"* · *"for everythung u need"* · *"regarding bizbox"* · *"nd all your queried"*.
+
+Read as one instruction delivered in pieces: **ask Bizbox Chat for everything I need regarding BizBox, and all my queries.** Not only the `bizboxsa` question — **anything BizBox.** The reading was stated on the fourth fragment, when *"regarding bizbox"* was a noun with no verb — the highest-risk message shape in the whole record — and **the fifth fragment confirmed it in his own words** rather than leaving it to stand on my inference.
+
+**Two readings were possible when only four fragments existed, and both were already satisfied**, so nothing built was wrong either way: (a) `bizboxsa` is the credential for everything needed regarding BizBox — which is what Part 89 records; (b) Bizbox Chat is the route for everything needed regarding BizBox — which is what I did by sending the `bizboxsa` question to them rather than running my own probe. **"nd all your queried" settles it as (b)**, and as a standing rule rather than a one-off, since "all" is not about one question.
+
+That is R11 working as intended, and worth noting as such: the reading was stated in one line before acting, he completed the sentence, and no work had to be undone. The cost of the ambiguity was a single sentence rather than an hour.
+
+**The rule, and the line it draws.** It is not "SQL01 stops working on MMS" — SQL01 is still the driver Dada named in Part 87. It is a split by *what is being touched*:
+
+| Goes to Bizbox Chat | Stays with SQL01 |
+|---|---|
+| measuring anything in `LiveDB_PMC`, `TrainingDB_HIS8` or `ReportServer` that belongs to **BizBox** — tables, columns, flags, logins, procedures, report usage, the assemblies | the **desk's own** objects: `psa.vw_*` views, `psa.sp_apply_change`, the `PMC_PSA` schema steps, the map on `D:\psa` |
+| what a BizBox field, status or flag *means* | what the desk does with it |
+| what the vendor client does and whether something would break it | the handoffs, the runbook, and relaying rulings to WS36 |
+
+**This is the third time he has corrected me in the same direction.** First *"the bozbox chat can get to it"*, when I told them SQL01 had the SQL route and they might not. Then he rejected a `LiveDB_PMC` table survey I had started, mid-call. Now *"ask bizbox chat … regarding bizbox"*. **The pattern is mine to stop repeating, not his to keep correcting:** I reach for a probe because I have the connection, when the answer belongs to the session that holds the knowledge. Having the route is not the same as owning the question.
+
+**Already applied, not retrospective.** The `bizboxsa` probe was written and **deliberately not run**; it stays unrun in the scratchpad. The questions put to them are on the record in Part 89 — what the login is, what it holds, whose account it actually is, and whether BizBox tolerates a narrow `EXECUTE`-only login instead. **Counts, roles and names only; no password, no connection string.**
+
+**One consequence worth naming now rather than discovering later.** The stock-truth work from Part 84 — building `psa.vw_stock_on_hand` off the ledger rather than off `actualqty` — sits across this line. **The view is the desk's object and mine to write; the measurements that justify it are Bizbox Chat's and already done.** So that work does not need a new BizBox probe from me, and will not get one. If it turns out to need a fact about BizBox I do not already hold, it goes to them.
+
+**Nothing changed on any host. `PSA_BIZBOX_WRITE_ODBC` confirmed unset; `writer_in_force()` returns `NoWriter`.**
