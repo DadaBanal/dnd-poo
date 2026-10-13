@@ -180,6 +180,38 @@
     "project_plan_item.budget_hours": {
       "sql": "DECIMAL(9,2)",
       "why": "A template's planned ticket budget (069), the unit of every project budget."
+    },
+    "ext_stock.quantity": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_stock.unit_cost": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_movement.qty_in": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_movement.qty_out": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_movement.balance": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_movement.unit_cost": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_rr_line.quantity": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_rr_line.unit_cost": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
     }
   },
   "columns": {
@@ -1246,6 +1278,29 @@
     "ext_medicine.mims_ref": "NAME",
     "ext_medicine.admin_group": "NAME",
     "ext_medicine.remarks": "FREE",
-    "ext_medicine.synced_at": "TIMESTAMP_TEXT"
+    "ext_medicine.synced_at": "TIMESTAMP_TEXT",
+    "intake_message.body_hash": "CODE",
+    "ext_stock.source_id": "ID",
+    "ext_stock.ext_ref": "REF",
+    "ext_stock.warehouse_ref": "REF",
+    "ext_stock.item_ref": "REF",
+    "ext_stock.as_of": "TIMESTAMP_TEXT",
+    "ext_stock.synced_at": "TIMESTAMP_TEXT",
+    "ext_movement.source_id": "ID",
+    "ext_movement.ext_ref": "REF",
+    "ext_movement.item_ref": "REF",
+    "ext_movement.warehouse_ref": "REF",
+    "ext_movement.moved_on": "TIMESTAMP_TEXT",
+    "ext_movement.kind": "CODE",
+    "ext_movement.doc_ref": "REF",
+    "ext_movement.remarks": "FREE",
+    "ext_movement.synced_at": "TIMESTAMP_TEXT",
+    "ext_rr_line.source_id": "ID",
+    "ext_rr_line.ext_ref": "REF",
+    "ext_rr_line.rr_ref": "REF",
+    "ext_rr_line.product_ref": "REF",
+    "ext_rr_line.description": "NAME",
+    "ext_rr_line.po_ref": "REF",
+    "ext_rr_line.synced_at": "TIMESTAMP_TEXT"
   }
 }

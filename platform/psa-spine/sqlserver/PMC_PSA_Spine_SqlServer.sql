@@ -256,6 +256,9 @@ BEGIN
     PRINT N'    psa.mms_report_run';
     PRINT N'    psa.ext_warehouse';
     PRINT N'    psa.ext_medicine';
+    PRINT N'    psa.ext_stock';
+    PRINT N'    psa.ext_movement';
+    PRINT N'    psa.ext_rr_line';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -334,13 +337,19 @@ BEGIN
     PRINT N'    psa.ix_mms_report_run_member';
     PRINT N'    psa.ix_ext_warehouse_group';
     PRINT N'    psa.ix_ext_medicine_controlled';
+    PRINT N'    psa.ix_ext_stock_item';
+    PRINT N'    psa.ix_ext_stock_warehouse';
+    PRINT N'    psa.ix_ext_movement_item';
+    PRINT N'    psa.ix_ext_movement_warehouse';
+    PRINT N'    psa.ix_ext_movement_when';
+    PRINT N'    psa.ix_ext_rr_line_rr';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  158 tables, 77 indexes, 4 triggers.';
+    PRINT N'  161 tables, 83 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -4034,6 +4043,89 @@ CREATE TABLE psa.[ext_medicine] (
 END;
 
 -- --------------------------------------------------------------------------
+-- ext_stock   (from schema/084_mms_stock.sql)
+-- One row per (warehouse, item) that holds stock; ext_ref is
+-- <warehouse_ref>:<item_ref>, made by the read when the view has no key.
+IF OBJECT_ID(N'psa.[ext_stock]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_stock] (
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_stock_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [warehouse_ref] NVARCHAR(400) NOT NULL,
+    [item_ref] NVARCHAR(400) NOT NULL,
+    [quantity] DECIMAL(19,4) NOT NULL,
+    [unit_cost] DECIMAL(19,4) NULL,
+    [as_of] NVARCHAR(64) NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_ext_stock_present] DEFAULT (1) CONSTRAINT [CK_ext_stock_01] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [as_of_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [as_of], 126), CASE WHEN [as_of] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [as_of], 112) END)),
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END)),
+    CONSTRAINT [PK_ext_stock] PRIMARY KEY ([source_id], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ext_movement   (from schema/084_mms_stock.sql)
+-- One row per movement of an item in a warehouse inside the view's window:
+-- received, issued, transferred, adjusted, counted. kind is BizBox's own
+-- word; doc_ref the document that moved it (a receiving report, an issue
+-- slip, a transfer). Rows the view no longer returns are deleted, not kept
+-- absent: the window moved, nothing was lost in BizBox.
+IF OBJECT_ID(N'psa.[ext_movement]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_movement] (
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_movement_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [item_ref] NVARCHAR(400) NOT NULL,
+    [warehouse_ref] NVARCHAR(400) NULL,
+    [moved_on] NVARCHAR(64) NOT NULL,
+    [kind] NVARCHAR(32) NULL,
+    [doc_ref] NVARCHAR(400) NULL,
+    [qty_in] DECIMAL(19,4) NULL,
+    [qty_out] DECIMAL(19,4) NULL,
+    [balance] DECIMAL(19,4) NULL,
+    [unit_cost] DECIMAL(19,4) NULL,
+    [remarks] NVARCHAR(MAX) NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_ext_movement_present] DEFAULT (1) CONSTRAINT [CK_ext_movement_01] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [moved_on_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [moved_on], 126), CASE WHEN [moved_on] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [moved_on], 112) END)),
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END)),
+    CONSTRAINT [PK_ext_movement] PRIMARY KEY ([source_id], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ext_rr_line   (from schema/084_mms_stock.sql)
+-- A receiving report's lines, as ext_po_line is a purchase order's.
+IF OBJECT_ID(N'psa.[ext_rr_line]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_rr_line] (
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_rr_line_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [rr_ref] NVARCHAR(400) NOT NULL,
+    [line_no] INT NULL,
+    [product_ref] NVARCHAR(400) NULL,
+    [description] NVARCHAR(400) NULL,
+    [quantity] DECIMAL(19,4) NULL,
+    [unit_cost] DECIMAL(19,4) NULL,
+    [po_ref] NVARCHAR(400) NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_ext_rr_line_present] DEFAULT (1) CONSTRAINT [CK_ext_rr_line_01] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END)),
+    CONSTRAINT [PK_ext_rr_line] PRIMARY KEY ([source_id], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -4683,6 +4775,12 @@ ALTER TABLE psa.[configuration] ADD [parent_configuration_id] NVARCHAR(64) NULL 
 IF COL_LENGTH(N'psa.[ext_change]', N'batch_id') IS NULL
 ALTER TABLE psa.[ext_change] ADD [batch_id] INT NULL CONSTRAINT [FK_ext_change_batch_id] REFERENCES psa.[ext_batch]([batch_id]);
 
+-- The intake guard (SQL01, Part 82, 30 genuine requests filed as resends):
+-- a resend is the same sender, the same subject AND the same words. The
+-- words are kept as a hash, never as text.
+IF COL_LENGTH(N'psa.[intake_message]', N'body_hash') IS NULL
+ALTER TABLE psa.[intake_message] ADD [body_hash] NVARCHAR(32) NULL;
+
 IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
 ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
 
@@ -4936,6 +5034,24 @@ CREATE INDEX [ix_ext_warehouse_group] ON psa.[ext_warehouse] ([source_id], [grou
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_medicine_controlled' AND object_id = OBJECT_ID(N'psa.[ext_medicine]'))
 CREATE INDEX [ix_ext_medicine_controlled] ON psa.[ext_medicine] ([source_id], [controlled], [present]);
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_stock_item' AND object_id = OBJECT_ID(N'psa.[ext_stock]'))
+CREATE INDEX [ix_ext_stock_item] ON psa.[ext_stock] ([source_id], [item_ref], [present]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_stock_warehouse' AND object_id = OBJECT_ID(N'psa.[ext_stock]'))
+CREATE INDEX [ix_ext_stock_warehouse] ON psa.[ext_stock] ([source_id], [warehouse_ref], [present]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_movement_item' AND object_id = OBJECT_ID(N'psa.[ext_movement]'))
+CREATE INDEX [ix_ext_movement_item] ON psa.[ext_movement] ([source_id], [item_ref], [moved_on]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_movement_warehouse' AND object_id = OBJECT_ID(N'psa.[ext_movement]'))
+CREATE INDEX [ix_ext_movement_warehouse] ON psa.[ext_movement] ([source_id], [warehouse_ref], [moved_on]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_movement_when' AND object_id = OBJECT_ID(N'psa.[ext_movement]'))
+CREATE INDEX [ix_ext_movement_when] ON psa.[ext_movement] ([source_id], [moved_on]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_rr_line_rr' AND object_id = OBJECT_ID(N'psa.[ext_rr_line]'))
+CREATE INDEX [ix_ext_rr_line_rr] ON psa.[ext_rr_line] ([source_id], [rr_ref]);
+
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
@@ -5071,10 +5187,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 158 OR @Triggers <> 4 OR @Indexes < 77
+IF @Tables <> 161 OR @Triggers <> 4 OR @Indexes < 83
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 158), %d triggers (expected 4), %d indexes (expected at least 77). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 161), %d triggers (expected 4), %d indexes (expected at least 83). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -5134,6 +5250,9 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[ext_rr_line];
+    DROP TABLE IF EXISTS psa.[ext_movement];
+    DROP TABLE IF EXISTS psa.[ext_stock];
     DROP TABLE IF EXISTS psa.[ext_medicine];
     DROP TABLE IF EXISTS psa.[ext_warehouse];
     DROP TABLE IF EXISTS psa.[mms_report_run];

@@ -190,6 +190,14 @@ def main(argv: list[str] | None = None) -> int:
     pmr.add_argument("database", help=DB_HELP)
     pmr.add_argument("--apply", action="store_true", help="write; without it nothing is changed")
 
+    pisd = sub.add_parser("intake-split-duplicates",
+                          help="SQL01 Part 82 (13 Oct 2026): every mail filed as a resend of another's ticket becomes its own "
+                               "ticket, dated when it arrived, cross-linked; preview unless --apply")
+    pisd.add_argument("database", help=DB_HELP)
+    pisd.add_argument("--apply", action="store_true", help="write; without it nothing is changed")
+    pisd.add_argument("--since", default=None, help="only mail received on or after this day (YYYY-MM-DD)")
+    pisd.add_argument("--actor", default="sql01", help="who is recorded as doing it")
+
     pbp = sub.add_parser("bizbox-push",
                          help="13 Oct 2026: offer every APPROVED change to the BizBox writer. With "
                               "PSA_BIZBOX_WRITE_ODBC set the writer calls psa.sp_apply_change in BizBox (SQL01's "
@@ -771,6 +779,23 @@ def _run(conn, a) -> int:
             print(f"refused: {exc}", file=sys.stderr)
             return 1
         print(counts["words"] + ("" if a.apply else " (PREVIEW, nothing written)"))
+        return 0
+
+    if a.cmd == "intake-split-duplicates":
+        from . import intake
+        plan = intake.split_duplicates(conn, at=datetime.now(), actor=a.actor, apply=a.apply, since=a.since)
+        if not plan:
+            print("nothing to split: no mail is filed as a resend without a ticket of its own")
+            return 0
+        for r in plan:
+            if r.get("outcome"):
+                print(f"{r['received_at']}  from {r['from']}  {r['outcome']}")
+                continue
+            print(f"{r['received_at']}  from {r['from']}  note on {r['parent']} -> {r.get('ticket') or 'would open a ticket'} on {r['board']}: "
+                  f"{r['summary']}" + ("" if r["has_words"] else "  (no words found on that ticket; the subject alone)"))
+        done = [r for r in plan if not r.get("outcome")]
+        print(f"{len(done)} mail(s) " + ("raised as their own tickets, cross-linked" if a.apply
+                                         else "would be raised as their own tickets (PREVIEW, nothing written; re-run with --apply)"))
         return 0
 
     if a.cmd == "bizbox-push":

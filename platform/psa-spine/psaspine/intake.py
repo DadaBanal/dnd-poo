@@ -537,22 +537,44 @@ def summary_from(subject: str, body: str, message=None) -> str:
     return ""
 
 
-def _recent_same_subject(conn: sqlite3.Connection, sender: str, subject: str,
-                         at: datetime):
-    """The weaker guard, used only when there is no thread header. INFERRED.
+def body_hash(body: str | None) -> str:
+    """The words of a mail as a short hash, so a resend can be told from a new
+    request under the same subject line without the desk keeping the text
+    (SQL01, Part 82). Whitespace and case do not count."""
+    words = re.sub(r"\s+", " ", body or "").strip().lower()
+    return hashlib.sha256(words.encode("utf-8")).hexdigest()[:24]
 
-    Never on an empty subject: two unrelated requests from one ward, both sent
-    with no subject, are two requests, and matching them on "" would file the
-    second as a note on the first (Dada, 2 Oct 2026)."""
-    if not (subject or "").strip():
+
+def _minutes_between(earlier: str, later: str) -> int:
+    try:
+        return int((datetime.fromisoformat(later) - datetime.fromisoformat(earlier)).total_seconds() // 60)
+    except ValueError:
+        return 0
+
+
+def _recent_same_subject(conn: sqlite3.Connection, sender: str, subject: str,
+                         at: datetime, *, channel: str | None = None, body_hash: str | None = None):
+    """The weaker guard, used only when there is no thread header: a resend
+    is the same sender, the same subject AND the same words, in the same
+    mailbox, inside the window, and never a mail that had not arrived yet.
+
+    SQL01, Part 82 (13 Oct 2026): sender + subject + 24 h filed 30 genuine
+    requests as resends, because PMC's departments send every case under one
+    standing subject line, 4 of them onto a mail that arrived later, 1 across
+    mailboxes. Dada: "only if the body is the same too". Never on an empty
+    subject either: two unrelated requests from one ward, both sent with no
+    subject, are two requests (Dada, 2 Oct 2026)."""
+    if not (subject or "").strip() or not body_hash:
         return None
     cutoff = (at - DUPLICATE_WINDOW).isoformat(sep=" ", timespec="minutes")
+    upto = at.isoformat(sep=" ", timespec="minutes")
     return conn.execute(
-        "SELECT message_id, work_item_id FROM intake_message"
-        "  WHERE from_address = ? AND subject = ? AND received_at >= ?"
-        "    AND work_item_id IS NOT NULL"
+        "SELECT message_id, work_item_id, received_at FROM intake_message"
+        "  WHERE from_address = ? AND subject = ? AND received_at >= ? AND received_at <= ?"
+        "    AND work_item_id IS NOT NULL AND body_hash = ?"
+        "    AND COALESCE(channel, '') = COALESCE(?, '')"
         "  ORDER BY received_at DESC LIMIT 1",
-        (sender, subject, cutoff)).fetchone()
+        (sender, subject, cutoff, upto, body_hash, channel)).fetchone()
 
 
 def import_drop(conn: sqlite3.Connection, drop_dir, *, run_id: str,
@@ -569,6 +591,10 @@ def import_drop(conn: sqlite3.Connection, drop_dir, *, run_id: str,
     # A .part file is one the pickup is still writing, or one a crash left
     # half-written: never a message to import.
     files = sorted(p for p in drop.iterdir() if p.is_file() and not p.name.endswith(".part"))
+    # In the order the mail arrived, not the order the files are named: the
+    # weaker guard asks "did this come after the mail that opened the
+    # ticket?", and SQL01 measured 4 of 30 filed against a later one.
+    files.sort(key=lambda p: (_date_key(p, at), p.name))
 
     if board_id is None:
         row = conn.execute(
@@ -603,6 +629,14 @@ def import_drop(conn: sqlite3.Connection, drop_dir, *, run_id: str,
     return counts
 
 
+def _date_key(path: Path, fallback: datetime) -> str:
+    try:
+        message = email.message_from_bytes(path.read_bytes(), policy=email.policy.default)
+        return received_at(message, fallback=fallback).isoformat(sep=" ", timespec="minutes")
+    except Exception:                                   # noqa: BLE001 - an unreadable file sorts first and is recorded by the import
+        return ""
+
+
 def _import_one(conn: sqlite3.Connection, path: Path, *, run_id: str, channel: str, at: datetime,
                 rules, own_addresses, run_board: str | None, counts: dict) -> None:
     """One file of the drop: exactly one outcome, counted."""
@@ -621,6 +655,7 @@ def _import_one(conn: sqlite3.Connection, path: Path, *, run_id: str, channel: s
     when = received_at(message, fallback=at)
     stamp = when.isoformat(sep=" ", timespec="minutes")
     body = body_of(message)
+    bh = body_hash(body)
     # The sender's own HTML, rebuilt by the gate, or "" if they wrote plain
     # text. `body` stays the words: the summary and the dedup read that, never
     # the markup, so a ticket's summary is never a tag.
@@ -652,7 +687,7 @@ def _import_one(conn: sqlite3.Connection, path: Path, *, run_id: str, channel: s
     if guarded:
         # Recorded and counted like everything else; it just opens nothing.
         _record(conn, mid, stamp, sender, subject, channel, "UNCLASSIFIED",
-                None, None, run_id)
+                None, None, run_id, body_hash=bh)
         conn.execute(
             "INSERT INTO data_quality (run_id, subject_kind, subject_id, code,"
             " detail, severity) VALUES (?,?,?,?,?,?)",
@@ -685,7 +720,7 @@ def _import_one(conn: sqlite3.Connection, path: Path, *, run_id: str, channel: s
                         counts=counts)
             cc.add_from_message(conn, ticket_id, message, sender=sender, own_addresses=own_addresses, at=when)
             _record(conn, mid, stamp, sender, subject, channel, "NEW_TICKET",
-                    ticket_id, parent_id, run_id, to_address)
+                    ticket_id, parent_id, run_id, to_address, body_hash=bh)
             counts["new"] += 1
             counts["reply_to_closed"] += 1
             return
@@ -700,19 +735,29 @@ def _import_one(conn: sqlite3.Connection, path: Path, *, run_id: str, channel: s
                          (parent_ticket,))
             counts["reopened"] += 1
         _record(conn, mid, stamp, sender, subject, channel, "APPENDED",
-                parent_ticket, parent_id, run_id)
+                parent_ticket, parent_id, run_id, body_hash=bh)
         counts["appended"] += 1
         return
 
     if not parents:
-        recent = _recent_same_subject(conn, sender, subject, when)
+        recent = _recent_same_subject(conn, sender, subject, when, channel=channel, body_hash=bh)
         if recent:
-            _append_note(conn, recent["work_item_id"], body or subject,
-                         sender, stamp, body_html=body_html)
+            # Said on the ticket and counted on Setup > Email connector: a
+            # member can tell a resend from a request that never arrived
+            # (SQL01, Part 82: "nobody is told").
+            gap = _minutes_between(recent["received_at"], stamp)
+            _append_note(conn, recent["work_item_id"],
+                         f"(Sent again {gap} minute(s) after the mail that opened this ticket: the same sender, "
+                         f"subject and words, so no second ticket was raised.)\n\n" + (body or subject), sender, stamp)
+            conn.execute(
+                "INSERT INTO data_quality (run_id, subject_kind, subject_id, code, detail, severity) VALUES (?,?,?,?,?,?)",
+                (run_id, "intake_message", mid, "INTAKE_RESEND",
+                 f"a resend of the mail that opened {recent['work_item_id']}, {gap} minute(s) later; filed as a note there,"
+                 " no second ticket", "INFO"))
             _keep_files(conn, message, recent["work_item_id"], sender=sender, at=when,
                         run_id=run_id, counts=counts)
             _record(conn, mid, stamp, sender, subject, channel, "DUPLICATE",
-                    None, recent["message_id"], run_id)
+                    None, recent["message_id"], run_id, body_hash=bh)
             counts["duplicate"] += 1
             return
 
@@ -723,7 +768,7 @@ def _import_one(conn: sqlite3.Connection, path: Path, *, run_id: str, channel: s
     if not board_id or not sender or not summary:
         # Nothing to hang a ticket on. Recorded and counted, never dropped.
         _record(conn, mid, stamp, sender, subject, channel, "UNCLASSIFIED",
-                None, None, run_id)
+                None, None, run_id, body_hash=bh)
         why = ("no board to route to" if not board_id else
                "no sender" if not sender else
                "no subject, no words and no file: the mail said nothing")
@@ -741,7 +786,7 @@ def _import_one(conn: sqlite3.Connection, path: Path, *, run_id: str, channel: s
                 counts=counts)
     cc.add_from_message(conn, ticket_id, message, sender=sender, own_addresses=own_addresses, at=when)
     _record(conn, mid, stamp, sender, subject, channel, "NEW_TICKET",
-            ticket_id, None, run_id, to_address)
+            ticket_id, None, run_id, to_address, body_hash=bh)
     from . import outbox
     outbox.settle_reply_from(conn, ticket_id)     # the acknowledgement answers from the address written to
     counts["new"] += 1
@@ -810,13 +855,13 @@ def _record_failure(conn: sqlite3.Connection, path: Path, exc: BaseException, *,
 def _record(conn: sqlite3.Connection, message_id: str, stamp: str, sender: str,
             subject: str, channel: str, disposition: str,
             work_item_id: str | None, duplicate_of: str | None,
-            run_id: str, to_address: str | None = None) -> None:
+            run_id: str, to_address: str | None = None, body_hash: str | None = None) -> None:
     conn.execute(
         "INSERT INTO intake_message (message_id, received_at, from_address,"
-        " subject, channel, disposition, work_item_id, duplicate_of, run_id, to_address)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?)",
+        " subject, channel, disposition, work_item_id, duplicate_of, run_id, to_address, body_hash)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (message_id, stamp, sender or None, subject or None, channel,
-         disposition, work_item_id, duplicate_of, run_id, to_address))
+         disposition, work_item_id, duplicate_of, run_id, to_address, body_hash))
 
 
 def health(conn: sqlite3.Connection, *, days: int = 2, at: datetime | None = None) -> dict:
@@ -924,3 +969,67 @@ def retry(conn: sqlite3.Connection, message_id: str, *, at: datetime, actor: str
              subject_kind="intake_message", subject_id=message_id,
              detail="set-aside message forgotten so the next pickup sync imports it again")
     return f"{message_id} forgotten; the next pickup sync from before it arrived imports it again"
+
+
+def split_duplicates(conn: sqlite3.Connection, *, at: datetime, actor: str, apply: bool = False,
+                     since: str | None = None) -> list[dict]:
+    """Every mail filed as a resend of another's ticket (DUPLICATE, no ticket
+    of its own) becomes its own ticket, dated when it arrived, on the board
+    its mailbox belongs to, cross-linked with the ticket it was filed on
+    (Dada, 13 Oct 2026, for SQL01's 30). The words come back from the note
+    the import left on that ticket. Preview unless `apply`; returns the plan
+    either way, one row per mail."""
+    from . import itil
+    sql = "SELECT * FROM intake_message WHERE disposition = 'DUPLICATE' AND work_item_id IS NULL"
+    args: list = []
+    if since:
+        sql += " AND received_at >= ?"
+        args.append(since)
+    rows = conn.execute(sql + " ORDER BY received_at, message_id", args).fetchall()
+    claims = board_addresses(conn)
+    stamp = at.isoformat(sep=" ", timespec="minutes")
+    out = []
+    for m in rows:
+        parent = conn.execute("SELECT * FROM intake_message WHERE message_id = ?", (m["duplicate_of"],)).fetchone() if m["duplicate_of"] else None
+        parent_ticket = parent["work_item_id"] if parent else None
+        plan = {"message_id": m["message_id"], "received_at": m["received_at"], "from": m["from_address"] or "",
+                "parent": parent_ticket or "", "board": "", "summary": "", "has_words": False}
+        if not parent_ticket:
+            plan["outcome"] = "left: the ticket it was filed on cannot be found"
+            out.append(plan)
+            continue
+        note = conn.execute(
+            "SELECT detail, body_format FROM ticket_event WHERE work_item_id = ? AND kind = 'INTAKE_REPLY' AND actor = ?"
+            " AND occurred_at = ? ORDER BY ticket_event_id LIMIT 1", (parent_ticket, m["from_address"], m["received_at"])).fetchone()
+        words = (note["detail"] or "") if note else ""
+        html = words if note and note["body_format"] == "EMAIL" else None
+        plain = words
+        if html:
+            from . import richtext
+            plain = richtext.text(html) or ""
+        board = claims.get((m["to_address"] or "").lower()) or _board_of(conn, parent_ticket)
+        summary = summary_from(m["subject"] or "", plain) or f"Request split out of {parent_ticket}"
+        plan.update({"board": board, "summary": summary, "has_words": bool(words)})
+        if apply:
+            when = datetime.fromisoformat(m["received_at"])
+            new = _open_ticket(conn, board_id=board, summary=summary, requester=m["from_address"] or "",
+                               body=plain or (m["subject"] or ""), body_html=html, at=when)
+            itil.link(conn, new, parent_ticket, "RELATED", actor=actor, at=at)
+            from . import board
+            board._event(conn, new, stamp, "NOTE", actor,
+                         f"Arrived {m['received_at']} and was first filed as a note on {parent_ticket} (same sender and subject "
+                         f"line as the mail that opened it). Raised as its own ticket on {stamp[:10]}.", "INTERNAL")
+            board._event(conn, parent_ticket, stamp, "NOTE", actor,
+                         f"The note of {m['received_at']} from {m['from_address'] or 'the requester'} was a different request "
+                         f"under the same subject line: raised as its own ticket {new} on {stamp[:10]}.", "INTERNAL")
+            conn.execute("UPDATE intake_message SET disposition = 'NEW_TICKET', work_item_id = ? WHERE message_id = ?",
+                         (new, m["message_id"]))
+            db.audit(conn, at=stamp, actor=actor, action="INTAKE_SPLIT", subject_kind="ticket", subject_id=new,
+                     detail=f"split out of {parent_ticket}: the mail of {m['received_at']} filed there as a resend")
+            plan["ticket"] = new
+        out.append(plan)
+    if apply:
+        conn.commit()
+    else:
+        conn.rollback()
+    return out
