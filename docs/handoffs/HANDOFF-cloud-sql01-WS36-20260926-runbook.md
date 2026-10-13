@@ -3697,3 +3697,35 @@ Also measured and good: **`prefers-reduced-motion` honoured 13 times** (uncommon
 **Two code-health notes, not accessibility:** `!important` appears **101** times, which will make the design system harder to hold as warehousing and the Reports tab land; and `:focus` 31 against `:focus-visible` 5.
 
 Nothing was changed. The UI is WS36's code.
+
+### Part 81: 2026-10-13, ~16:25 +08:00. **082 applied; the lookup names confirmed; the stock measured. Three things now need Dada's hand.** MEASURED.
+
+Applies `HANDOFF-cloud-sql01-WS36-20261013-mms-reports-082.md` and begins `...-warehouses-drugs-083.md`.
+
+- **CI run 38362823461 on `c81f7fa`: windows, sql-server, test (3.11), test (3.14) all success.** Pulled fast-forward; 0 local-only, tree clean.
+- **Backup:** `D:\Backups\PMC_PSA\PMC_PSA_COPYONLY_pre082_20261013-162335.bak`, 132.1 MB, COPY_ONLY with CHECKSUM, `RESTORE VERIFYONLY` valid.
+- **082 applied**, 5 guarded blocks extracted from the port by their own text, one transaction, **11 checks all PASS** with the control probed first and again after: `psa.mms_report` and `psa.mms_report_run` exist, `report_id` is IDENTITY, `path` is 800, both tables empty, all three indexes present and `ux_mms_report_path` is UNIQUE. **COMMITTED.**
+- **PSA-Desk restarted**, down to 401, state Running.
+
+**Section 4a, confirmed.** `psa.ext_lookup` holds exactly the five expected `ListName` values and nothing else: `category` 58, `currency` 2, `po_status` 6, `rr_status` 3, `unit` 83 - **152 total**. Nothing missing, nothing extra that would be read and ignored.
+
+**Handoff 083's two measurements, done. The answer is better than expected.**
+
+| | |
+|---|---|
+| `dbo.iwWareitem` total rows | **591,369** |
+| rows with `actualqty` other than zero | **4,358** - **0.7%** of the table |
+| warehouses actually holding stock | **25** of the 73 |
+| largest: warehouse 1041 | 1,013 rows; then 1019 (682), 1071 (487), 1008 (357), 1052 (214) |
+
+The quantity column is **`actualqty`**; the other 20-odd quantity columns on that table are movement buckets (`purcqty`, `salesqty`, `adjinqty`, `issoutqty`), not a balance. **A view narrowed to non-zero rows mirrors 4,358 rows - a factor of 136 smaller than the table, and smaller than the desk's current largest mirror (product, 5,472).** So stock on hand is comfortably mirrorable after all, and this morning's warning is answered: narrow it, and the hourly pattern carries it unchanged.
+
+### NOT DONE - three things that need Dada, not SQL01
+
+1. **`pywin32` cannot be installed: the package hook blocks it.** Step 9 needs it so the desk reaches the report server with its own Windows sign-in. `C:\PMC\Python312\python.exe -c "import win32com.client"` fails; pip is present (26.2.1). **Verified on PyPI this session** before attempting: *pywin32*, author **Mark Hammond (et al)**, `mhammond@skippinet.com.au`, OSI-approved Python Software Foundation License, project `github.com/mhammond/pywin32`, releases back to at least 2018, page <https://pypi.org/project/pywin32/>. The install was nevertheless refused twice by `pmc_session.py` with *"PyPI '2': does not exist on PyPI"* - **the hook is parsing the trailing digits of the name as the package**. Not retried with any other spelling. Only Dada edits the allow-list. **Without it the reports tab still loads and reports the server's 401 in a sentence; it simply cannot render.**
+2. **The SSRS *Browser* role for `DND-SQL01\psa_desk` on `/BizBox MMS Reports`.** `rs.exe` is **absent** on this host, so it cannot be scripted; it needs Report Manager's web UI. Measured: SSRS knows 244 users and **`psa_desk` is not among them**.
+3. **`PSA_SSRS_URL` in PSA-Desk's environment.** The desk sets its environment **inside its own task action**, and that task runs as `psa_desk` with a **stored password**, so Windows refuses the change without it - the same wall as Parts 75 and 76. Script written for him: **`platform/psa-spine/scripts/Set-PsaDeskSsrsUrl.ps1`** - preview by default, `-Apply` asks for the password once at the Windows prompt, exports the task XML to `D:\psa\logs` first, verifies only `PSA_SSRS_URL` was added and the logon is unchanged, restarts the desk and ends in a verdict. Parses clean under PowerShell 5.1, plain ASCII, previewed.
+
+Steps 10 and 11 (the first `sync-mms-reports` read and the walk-through) wait on 1 to 3. Nothing else in the desk is affected.
+
+**Still not built, per instruction:** the write path. `PSA_BIZBOX_WRITE_ODBC` is set nowhere.
