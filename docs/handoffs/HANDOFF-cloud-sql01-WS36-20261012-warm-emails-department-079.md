@@ -85,6 +85,15 @@ A second run reads `Wrote 0 email(s)`. Setup › Audit shows `MAIL_TEMPLATE` and
 
 ## 5. The one-off tidy, preview first
 
+**Superseded in part, 13 Oct 2026 (runbook Part 77).** Dada ruled that a ticket's department is never filled in
+afterwards: it is set only at the door (the portal's dropdown, an emailed ticket's sender, a member on the desk). So
+the department half of `ticket-fill` is **gone from the code** at the head carrying this note, and the company half
+(46 tickets, UNCLASSIFIED → PMC) was **already applied by SQL01** on 12 Oct. What is left of the command names the tiles
+with no Item, and prints `department: never filled in here`. Nothing below is still to run unless Dada asks for the
+tile list again. The `IT_HELP` *Resolved* `+` line SQL01 reported is also fixed: words equal to the desk's own are
+stored NULL, so the preview now compares the words, not the flag, and a second run reads `Wrote 0`.
+
+
 ```
 C:\PMC\Python312\python.exe -m psaspine ticket-fill "<the desk's connection>" --actor "sql01 for dada.banal"
 ```

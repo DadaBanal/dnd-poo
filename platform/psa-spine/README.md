@@ -2538,10 +2538,13 @@ by hand. Those tiles are now named:
 - in a banner on Setup › Portal tiles;
 - by `ticket-fill` (next).
 
-**The one-off tidy.** `python -m psaspine ticket-fill <db> --actor … [--apply]` does three things:
-- gives tickets with no department their contact's, where AD's matches the list;
-- moves tickets filed under UNCLASSIFIED to PMC;
+**The one-off tidy.** `python -m psaspine ticket-fill <db> --actor … [--apply]` does two things:
+- moves tickets filed under UNCLASSIFIED to PMC (done on the live desk, 12 Oct 2026);
 - lists the tiles with no Item.
+
+It never fills in a department. Dada, 12 Oct 2026 (runbook Part 77): *"the departments should only come from when
+it gets picked up from the requests portal direct emailing the ticket tech or the member will add their dept
+manually"*. A department is written at those three doors and nowhere else; the backfill that was here is gone.
 
 It prints counts, department names and tile labels only, never a person or a summary. It runs as a preview first,
 and a second run finds nothing to do.

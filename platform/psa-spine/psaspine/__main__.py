@@ -284,9 +284,10 @@ def main(argv: list[str] | None = None) -> int:
     pmw.add_argument("--actor", required=True, help="who this is done for, for the audit trail")
     pmw.add_argument("--apply", action="store_true", help="write it; without this nothing is changed")
     ptf = sub.add_parser("ticket-fill",
-                         help="12 Oct 2026: tickets with no department take their contact's (079), tickets filed "
-                              "under UNCLASSIFIED take PMC's company, and the portal tiles that would leave a ticket "
-                              "with no Type > Subtype > Item are named. Counts and tile names only. Preview unless --apply")
+                         help="12 Oct 2026: tickets filed under UNCLASSIFIED take PMC's company, and the portal tiles "
+                              "that would leave a ticket with no Type > Subtype > Item are named. Never a department: "
+                              "Dada's ruling (Part 77) is that one is set only at the door. Counts and tile names "
+                              "only. Preview unless --apply")
     ptf.add_argument("database", help=DB_HELP)
     ptf.add_argument("--actor", required=True, help="who this is done for, for the audit trail")
     ptf.add_argument("--apply", action="store_true", help="write it; without this nothing is changed")
@@ -930,16 +931,9 @@ def _run(conn, a) -> int:
         return 0
 
     if a.cmd == "ticket-fill":
-        from . import board as _board, departments, portal_tiles
+        from . import board as _board, portal_tiles
         now = datetime.now()
-        d = departments.backfill(conn, apply=a.apply, at=now, actor=a.actor)
-        if not d["ready"]:
-            print("department: this store has not taken 079 yet; nothing to fill")
-        else:
-            print(f"department: {d['empty']} ticket(s) with none; {d['filled']} take their contact's;"
-                  f" {d['unmatched']} stay unset (no contact, or AD's department is not on Setup > Departments)")
-            for name, n in sorted(d["by_department"].items(), key=lambda kv: (-kv[1], kv[0])):
-                print(f"  {n:6d}  {name}")
+        print("department: never filled in here (Dada, 12 Oct 2026: a department is set only at the door)")
         c = _board.fill_company(conn, apply=a.apply, at=now, actor=a.actor)
         if c["target"] == _board.UNKNOWN_ENTITY:
             print("company: no PMC company on this desk; nothing moved")

@@ -199,7 +199,9 @@ def apply_words(conn: sqlite3.Connection, board_id: str, which: str, *, apply: b
             note("?", label + " (no words here: the desk's own stay)")
             return
         subject, body = wanted
-        if cur["custom"] and (cur["subject"], cur["body"]) == (subject, body):
+        # Words equal to the desk's own are stored as NULL (outbox._set_mail), so
+        # such a row never reads custom: compare the words themselves (Part 77).
+        if (cur["subject"], cur["body"]) == (subject, body):
             note("=", label)
         elif cur["custom"] and not replace:
             note("~", label + " (the board's own words kept)")

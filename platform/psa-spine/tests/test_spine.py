@@ -17642,7 +17642,7 @@ class DepartmentCompanyAndWordsTest(unittest.TestCase):
             self.assertNotIn("Which department is this for?", page)
 
     # ------------------------------------------------------------ company and the one-off fill
-    def test_a_new_ticket_is_pmcs_and_ticket_fill_tidies_the_old_ones(self):
+    def test_a_new_ticket_is_pmcs_and_ticket_fill_moves_the_old_ones_but_never_a_department(self):
         from psaspine import board as _b, departments
         self._more()
         conn = db.connect(self.db_path)
@@ -17654,20 +17654,16 @@ class DepartmentCompanyAndWordsTest(unittest.TestCase):
                                    requested_by=None, at=self.at)
         conn.execute("UPDATE work_item SET entity_id = 'UNCLASSIFIED' WHERE work_item_id = ?", (lost,))  # ... and before today
         conn.commit()
-        d = departments.backfill(conn, apply=False, at=self.at, actor="t")
         c = _b.fill_company(conn, apply=False, at=self.at, actor="t")
         conn.rollback()
-        self.assertEqual((d["filled"], d["by_department"]), (1, {"Nursing - Ward 3": 1}))
         self.assertEqual(c, {"target": "PMC", "moved": 1})
-        self.assertEqual(self._row(old), (None, "PMC"))                  # the preview wrote nothing
-        self.assertEqual(self._row(lost), (None, "UNCLASSIFIED"))
-        departments.backfill(conn, apply=True, at=self.at, actor="t")
+        self.assertEqual(self._row(lost), (None, "UNCLASSIFIED"))        # the preview wrote nothing
         _b.fill_company(conn, apply=True, at=self.at, actor="t")
         conn.commit()
-        self.assertEqual(self._row(old)[0], "Nursing - Ward 3")
         self.assertEqual(self._row(lost)[1], "PMC")
+        self.assertEqual(self._row(old)[0], None)                         # Part 77: never filled in afterwards
+        self.assertFalse(hasattr(departments, "backfill"))
         self.assertEqual(_b.fill_company(conn, apply=True, at=self.at, actor="t")["moved"], 0)   # once only
-        self.assertEqual(departments.backfill(conn, apply=True, at=self.at, actor="t")["filled"], 0)
         # a desk without PMC keeps the catch-all
         conn.execute("UPDATE work_item SET entity_id = 'UNCLASSIFIED' WHERE entity_id = 'PMC'")
         from unittest import mock
@@ -17720,6 +17716,9 @@ class DepartmentCompanyAndWordsTest(unittest.TestCase):
         hd = mail_words.apply_words(conn, "IT_HELP", "HELPDESK", apply=True, replace=False, at=self.at, actor="t")
         self.assertTrue(hd[-1].startswith("Wrote "), hd[-1])
         self.assertNotIn("?", "".join(line[0] for line in hd[:-1]))         # every PMO Helpdesk status has words
+        # Part 77: Resolved's words equal the desk's own and are stored NULL; a second run still reads 0
+        hd = mail_words.apply_words(conn, "IT_HELP", "HELPDESK", apply=True, replace=False, at=self.at, actor="t")
+        self.assertTrue(hd[-1].startswith("Wrote 0 email(s);"), hd[-1])
         with self.assertRaises(ValueError):
             mail_words.apply_words(conn, "NOPE", "HELPDESK", apply=False, replace=False, at=self.at, actor="t")
         conn.rollback()

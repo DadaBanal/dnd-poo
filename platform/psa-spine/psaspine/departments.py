@@ -213,27 +213,9 @@ def set_ticket(conn: sqlite3.Connection, work_item_id: str, name: str | None) ->
     return dept
 
 
-def backfill(conn: sqlite3.Connection, *, apply: bool, at: datetime, actor: str) -> dict:
-    """Tickets with no department take their contact's, where AD's matches the
-    list. Counts only: never a name of a person or a summary. Preview unless
-    apply; a second run finds nothing to do."""
-    out = {"ready": on_tickets(conn), "empty": 0, "filled": 0, "unmatched": 0, "by_department": {}}
-    if not out["ready"]:
-        return out
-    rows = conn.execute("SELECT t.work_item_id, c.department FROM ticket t LEFT JOIN contact c"
-                        " ON c.contact_id = t.contact_id WHERE t.department IS NULL").fetchall()
-    out["empty"] = len(rows)
-    for r in rows:
-        dept = match(conn, r["department"])
-        if not dept:
-            out["unmatched"] += 1
-            continue
-        out["filled"] += 1
-        out["by_department"][dept] = out["by_department"].get(dept, 0) + 1
-        if apply:
-            conn.execute("UPDATE ticket SET department = ? WHERE work_item_id = ? AND department IS NULL",
-                         (dept, r["work_item_id"]))
-    if apply and out["filled"]:
-        db.audit(conn, at=_stamp(at), actor=actor, action="TICKET_DEPARTMENT", subject_kind="ticket",
-                 subject_id="*", detail=f"{out['filled']} ticket(s) given their contact's department")
-    return out
+# There is deliberately no backfill. Dada, 12 Oct 2026 (runbook Part 77): "the
+# departments should only come from when it gets picked up from the requests
+# portal direct emailing the ticket tech or the member will add their dept
+# manually". So a department is written at three doors only -- the portal's
+# dropdown, an emailed ticket's sender (of_contact), and a member on the desk --
+# and never filled in afterwards from history.
