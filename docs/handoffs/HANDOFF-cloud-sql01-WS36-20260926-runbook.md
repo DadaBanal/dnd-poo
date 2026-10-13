@@ -3743,3 +3743,30 @@ Steps 10 and 11 (the first `sync-mms-reports` read and the walk-through) wait on
 **That sentence is misleading in this case and the evidence says so:** `\Everyone` already has Browser, and the same server answers 200 to an authenticated request. The real cause is read from `psaspine/ssrs.py` line 82-89: `WinHttpTransport` is the class that sends the process's Windows identity, and its `__init__` does `import win32com.client`. Without **pywin32** the code falls back to a plain `urllib` request, which sends no Windows identity, gets a 401, and reports it as a sign-in refusal. Exactly as the handoff's step 9 predicted, though the sentence points at the wrong remedy.
 
 **So one thing now blocks steps 10 and 11 entirely: the pywin32 allow-list entry, which only Dada can add.** Everything else for the MMS reports tab is in place. Worth passing to Cloud Build: when the transport is the plain fallback, the refusal sentence should say so rather than naming the Browser role, because here the role was already granted.
+
+**Part 81, second update (16:40 +08:00): the report server accepts ONLY Windows integrated authentication, so the fallback transport can never work.** MEASURED.
+
+Dada: *"find out from the bizbox chat as to why it errors"*. Asked the Bizbox Reporting SSRS session (it owns the BizBox SSRS work) and, while waiting, measured the one thing that settles it.
+
+`rsreportserver.config` on this host (`C:\Program Files\Microsoft SQL Server Reporting Services\SSRS\ReportServer\`):
+
+```
+<AuthenticationTypes>
+  <RSWindowsNegotiate />
+  <RSWindowsNTLM />
+</AuthenticationTypes>
+<RSWindowsExtendedProtectionLevel>Off</RSWindowsExtendedProtectionLevel>
+EnableAuthPersistence = true
+```
+
+**`RSWindowsBasic` is absent. `Custom` is absent.** The server speaks Negotiate and NTLM and nothing else. URL reservations are `http://+:80/ReportServer/` and `http://+:80/Reports/`, both owned by `NT SERVICE\SQLServerReportingServices`, Listen: Yes.
+
+So the diagnosis is no longer an inference from a stack trace:
+
+- the desk's `WinHttpTransport` performs a Negotiate/NTLM handshake with the process identity; it needs **pywin32**;
+- without it the code falls back to plain `urllib`, which performs **neither** handshake;
+- a caller that offers neither is refused by a server that accepts only those two. **There is no configuration of permissions that would make the fallback succeed** - `\Everyone` already holds Browser and it still 401s.
+
+**Therefore pywin32 is structurally required, not merely preferred.** The only alternative would be enabling `RSWindowsBasic`, which would send credentials over plain HTTP on this server and is a security downgrade; **not proposed, not done**.
+
+**For Cloud Build:** the refusal sentence should distinguish the two cases. When the transport in use is the urllib fallback, it should say the desk could not present a Windows identity and name pywin32 - not tell SQL01 to grant a Browser role that, here, was already granted. As written it sends the reader to the wrong fix.
