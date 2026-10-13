@@ -17963,7 +17963,7 @@ class CwShapeTest(unittest.TestCase):
         self.assertIn("Products · 1", page)
         self.assertIn("Vendors · 2", page)
         self.assertIn("<a href='/procurement/purchase_order?ref=PO-1'>PO-1</a>", page)
-        self.assertNotIn("Queue for BizBox", page)
+        self.assertNotIn("Send for approval", page)
         # every tab answers; an item has no status, so its first filter is the category
         for tab_name in ("purchase_order", "invoice", "product", "vendor", "changes"):
             status, _, page = self._call("GET", "/procurement", query=f"tab={tab_name}", cookie=self.alice)
@@ -17988,7 +17988,7 @@ class CwShapeTest(unittest.TestCase):
         # a service manager: tick rows, change them together, in one batch
         self._manager()
         _, _, page = self._call("GET", "/procurement", cookie=self.alice)
-        self.assertIn("Queue for BizBox", page)
+        self.assertIn("Send for approval", page)
         self.assertIn("name='e:PO-1:vendor'", page)                                              # editable in place
         self.assertIn("New purchase order", page)
         _, h, _ = self._call("POST", "/procurement/purchase_order/bulk", cookie=self.alice,

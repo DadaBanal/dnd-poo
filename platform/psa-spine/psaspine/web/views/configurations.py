@@ -481,7 +481,9 @@ def _cfg_overview(ctx, c, cw: bool) -> str:
     pod2 += (f"<dt>Warranty ends</dt><dd>{_warranty_cell(ctx, c)}</dd><dt>Purchase ref</dt><dd>{dash(c['purchase_ref'])}</dd>"
              "<dt>Agreement</dt><dd>" + (f"<a href='/agreement/{t.esc(c['agreement_id'])}'>{t.esc(c['agreement_id'])}</a> {t.esc(c['agreement_name'] or '')}"
                                          if c["agreement_id"] else "—") + "</dd>")
-    pod2 += "".join(f"<dt>{label}</dt><dd>{dash(c[key])}</dd>" for label, key in (
+    # Words, never the stored value (Dada, 13 Oct 2026: no column names or codes on screen).
+    val = lambda key: ("Typed in by hand" if c["source"] == "MANUAL" else "Active Directory") if key == "source" else dash(c[key])
+    pod2 += "".join(f"<dt>{label}</dt><dd>{val(key)}</dd>" for label, key in (
         ("DNS name", "dns_name"), ("Operating system", "os_name"), ("OS version", "os_version"), ("Description", "description"),
         ("ScreenConnect session", "remote_session_id"), ("AD object", "ad_object_guid"), ("Source", "source"),
         ("Added", "created_at"), ("Last synced from AD", "last_synced_at"), ("Last login", "last_seen_at")))

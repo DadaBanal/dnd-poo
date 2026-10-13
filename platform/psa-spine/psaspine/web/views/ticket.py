@@ -1841,8 +1841,8 @@ def _tasks_card(ctx, tk, *, can_work: bool) -> str:
                 + (f"<div class=muted title='{t.esc(r['done_at'] or '')}'>{t.esc(r['done_by'] or '')}</div>" if ticked else "") + "</td>"
                 f"<td class=num>{n}</td>"
                 + (f"<td><input form='tsave{r['task_id']}' name=text value='{t.esc(text)}' required maxlength=400 aria-label='Task'></td>"
-                   f"<td><input form='tsave{r['task_id']}' name=notes value='{t.esc(notes)}' maxlength=2000 aria-label='Notes' placeholder='notes'></td>"
-                   f"<td><input form='tsave{r['task_id']}' name=resolution value='{t.esc(res)}' maxlength=2000 aria-label='Resolution' placeholder='resolution'></td>"
+                   f"<td><input form='tsave{r['task_id']}' name=notes value='{t.esc(notes)}' maxlength=2000 aria-label='Notes' placeholder='notes for the tech'></td>"
+                   f"<td><input form='tsave{r['task_id']}' name=resolution value='{t.esc(res)}' maxlength=2000 aria-label='Resolution' placeholder='how it was fixed'></td>"
                    if can_work and grid else
                    f"<td>{('<s>' + t.esc(text) + '</s>') if ticked else t.esc(text)}</td><td>{t.esc(notes)}</td><td>{t.esc(res)}</td>")
                 + f"<td class=tsch>{sched_cell(r)}</td>"
@@ -1850,9 +1850,9 @@ def _tasks_card(ctx, tk, *, can_work: bool) -> str:
                    f"<form id='tsave{r['task_id']}' method=post action='/ticket/{wid}/task/save' class=inline><input type=hidden name=task_id value='{r['task_id']}'>"
                    f"<button class='ghost small' type=submit title='Save this row'>{t.icon('check')}</button></form>"
                    f"<form method=post action='/ticket/{wid}/task/move' class=inline><input type=hidden name=task_id value='{r['task_id']}'><input type=hidden name=dir value=up>"
-                   f"<button class='ghost small' type=submit aria-label='Move up'>{t.icon('up')}</button></form>"
+                   f"<button class='ghost small' type=submit aria-label='Move up' title='Move up'>{t.icon('up')}</button></form>"
                    f"<form method=post action='/ticket/{wid}/task/move' class=inline><input type=hidden name=task_id value='{r['task_id']}'><input type=hidden name=dir value=down>"
-                   f"<button class='ghost small' type=submit aria-label='Move down'>{t.icon('down')}</button></form>"
+                   f"<button class='ghost small' type=submit aria-label='Move down' title='Move down'>{t.icon('down')}</button></form>"
                    f"<form method=post action='/ticket/{wid}/task/remove' class=inline><input type=hidden name=task_id value='{r['task_id']}'>"
                    f"<button class='ghost small' type=submit aria-label='Remove' title='Remove this task'>{t.icon('x')}</button></form></td>"
                    if can_work else "<td></td>") + "</tr>")
@@ -1883,7 +1883,9 @@ def _tasks_card(ctx, tk, *, can_work: bool) -> str:
               "f.querySelector('[name=order]').value=Array.prototype.map.call(tb.querySelectorAll('tr[data-task]'),function(x){return x.getAttribute('data-task')}).join(',');f.submit()})});"
               "tb.querySelectorAll('.handle').forEach(function(h){h.addEventListener('mousedown',function(){h.closest('tr').setAttribute('draggable','true')})})})()</script>"
               if can_work else "")
-    return (f"<div class=card data-pod=tasks><h3><svg class=ic aria-hidden=true><use href=#i-checks></use></svg>{head}</h3>"
+    hint = ("<p class=why>Tick a task when it is done. Change its words, notes or how it was fixed in the row and press the tick to save. "
+            "Drag the handle, or use the arrows, to put them in order. <i>Schedule…</i> books a visit for that task.</p>" if can_work and grid else "")
+    return (f"<div class=card data-pod=tasks><h3><svg class=ic aria-hidden=true><use href=#i-checks></use></svg>{head}</h3>{hint}"
             + (("<div class=tablewrap><table class='compact tgrid'><thead><tr><th></th><th>Done</th><th class=num>Pri</th><th>Task</th>"
                 "<th>Notes</th><th>Resolution</th><th>Schedule</th><th></th></tr></thead><tbody>" + trs + "</tbody></table></div>")
                if rows else "<div class=muted>No tasks.</div>")

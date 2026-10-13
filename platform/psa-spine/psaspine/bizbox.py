@@ -432,7 +432,9 @@ EDITABLE = {
 }
 FIELD_WORDS = {"status": "Status", "ends_on": "End date", "due_on": "Due date", "name": "Name", "unit_cost": "Unit cost",
                "vendor": "Vendor", "ordered_on": "Order date", "supplier_ref": "Supplier's invoice no.",
-               "category": "Category", "unit": "Unit", "NEW": "New record"}
+               "category": "Category", "unit": "Unit", "currency": "Currency", "total": "Total", "amount": "Amount",
+               "party": "Vendor", "invoiced_on": "Invoice date", "starts_on": "Start date", "description": "Description",
+               "quantity": "Quantity", "NEW": "New record"}
 # What a person may ADD (13 Oct 2026, Dada: "edits and adds on the bizbox
 # system"): the fields a new record carries, which of them BizBox needs
 # before it will take the record, and, for a purchase order, its lines.
@@ -443,7 +445,7 @@ ADDABLE = {
     "product": {"fields": {"ext_ref": "text", "name": "text", "category": "text", "unit": "text", "unit_cost": "money"},
                 "required": ("name",), "lines": None},
 }
-BATCH_WORDS = {"PENDING": "Waiting for approval", "APPROVED": "Approved, waiting to push", "APPLIED": "Applied in BizBox",
+BATCH_WORDS = {"PENDING": "Waiting for approval", "APPROVED": "Approved, waiting to be sent", "APPLIED": "Applied in BizBox",
                "REJECTED": "Refused by BizBox", "CANCELLED": "Cancelled"}
 MAX_BATCH = 500
 

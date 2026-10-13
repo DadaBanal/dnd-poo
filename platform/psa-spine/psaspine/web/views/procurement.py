@@ -17,6 +17,7 @@ roles, which falls back to the Finance level.
 """
 from __future__ import annotations
 
+import re
 import urllib.parse
 
 from ... import bizbox
@@ -59,14 +60,33 @@ def _tabs(ctx, on: str) -> str:
         f"<a class='{'on' if k == on else ''}' href='/procurement?tab={k}'>{v} · {counts[k]}</a>" for k, v in TABS) + "</div>")
 
 
+READ_WORDS = {"purchase_order": "purchase orders", "po_line": "order lines", "product": "items",
+              "invoice": "receiving reports", "agreement": "agreements"}
+
+
+def _read_words(result: str) -> str:
+    """The read's own summary ("purchase_order: 5 rows, 5 new, ...") in words:
+    what BizBox holds, and what changed since the read before. No kind or
+    table name reaches the screen (Dada, 13 Oct 2026)."""
+    parts = []
+    for m in re.finditer(r"(\w+): (\d+) rows, (\d+) new, (\d+) changed, (\d+) unchanged, (\d+) absent", result or ""):
+        kind, rows, new, changed, _, gone = m.group(1), *map(int, m.groups()[1:])
+        if not rows and not gone:
+            continue
+        bits = ", ".join(b for b in (f"{new} new" if new else "", f"{changed} changed" if changed else "",
+                                     f"{gone} gone" if gone else "") if b)
+        parts.append(f"{rows} {READ_WORDS.get(kind, kind.replace('_', ' '))}" + (f" ({bits})" if bits else ""))
+    return (" · " + " · ".join(parts)) if parts else ""
+
+
 def _head(ctx, on: str, q) -> str:
     st = bizbox.status(ctx.conn)
-    sync = (f"BizBox read {t.esc(st['last_sync_at'])}: {t.esc(st['last_result'] or '')}" if st and st["last_sync_at"]
-            else "Not read from BizBox yet. SQL01 runs <code>psaspine sync-bizbox</code> once the read-only views exist.")
-    return (_banners(q) + "<h1>Procurement</h1><p class=sub>BizBox's MMS, as the reference PSA's Procurement module: "
-            "purchase orders, receiving, items and vendors. Tick rows to change them together, edit cells and save them "
-            "in one go, or add a new order or item. Nothing changes in BizBox until a second person approves it and "
-            "the push runs; the Changes tab is where each one stands.</p>"
+    sync = (f"Read from BizBox {t.esc(st['last_sync_at'])}{t.esc(_read_words(st['last_result']))}" if st and st["last_sync_at"]
+            else "Not read from BizBox yet: the hourly read has not run.")
+    return (_banners(q) + "<h1>Procurement</h1><p class=sub>Everything here is read from BizBox: purchase orders, "
+            "receiving, items and vendors. To change something, tick rows and set one thing on all of them, or edit "
+            "the cells in a row, say why, and send it for approval. A second person approves it on the Changes tab. "
+            "Nothing in BizBox changes until it is approved and sent.</p>"
             f"<div class='banner ok'>{sync}</div>" + _tabs(ctx, on))
 
 
@@ -113,7 +133,9 @@ def _grid(ctx, kind) -> str:
     absent = q.get("absent") == "1"
     page_no = int(q["page"]) if q.get("page", "").isdigit() and int(q["page"]) > 0 else 1
     rows, total = _rows(ctx, kind, search=search, status=status, vendor=vendor, absent=absent, page_no=page_no)
-    columns = list(finance._columns(ctx, kind))
+    # Finance's columns, in Procurement's words: the receiving report's
+    # counterparty is the vendor here, never "party" (Dada, 13 Oct 2026).
+    columns = [(f, "Vendor" if f == "party" else lab) for f, lab in finance._columns(ctx, kind)]
     can = _can_write(ctx)
     editable = bizbox.EDITABLE.get(kind, {}) if can else {}
     lines = {}
@@ -172,15 +194,15 @@ def _grid(ctx, kind) -> str:
     if can and editable:
         fopts = "".join(f"<option value={f}>{t.esc(bizbox.FIELD_WORDS[f])}</option>" for f in editable)
         tools = (f"<form id=bulk method=post action='/procurement/{kind}/bulk' class='row schedbar bulkbar' style='margin-top:10px'>"
-                 "<div style='flex:0 0 auto'><b><span data-ticked>0</span> ticked:</b></div>"
+                 "<div style='flex:0 0 auto'><b><span data-ticked>0</span> ticked</b> · change</div>"
                  f"<div style='flex:0 0 170px'><select name=field aria-label='Field to change'>{fopts}</select></div>"
-                 "<div style='flex:1 1 160px'><input name=new_value required maxlength=200 placeholder='New value for every ticked row'></div>"
-                 "<div style='flex:1 1 200px'><input name=reason required maxlength=400 placeholder='Why (the approver and BizBox see this)'></div>"
-                 f"<div style='flex:0 0 auto'><button type=submit>{t.icon('check')} Queue for BizBox</button></div></form>"
+                 "<div style='flex:1 1 160px'><input name=new_value required maxlength=200 placeholder='to this new value'></div>"
+                 "<div style='flex:1 1 200px'><input name=reason required maxlength=400 placeholder='Why? The approver sees this'></div>"
+                 f"<div style='flex:0 0 auto'><button type=submit>{t.icon('check')} Send for approval</button></div></form>"
                  f"<form id=grid method=post action='/procurement/{kind}/edits' class='row schedbar' style='margin-top:6px'>"
-                 "<div style='flex:0 0 auto'><b><span data-edited>0</span> cell(s) edited:</b></div>"
-                 "<div style='flex:1 1 260px'><input name=reason maxlength=400 placeholder='Why (needed to queue edited cells)'></div>"
-                 f"<div style='flex:0 0 auto'><button class=ghost type=submit>{t.icon('check')} Queue edited cells</button></div></form>")
+                 "<div style='flex:0 0 auto'><b><span data-edited>0</span> cell(s) edited</b></div>"
+                 "<div style='flex:1 1 260px'><input name=reason maxlength=400 placeholder='Why? Needed before sending edited cells'></div>"
+                 f"<div style='flex:0 0 auto'><button class=ghost type=submit>{t.icon('check')} Send edited cells for approval</button></div></form>")
     script = ("<script>(function(){var tick=document.querySelector('[data-tickall]');var n=document.querySelector('[data-ticked]');"
               "var boxes=function(){return Array.prototype.slice.call(document.querySelectorAll(\"input[form=bulk][name=refs]\"))};"
               "function count(){if(n)n.textContent=boxes().filter(function(b){return b.checked}).length}"
@@ -256,7 +278,7 @@ def _changes(ctx):
     if status == "OPEN":
         rows = [b for b in rows if b["status"] in ("PENDING", "APPROVED")]
     opts = "".join(f"<option value={k}{' selected' if k == status else ''}>{v}</option>" for k, v in (
-        ("OPEN", "Waiting (approval or push)"), ("PENDING", "Waiting for approval"), ("APPROVED", "Approved, waiting to push"),
+        ("OPEN", "Waiting to be approved or sent"), ("PENDING", "Waiting for approval"), ("APPROVED", "Approved, waiting to be sent"),
         ("APPLIED", "Applied in BizBox"), ("REJECTED", "Refused by BizBox"), ("CANCELLED", "Cancelled"), ("ALL", "All")))
     trs = "".join(
         f"<tr><td><a href='/procurement/batch/{b['batch_id']}'>#{b['batch_id']}</a></td><td>{_batch_what(b)}</td>"
@@ -268,14 +290,14 @@ def _changes(ctx):
         writer = bizbox.writer_in_force().name
     except bizbox.Refused:
         writer = "none"
-    how = ("The push runs on the host (<code>psaspine bizbox-push --apply</code>) through BizBox's own procedure."
+    how = ("Approved changes are sent to BizBox by the scheduled run on the host."
            if writer != "none" else
-           "<b>No write path is switched on yet:</b> an approved change waits here until SQL01 has built the procedure "
-           "in BizBox, or until someone applies it in BizBox by hand and it is marked applied.")
+           "<b>Changes are not sent to BizBox automatically yet:</b> that link is still being set up. An approved change "
+           "waits here until it is, or until someone makes the change in BizBox by hand and marks it applied here.")
     body = (_head(ctx, "changes", q) + "<div class=card><form method=get action='/procurement' class='row schedbar'>"
-            f"<input type=hidden name=tab value=changes><div style='flex:0 0 260px'><select name=status>{opts}</select></div>"
+            f"<input type=hidden name=tab value=changes><div style='flex:0 0 300px'><select name=status>{opts}</select></div>"
             "<div style='flex:0 0 auto'><button class=ghost type=submit>Show</button></div></form>"
-            f"<p class=why>Each batch is one reason and one approval. A person with Procurement WRITE approves; never the person who asked. {how}</p>"
+            f"<p class=why>Each batch is one request: one reason, one approval. Someone with Procurement write access approves it, never the person who asked. {how}</p>"
             "<div class=tablewrap><table class=compact><thead><tr><th>Batch</th><th>What</th><th>Why</th><th>Asked by</th>"
             "<th>Approved by</th><th>State</th><th></th></tr></thead><tbody>"
             + (trs or "<tr><td colspan=7 class=muted>Nothing waiting.</td></tr>") + "</tbody></table></div></div>")
@@ -312,7 +334,7 @@ def batch_page(ctx, batch_id):
             f"<div class=card><p><b>Why:</b> {t.esc(b['reason'])}</p>"
             + (f"<p><b>BizBox's answer:</b> {t.esc(b['answer'])}</p>" if b["answer"] else "")
             + f"<p>{_batch_actions(ctx, b)}</p></div>" + extra
-            + ("<div class=card><h3>" + t.icon("rows") + "The changes</h3>" + finance._changes_table(ctx, rows) + "</div>"
+            + ("<div class=card><h3>" + t.icon("rows") + "The changes</h3>" + finance._changes_table(ctx, rows, pending_word=bizbox.BATCH_WORDS[b['status']] if b['status'] in ('PENDING', 'APPROVED') else 'Waiting for BizBox') + "</div>"
                if b["change_kind"] == "EDIT" else ""))
     return Response(body=t.page(f"Batch #{b['batch_id']}", body, user=ctx.user, active=AREA))
 
@@ -326,7 +348,7 @@ def approve(ctx, batch_id):
     except bizbox.Refused as exc:
         ctx.conn.rollback()
         return redirect("/procurement?" + urllib.parse.urlencode({"tab": "changes", "err": str(exc)}))
-    return redirect("/procurement?" + urllib.parse.urlencode({"tab": "changes", "msg": f"Batch #{batch_id} approved. It goes to BizBox on the next push."}))
+    return redirect("/procurement?" + urllib.parse.urlencode({"tab": "changes", "msg": f"Batch #{batch_id} approved. It will be sent to BizBox on the next run."}))
 
 
 def cancel(ctx, batch_id):
@@ -419,11 +441,11 @@ def new_form(ctx, kind):
                   "<div><label>Category</label><input name=category maxlength=400></div>"
                   "<div><label>Unit</label><input name=unit maxlength=32 placeholder='pc, box, ream'></div>"
                   "<div><label>Unit cost</label><input name=unit_cost type=number step=any min=0></div>")
-    body = (_banners(q) + f"<h1>{NEW_WORDS[kind]}</h1><p class=sub>Queued for BizBox: a second person approves it, then the push "
-            f"creates it there and BizBox gives it its number. <a href='/procurement?tab={kind}'>Back</a></p>"
+    body = (_banners(q) + f"<h1>{NEW_WORDS[kind]}</h1><p class=sub>This goes to the Changes tab for a second person to approve. Once it is approved and sent, BizBox "
+            f"creates it and gives it its number. <a href='/procurement?tab={kind}'>Back</a></p>"
             f"<div class=card><form method=post action='/procurement/{kind}/add' class=fields><div class=grid2>{fields}"
-            "<div style='grid-column:1/-1'><label>Why</label><input name=reason required maxlength=400 placeholder='What the approver and BizBox need to know'></div>"
-            f"</div><div style='margin-top:12px'><button type=submit>{t.icon('check')} Queue for BizBox</button></div></form></div>")
+            "<div style='grid-column:1/-1'><label>Why</label><input name=reason required maxlength=400 placeholder='What the approver needs to know'></div>"
+            f"</div><div style='margin-top:12px'><button type=submit>{t.icon('check')} Send for approval</button></div></form></div>")
     return Response(body=t.page(NEW_WORDS[kind], body, user=ctx.user, active=AREA))
 
 

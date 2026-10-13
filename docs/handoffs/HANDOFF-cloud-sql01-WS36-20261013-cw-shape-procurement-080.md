@@ -81,9 +81,10 @@ Nothing changes in any scheduled task, the file store or the backup.
   *Schedule…* books a visit that shows on the Schedule tab and on Dispatch.
 - **Configurations:** the new columns and *Columns*; tick two rows, change their status, read the two audit rows;
   a configuration's screen with its three tabs; give a monitor a parent PC and see it under the PC.
-- **Procurement** (a service manager): Purchase orders, Receiving, Products, Vendors counts match Finance's; tick two
-  orders and queue a status change; the Changes tab shows the batch waiting, *yours: someone else approves*; a second
-  manager approves; the row on the grid reads *Status* under *Waiting*.
+- **Procurement** (a service manager): Purchase orders, Receiving, Products, Vendors counts match Finance's; the read
+  banner reads in words (*5 purchase orders (5 new)*), never a table name; tick two orders, set Status, say why and
+  *Send for approval*; the Changes tab shows the batch *Waiting for approval*, *yours: someone else approves*; a
+  second manager approves; the row on the grid reads *Status* under *Waiting*.
 - **Nothing in BizBox changes.** MEASURED from the code: no code path on this head opens a connection to BizBox for
   writing. `ProcedureWriter` exists but is built only when `PSA_BIZBOX_WRITE_ODBC` is set, and it is not set.
 - `psaspine bizbox-push "<conn>"` (no `--apply`) prints *approved and waiting: N change(s)* and *PREVIEW*.

@@ -104,10 +104,12 @@ def _cell(rec, field, area: str = "finance") -> str:
     return f"<td>{t.esc(v or '')}</td>"
 
 
-def _changes_table(ctx, rows, *, with_record: bool = True) -> str:
+def _changes_table(ctx, rows, *, with_record: bool = True, pending_word: str = "Waiting for BizBox") -> str:
+    """`pending_word`: what a PENDING change is waiting for. Inside a batch
+    (080) that is its batch's word (approval first), not BizBox's."""
     can = common.allows(ctx, "FINANCE", "WRITE")
     back = {v: k for k, v in bizbox.LINK_KIND.items()}
-    words = {"PENDING": "Waiting for BizBox", "APPLIED": "Applied in BizBox", "REJECTED": "Refused by BizBox",
+    words = {"PENDING": pending_word, "APPLIED": "Applied in BizBox", "REJECTED": "Refused by BizBox",
              "CANCELLED": "Cancelled"}
     trs = []
     for c in rows:

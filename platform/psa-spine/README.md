@@ -2583,9 +2583,12 @@ inside BizBox*.
 **Procurement** (`/procurement`): BizBox's MMS, the same mirror Finance shows, as a module of its own.
 - Tabs: Purchase orders, Receiving (BizBox's receiving reports, which Finance calls invoices), Products, Vendors (the
   names on orders and receipts, with counts and sums; a vendor's own record stays in BizBox's people table), Changes.
-- Each grid: search, a status filter (an item's is its category) and a vendor filter; tick rows then *Queue for BizBox* with one field, one value and a
-  reason (a batch); edit cells in place and *Queue edited cells* (a batch of only the cells that differ); *New
-  purchase order* (with up to eight lines, each an item BizBox has) and *New item*.
+- Each grid: search, a status filter (an item's is its category) and a vendor filter; tick rows, set one field to
+  one value, say why, then *Send for approval* (a batch); or edit cells in place and *Send edited cells for approval*
+  (a batch of only the cells that differ); *New purchase order* (with up to eight lines, each an item BizBox has) and
+  *New item*. The words on screen are a person's, never a table's: the read banner says *5 purchase orders (5 new)*,
+  a change waits *for approval* and then *to be sent*, a configuration was *typed in by hand* (Dada, 13 Oct 2026:
+  *"make sure its user friendly and easy to understand"*, *"dont go by column names or db names or variables"*).
 - A record's page is Finance's, served under this menu with its links kept here.
 - Rights: a **PROCUREMENT** module in Security roles. A role with no row for it takes its Finance level, so nothing
   changed for anyone the day it appeared; it can be set apart later.
