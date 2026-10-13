@@ -64,6 +64,11 @@ body{margin:0;background:var(--canvas);color:var(--ink);font:14px/1.5 var(--font
 a{color:var(--accent);text-decoration:none;transition:color var(--fast) var(--ease)}
 a:hover{text-decoration:underline;text-underline-offset:2px}
 :focus-visible{outline:2px solid var(--ring);outline-offset:2px;border-radius:var(--r-sm)}
+/* Part 80 (13 Oct 2026): a keyboard user jumps past the nav; a screen reader is told what an icon button does. */
+.skip{position:absolute;left:-9999px;top:8px;z-index:1000;padding:8px 14px;border-radius:999px;background:var(--accent);color:#fff;font-weight:600}
+.skip:focus{left:8px;outline:2px solid var(--ring);outline-offset:2px}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+main:focus{outline:none}
 ::selection{background:var(--accent-bg)}
 h1{font-size:22px;font-weight:600;letter-spacing:-.4px;margin:0 0 4px;line-height:1.25}
 h3{font-size:13px;font-weight:600;letter-spacing:.2px;color:var(--ink-2);text-transform:uppercase;margin:0 0 10px}
@@ -463,6 +468,19 @@ table.tgrid details.tsched form>*{margin:2px 0}.ttabs .tcount{font-size:11px;pad
 table.pgrid td.ecell input{width:100%;min-width:90px;padding:3px 6px;font-size:12.5px;border:1px solid transparent;background:transparent}
 table.pgrid td.ecell input:hover,table.pgrid td.ecell input:focus{border-color:var(--line-2);background:var(--surface)}
 table.pgrid td.ecell input.edited{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,var(--surface))}
+table.pgrid td.ecell select{width:100%;min-width:110px;padding:3px 6px;font-size:12.5px;border:1px solid transparent;background:transparent}
+table.pgrid td.ecell select:hover,table.pgrid td.ecell select:focus{border-color:var(--line-2);background:var(--surface)}
+table.pgrid td.ecell select.edited{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,var(--surface))}
+form[data-record] dd>select,form[data-record] dd>input{width:100%;max-width:440px}
+form[data-record] dd>select[data-was]:not([data-was='']),form[data-record] dd>input[data-was]{border-color:var(--line)}
+dialog.review{position:fixed;inset:0;margin:auto;width:min(760px,94vw);max-height:90vh;overflow:auto;padding:20px 22px;border:1px solid var(--line-2);border-radius:16px;background:var(--card);color:var(--ink);box-shadow:0 24px 60px rgb(10 12 18/.35)}
+dialog.review:not([open]){display:none}
+dialog.review::backdrop{background:rgb(10 12 18/.4);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
+dialog.review h2{margin:0 0 10px;display:flex;align-items:center;gap:8px;font-size:18px}
+dialog.review .tablewrap table{width:auto;min-width:min(100%,520px)}
+dialog.review table td:nth-last-child(2){color:var(--ink-3);text-align:center;padding:0 10px}
+dialog.review .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+dialog.review .acts form{display:inline}
 .bulkbar{background:var(--surface-2);border-radius:var(--r);padding:8px 10px}
 .pill.dept{display:inline-flex;align-items:center;gap:4px;font-weight:600;color:var(--ink);--c:#0ea5e9;
   background:color-mix(in srgb,var(--c) 14%,var(--surface));border:1px solid color-mix(in srgb,var(--c) 50%,transparent)}
@@ -2995,7 +3013,8 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         ("procurement", "Procurement", [
             ("procurement", "/procurement", "Procurement", "Purchase orders, receiving, items and vendors from BizBox"),
             ("pochanges", "/procurement?tab=changes", "Changes to BizBox", "What waits for approval or the push"),
-            ("poreports", "/procurement?tab=reports", "MMS reports", "The report server's reports, as PDF or Excel")]),
+            ("poreports", "/procurement?tab=reports", "MMS reports", "The report server's reports, as PDF or Excel"),
+            ("podrugs", "/procurement?tab=medicine", "Drugs and medicines", "Every item BizBox marks as a medicine, controlled ones flagged")]),
         ("reports", "Reports", [
             ("reports", "/reports", "Reports", "KPIs, monthly charts, the writer"),
             ("uplift", "/uplift", "Uplift", "The programme's evidence")]),
@@ -3005,7 +3024,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
     levels = getattr(user, "modules", None) or {}
     gate = {"schedule": "SCHEDULE", "projects": "PROJECTS", "kb": "KNOWLEDGE", "reports": "REPORTS",
             "finance": "FINANCE", "sales": "FINANCE", "time": "TIME", "calendar": "SCHEDULE",
-            "procurement": "PROCUREMENT", "pochanges": "PROCUREMENT", "poreports": "PROCUREMENT"}
+            "procurement": "PROCUREMENT", "pochanges": "PROCUREMENT", "poreports": "PROCUREMENT", "podrugs": "PROC_DRUG"}
     groups = [(g, label, [pg for pg in pages if pg[0] not in gate or levels.get(gate[pg[0]], "READ") != "NONE"])
               for g, label, pages in groups]
     # 073: the desk's Chat is for chat operators (Dada, 7 Oct 2026).
@@ -3023,7 +3042,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
     icons = {"admin": "setup", "schedule": "grip", "projects": "layers", "kb": "note", "finance": "tag", "sales": "briefcase",
              "help": "note", "time": "clock", "approvals": "check", "service": "ticket", "configurations": "monitor",
              "chat": "note", "cfgnew": "plus", "cfgcsv": "reports", "cfgtypes": "setup", "cfgint": "link",
-             "procurement": "cart", "pochanges": "checks", "poreports": "reports"}
+             "procurement": "cart", "pochanges": "checks", "poreports": "reports", "podrugs": "tag"}
 
     def one(key, href, label, cls="", current=False):
         return (f'<a href="{esc(href)}" title="{esc(label)}" class="{cls}{" on" if current else ""}"'
@@ -3104,6 +3123,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         f"<title>{esc(title)} · {'PMC Requests' if requester else 'Dada PSA'}</title>{THEME_BOOT}"
         f"<style>{STYLE}</style></head><body{' data-requester' if requester else ''}>"
         f'<div id="nprog" aria-hidden="true"></div>{SPRITE}'
+        '<a class=skip href="#main">Skip to content</a>'
         f'<header class="top"><a class="brand" href="{"/my" if requester else "/"}"><i></i>'
         f'<span>{"PMC Requests" if requester else "Dada PSA"}</span></a>'
         f"<nav class=mega aria-label='Main'>{nav}</nav>{who}</header>"
@@ -3111,7 +3131,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         # with a chime (Dada, 7 Oct 2026). Filled by the script from /chat/waiting.json.
         + (_chat_banner(user)
            if user is not None and not requester else "")
-        + (f"<main data-live='{esc(live)}'>" if live else "<main>") + f"{body}</main>"
+        + (f"<main id=main tabindex=-1 data-live='{esc(live)}'>" if live else "<main id=main tabindex=-1>") + f"{body}</main>"
         + (quick if quick is not None else (_quick_default(nav_items) if user is not None and not requester else ""))
         + ("<footer>PMC Requests — a request reaches the department it is for.</footer>" if requester else
            "<footer>PMC PSA spine — Phase B pilot. LAN only, Dada IT only. "

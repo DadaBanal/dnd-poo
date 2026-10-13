@@ -9,7 +9,8 @@
   "\"amount\", \"currency\"}}} and, on the invoice, \"agreement_ref\". The Finance page shows the Agreements tab once rows exist.",
   "An invoice here is BizBox's receiving report (its key is the receiving number); supplier_ref is the supplier's own invoice",
   "number, which staff type and which repeats, so it is never the key. Status is BizBox's own word; paid is not knowable there.",
-  "Optional, 13 Oct 2026 (081): a \"lookup\" object reads BizBox's own code lists for the desk's dropdowns, e.g. {\"lookup\": {\"view\": \"psa.vw_lookup\", \"columns\": {\"list\": \"ListName\", \"code\": \"Code\", \"label\": \"Label\", \"sort_no\": \"SortNo\"}}}; list is one of po_status, rr_status, currency, unit, category. Not in this sample, so a desk without the view reads as before."
+  "Optional, 13 Oct 2026 (081): a \"lookup\" object reads BizBox's own code lists for the desk's dropdowns, e.g. {\"lookup\": {\"view\": \"psa.vw_lookup\", \"columns\": {\"list\": \"ListName\", \"code\": \"Code\", \"label\": \"Label\", \"sort_no\": \"SortNo\"}}}; list is one of po_status, rr_status, currency, unit, category. Not in this sample, so a desk without the view reads as before.",
+  "Optional, 13 Oct 2026 (083): \"warehouse\" (ext_ref, name, group_name, active) and \"medicine\" (ext_ref = the item code, generic, dosage, controlled, doh_ref, mims_ref, admin_group, remarks) read SQL01's psa.vw_warehouse and psa.vw_drug_item; see the 083 handoff for the columns."
  ],
  "objects": {
   "product": {

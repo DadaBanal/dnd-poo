@@ -1232,6 +1232,20 @@
     "mms_report_run.format": "CODE",
     "mms_report_run.params_json": "FREE",
     "mms_report_run.outcome": "CODE",
-    "mms_report_run.message": "FREE"
+    "mms_report_run.message": "FREE",
+    "ext_warehouse.source_id": "ID",
+    "ext_warehouse.ext_ref": "REF",
+    "ext_warehouse.name": "NAME",
+    "ext_warehouse.group_name": "NAME",
+    "ext_warehouse.synced_at": "TIMESTAMP_TEXT",
+    "ext_medicine.source_id": "ID",
+    "ext_medicine.ext_ref": "REF",
+    "ext_medicine.generic": "NAME",
+    "ext_medicine.dosage": "NAME",
+    "ext_medicine.doh_ref": "REF",
+    "ext_medicine.mims_ref": "NAME",
+    "ext_medicine.admin_group": "NAME",
+    "ext_medicine.remarks": "FREE",
+    "ext_medicine.synced_at": "TIMESTAMP_TEXT"
   }
 }

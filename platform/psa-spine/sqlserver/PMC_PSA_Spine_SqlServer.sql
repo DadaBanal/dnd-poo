@@ -254,6 +254,8 @@ BEGIN
     PRINT N'    psa.ext_lookup';
     PRINT N'    psa.mms_report';
     PRINT N'    psa.mms_report_run';
+    PRINT N'    psa.ext_warehouse';
+    PRINT N'    psa.ext_medicine';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -330,13 +332,15 @@ BEGIN
     PRINT N'    psa.ux_mms_report_path';
     PRINT N'    psa.ix_mms_report_area';
     PRINT N'    psa.ix_mms_report_run_member';
+    PRINT N'    psa.ix_ext_warehouse_group';
+    PRINT N'    psa.ix_ext_medicine_controlled';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  156 tables, 75 indexes, 4 triggers.';
+    PRINT N'  158 tables, 77 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -3984,6 +3988,52 @@ CREATE TABLE psa.[mms_report_run] (
 END;
 
 -- --------------------------------------------------------------------------
+-- ext_warehouse   (from schema/083_warehouses_drugs.sql)
+IF OBJECT_ID(N'psa.[ext_warehouse]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_warehouse] (
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_warehouse_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [name] NVARCHAR(400) NOT NULL,
+    [group_name] NVARCHAR(400) NULL,
+    [active] INT NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_ext_warehouse_present] DEFAULT (1) CONSTRAINT [CK_ext_warehouse_01] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END)),
+    CONSTRAINT [PK_ext_warehouse] PRIMARY KEY ([source_id], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ext_medicine   (from schema/083_warehouses_drugs.sql)
+-- One row per item that is a medicine; ext_ref is the item's code, the same
+-- key ext_product carries, so the two join. Nothing here is a patient's.
+IF OBJECT_ID(N'psa.[ext_medicine]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_medicine] (
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_medicine_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [generic] NVARCHAR(400) NULL,
+    [dosage] NVARCHAR(400) NULL,
+    [controlled] INT NULL,
+    [doh_ref] NVARCHAR(400) NULL,
+    [mims_ref] NVARCHAR(400) NULL,
+    [admin_group] NVARCHAR(400) NULL,
+    [remarks] NVARCHAR(MAX) NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_ext_medicine_present] DEFAULT (1) CONSTRAINT [CK_ext_medicine_01] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END)),
+    CONSTRAINT [PK_ext_medicine] PRIMARY KEY ([source_id], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -4880,6 +4930,12 @@ CREATE INDEX [ix_mms_report_area] ON psa.[mms_report] ([area], [shown], [present
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_mms_report_run_member' AND object_id = OBJECT_ID(N'psa.[mms_report_run]'))
 CREATE INDEX [ix_mms_report_run_member] ON psa.[mms_report_run] ([member], [report_id], [ran_at]);
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_warehouse_group' AND object_id = OBJECT_ID(N'psa.[ext_warehouse]'))
+CREATE INDEX [ix_ext_warehouse_group] ON psa.[ext_warehouse] ([source_id], [group_name], [present]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_medicine_controlled' AND object_id = OBJECT_ID(N'psa.[ext_medicine]'))
+CREATE INDEX [ix_ext_medicine_controlled] ON psa.[ext_medicine] ([source_id], [controlled], [present]);
+
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
@@ -5015,10 +5071,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 156 OR @Triggers <> 4 OR @Indexes < 75
+IF @Tables <> 158 OR @Triggers <> 4 OR @Indexes < 77
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 156), %d triggers (expected 4), %d indexes (expected at least 75). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 158), %d triggers (expected 4), %d indexes (expected at least 77). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -5078,6 +5134,8 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[ext_medicine];
+    DROP TABLE IF EXISTS psa.[ext_warehouse];
     DROP TABLE IF EXISTS psa.[mms_report_run];
     DROP TABLE IF EXISTS psa.[mms_report];
     DROP TABLE IF EXISTS psa.[ext_lookup];

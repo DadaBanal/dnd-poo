@@ -764,8 +764,8 @@ def _run(conn, a) -> int:
     if a.cmd == "sync-mms-reports":
         from . import mms_reports, ssrs
         try:
-            reports = ssrs.Ssrs().list_reports()
-            counts = mms_reports.sync(conn, reports, at=datetime.now(), actor="cli", apply=a.apply)
+            listed = ssrs.Ssrs().list_reports()          # not `reports`: main() imports a module by that name below
+            counts = mms_reports.sync(conn, listed, at=datetime.now(), actor="cli", apply=a.apply)
         except (ssrs.Refused, ssrs.ServerError) as exc:
             conn.rollback()
             print(f"refused: {exc}", file=sys.stderr)

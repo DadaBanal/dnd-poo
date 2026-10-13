@@ -1,7 +1,8 @@
 # Dada PSA: Tasks, Configurations and Procurement — a guide for the desk
 
 **For:** PMC IT technicians and service managers (first reader: Shane). **Date:** 13 October 2026.
-**Covers:** the desk after the 13 October update (schema 080 and 081). Nothing here reaches BizBox by itself: every
+**Covers:** the desk after the 13 October update (schema 080 to 083), including the review window added the same
+evening: every change to a BizBox record is shown, from → to, before it is sent. Nothing here reaches BizBox by itself: every
 change you queue waits for a second person's approval, and the link that sends approved changes to BizBox is not
 switched on yet.
 
@@ -104,16 +105,29 @@ and the work linked to it.
 2. In the bar above the grid, choose the field (*Status*, *Vendor*, *Order date*…).
 3. Choose or type the new value. For a status, a vendor or a currency it is a dropdown of what BizBox accepts.
 4. Write **why**, in a sentence. The approver reads it, and BizBox's owner may read it later.
-5. **Send for approval.**
+5. **Review and send.** A window opens that says what will change: one line per record, the field, what BizBox has
+   now and what it will read after, and your reason. Rows that already have that value are counted and left alone.
+   Nothing has been sent yet. **Send for approval** sends it; **Go back and change it** closes the window and leaves
+   the grid as you had it, ticks and all.
 
-The desk answers *Batch #N queued: 2 record(s)* and the rows show a chip under **Waiting** naming the field. A row
-that already has that value is left out and counted.
+The desk answers *Batch #N queued: 2 record(s)* and the rows show a chip under **Waiting** naming the field.
 
 ### 4.4 Editing cells in place
 
 Change the cells you want directly in the rows (a dropdown, a date box or a text box), write why in the lower bar,
-then **Send edited cells for approval**. Only the cells that differ from what BizBox has are sent; the count on the
-left tells you how many you have changed. A cell set back to its original value is not a change.
+then **Review edited cells and send**. The same window opens, listing only the cells that differ from what BizBox
+has, each with its record; the count on the left tells you how many you have changed. A cell set back to its
+original value is not a change. **Send for approval** sends them; **Go back and change it** keeps your edits.
+
+### 4.4a Changing one record from its own page
+
+Open the record (click its number). If your role may propose, the fields BizBox lets the desk change are the boxes
+on the page itself: the status is BizBox's dropdown, a date is a date box, an amount a number. Change what is
+wrong, write **why**, then **Review changes**. The window lists each field that will change, from what BizBox has
+now to what you set, in BizBox's own words. **Send for approval** queues it as a batch; **Go back and change it**
+returns you to the page with your edits still in place. If nothing differs, the page says *Nothing is changed:
+every field still reads what BizBox has* and no window opens; a value BizBox does not use is refused the same way,
+before anything is sent.
 
 ### 4.5 A new purchase order or a new item
 
@@ -172,6 +186,18 @@ the title.
 If the page says the report server refused the desk's sign-in or could not be reached, nothing is wrong with your
 values: tell Dada, who tells SQL01. Every run is logged, so a report you ran can always be found again.
 
+## 5b. Drugs and warehouses
+
+**Procurement › Drugs** lists every item BizBox marks as a medicine: the item, its name, the generic name, the
+dosage, a red **Controlled** chip for a controlled drug, the category, how it is given, and its DOH and MIMS
+references. The chips at the top show all, controlled only, or not controlled; the search box reads any of those
+words. It shows only to a role with *See* on *Drugs and medicines*, which Dada sets apart from the rest of Items.
+Open an item from there and its page carries a *Medicine* card with the same facts.
+
+**Procurement › Warehouses** lists the hospital's warehouses by group, active ones first, with their codes. Stock on
+hand per warehouse is on the Reports tab under *Perpetual inventory*. Nothing on either tab is edited here; both are
+BizBox's.
+
 ## 6. What your role lets you do in Procurement
 
 Procurement has three areas, as BizBox grants purchasing, receiving and inventory separately: **Purchase orders**,
@@ -181,7 +207,7 @@ Procurement has three areas, as BizBox grants purchasing, receiving and inventor
 |---|---|
 | **None** | Nothing; the tab does not show. With none in any area, the Procurement menu does not show. |
 | **See** | Open the tab and the records. No bars, no editable cells, no New button. |
-| **Propose** | Tick and send, edit cells, add a new order or item. Cancel your own batches. |
+| **Propose** | Change a record from its page, tick and send, edit cells, add a new order or item; every one through the review window. Cancel your own batches. |
 | **Approve** | Everything above, plus approve other people's batches and cancel anyone's. Never approve your own. |
 
 The desk sends every approved change to BizBox under one login, so these levels are what BizBox's own per-person
@@ -213,13 +239,17 @@ first place to ask.
 
 1. **Procurement**, Purchase orders tab. Filter by vendor or status if it helps.
 2. Tick the orders. The bar reads *N ticked*.
-3. Field *Status*; pick the new status from the dropdown; write why; **Send for approval**.
-4. The rows show *Status* under *Waiting*. Tell your approver.
+3. Field *Status*; pick the new status from the dropdown; write why; **Review and send**.
+4. Read the window: each order, *Status*, now → after. **Send for approval**.
+5. The rows show *Status* under *Waiting*. Tell your approver.
 
 **Fix one wrong cell**
 
-1. On the grid, change the cell in the row: pick the vendor from the dropdown, or set the date.
-2. The lower bar reads *1 cell(s) edited*. Write why; **Send edited cells for approval**.
+1. On the grid, change the cell in the row: pick the vendor from the dropdown, or set the date. Or open the record
+   and change the field on its page.
+2. The lower bar reads *1 cell(s) edited*. Write why; **Review edited cells and send** (on the record's page,
+   **Review changes**).
+3. The window shows that one cell, now → after. **Send for approval**.
 
 **Raise a new purchase order**
 
@@ -260,7 +290,8 @@ first place to ask.
 | *Your security role does not let you see procurement* | Your role has None in every area | Ask Dada to set your role. |
 | *That is not a vendor BizBox has; pick one from the list* | The vendor is not on any BizBox order or receipt | Pick an existing vendor. A new vendor is created in BizBox first. |
 | *Every ticked record already has that value in BizBox* | Nothing to change | Nothing to do. |
-| *Nothing was changed: every cell still reads what BizBox has* | You sent the edited-cells bar with no cell changed | Change a cell first. |
+| *Nothing is changed: every cell still reads what BizBox has* (or *every field*) | You asked to review with no cell, or no field on the record's page, changed | Change something first. |
+| *Not sent: …* above a record's page or a grid | The review found a value BizBox would refuse, or nothing to tick | Read the rest of the line; fix it and review again. Nothing was queued. |
 | *Say why, so the person who approves it and BizBox's owner know* | The why box was empty | Write one sentence. |
 | *A change to status on PO-… is already pending; cancel it first* | Someone has already queued that field on that record | Open Changes, read the pending one, cancel it if yours or ask its owner. |
 | *A change is approved by someone other than the person who asked for it* | You tried to approve your own | Ask a second approver. |

@@ -259,7 +259,7 @@ def index(ctx):
     if can and rows:
         bulk = (f"<form id=cfgbulk method=post action='/configurations/bulk' class='row schedbar bulkbar' style='margin-top:10px'>"
                 f"<input type=hidden name=back value='{t.esc(keep())}'>"
-                "<div style='flex:0 0 auto'><b><span data-ticked>0</span> ticked:</b></div>"
+                "<div style='flex:0 0 auto' aria-live=polite><b><span data-ticked>0</span> ticked:</b></div>"
                 f"<div style='flex:0 0 170px'><select name=status aria-label='Change status'>{_opts([('', 'Status: leave')] + [(x['status_id'], x['name']) for x in cmdb.statuses(ctx.conn)], '')}</select></div>"
                 f"<div style='flex:0 0 170px'><select name=config_type aria-label='Change type'>{_opts([('', 'Type: leave')] + [(x['type_id'], x['name']) for x in cmdb.types(ctx.conn)], '')}</select></div>"
                 f"<div style='flex:0 0 200px'><select name=contact_id aria-label='Change contact'>{_opts([('', 'Contact: leave'), ('-', 'Contact: clear')] + [(p['contact_id'], p['display_name']) for p in ctx.conn.execute('SELECT contact_id, display_name FROM contact WHERE inactive = 0 ORDER BY display_name LIMIT 2000')], '')}</select></div>"

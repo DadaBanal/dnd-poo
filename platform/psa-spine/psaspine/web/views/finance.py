@@ -106,6 +106,21 @@ def _cell(rec, field, area: str = "finance", labels: dict | None = None) -> str:
     return f"<td>{t.esc(v or '')}</td>"
 
 
+def medicine_card(ctx, kind: str, ext_ref: str) -> str:
+    """An item that BizBox marks as a medicine shows its medicine facts, to a
+    role with See on drugs and medicines (083)."""
+    if kind != "product" or not common.allows(ctx, "PROC_DRUG"):
+        return ""
+    m = bizbox.medicine_of(ctx.conn, ext_ref)
+    if m is None:
+        return ""
+    facts = "".join(f"<dt>{lab}</dt><dd>{t.esc(str(m[f]) if m[f] not in (None, '') else '—')}</dd>" for lab, f in (
+        ("Generic name", "generic"), ("Dosage", "dosage"), ("Administration", "admin_group"), ("DOH reference", "doh_ref"),
+        ("MIMS", "mims_ref"), ("Remarks", "remarks")))
+    flag = "<span class='chip sla-bad'>Controlled drug</span>" if m["controlled"] else "<span class=chip>Not a controlled drug</span>"
+    return f"<div class=card><h3>{t.icon('tag')}Medicine</h3><p>{flag}</p><dl class=kv>{facts}</dl></div>"
+
+
 def module_for(kind: str, area: str) -> str:
     """The security module a record page answers to: Finance's, or, under the
     Procurement menu, the area the kind belongs to (13 Oct 2026)."""
@@ -303,11 +318,67 @@ def changes_page(ctx):
 
 
 def detail(ctx, kind, *, area: str = "finance"):
-    from .. import HttpError, Response
+    from .. import HttpError
     common.require_module(ctx, module_for(kind, area))
     ext_ref = ctx.request.query.get("ref", "")
     if kind not in bizbox.LINK_KIND or not ext_ref:
         raise HttpError("404 Not Found", "No such record.")
+    return _detail(ctx, kind, area, ext_ref)
+
+
+def _edit_control(ctx, kind: str, field: str, how: str, current, shown=None) -> str:
+    """The record's own field as a control, prefilled: BizBox's list as a
+    dropdown, a date box, a number, or text (Dada, 13 Oct 2026: "the edit
+    should be on the item itself"). `current` is BizBox's value (kept on the
+    control as data-was); `shown` is what the person had typed when the page
+    comes back from the review window, else the same."""
+    cur = "" if current is None else (f"{float(current):g}" if how == "money" else str(current))
+    val = cur if shown is None else str(shown)
+    name = f"e:{field}"
+    opts = bizbox.choices(ctx.conn, kind, field)
+    if opts:
+        options = "".join(f"<option value='{t.esc(c)}'{' selected' if c == val else ''}>{t.esc(l)}</option>" for c, l in opts)
+        if cur and cur not in {c for c, _ in opts}:
+            options = f"<option value='{t.esc(cur)}'{' selected' if cur == val else ''}>{t.esc(cur)} (as in BizBox)</option>" + options
+        return f"<select name='{name}' data-was='{t.esc(cur)}' aria-label='{t.esc(bizbox.FIELD_WORDS.get(field, field))}'>{options}</select>"
+    if how == "date":
+        return f"<input type=date name='{name}' value='{t.esc(val)}' data-was='{t.esc(cur)}'>"
+    if how == "money":
+        return f"<input type=number step=any min=0 name='{name}' value='{t.esc(val)}' data-was='{t.esc(cur)}'>"
+    return f"<input name='{name}' value='{t.esc(val)}' data-was='{t.esc(cur)}' maxlength=400>"
+
+
+def review_dialog(title: str, preview: dict, *, action: str, hidden: list, show_ref: bool = False) -> str:
+    """The window that says what will change before anything is sent for
+    approval (Dada, 13 Oct 2026): one line per change, from -> to in BizBox's
+    words, the reason, and two ways out. "Send" posts the hidden copy of the
+    change to `action`; "Go back" closes the window natively (method=dialog),
+    leaving the form underneath as the person filled it. Modal when scripts
+    run; still usable when they do not."""
+    rows = "".join("<tr>" + (f"<td>{t.esc(r['ref'])}</td>" if show_ref else "")
+                   + f"<td>{t.esc(r['word'])}</td><td>{t.esc(r['old_word'])}</td><td aria-hidden=true>→</td><td><b>{t.esc(r['new_word'])}</b></td></tr>"
+                   for r in preview["rows"])
+    head = ("<th>Record</th>" if show_ref else "") + "<th>Field</th><th>Now in BizBox</th><th><span class=sr-only>becomes</span></th><th>After</th>"
+    n = preview["same"]
+    same = (f"<p class=muted>{n} {'is' if n == 1 else 'are'} already so in BizBox and {'stays' if n == 1 else 'stay'} as "
+            f"{'it is' if n == 1 else 'they are'}.</p>" if n else "")
+    fields = "".join(f"<input type=hidden name='{t.esc(k)}' value='{t.esc(v)}'>" for k, v in hidden)
+    return (f"<dialog open class=review aria-labelledby=review-title><h2 id=review-title>{t.icon('checks')}{t.esc(title)}</h2>"
+            f"<div class=tablewrap><table class=compact><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table></div>" + same
+            + f"<p><b>Why:</b> {t.esc(preview['reason'])}</p>"
+            "<p class=why>Sending it queues the change for a second person to approve. BizBox itself changes only after that, "
+            "when the approved change is pushed.</p>"
+            f"<div class=acts><form method=post action='{action}'>{fields}<button type=submit>{t.icon('check')} Send for approval</button></form>"
+            "<form method=dialog><button class=ghost type=submit>Go back and change it</button></form></div></dialog>"
+            "<script>(function(){var d=document.querySelector('dialog.review');if(d&&d.showModal){d.removeAttribute('open');d.showModal()}})()</script>")
+
+
+def _review_dialog(kind: str, area: str, ext_ref: str, preview: dict, *, action: str, hidden: list) -> str:
+    return review_dialog(f"What will change on {ext_ref}", preview, action=action, hidden=hidden)
+
+
+def _detail(ctx, kind, area, ext_ref, *, dialog: str = "", err: str = "", posted: dict | None = None):
+    from .. import HttpError, Response
     rec = bizbox.get(ctx.conn, kind, ext_ref)
     if rec is None:
         raise HttpError("404 Not Found", "No such record in the BizBox mirror.")
@@ -321,7 +392,24 @@ def detail(ctx, kind, *, area: str = "finance"):
         if f in labels:
             return t.esc(bizbox.word(labels, f, rec[f]) or "—")
         return t.esc(rec[f] or "—")
-    facts = "".join(f"<dt>{t.esc(lab)}</dt><dd>{fact(f)}</dd>" for f, lab in _columns(ctx, kind))
+    can_edit = common.allows(ctx, module_for(kind, area), "WRITE") and kind in bizbox.EDITABLE and bool(rec["present"])
+    editable = bizbox.EDITABLE.get(kind, {}) if can_edit else {}
+    posted = posted or {}
+    facts = "".join(
+        f"<dt>{t.esc(lab)}</dt><dd>"
+        + (_edit_control(ctx, kind, f, editable[f], rec[f], posted.get(f"e:{f}")) if f in editable else fact(f))
+        + "</dd>" for f, lab in _columns(ctx, kind))
+    if can_edit:
+        q0 = ctx.request.query
+        facts = (f"<form method=post action='/finance/{kind}/review' class=fields data-record{' aria-describedby=flash-err' if (err or q0.get('err')) else ''}>"
+                 f"<input type=hidden name=ref value='{t.esc(ext_ref)}'><input type=hidden name=area value='{area}'>"
+                 f"<dl class=kv>{facts}</dl>"
+                 f"<div style='margin-top:10px'><label>Why</label><input name=reason maxlength=400 value='{t.esc(posted.get('reason', ''))}' "
+                 "placeholder='What the approver and BizBox need to know' required></div>"
+                 f"<div style='margin-top:10px'><button type=submit>{t.icon('checks')} Review changes</button> "
+                 "<span class=muted>Change the fields above; the window shows what will change before it is sent.</span></div></form>")
+    else:
+        facts = f"<dl class=kv>{facts}</dl>"
     seen = common.board_ids_for(ctx)
     linked = bizbox.linked_to(ctx.conn, kind, ext_ref)
     visible = _visible_subjects(ctx, linked, seen)
@@ -359,39 +447,74 @@ def detail(ctx, kind, *, area: str = "finance"):
                     or "<tr><td colspan=7 class=muted>No lines mirrored.</td></tr>")
                  + (f"<tr><td colspan=6 class=num><b>Lines total</b></td><td class=num><b>{t.esc(_money(total, rec['currency']))}</b></td></tr>" if lines else "")
                  + "</tbody></table></div></div>")
-    can_edit = common.allows(ctx, module_for(kind, area), "WRITE") and kind in bizbox.EDITABLE
     proposals = bizbox.changes(ctx.conn, kind, ext_ref)
-    form = ""
-    if can_edit:
-        fields = "".join(f"<option value={f}>{bizbox.FIELD_WORDS[f]}</option>" for f in bizbox.EDITABLE[kind])
-        form = (f"<form method=post action='/finance/{kind}/propose' class=grid2 style='margin-top:10px' data-valuepick>"
-                f"<input type=hidden name=ref value='{t.esc(ext_ref)}'><input type=hidden name=area value='{area}'>"
-                f"<div><label>Field</label><select name=field>{fields}</select></div>"
-                f"<div><label>New value</label>{value_inputs(ctx, kind, list(bizbox.EDITABLE[kind]))}</div>"
-                "<div style='grid-column:1/-1'><label>Why</label><input name=reason required maxlength=400 "
-                "placeholder='What the person applying it in BizBox needs to know'></div>"
-                "<div><button class=ghost type=submit>Propose the change</button></div></form>" + VALUE_PICK_SCRIPT)
-    changes_card = ("<div class=card><h3>" + t.icon("note") + "Changes to BizBox</h3><p class=why>BizBox is where this record "
-                    "changes. A change proposed here is approved by a second person, then pushed to BizBox by its own "
-                    "procedure once SQL01 has switched that on; until then it waits here, and BizBox itself has not changed.</p>"
-                    + (_changes_table(ctx, proposals, with_record=False) if proposals else "") + form + "</div>"
-                    if (can_edit or proposals) else "")
+    changes_card = ("<div class=card><h3>" + t.icon("note") + "Changes waiting for BizBox</h3><p class=why>A change sent from "
+                    "this page is approved by a second person, then pushed to BizBox once that link is switched on; until "
+                    "then it waits here, and BizBox itself has not changed.</p>"
+                    + _changes_table(ctx, proposals, with_record=False) + "</div>" if proposals else "")
     from . import agreements as agreements_view
-    extra = agreements_view.covering_card(ctx, kind, ext_ref) + extra + changes_card
+    extra = agreements_view.covering_card(ctx, kind, ext_ref) + medicine_card(ctx, kind, ext_ref) + extra + changes_card
     q = ctx.request.query
-    body = ((f"<div class='banner ok'>{t.esc(q.get('msg', ''))}</div>" if q.get("msg") else "")
-            + (f"<div class='banner err'>{t.esc(q.get('err', ''))}</div>" if q.get("err") else "")
-            + f"<h1>{t.esc(ONE[kind])} {t.esc(ext_ref)}</h1><p class=sub>From BizBox, read-only"
+    body = ((f"<div class='banner ok' id=flash-ok role=status aria-live=polite>{t.esc(q.get('msg', ''))}</div>" if q.get("msg") else "")
+            + (f"<div class='banner err' id=flash-err role=alert>{t.esc(err or q.get('err', ''))}</div>" if (err or q.get("err")) else "")
+            + dialog
+            + f"<h1>{t.esc(ONE[kind])} {t.esc(ext_ref)}</h1><p class=sub>From BizBox" + (", changed from here" if can_edit else ", read-only")
             + ("" if rec["present"] else " · <b>no longer in BizBox</b>; kept because work links to it")
             + f" · synced {t.esc(rec['synced_at'])} · <a href='/{area}?tab={kind}'>"
             + t.esc(("Receiving" if kind == "invoice" else dict(TABS)[kind]) if area == "procurement" else dict(TABS)[kind]) + "</a>"
             + (f" · <span class='chip sla-warn'>{sum(1 for c in proposals if c['status'] == 'PENDING')} change(s) waiting for BizBox</span>"
                if any(c["status"] == "PENDING" for c in proposals) else "") + "</p>"
-            + f"<div class=grid2><div class=card><dl class=kv>{facts}</dl></div>"
+            + f"<div class=grid2><div class=card>{facts}</div>"
             + "<div class=card><h3>" + t.icon("note") + "Work linked to it</h3>"
             + (f"<ul class=plain>{''.join(links)}</ul>" if links else "<div class=muted>No ticket or project yet.</div>")
             + "</div></div>" + extra)
     return Response(body=t.page(ext_ref, body, user=ctx.user, active=area))
+
+
+def _posted_edits(f, kind: str) -> list:
+    return [(f.get("ref", ""), key[2:], f.get(key, "")) for key in f.keys() if key.startswith("e:") and key[2:] in bizbox.EDITABLE.get(kind, {})]
+
+
+def review(ctx, kind):
+    """POST: the record's form, checked, shown back with the window that
+    says what will change. Nothing is queued yet."""
+    from .. import HttpError, redirect
+    f = ctx.request.form()
+    area = f.get("area", "finance") if f.get("area", "finance") in AREAS else "finance"
+    common.require_module(ctx, module_for(kind, area), "WRITE")
+    ext_ref = f.get("ref", "")
+    if kind not in bizbox.LINK_KIND or not ext_ref:
+        raise HttpError("404 Not Found", "No such record.")
+    edits = _posted_edits(f, kind)
+    try:
+        preview = bizbox.preview_edits(ctx.conn, kind, edits, reason=f.get("reason", ""))
+    except bizbox.Refused as exc:
+        return _detail(ctx, kind, area, ext_ref, err=f"Not sent: {exc}", posted=dict(f))
+    if not preview["rows"]:
+        return _detail(ctx, kind, area, ext_ref, err="Nothing is changed: every field still reads what BizBox has.", posted=dict(f))
+    hidden = [("ref", ext_ref), ("area", area), ("reason", preview["reason"])] + [(f"e:{r['field']}", "" if r["new"] is None else str(r["new"])) for r in preview["rows"]]
+    dialog = _review_dialog(kind, area, ext_ref, preview | {"same": 0}, action=f"/finance/{kind}/send", hidden=hidden)   # every field was posted: "left as they are" is noise here
+    return _detail(ctx, kind, area, ext_ref, dialog=dialog, posted=dict(f))
+
+
+def send(ctx, kind):
+    """POST from the review window: queue the batch for approval."""
+    from .. import redirect
+    f = ctx.request.form()
+    area = f.get("area", "finance") if f.get("area", "finance") in AREAS else "finance"
+    common.require_module(ctx, module_for(kind, area), "WRITE")
+    ext_ref = f.get("ref", "")
+    if kind not in bizbox.LINK_KIND or not ext_ref:
+        return redirect(f"/{area}")
+    back = _url(kind, ext_ref, area)
+    try:
+        out = bizbox.propose_edits(ctx.conn, kind, _posted_edits(f, kind), reason=f.get("reason", ""), at=ctx.now, actor=ctx.user.id)
+        ctx.conn.commit()
+    except bizbox.Refused as exc:
+        ctx.conn.rollback()
+        return redirect(back + ("&" if "?" in back else "?") + urllib.parse.urlencode({"err": f"Not sent: {exc}"}))
+    return redirect(back + ("&" if "?" in back else "?") + urllib.parse.urlencode(
+        {"msg": f"Batch #{out['batch_id']} sent for approval: {out['queued']} change(s). BizBox has not changed yet."}))
 
 
 def ticket_card(ctx, tk, *, can_work: bool) -> str:

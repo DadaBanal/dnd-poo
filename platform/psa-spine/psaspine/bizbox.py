@@ -55,6 +55,10 @@ KINDS = {
                                 "unit_cost": "money"}),
     # 081: BizBox's own code lists, one row per entry; see choices() below.
     "lookup": ("ext_lookup", {"ext_ref": "text", "list": "text", "code": "text", "label": "text", "sort_no": "int"}),
+    # 083: the 73 warehouses in their groups, and the items that are medicines
+    "warehouse": ("ext_warehouse", {"ext_ref": "text", "name": "text", "group_name": "text", "active": "int"}),
+    "medicine": ("ext_medicine", {"ext_ref": "text", "generic": "text", "dosage": "text", "controlled": "int",
+                                  "doh_ref": "text", "mims_ref": "text", "admin_group": "text", "remarks": "text"}),
 }
 LABEL = {"agreement": "Agreements", "product": "Products", "purchase_order": "Purchase orders", "invoice": "Invoices"}
 LINK_KIND = {"agreement": "AGREEMENT", "product": "PRODUCT", "purchase_order": "PURCHASE_ORDER", "invoice": "INVOICE"}
@@ -305,7 +309,8 @@ def sync(conn: sqlite3.Connection, rows_by_kind: dict[str, list[dict]], *, at: d
 
 
 READ_WORDS = {"purchase_order": "purchase orders", "po_line": "order lines", "product": "items",
-              "invoice": "receiving reports", "agreement": "agreements", "lookup": "list entries"}
+              "invoice": "receiving reports", "agreement": "agreements", "lookup": "list entries",
+              "warehouse": "warehouses", "medicine": "medicines"}
 
 
 def read_words(result: str | None) -> str:
@@ -756,6 +761,40 @@ def propose_many(conn, kind: str, refs, field: str, new_value: str, *, reason: s
     return {"batch_id": bid, "queued": queued, "same": same}
 
 
+def preview_edits(conn, kind: str, edits, *, reason: str) -> dict:
+    """What propose_edits would queue, for the review window (Dada, 13 Oct
+    2026: "a window saying what will be changed before pushing to bizbox").
+    Every check runs; nothing is written. Returns the rows that differ
+    (ref, field, the words, from, to) and how many were already so."""
+    reason = _reason(reason)
+    labels = labels_for(conn, kind)
+    rows, same = [], 0
+    for ref, field, value in edits:
+        rec = get(conn, kind, str(ref).strip())
+        if rec is None:
+            raise Refused(f"{ref} is not in the BizBox mirror.")
+        kept = _edit_check(conn, kind, rec, field, value)
+        if kept is _SAME:
+            same += 1
+            continue
+        rows.append({"ref": rec["ext_ref"], "field": field, "word": FIELD_WORDS.get(field, field),
+                     "old": rec[field], "new": kept,
+                     "old_word": word(labels, field, rec[field]) or "—", "new_word": word(labels, field, kept) or "—"})
+    return {"rows": rows, "same": same, "reason": reason}
+
+
+def preview_many(conn, kind: str, refs, field: str, new_value: str, *, reason: str) -> dict:
+    """What propose_many would queue: the same checks, nothing written."""
+    refs = [r for r in dict.fromkeys(str(x).strip() for x in refs) if r]
+    if not refs:
+        raise Refused("Tick at least one record.")
+    if len(refs) > MAX_BATCH:
+        raise Refused(f"At most {MAX_BATCH} records in one batch.")
+    if EDITABLE.get(kind, {}).get(field) is None:
+        raise Refused(f"{field} is not a field that can be changed on these records.")
+    return preview_edits(conn, kind, [(r, field, new_value) for r in refs], reason=reason)
+
+
 def propose_edits(conn, kind: str, edits, *, reason: str, at: datetime, actor: str) -> dict:
     """Cells edited in place on the grid, saved in one go: (ext_ref, field,
     new_value) triples, one batch. A cell left as BizBox has it is not a
@@ -1001,6 +1040,44 @@ def vendors(conn, *, q: str = "") -> list:
         + " GROUP BY vendor ORDER BY vendor",
         [SOURCE, SOURCE] + ([like] if like else [])).fetchall()
     return rows
+
+
+# ------------------------------------------------- warehouses, medicines (083)
+
+def warehouses(conn, *, q: str = "", include_inactive: bool = True) -> list:
+    """Every warehouse the mirror holds, by group then name, active first."""
+    if not db.table_exists(conn, "ext_warehouse"):
+        return []
+    where, args = _filter("warehouse", q, False)
+    if not include_inactive:
+        where += " AND COALESCE(active, 1) = 1"
+    return conn.execute(f"SELECT *{where} ORDER BY COALESCE(group_name, ''), COALESCE(active, 1) DESC, name", args).fetchall()
+
+
+def medicines(conn, *, q: str = "", controlled: bool | None = None, limit: int = PAGE, offset: int = 0) -> tuple[list, int]:
+    """The medicines with their item's name and category; a page and the
+    count. `controlled` filters the flag."""
+    if not db.table_exists(conn, "ext_medicine"):
+        return [], 0
+    sql, args = [" FROM ext_medicine m LEFT JOIN ext_product p ON p.source_id = m.source_id AND p.ext_ref = m.ext_ref"
+                 " WHERE m.source_id = ? AND m.present = 1"], [SOURCE]
+    if controlled is not None:
+        sql.append(" AND COALESCE(m.controlled, 0) = ?"); args.append(1 if controlled else 0)
+    for word in (q or "").split()[:4]:
+        cols = ("m.ext_ref", "p.name", "m.generic", "m.dosage", "m.doh_ref", "m.mims_ref", "m.admin_group")
+        sql.append(" AND (" + " OR ".join(f"LOWER(COALESCE({c}, '')) LIKE ? ESCAPE '\\'" for c in cols) + ")")
+        args += [_like(word.lower())] * len(cols)
+    where = "".join(sql)
+    total = conn.execute(f"SELECT COUNT(*){where}", args).fetchone()[0]
+    rows = conn.execute(f"SELECT m.*, p.name AS item_name, p.category AS category, p.unit AS unit, p.present AS item_present{where}"
+                        " ORDER BY COALESCE(p.name, m.ext_ref), m.ext_ref LIMIT ? OFFSET ?", [*args, limit, offset]).fetchall()
+    return rows, total
+
+
+def medicine_of(conn, item_ref: str):
+    if not db.table_exists(conn, "ext_medicine"):
+        return None
+    return conn.execute("SELECT * FROM ext_medicine WHERE source_id = ? AND ext_ref = ? AND present = 1", (SOURCE, item_ref)).fetchone()
 
 
 def po_lines(conn, po_ref: str):

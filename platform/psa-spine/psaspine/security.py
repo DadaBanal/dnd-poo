@@ -23,7 +23,7 @@ from . import db
 MODULES = {"KNOWLEDGE": "Knowledge base", "PROJECTS": "Projects", "REPORTS": "Reports",
            "SCHEDULE": "Schedule", "FINANCE": "Finance (BizBox)", "TIME": "Timesheets",
            "PROC_PO": "Procurement: purchase orders", "PROC_RR": "Procurement: receiving",
-           "PROC_ITEM": "Procurement: items"}
+           "PROC_ITEM": "Procurement: items", "PROC_DRUG": "Procurement: drugs and medicines"}
 # Procurement, 13 Oct 2026. Dada: "rbac for the procurement module needs to be
 # made as it will bypass the bizbox permissions". One BizBox login will push
 # every approved change, so the desk keeps what BizBox's per-user rights did,
@@ -32,8 +32,10 @@ MODULES = {"KNOWLEDGE": "Knowledge base", "PROJECTS": "Projects", "REPORTS": "Re
 # and adds), ADMIN is approve, and never one's own. There is no fallback to
 # Finance: a role sees an area only once Setup says so (a live desk's roles
 # start at NONE; the starter roles below are only written into an empty table).
-PROCUREMENT_AREAS = ("PROC_PO", "PROC_RR", "PROC_ITEM")
-PROCUREMENT_AREA_OF = {"purchase_order": "PROC_PO", "invoice": "PROC_RR", "product": "PROC_ITEM"}
+# 13 Oct 2026, later: a fourth area, drugs and medicines, apart from the rest
+# of Items so pharmacy can be given See or Propose on its own (Dada).
+PROCUREMENT_AREAS = ("PROC_PO", "PROC_RR", "PROC_ITEM", "PROC_DRUG")
+PROCUREMENT_AREA_OF = {"purchase_order": "PROC_PO", "invoice": "PROC_RR", "product": "PROC_ITEM", "medicine": "PROC_DRUG"}
 AREA_WORDS = {"NONE": "None", "READ": "See", "WRITE": "Propose", "ADMIN": "Approve"}
 # A module that is the highest of several: PROCUREMENT (the menu, the Changes
 # and Vendors tabs) is whichever area the role holds highest.
@@ -51,13 +53,13 @@ RANK = {level: i for i, level in enumerate(LEVELS)}
 STARTER = (
     ("TECHNICIAN", "Technician", 1, {"KNOWLEDGE": "WRITE", "PROJECTS": "WRITE", "REPORTS": "READ",
                                     "SCHEDULE": "WRITE", "FINANCE": "READ", "TIME": "WRITE",
-                                    "PROC_PO": "READ", "PROC_RR": "READ", "PROC_ITEM": "READ"}),
+                                    "PROC_PO": "READ", "PROC_RR": "READ", "PROC_ITEM": "READ", "PROC_DRUG": "READ"}),
     ("SERVICE_MANAGER", "Service manager", 0, {"KNOWLEDGE": "ADMIN", "PROJECTS": "ADMIN", "REPORTS": "ADMIN",
                                                "SCHEDULE": "ADMIN", "FINANCE": "WRITE", "TIME": "ADMIN",
-                                               "PROC_PO": "ADMIN", "PROC_RR": "ADMIN", "PROC_ITEM": "ADMIN"}),
+                                               "PROC_PO": "ADMIN", "PROC_RR": "ADMIN", "PROC_ITEM": "ADMIN", "PROC_DRUG": "ADMIN"}),
     ("READ_ONLY", "Read only", 0, {"KNOWLEDGE": "READ", "PROJECTS": "READ", "REPORTS": "READ",
                                    "SCHEDULE": "READ", "FINANCE": "NONE", "TIME": "READ",
-                                   "PROC_PO": "NONE", "PROC_RR": "NONE", "PROC_ITEM": "NONE"}),
+                                   "PROC_PO": "NONE", "PROC_RR": "NONE", "PROC_ITEM": "NONE", "PROC_DRUG": "NONE"}),
 )
 
 

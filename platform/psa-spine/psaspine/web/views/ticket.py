@@ -1848,13 +1848,13 @@ def _tasks_card(ctx, tk, *, can_work: bool) -> str:
                 + f"<td class=tsch>{sched_cell(r)}</td>"
                 + ("<td class=tacts>"
                    f"<form id='tsave{r['task_id']}' method=post action='/ticket/{wid}/task/save' class=inline><input type=hidden name=task_id value='{r['task_id']}'>"
-                   f"<button class='ghost small' type=submit title='Save this row'>{t.icon('check')}</button></form>"
+                   f"<button class='ghost small' type=submit title='Save this row'>{t.icon('check')}<span class=sr-only>Save this row</span></button></form>"
                    f"<form method=post action='/ticket/{wid}/task/move' class=inline><input type=hidden name=task_id value='{r['task_id']}'><input type=hidden name=dir value=up>"
-                   f"<button class='ghost small' type=submit aria-label='Move up' title='Move up'>{t.icon('up')}</button></form>"
+                   f"<button class='ghost small' type=submit title='Move up'>{t.icon('up')}<span class=sr-only>Move up</span></button></form>"
                    f"<form method=post action='/ticket/{wid}/task/move' class=inline><input type=hidden name=task_id value='{r['task_id']}'><input type=hidden name=dir value=down>"
-                   f"<button class='ghost small' type=submit aria-label='Move down' title='Move down'>{t.icon('down')}</button></form>"
+                   f"<button class='ghost small' type=submit title='Move down'>{t.icon('down')}<span class=sr-only>Move down</span></button></form>"
                    f"<form method=post action='/ticket/{wid}/task/remove' class=inline><input type=hidden name=task_id value='{r['task_id']}'>"
-                   f"<button class='ghost small' type=submit aria-label='Remove' title='Remove this task'>{t.icon('x')}</button></form></td>"
+                   f"<button class='ghost small' type=submit title='Remove this task'>{t.icon('x')}<span class=sr-only>Remove this task</span></button></form></td>"
                    if can_work else "<td></td>") + "</tr>")
     trs = "".join(row(r, n) for n, r in enumerate(rows, 1))
     add = ""
@@ -2061,7 +2061,7 @@ def _tab_bar(wid: str, current: str, counts: dict | None = None) -> str:
     return ("<nav class='tabs ttabs' aria-label='Ticket tabs'>" + "".join(
         f"<a href='/ticket/{wid}" + (f"/{key}" if key else "") + "'"
         + (" class=on aria-current=page" if key == current else "") + f">{label}"
-        + (f" <span class=tcount>{t.esc(counts[key])}</span>" if counts.get(key) else "") + "</a>" for key, label in TICKET_TABS)
+        + (f" <span class=tcount aria-label='{t.esc(counts[key])} done'>{t.esc(counts[key])}</span>" if counts.get(key) else "") + "</a>" for key, label in TICKET_TABS)
         + "</nav>")
 
 

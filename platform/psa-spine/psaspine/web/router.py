@@ -125,11 +125,15 @@ ROUTES = [
     ("POST", "/procurement/batch/<batch_id>/cancel", procurement_view.cancel),
     ("GET", "/procurement/<kind>/new", procurement_view.new_form),
     ("POST", "/procurement/<kind>/add", procurement_view.add),
+    ("POST", "/procurement/<kind>/bulk/review", procurement_view.review_bulk),   # the window first (13 Oct 2026)
     ("POST", "/procurement/<kind>/bulk", procurement_view.bulk),
+    ("POST", "/procurement/<kind>/edits/review", procurement_view.review_edits),
     ("POST", "/procurement/<kind>/edits", procurement_view.edits),
     ("GET", "/procurement/<kind>", procurement_view.detail),             # ?ref=<BizBox reference>
     ("GET", "/finance", finance_view.index),
     ("GET", "/finance/<kind>", finance_view.detail),                    # ?ref=<BizBox reference>
+    ("POST", "/finance/<kind>/review", finance_view.review),             # what will change, before it is sent
+    ("POST", "/finance/<kind>/send", finance_view.send),
     ("POST", "/finance/<kind>/propose", finance_view.propose),
     ("POST", "/finance/change/<change_id>/cancel", finance_view.cancel_change),
     ("POST", "/ticket/<work_item_id>/finance/link", finance_view.ticket_link),

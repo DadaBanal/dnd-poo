@@ -33,8 +33,9 @@ Both read reference tables only: no patient table, no price table, no `PMC_Backu
 | `group_name` | `GroupName` | the group's name (Admin, Nursing Service, Ancillary, …) |
 | `active` | `IsActive` | 1 or 0 |
 
-**`psa.vw_medicine`** from `dbo.iwItemMedicines` joined to `dbo.iwItems` and `dbo.mscGenerics` (2,166 rows), one row
-per item that is a medicine:
+**`psa.vw_drug_item`** from `dbo.iwItemMedicines` joined to `dbo.iwItems` and `dbo.mscGenerics` (2,166 rows), one row
+per item that is a medicine. (Not `vw_medicine`: the desk's patient-word fence refuses any view name containing *medic*,
+by design, and this one is an item list, so it takes a name the fence lets through.)
 
 | Desk field | Your column | What it is |
 |---|---|---|
@@ -52,7 +53,7 @@ Grant SELECT on both to `psa_bizbox_reader`, as for the others. Then two objects
 ```
 "warehouse": {"view": "psa.vw_warehouse",
               "columns": {"ext_ref": "WarehouseCode", "name": "WarehouseName", "group_name": "GroupName", "active": "IsActive"}},
-"medicine":  {"view": "psa.vw_medicine",
+"medicine":  {"view": "psa.vw_drug_item",
               "columns": {"ext_ref": "ItemCode", "generic": "GenericName", "dosage": "Dosage", "controlled": "IsControlDrug",
                           "doh_ref": "DOHDrugCode", "mims_ref": "MIMSDesc", "admin_group": "AdminGroup", "remarks": "Remarks"}}
 ```

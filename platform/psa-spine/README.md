@@ -2584,11 +2584,24 @@ inside BizBox*.
 - Tabs: Purchase orders, Receiving (BizBox's receiving reports, which Finance calls invoices), Products, Vendors (the
   names on orders and receipts, with counts and sums; a vendor's own record stays in BizBox's people table), Changes.
 - Each grid: search, a status filter (an item's is its category) and a vendor filter; tick rows, set one field to
-  one value, say why, then *Send for approval* (a batch); or edit cells in place and *Send edited cells for approval*
+  one value, say why, then *Review and send* (a batch); or edit cells in place and *Review edited cells and send*
   (a batch of only the cells that differ); *New purchase order* (with up to eight lines, each an item BizBox has) and
   *New item*. The words on screen are a person's, never a table's: the read banner says *5 purchase orders (5 new)*,
   a change waits *for approval* and then *to be sent*, a configuration was *typed in by hand* (Dada, 13 Oct 2026:
   *"make sure its user friendly and easy to understand"*, *"dont go by column names or db names or variables"*).
+- **The edit is on the record itself, and a window says what will change before it is sent** (Dada, 13 Oct 2026,
+  on the record page's Field / New value box: *"counter productive; the edit should be on the item itself and a
+  window saying what will be changed before pushing to bizbox"*). On a record's page, for a role that may propose,
+  the fields BizBox lets the desk change are the controls: the status is BizBox's dropdown, a date a date box, an
+  amount a number. Change them, say why, *Review changes*: a window lists each field from -> to in BizBox's words,
+  how many were left as they are, and the reason, with *Send for approval* and *Go back and change it* (the form
+  underneath keeps what was typed). Only then is a batch queued; the mirror and BizBox are untouched until it is
+  approved and pushed. The grids take the same step: *Review and send* and *Review edited cells and send* open the
+  window first (the record named on each line), and the grid underneath keeps the ticks, the field and the edited
+  cells. A value BizBox does not use, or nothing changed, is said on the page before any window opens. Nothing is
+  written while reviewing (`bizbox.preview_edits`, `preview_many`); the window's hidden copy of the change is what
+  *Send* posts (`/finance/<kind>/review` then `/send`; `/procurement/<kind>/bulk/review` then `/bulk`;
+  `/edits/review` then `/edits`). The window is a native `<dialog>`: modal with scripts, still a page without them.
 - A record's page is Finance's, served under this menu with its links kept here.
 - **Rights, per area** (Dada, 13 Oct 2026: *"rbac for the procurement module needs to be made as it will bypass the
   bizbox permissions"*). The desk will push every approved change under one BizBox login, so the desk keeps what
@@ -2658,6 +2671,26 @@ reports."* Four choices were put to him: a **Reports tab inside Procurement**; t
   render `GET` are the only three things sent.
 
 Tests: `MmsReportsTest`.
+
+## Warehouses, and drugs and medicines (13 Oct 2026, schema 083)
+
+Dada, 13 Oct 2026, with SQL01's measurements (73 warehouses in 6 groups; 2,166 items BizBox marks as medicines, with
+a controlled-drug flag; stock on hand 591,000 rows): a **Warehouses tab** by group, read hourly from one small view;
+**stock on hand through the MMS reports** until SQL01 has measured how many rows carry stock; a **Drugs tab as its own
+rights area**.
+
+- Two mirror kinds, `warehouse` and `medicine`, read by `sync-bizbox` like the others from SQL01's `psa.vw_warehouse`
+  and `psa.vw_drug_item` (the 083 handoff names the columns). A medicine's key is the item's code, so it joins the item.
+- **Procurement › Warehouses**: by group, active first, with a search. Shows to a role with *See* on Items.
+- **Procurement › Drugs**: every medicine with its item name, generic, dosage, a *Controlled* chip and filter, category
+  in words, administration group, DOH and MIMS references; search by any of them. Read-only: a medicine's facts are
+  BizBox's. Shows only to a role with *See* on the fourth area, **Procurement: drugs and medicines** (`PROC_DRUG`), so
+  pharmacy can be given it apart from the rest of Items. A role with that area alone opens the Procurement menu on
+  Drugs.
+- **An item's page** gains a *Medicine* card when the item is one, for the same area.
+- Nothing of stock is copied: the Warehouses tab points at *Perpetual inventory* on the Reports tab.
+
+Tests: `WarehousesAndDrugsTest`.
 
 ## Changing a booking in place, and your own Outlook entries (9 Oct 2026, schema 077)
 

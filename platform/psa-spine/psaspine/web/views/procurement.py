@@ -28,15 +28,18 @@ from __future__ import annotations
 import re
 import urllib.parse
 
-from ... import bizbox, security
+from ... import bizbox, db, security
 from .. import templates as t
 from . import common, finance
 
 AREA = "procurement"
 TABS = (("purchase_order", "Purchase orders"), ("invoice", "Receiving"), ("product", "Products"),
-        ("vendor", "Vendors"), ("changes", "Changes"), ("reports", "Reports"))
+        ("medicine", "Drugs"), ("vendor", "Vendors"), ("warehouse", "Warehouses"), ("changes", "Changes"), ("reports", "Reports"))
 KINDS = ("purchase_order", "invoice", "product")
 NEW_WORDS = {"purchase_order": "New purchase order", "product": "New item"}
+# the record in words, one and many, for the review window's title
+ONE_WORD = {"purchase_order": "purchase order", "invoice": "receiving report", "product": "item"}
+MANY_WORD = {"purchase_order": "purchase orders", "invoice": "receiving reports", "product": "items"}
 # the column a vendor filter reads, per kind
 VENDOR_COL = {"purchase_order": "vendor", "invoice": "party"}
 # the column the first filter reads, per kind: an item has no status, so its
@@ -66,8 +69,14 @@ def _seen(ctx) -> list:
 
 
 def _banners(q) -> str:
-    return ((f"<div class='banner ok'>{t.esc(q.get('msg', ''))}</div>" if q.get("msg") else "")
-            + (f"<div class='banner err'>{t.esc(q.get('err', ''))}</div>" if q.get("err") else ""))
+    """The page's answer to the last thing sent: the refusal is an alert with
+    an id, so the form that drew it points at it (aria-describedby, Part 80)."""
+    return ((f"<div class='banner ok' id=flash-ok role=status aria-live=polite>{t.esc(q.get('msg', ''))}</div>" if q.get("msg") else "")
+            + (f"<div class='banner err' id=flash-err role=alert>{t.esc(q.get('err', ''))}</div>" if q.get("err") else ""))
+
+
+def _described(q) -> str:
+    return " aria-describedby=flash-err" if q.get("err") else ""
 
 
 def _tabs(ctx, on: str) -> str:
@@ -83,6 +92,10 @@ def _tabs(ctx, on: str) -> str:
     if seen and mms_reports.ready(ctx.conn):
         counts["reports"] = ctx.conn.execute(
             f"SELECT COUNT(*) FROM mms_report WHERE present = 1 AND shown = 1 AND area IN ({marks})", seen).fetchone()[0]
+    if _may(ctx, "medicine") and db.table_exists(ctx.conn, "ext_medicine"):
+        counts["medicine"] = ctx.conn.execute("SELECT COUNT(*) FROM ext_medicine WHERE source_id = ? AND present = 1", (bizbox.SOURCE,)).fetchone()[0]
+    if "product" in seen and db.table_exists(ctx.conn, "ext_warehouse"):
+        counts["warehouse"] = ctx.conn.execute("SELECT COUNT(*) FROM ext_warehouse WHERE source_id = ? AND present = 1", (bizbox.SOURCE,)).fetchone()[0]
     return ("<div class=stabs>" + "".join(
         f"<a class='{'on' if k == on else ''}' href='/procurement?tab={k}'>{v} · {counts[k]}</a>" for k, v in TABS if k in counts) + "</div>")
 
@@ -93,8 +106,8 @@ def _head(ctx, on: str, q) -> str:
             else "Not read from BizBox yet: the hourly read has not run.")
     return (_banners(q) + "<h1>Procurement</h1><p class=sub>Everything here is read from BizBox: purchase orders, "
             "receiving, items and vendors. To change something, tick rows and set one thing on all of them, or edit "
-            "the cells in a row, say why, and send it for approval. A second person approves it on the Changes tab. "
-            "Nothing in BizBox changes until it is approved and sent.</p>"
+            "the cells in a row, say why, and review it: a window shows what will change before it is sent for approval. "
+            "A second person approves it on the Changes tab. Nothing in BizBox changes until it is approved and sent.</p>"
             f"<div class='banner ok'>{sync}</div>" + _tabs(ctx, on))
 
 
@@ -109,8 +122,16 @@ def index(ctx):
         return _changes(ctx)
     if tab == "reports":
         return _reports(ctx)
+    if tab == "medicine":
+        _gate(ctx, "medicine")
+        return _drugs(ctx)
+    if tab == "warehouse":
+        _gate(ctx, "product")
+        return _warehouses(ctx)
     if tab not in KINDS:
-        tab = (_seen(ctx) or ["changes"])[0]               # the first area the person may see
+        tab = (_seen(ctx) or (["medicine"] if _may(ctx, "medicine") else ["changes"]))[0]   # the first area the person may see
+        if tab == "medicine":
+            return _drugs(ctx)
         if tab == "changes":
             return _changes(ctx)
     _gate(ctx, tab)
@@ -140,7 +161,13 @@ def _rows(ctx, kind, *, search, status, vendor, absent, page_no):
     return rows, total
 
 
-def _grid(ctx, kind) -> str:
+def _grid(ctx, kind, *, posted: dict | None = None) -> str:
+    """`posted`: what a review window was asked about, so "Go back and
+    change it" finds the grid as the person left it (edited cells, ticks,
+    the field and the reasons), not BizBox's values again."""
+    posted = posted or {}
+    cells = posted.get("cells", {})
+    ticked = posted.get("refs", set())
     q = ctx.request.query
     search, status, vendor = q.get("q", ""), q.get("status", ""), q.get("vendor", "")
     absent = q.get("absent") == "1"
@@ -175,24 +202,26 @@ def _grid(ctx, kind) -> str:
             if f == "unit_cost" and v is not None:
                 v = f"{float(v):g}"
             cur = "" if v is None else str(v)
+            shown = cells.get(f"e:{r['ext_ref']}:{f}", cur)          # BizBox's value, or what the person had typed
             label = f"{bizbox.FIELD_WORDS.get(f, f)} of {r['ext_ref']}"
             if choice[f]:
                 # a dropdown of what BizBox accepts; the row's own value stays
                 # choosable even when BizBox no longer lists it
-                options = "".join(f"<option value='{t.esc(c)}'{' selected' if c == cur else ''}>{t.esc(l)}</option>" for c, l in choice[f])
+                options = "".join(f"<option value='{t.esc(c)}'{' selected' if c == shown else ''}>{t.esc(l)}</option>" for c, l in choice[f])
                 if cur and cur not in {c for c, _ in choice[f]}:
-                    options = f"<option value='{t.esc(cur)}' selected>{t.esc(cur)} (as in BizBox)</option>" + options
+                    options = f"<option value='{t.esc(cur)}'{' selected' if cur == shown else ''}>{t.esc(cur)} (as in BizBox)</option>" + options
                 return (f"<td class=ecell><select form=grid name='e:{t.esc(r['ext_ref'])}:{f}' data-was='{t.esc(cur)}'"
                         f" aria-label='{t.esc(label)}'>{options}</select></td>")
             typ = "date" if editable[f] == "date" else "text"
             return (f"<td class='ecell{' num' if f == 'unit_cost' else ''}'><input form=grid type={typ} name='e:{t.esc(r['ext_ref'])}:{f}'"
-                    f" value='{t.esc(cur)}' data-was='{t.esc(cur)}' aria-label='{t.esc(label)}'></td>")
+                    f" value='{t.esc(shown)}' data-was='{t.esc(cur)}' aria-label='{t.esc(label)}'></td>")
         return finance._cell(r, f, AREA, labels)
     trs = []
     for r in rows:
         waiting = ", ".join(sorted(bizbox.FIELD_WORDS.get(f, f) for f in pending.get(r["ext_ref"], ())))
         wait_cell = f"<span class='chip sla-warn'>{t.esc(waiting)}</span>" if waiting else ""
-        trs.append(f"<tr><td><input type=checkbox form=bulk name=refs value='{t.esc(r['ext_ref'])}' aria-label='Tick {t.esc(r['ext_ref'])}'></td>"
+        trs.append(f"<tr><td><input type=checkbox form=bulk name=refs value='{t.esc(r['ext_ref'])}'{' checked' if r['ext_ref'] in ticked else ''}"
+                   f" aria-label='Tick {t.esc(r['ext_ref'])}'></td>"
                    + "".join(cell(r, f) for f, _ in columns)
                    + (f"<td class=num>{lines.get(r['ext_ref'], 0)}</td>" if kind == "purchase_order" else "")
                    + f"<td>{wait_cell}</td></tr>")
@@ -218,17 +247,19 @@ def _grid(ctx, kind) -> str:
                   if can and kind in bizbox.ADDABLE else "") + "</form>")
     tools = ""
     if can and editable:
-        fopts = "".join(f"<option value={f}>{t.esc(bizbox.FIELD_WORDS[f])}</option>" for f in editable)
-        tools = (f"<form id=bulk method=post action='/procurement/{kind}/bulk' class='row schedbar bulkbar' style='margin-top:10px' data-valuepick>"
-                 "<div style='flex:0 0 auto'><b><span data-ticked>0</span> ticked</b> · change</div>"
+        fopts = "".join(f"<option value={f}{' selected' if f == posted.get('field') else ''}>{t.esc(bizbox.FIELD_WORDS[f])}</option>" for f in editable)
+        why_bulk = t.esc(posted.get("reason", "")) if posted.get("form") == "bulk" else ""
+        why_grid = t.esc(posted.get("reason", "")) if posted.get("form") == "grid" else ""
+        tools = (f"<form id=bulk method=post action='/procurement/{kind}/bulk/review' class='row schedbar bulkbar' style='margin-top:10px' data-valuepick{_described(q)}>"
+                 "<div style='flex:0 0 auto' aria-live=polite><b><span data-ticked>0</span> ticked</b> · change</div>"
                  f"<div style='flex:0 0 170px'><select name=field aria-label='Field to change'>{fopts}</select></div>"
                  f"<div style='flex:1 1 160px'>{finance.value_inputs(ctx, kind, list(editable))}</div>"
-                 "<div style='flex:1 1 200px'><input name=reason required maxlength=400 placeholder='Why? The approver sees this'></div>"
-                 f"<div style='flex:0 0 auto'><button type=submit>{t.icon('check')} Send for approval</button></div></form>"
-                 f"<form id=grid method=post action='/procurement/{kind}/edits' class='row schedbar' style='margin-top:6px'>"
-                 "<div style='flex:0 0 auto'><b><span data-edited>0</span> cell(s) edited</b></div>"
-                 "<div style='flex:1 1 260px'><input name=reason maxlength=400 placeholder='Why? Needed before sending edited cells'></div>"
-                 f"<div style='flex:0 0 auto'><button class=ghost type=submit>{t.icon('check')} Send edited cells for approval</button></div></form>")
+                 f"<div style='flex:1 1 200px'><input name=reason required maxlength=400 value='{why_bulk}' placeholder='Why? The approver sees this'></div>"
+                 f"<div style='flex:0 0 auto'><button type=submit>{t.icon('checks')} Review and send</button></div></form>"
+                 f"<form id=grid method=post action='/procurement/{kind}/edits/review' class='row schedbar' style='margin-top:6px'{_described(q)}>"
+                 "<div style='flex:0 0 auto' aria-live=polite><b><span data-edited>0</span> cell(s) edited</b></div>"
+                 f"<div style='flex:1 1 260px'><input name=reason maxlength=400 value='{why_grid}' placeholder='Why? Needed before sending edited cells'></div>"
+                 f"<div style='flex:0 0 auto'><button class=ghost type=submit>{t.icon('checks')} Review edited cells and send</button></div></form>")
     script = ("<script>(function(){var tick=document.querySelector('[data-tickall]');var n=document.querySelector('[data-ticked]');"
               "var boxes=function(){return Array.prototype.slice.call(document.querySelectorAll(\"input[form=bulk][name=refs]\"))};"
               "function count(){if(n)n.textContent=boxes().filter(function(b){return b.checked}).length}"
@@ -442,22 +473,88 @@ def edits(ctx, kind):
         return redirect("/procurement")
     _gate(ctx, kind, "WRITE")
     f = ctx.request.form()
-    triples = []
-    for key in f.keys():
-        if not key.startswith("e:"):
-            continue
-        parts = key.split(":", 2)
-        if len(parts) != 3:
-            continue
-        _, ref, field = parts
-        triples.append((ref, field, f.get(key, "")))
     try:
-        out = bizbox.propose_edits(ctx.conn, kind, triples, reason=f.get("reason", ""), at=ctx.now, actor=ctx.user.id)
+        out = bizbox.propose_edits(ctx.conn, kind, _cells(f), reason=f.get("reason", ""), at=ctx.now, actor=ctx.user.id)
         ctx.conn.commit()
     except bizbox.Refused as exc:
         ctx.conn.rollback()
         return redirect(_back(kind, err=f"Not queued: {exc}"))
     return redirect(_back(kind, msg=f"Batch #{out['batch_id']} queued: {out['queued']} cell(s). A second person approves it on the Changes tab."))
+
+
+def _grid_page(ctx, kind, *, dialog: str = "", err: str = "", posted: dict | None = None):
+    """The tab as a POST answers it: the grid as the person left it, with the
+    review window on top or a refusal above."""
+    from .. import Response
+    banner = f"<div class='banner err' id=flash-err role=alert>{t.esc(err)}</div>" if err else ""
+    return Response(body=t.page("Procurement", banner + dialog + _head(ctx, kind, ctx.request.query) + _grid(ctx, kind, posted=posted),
+                                user=ctx.user, active=AREA))
+
+
+def _posted(f, form: str, refs=()) -> dict:
+    return {"form": form, "cells": {k: f.get(k, "") for k in f.keys() if k.startswith("e:")},
+            "refs": {str(r).strip() for r in refs}, "field": f.get("field", ""), "reason": f.get("reason", "")}
+
+
+def _cells(f) -> list:
+    triples = []
+    for key in f.keys():
+        if not key.startswith("e:"):
+            continue
+        parts = key.split(":", 2)
+        if len(parts) == 3:
+            triples.append((parts[1], parts[2], f.get(key, "")))
+    return triples
+
+
+def review_bulk(ctx, kind):
+    """POST from the tick-and-change bar: the window that says what will
+    change on the ticked rows. Nothing is queued yet (Dada, 13 Oct 2026)."""
+    from .. import redirect
+    _gate(ctx)
+    if kind not in KINDS:
+        return redirect("/procurement")
+    _gate(ctx, kind, "WRITE")
+    f = ctx.request.form()
+    refs = ctx.request.form_list("refs")
+    field = f.get("field", "")
+    value = finance.picked_value(f, field)
+    posted = _posted(f, "bulk", refs)
+    try:
+        preview = bizbox.preview_many(ctx.conn, kind, refs, field, value, reason=f.get("reason", ""))
+    except bizbox.Refused as exc:
+        return _grid_page(ctx, kind, err=f"Not sent: {exc}", posted=posted)
+    if not preview["rows"]:
+        return _grid_page(ctx, kind, err="Nothing is changed: every ticked record already has that value in BizBox.", posted=posted)
+    hidden = ([("refs", r) for r in dict.fromkeys(str(x).strip() for x in refs) if r]
+              + [("field", field), ("new_value", value), ("reason", preview["reason"])])
+    n = len(preview["rows"])
+    dialog = finance.review_dialog(f"What will change on {n} {ONE_WORD[kind] if n == 1 else MANY_WORD[kind]}", preview,
+                                   action=f"/procurement/{kind}/bulk", hidden=hidden, show_ref=True)
+    return _grid_page(ctx, kind, dialog=dialog, posted=posted)
+
+
+def review_edits(ctx, kind):
+    """POST from the grid's edited cells: the window that lists each cell
+    that differs from BizBox, from -> to. Nothing is queued yet."""
+    from .. import redirect
+    _gate(ctx)
+    if kind not in KINDS:
+        return redirect("/procurement")
+    _gate(ctx, kind, "WRITE")
+    f = ctx.request.form()
+    posted = _posted(f, "grid")
+    try:
+        preview = bizbox.preview_edits(ctx.conn, kind, _cells(f), reason=f.get("reason", ""))
+    except bizbox.Refused as exc:
+        return _grid_page(ctx, kind, err=f"Not sent: {exc}", posted=posted)
+    if not preview["rows"]:
+        return _grid_page(ctx, kind, err="Nothing is changed: every cell still reads what BizBox has.", posted=posted)
+    hidden = [(f"e:{r['ref']}:{r['field']}", "" if r["new"] is None else str(r["new"])) for r in preview["rows"]] + [("reason", preview["reason"])]
+    n, recs = len(preview["rows"]), len({r["ref"] for r in preview["rows"]})
+    dialog = finance.review_dialog(f"What will change: {n} cell{'s' if n != 1 else ''} on {recs} {ONE_WORD[kind] if recs == 1 else MANY_WORD[kind]}",
+                                   preview | {"same": 0}, action=f"/procurement/{kind}/edits", hidden=hidden, show_ref=True)   # every cell was posted
+    return _grid_page(ctx, kind, dialog=dialog, posted=posted)
 
 
 # ---------------------------------------------------------------------- adds
@@ -518,7 +615,7 @@ def new_form(ctx, kind):
                   "<div><label>Unit cost</label><input name=unit_cost type=number step=any min=0></div>")
     body = (_banners(q) + f"<h1>{NEW_WORDS[kind]}</h1><p class=sub>This goes to the Changes tab for a second person to approve. Once it is approved and sent, BizBox "
             f"creates it and gives it its number. <a href='/procurement?tab={kind}'>Back</a></p>"
-            f"<div class=card><form method=post action='/procurement/{kind}/add' class=fields><div class=grid2>{fields}"
+            f"<div class=card><form method=post action='/procurement/{kind}/add' class=fields{_described(q)}><div class=grid2>{fields}"
             "<div style='grid-column:1/-1'><label>Why</label><input name=reason required maxlength=400 placeholder='What the approver needs to know'></div>"
             f"</div><div style='margin-top:12px'><button type=submit>{t.icon('check')} Send for approval</button></div></form></div>")
     return Response(body=t.page(NEW_WORDS[kind], body, user=ctx.user, active=AREA))
@@ -675,7 +772,7 @@ def report_page(ctx, report_id):
     values, missing = (mms_reports.values_from(params, q.get, ctx.request.query_list, require=True) if want_run else ({}, []))
     asked = [p for p in params if p.prompt_user]
     controls = "".join(_param_control(p, chosen.get(p.name, None if p.name in chosen else "")) for p in asked)
-    form = (f"<form method=get action='/procurement/report/{rid}' class=fields data-report>"
+    form = (f"<form method=get action='/procurement/report/{rid}' class=fields data-report{' aria-describedby=flash-err' if (err or q.get('err')) else ''}>"
             + (f"<div class=grid2>{controls}</div>" if asked else "<p class=muted>This report asks for nothing; run it as it is.</p>")
             + "<div class='row' style='margin-top:12px;gap:8px;flex-wrap:wrap'>"
             f"<div style='flex:0 0 auto'><button type=submit name=run value=1>{t.icon('reports')} Run and show the PDF</button></div>"
@@ -700,7 +797,8 @@ def report_page(ctx, report_id):
         f"<li>{t.esc(x['ran_at'])} · {t.esc(x['member'])} · {'Excel' if x['format'] == 'EXCELOPENXML' else 'PDF'} · "
         + (f"<span class=muted>{x['millis']} ms</span>" if x["outcome"] == "OK" else f"<span class='chip sla-bad'>failed</span> <span class=muted>{t.esc(x['message'] or '')}</span>")
         + "</li>" for x in runs) + "</ul></div>") if runs else ""
-    body = (_banners(q) + (f"<div class='banner err'>{t.esc(err)}</div>" if err else "")
+    body = (_banners(q) + (f"<div class='banner err' id=flash-err role=alert>{t.esc(err)}</div>" if err and not q.get("err")
+                           else (f"<div class='banner err' role=alert>{t.esc(err)}</div>" if err else ""))
             + f"<a class=backbtn data-back href='/procurement?tab=reports' title='Back to reports'>{t.icon('left')}<span class=lbl>Back to reports</span></a>"
             f"<h1>{t.esc(r['title'])}</h1><p class=sub>{t.esc(mms_reports.AREA_WORDS[r['area']])}"
             + (f" · {t.esc(r['description'])}" if r["description"] else "")
@@ -740,3 +838,78 @@ def report_render(ctx, report_id):
     name = f"{stem}-{ctx.now.strftime('%Y%m%d-%H%M')}.{ext}"
     disposition = ("inline" if fmt == "PDF" else "attachment") + f"; filename=\"{name}\""
     return Response(body=data, content_type=ctype, headers=[("Content-Disposition", disposition), ("Cache-Control", "no-store")])
+
+
+# ------------------------------------------------- drugs and warehouses (083)
+
+def _drugs(ctx):
+    """The items BizBox marks as medicines, with the controlled-drug flag:
+    the one list a hospital asks for first (SQL01, 13 Oct 2026). Read-only;
+    a medicine's own fields are BizBox's."""
+    from .. import Response
+    q = ctx.request.query
+    search = q.get("q", "")
+    flag = q.get("controlled", "")
+    controlled = True if flag == "1" else False if flag == "0" else None
+    page_no = int(q["page"]) if q.get("page", "").isdigit() and int(q["page"]) > 0 else 1
+    if not db.table_exists(ctx.conn, "ext_medicine"):
+        body = _head(ctx, "medicine", q) + "<div class=card><p class=muted>The desk cannot list medicines until schema 083 is applied on the host.</p></div>"
+        return Response(body=t.page("Procurement · Drugs", body, user=ctx.user, active=AREA))
+    rows, total = bizbox.medicines(ctx.conn, q=search, controlled=controlled, limit=bizbox.PAGE, offset=(page_no - 1) * bizbox.PAGE)
+    labels = bizbox.labels_for(ctx.conn, "product")
+    n_ctrl = ctx.conn.execute("SELECT COUNT(*) FROM ext_medicine WHERE source_id = ? AND present = 1 AND COALESCE(controlled, 0) = 1", (bizbox.SOURCE,)).fetchone()[0]
+    keep = {k: v for k, v in {"tab": "medicine", "q": search, "controlled": flag}.items() if v}
+    chips = "".join(f"<a class='{'on' if flag == f else ''}' href='/procurement?{urllib.parse.urlencode({k: v for k, v in (keep | {'controlled': f}).items() if v})}'>{w}</a>"
+                    for f, w in (("", "All medicines"), ("1", f"Controlled · {n_ctrl}"), ("0", "Not controlled")))
+    CONTROLLED = "<span class='chip sla-bad'>Controlled</span>"
+    trs = "".join(
+        f"<tr><td>{finance._ref_link('product', r['ext_ref'], AREA)}" + ("" if r["item_present"] in (1, None) else " <span class=pill>gone from BizBox</span>") + "</td>"
+        f"<td>{t.esc(r['item_name'] or '')}</td><td>{t.esc(r['generic'] or '')}</td><td>{t.esc(r['dosage'] or '')}</td>"
+        f"<td>{CONTROLLED if r['controlled'] else ''}</td>"
+        f"<td>{t.esc(bizbox.word(labels, 'category', r['category']))}</td><td>{t.esc(r['admin_group'] or '')}</td>"
+        f"<td class=muted>{t.esc(r['doh_ref'] or '')}" + (f"<div>{t.esc(r['mims_ref'])}</div>" if r["mims_ref"] else "") + "</td></tr>" for r in rows)
+    first, last = (page_no - 1) * bizbox.PAGE + 1, min(page_no * bizbox.PAGE, total)
+    pager = (f"<div class='row schedbar' style='justify-content:space-between'><div class=muted>Showing {first}–{last} of {total}</div><div>"
+             + (f"<a class='ghost small' href='/procurement?{urllib.parse.urlencode(keep | {'page': page_no - 1})}'>‹ Previous</a> " if page_no > 1 else "")
+             + (f"<a class='ghost small' href='/procurement?{urllib.parse.urlencode(keep | {'page': page_no + 1})}'>Next ›</a>" if last < total else "")
+             + "</div></div>") if total > bizbox.PAGE else f"<div class=muted style='margin-top:8px'>{total} medicine(s).</div>"
+    body = (_head(ctx, "medicine", q) + "<div class=card><form method=get action='/procurement' class='row schedbar'>"
+            "<input type=hidden name=tab value=medicine>" + (f"<input type=hidden name=controlled value='{t.esc(flag)}'>" if flag else "")
+            + f"<div style='flex:1 1 260px'><input name=q value='{t.esc(search)}' placeholder='Search by item, name, generic, dosage, DOH or MIMS'></div>"
+            "<div style='flex:0 0 auto'><button class=ghost type=submit>Search</button></div></form>"
+            f"<div class=stabs style='margin:10px 0 0'>{chips}</div>"
+            "<p class=why>Every item BizBox marks as a medicine, with its generic name, dosage and whether it is a controlled drug. "
+            "Read from BizBox; the medicine's own facts are changed there.</p>"
+            "<div class=tablewrap><table class='compact pgrid'><thead><tr><th>Item</th><th>Name</th><th>Generic</th><th>Dosage</th><th></th>"
+            "<th>Category</th><th>Administration</th><th>DOH · MIMS</th></tr></thead><tbody>"
+            + (trs or "<tr><td colspan=8 class=muted>No medicine matches, or BizBox has not been read for medicines yet.</td></tr>")
+            + "</tbody></table></div>" + pager + "</div>")
+    return Response(body=t.page("Procurement · Drugs", body, user=ctx.user, active=AREA))
+
+
+def _warehouses(ctx):
+    """The 73 warehouses in their 6 groups (SQL01, 13 Oct 2026), read hourly.
+    Read-only: a warehouse is BizBox's."""
+    from .. import Response
+    q = ctx.request.query
+    search = q.get("q", "")
+    if not db.table_exists(ctx.conn, "ext_warehouse"):
+        body = _head(ctx, "warehouse", q) + "<div class=card><p class=muted>The desk cannot list warehouses until schema 083 is applied on the host.</p></div>"
+        return Response(body=t.page("Procurement · Warehouses", body, user=ctx.user, active=AREA))
+    rows = bizbox.warehouses(ctx.conn, q=search)
+    groups: dict = {}
+    for r in rows:
+        groups.setdefault(r["group_name"] or "No group", []).append(r)
+    cards = "".join(
+        f"<div class=card><h3>{t.icon('layers')}{t.esc(g)} · {len(ws)}</h3><ul class='plain rptlist'>"
+        + "".join(f"<li><b>{t.esc(w['name'])}</b> <span class=muted>· {t.esc(w['ext_ref'])}</span>"
+                  + ("" if w["active"] in (1, None) else " <span class=pill>inactive</span>") + "</li>" for w in ws)
+        + "</ul></div>" for g, ws in groups.items())
+    body = (_head(ctx, "warehouse", q) + "<div class=card><form method=get action='/procurement' class='row schedbar'>"
+            "<input type=hidden name=tab value=warehouse>"
+            f"<div style='flex:1 1 260px'><input name=q value='{t.esc(search)}' placeholder='Search warehouses'></div>"
+            "<div style='flex:0 0 auto'><button class=ghost type=submit>Search</button></div></form>"
+            "<p class=why>BizBox's warehouses, by group. Stock on hand per warehouse is in the Reports tab (Perpetual inventory) "
+            "until a narrowed read of it is agreed.</p></div>"
+            + (cards or "<div class=card><p class=muted>No warehouse matches, or BizBox has not been read for warehouses yet.</p></div>"))
+    return Response(body=t.page("Procurement · Warehouses", body, user=ctx.user, active=AREA))
