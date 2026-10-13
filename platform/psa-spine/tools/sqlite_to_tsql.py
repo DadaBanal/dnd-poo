@@ -34,7 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from sqlite_ddl import (  # noqa: E402
-    AlterAddColumn, Column, Index, Table, Trigger, Unsupported, _balanced,
+    AlterAddColumn, Column, Index, Rebuild, Table, Trigger, Unsupported, _balanced,
     parse_schema,
 )
 
@@ -428,7 +428,7 @@ def generate(schema_dir: Path = SCHEMA_DIR, decisions: Path = DECISIONS) -> str:
     files = ([(p.name, p.read_text(encoding="utf-8")) for p in sorted(schema_dir.glob("*.sql"))]
              + [(f"local/{p.name}", p.read_text(encoding="utf-8"))
                 for p in sorted((schema_dir / "local").glob("*.sql"))])
-    tables, indexes, triggers, alters = parse_schema(files)
+    tables, indexes, triggers, alters, rebuilds = parse_schema(files)
     dec = Decisions(decisions)
     names = {t.name for t in tables}
 
@@ -594,6 +594,31 @@ IF SCHEMA_ID(@Schema) IS NULL
         w(emit_table(table, dec, names))
         w("END;")
 
+    if rebuilds:
+        w("")
+        w(f"-- {'=' * 74}")
+        w("-- CONSTRAINTS WIDENED ON TABLES THAT ALREADY EXIST")
+        w("--")
+        w("-- A rebuilt table in schema/ (SQLite cannot alter a CHECK) is a swap here:")
+        w("-- the old constraint goes, the new one comes, under the same name, only")
+        w("-- when the old one is still there. A fresh install creates the rebuilt")
+        w("-- definition above and this does nothing.")
+    for rebuild in rebuilds:
+        for name, old_expr, new_expr in _check_swaps(rebuild):
+            token = _new_literal(old_expr, new_expr)
+            w("")
+            if rebuild.comment:
+                out.extend(_comment_block(rebuild.comment))
+                rebuild.comment = ""
+            w(f"IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = N'{name}'"
+              f" AND parent_object_id = OBJECT_ID(N'{SCHEMA}.[{rebuild.table.name}]')"
+              f" AND definition NOT LIKE N'%''{token}''%')")
+            w("BEGIN")
+            w(f"    ALTER TABLE {SCHEMA}.[{rebuild.table.name}] DROP CONSTRAINT [{name}];")
+            w(f"    ALTER TABLE {SCHEMA}.[{rebuild.table.name}] WITH CHECK ADD CONSTRAINT [{name}] "
+              f"CHECK ({expression(new_expr, names)});")
+            w("END;")
+
     if alters:
         w("")
         w(f"-- {'=' * 74}")
@@ -740,6 +765,39 @@ PRINT N'target is enforced until somebody with the authority says so.';
     w(f"    DROP SCHEMA IF EXISTS {SCHEMA};")
     w("=============================================================================*/")
     return "\n".join(out) + "\n"
+
+
+def _checks_of(table: Table) -> list[tuple[str, str]]:
+    """(constraint name, expression) in the order emit_table numbers them."""
+    out, n = [], 0
+    for col in table.columns:
+        for check in col.checks:
+            n += 1
+            out.append((f"CK_{table.name}_{n:02d}", " ".join(check.split())))
+    for constraint in table.constraints:
+        if constraint.split(" ", 1)[0].upper() == "CHECK":
+            n += 1
+            body, _ = _balanced(constraint, constraint.index("("))
+            out.append((f"CK_{table.name}_{n:02d}", " ".join(body.split())))
+    return out
+
+
+def _check_swaps(rebuild: Rebuild) -> list[tuple[str, str, str]]:
+    """The CHECKs whose text a rebuild changed: (name, old, new)."""
+    old, new = _checks_of(rebuild.original), _checks_of(rebuild.table)
+    if [n for n, _ in old] != [n for n, _ in new]:
+        raise Unsupported(f"rebuild of {rebuild.table.name}: the CHECK constraints are not the same set; a rebuild changes their text only")
+    return [(n1, e1, e2) for (n1, e1), (_, e2) in zip(old, new) if e1 != e2]
+
+
+def _new_literal(old_expr: str, new_expr: str) -> str:
+    """A quoted value the new CHECK allows and the old did not: the token that
+    tells a widened constraint from the one before it on the server."""
+    olds = set(re.findall(r"'((?:[^']|'')*)'", old_expr))
+    for lit in re.findall(r"'((?:[^']|'')*)'", new_expr):
+        if lit not in olds:
+            return lit.replace("'", "''")      # the definition doubles a quote once; the N'...' literal once more
+    raise Unsupported("a rebuilt CHECK must allow at least one value the old one did not; nothing else is ported")
 
 
 def main(argv: list[str] | None = None) -> int:

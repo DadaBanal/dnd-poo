@@ -32,6 +32,7 @@ import json
 import os
 import re
 import sqlite3
+import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -44,15 +45,15 @@ KINDS = {
     "agreement": ("ext_agreement", {"ext_ref": "text", "name": "text", "party": "text", "starts_on": "date",
                                     "ends_on": "date", "status": "text", "amount": "money", "currency": "text"}),
     "product": ("ext_product", {"ext_ref": "text", "name": "text", "category": "text", "unit": "text",
-                                "unit_cost": "money"}),
+                                "unit_cost": "money", "tstamp": "text"}),
     "purchase_order": ("ext_purchase_order", {"ext_ref": "text", "vendor": "text", "ordered_on": "date",
-                                              "status": "text", "total": "money", "currency": "text"}),
+                                              "status": "text", "total": "money", "currency": "text", "tstamp": "text"}),
     "invoice": ("ext_invoice", {"ext_ref": "text", "party": "text", "invoiced_on": "date", "due_on": "date",
                                 "status": "text", "total": "money", "currency": "text", "agreement_ref": "text",
-                                "supplier_ref": "text"}),
+                                "supplier_ref": "text", "tstamp": "text"}),
     "po_line": ("ext_po_line", {"ext_ref": "text", "po_ref": "text", "line_no": "int", "product_ref": "text",
                                 "description": "text", "quantity": "money", "received_qty": "money",
-                                "unit_cost": "money"}),
+                                "unit_cost": "money", "tstamp": "text"}),
     # 081: BizBox's own code lists, one row per entry; see choices() below.
     "lookup": ("ext_lookup", {"ext_ref": "text", "list": "text", "code": "text", "label": "text", "sort_no": "int"}),
     # 083: the 73 warehouses in their groups, and the items that are medicines
@@ -63,12 +64,12 @@ KINDS = {
     # key is made here as <warehouse>:<item> when the view has none), the item
     # ledger inside the window SQL01's view keeps, and a receiving report's lines.
     "stock": ("ext_stock", {"ext_ref": "text", "warehouse_ref": "text", "item_ref": "text", "quantity": "money",
-                            "unit_cost": "money", "as_of": "date"}),
+                            "unit_cost": "money", "as_of": "date", "tstamp": "text"}),
     "movement": ("ext_movement", {"ext_ref": "text", "item_ref": "text", "warehouse_ref": "text", "moved_on": "date",
                                   "kind": "text", "doc_ref": "text", "qty_in": "money", "qty_out": "money",
-                                  "balance": "money", "unit_cost": "money", "remarks": "text"}),
+                                  "balance": "money", "unit_cost": "money", "remarks": "text", "tstamp": "text"}),
     "rr_line": ("ext_rr_line", {"ext_ref": "text", "rr_ref": "text", "line_no": "int", "product_ref": "text",
-                                "description": "text", "quantity": "money", "unit_cost": "money", "po_ref": "text"}),
+                                "description": "text", "quantity": "money", "unit_cost": "money", "po_ref": "text", "tstamp": "text"}),
 }
 # Kinds whose view is a window in time (Dada, 13 Oct 2026: "views based on
 # time or days or months"): a row the view no longer returns is deleted on
@@ -76,6 +77,20 @@ KINDS = {
 WINDOWED = {"movement"}
 LABEL = {"agreement": "Agreements", "product": "Products", "purchase_order": "Purchase orders", "invoice": "Invoices"}
 LINK_KIND = {"agreement": "AGREEMENT", "product": "PRODUCT", "purchase_order": "PURCHASE_ORDER", "invoice": "INVOICE"}
+# The MMS document kinds a change may carry (14 Oct 2026, the Bizbox Chat
+# session's measurement, Part 90: the ten in scope by volume; a purchase order
+# already exists). Where the word is the function the MMS term stays (ruling 2).
+MMS_KINDS = {"expense_req": "EXPENSE_REQ", "stock_req": "STOCK_REQ", "expense_issuance": "EXPENSE_ISSUANCE",
+             "delivery_receiving": "DELIVERY_RECEIVING", "stock_issuance": "STOCK_ISSUANCE", "purchase_req": "PURCHASE_REQ",
+             "material_production": "MATERIAL_PRODUCTION", "physical_count": "PHYSICAL_COUNT", "qty_adjustment": "QTY_ADJUSTMENT"}
+MMS_WORDS = {"expense_req": "Expense Requisition", "stock_req": "Stock Requisition", "expense_issuance": "Expense Issuance",
+             "delivery_receiving": "Delivery/Receiving", "stock_issuance": "Stock Issuance", "purchase_req": "Purchase Requisition",
+             "material_production": "Material Production", "physical_count": "Physical Count", "qty_adjustment": "Quantity Adjustment"}
+LINK_KIND.update(MMS_KINDS)
+BACK_KIND = {v: k for k, v in LINK_KIND.items()}
+# One record, in words, for every kind a change can name.
+KIND_WORDS = {"agreement": "agreement", "product": "item", "purchase_order": "purchase order", "invoice": "receiving report"} | {
+    k: w.lower() for k, w in MMS_WORDS.items()}
 REQUIRED = {"ext_ref", "name"}          # name only where the kind has one
 
 _IDENT = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]{0,127}(\.[A-Za-z_][A-Za-z0-9_]{0,127})?\Z")
@@ -594,8 +609,10 @@ def check_choice(conn, kind: str, field: str, value) -> None:
         raise Refused(f"That is not {LIST_WORDS[lst]}; pick one from the list.")
 
 
-BATCH_WORDS = {"PENDING": "Waiting for approval", "APPROVED": "Approved, waiting to be sent", "APPLIED": "Applied in BizBox",
-               "REJECTED": "Refused by BizBox", "CANCELLED": "Cancelled"}
+BATCH_WORDS = {"PENDING": "Waiting for approval", "APPROVED": "Approved, waiting to be sent", "SENDING": "Being sent to BizBox",
+               "APPLIED": "Applied in BizBox", "REJECTED": "Refused by BizBox", "CANCELLED": "Cancelled"}
+CHANGE_WORDS = {"PENDING": "Waiting for BizBox", "SENDING": "Being sent to BizBox", "APPLIED": "Applied in BizBox",
+                "REJECTED": "Refused by BizBox", "CANCELLED": "Cancelled"}
 MAX_BATCH = 500
 
 
@@ -640,16 +657,28 @@ class ProcedureWriter(Writer):
             raise Refused("the procedure name must be a plain schema.name")
         self.procedure = ".".join(f"[{p}]" for p in procedure.split("."))
 
+    @staticmethod
+    def params(change) -> tuple:
+        """The ten parameters, in the procedure's order; the tenth is the row
+        version the desk read (BINARY(8), bytes) or NULL for a new record. A
+        row version the desk cannot read is the desk's own fault, so it is a
+        ValueError, which push() records as REJECTED with the reason, never a
+        decline retried every run."""
+        try:
+            version = tstamp_bytes(change["expected_tstamp"] if "expected_tstamp" in change.keys() else None)
+        except Refused as exc:
+            raise ValueError(f"not sent: the row version the desk holds for this change is unreadable ({exc}); re-propose it from the record's page") from None
+        return (int(change["change_id"]), change["kind"], change["change_kind"] or "EDIT", change["ext_ref"],
+                change["field"], change["new_value"], change["payload"], change["requested_by"],
+                change["approved_by"], version)
+
     def apply(self, change) -> str:
         import json as _json
         import pyodbc                                            # the host has it; the tests use a fake writer
         con = pyodbc.connect(self.cs, autocommit=False, timeout=15)
         try:
             cur = con.cursor()
-            cur.execute(f"{{CALL {self.procedure} (?,?,?,?,?,?,?,?,?)}}",
-                        (int(change["change_id"]), change["kind"], change["change_kind"], change["ext_ref"],
-                         change["field"], change["new_value"], change["payload"], change["requested_by"],
-                         change["approved_by"]))
+            cur.execute(f"{{CALL {self.procedure} (?,?,?,?,?,?,?,?,?,?)}}", self.params(change))
             row = cur.fetchone()
             if row is None:
                 con.rollback()
@@ -664,19 +693,30 @@ class ProcedureWriter(Writer):
             con.close()
 
 
+def tstamp_bytes(text) -> bytes | None:
+    """BizBox's tstamp as the read view gives it ('0x00000000000F4240', or the
+    16 hex digits bare) back to BINARY(8); None when the desk holds none."""
+    if text in (None, ""):
+        return None
+    h = str(text).strip()
+    h = h[2:] if h[:2].lower() == "0x" else h
+    if not re.fullmatch(r"[0-9A-Fa-f]{1,16}", h):
+        raise Refused(f"a row version must be up to 16 hex digits; {h[:20]!r} is not")
+    return bytes.fromhex(h.rjust(16, "0"))
+
+
 def write_odbc_string(raw: str | None = None) -> str:
-    """The write login's string: refused when missing, when it is sa, or when
-    it is the read-only login's (one login for both would let a read path
-    write)."""
+    """The write string: one condition (SQL01, 14 Oct 2026: identity is the
+    grant). Unset is the off-switch (NoWriter). A string that names a login
+    is refused: the write path is Windows-authenticated, as psa_desk, with
+    no password anywhere; the checks for sa and for a reused read login are
+    gone, subsumed and void. A guard that cannot fail is deleted, not kept."""
     cs = (raw if raw is not None else os.environ.get("PSA_BIZBOX_WRITE_ODBC", "")).strip()
     if not cs:
         raise Refused("PSA_BIZBOX_WRITE_ODBC is not set; nothing is pushed to BizBox")
-    if re.search(r"(?i)(^|;)\s*(uid|user id|user)\s*=\s*\{?\s*sa\s*\}?\s*(;|$)", cs):
-        raise Refused("refused: the BizBox write login must not be sa")
-    read = os.environ.get("PSA_BIZBOX_ODBC", "")
-    uid = lambda s: (re.search(r"(?i)(?:^|;)\s*(?:uid|user id|user)\s*=\s*\{?([^;}]*)", s) or [None, ""])[1].strip().lower()
-    if read and uid(read) and uid(read) == uid(cs):
-        raise Refused("refused: the write login must be a login of its own, not the read-only one")
+    if re.search(r"(?i)(^|;)\s*(uid|user id|user)\s*=", cs):
+        raise Refused("refused: the write string names a login. The write path is Windows-authenticated by decision of 14 Oct 2026 "
+                      "(psa_desk, no password); if the desk has moved host, use a domain account, or change this guard deliberately.")
     return re.sub(r"(?i)(?:^|;)\s*applicationintent\s*=[^;]*", "", cs).strip(";")
 
 
@@ -732,13 +772,28 @@ def _edit_check(conn, kind: str, rec, field: str, new_value):
     return value
 
 
+def new_uid() -> str:
+    """A change's own id, minted by the desk: it survives a restore of PMC_PSA,
+    where change_id would be minted again (SQL01's question, 14 Oct 2026)."""
+    return uuid.uuid4().hex
+
+
+def _tstamp_of(rec) -> str | None:
+    """The record's BizBox row version as the desk read it, if the view gives one."""
+    try:
+        v = rec["tstamp"]
+    except (IndexError, KeyError):
+        return None
+    return str(v).strip() or None if v is not None else None
+
+
 def _edit_insert(conn, kind: str, rec, field: str, value, *, reason: str, batch_id: int, at: datetime, actor: str) -> int:
     old = rec[field]
     cur = conn.execute(
         "INSERT INTO ext_change (source_id, kind, ext_ref, field, old_value, new_value, reason, status, requested_at,"
-        " requested_by, batch_id) VALUES (?,?,?,?,?,?,?, 'PENDING', ?,?,?)",
+        " requested_by, batch_id, expected_tstamp, change_uid) VALUES (?,?,?,?,?,?,?, 'PENDING', ?,?,?,?,?)",
         (SOURCE, LINK_KIND[kind], rec["ext_ref"], field, None if old is None else str(old),
-         None if value is None else str(value), reason, _stamp(at), actor, batch_id))
+         None if value is None else str(value), reason, _stamp(at), actor, batch_id, _tstamp_of(rec), new_uid()))
     return cur.lastrowid
 
 
@@ -906,9 +961,9 @@ def propose_add(conn, kind: str, record: dict, lines=None, *, reason: str, at: d
     summary = rec.get("name") or rec.get("vendor") or "new record"
     conn.execute(
         "INSERT INTO ext_change (source_id, kind, ext_ref, field, old_value, new_value, reason, status, requested_at,"
-        " requested_by, batch_id) VALUES (?,?,?,?,?,?,?, 'PENDING', ?,?,?)",
+        " requested_by, batch_id, change_uid) VALUES (?,?,?,?,?,?,?, 'PENDING', ?,?,?,?)",
         (SOURCE, LINK_KIND[kind], rec.get("ext_ref") or f"NEW-{bid}", "NEW", None,
-         (f"{summary} ({len(kept_lines)} line(s))" if kept_lines else summary)[:MAX_TEXT], reason, _stamp(at), actor, bid))
+         (f"{summary} ({len(kept_lines)} line(s))" if kept_lines else summary)[:MAX_TEXT], reason, _stamp(at), actor, bid, new_uid()))
     db.audit(conn, at=_stamp(at), actor=actor, action="BIZBOX_BATCH", subject_kind="ext_batch", subject_id=str(bid),
              detail=f"proposed: new {LINK_KIND[kind].lower()}" + (f" with {len(kept_lines)} line(s)" if kept_lines else ""))
     return bid
@@ -965,6 +1020,8 @@ def cancel_batch(conn, batch_id: int, *, at: datetime, actor: str, answer: str =
     b = batch(conn, batch_id)
     if b is None:
         raise Refused("No such batch.")
+    if b["status"] == "SENDING":
+        raise Refused("That batch is being sent to BizBox now; it ends applied or refused, not cancelled.")
     if b["status"] not in ("PENDING", "APPROVED"):
         raise Refused(f"That batch is already {BATCH_WORDS[b['status']].lower()}.")
     n = 0
@@ -997,13 +1054,13 @@ def _settle(conn, batch_id, *, at: datetime, actor: str) -> None:
     if batch_id is None:
         return
     rows = batch_changes(conn, batch_id)
-    if not rows or any(r["status"] == "PENDING" for r in rows):
+    if not rows or any(r["status"] in ("PENDING", "SENDING") for r in rows):
         return
     states = {r["status"] for r in rows}
     end = "REJECTED" if "REJECTED" in states else "APPLIED" if "APPLIED" in states else "CANCELLED"
     answers = "; ".join(r["answer"] for r in rows if r["answer"])
     conn.execute("UPDATE ext_batch SET status = ?, decided_at = ?, decided_by = ?, answer = ? WHERE batch_id = ?"
-                 " AND status IN ('PENDING', 'APPROVED')", (end, _stamp(at), actor, answers[:2000] or None, batch_id))
+                 " AND status IN ('PENDING', 'APPROVED', 'SENDING')", (end, _stamp(at), actor, answers[:2000] or None, batch_id))
 
 
 def decide(conn, change_id: int, status: str, *, answer: str = "", at: datetime, actor: str,
@@ -1015,7 +1072,9 @@ def decide(conn, change_id: int, status: str, *, answer: str = "", at: datetime,
     row = conn.execute("SELECT status, batch_id FROM ext_change WHERE change_id = ?", (change_id,)).fetchone()
     if row is None:
         raise Refused("No such change.")
-    if row["status"] != "PENDING":
+    if row["status"] == "SENDING" and status == "CANCELLED":
+        raise Refused("That change is being sent to BizBox now; it ends applied or refused, not cancelled.")
+    if row["status"] not in ("PENDING", "SENDING"):
         raise Refused(f"That change is already {row['status'].lower()}.")
     stamp = _stamp(at)
     conn.execute("UPDATE ext_change SET status = ?, decided_at = ?, decided_by = ?, answer = ? WHERE change_id = ?",
@@ -1033,33 +1092,81 @@ def pushable(conn):
     return conn.execute(
         "SELECT c.*, b.change_kind, b.payload, b.approved_by, b.approved_at FROM ext_change c"
         " LEFT JOIN ext_batch b ON b.batch_id = c.batch_id"
-        " WHERE c.source_id = ? AND c.status = 'PENDING' AND (c.batch_id IS NULL OR b.status = 'APPROVED')"
+        " WHERE c.source_id = ? AND c.status = 'PENDING' AND (c.batch_id IS NULL OR b.status IN ('APPROVED', 'SENDING'))"
         " ORDER BY c.change_id", (SOURCE,)).fetchall()
 
 
+def claim(conn, change_id: int, *, at: datetime, actor: str) -> bool:
+    """The sender's one UPDATE (SQL01, 14 Oct 2026): PENDING -> SENDING on this
+    row alone, so two overlapping runs cannot both send it. False when
+    somebody else has it. The batch follows its first claimed change.
+
+    The claim COMMITS: that is the mechanism, the other run must see it. So
+    this is the sender's to call, on a connection with nothing else pending
+    (bizbox-push), never from a request that has work of its own open."""
+    cur = conn.execute("UPDATE ext_change SET status = 'SENDING', decided_by = ?, decided_at = ? WHERE change_id = ? AND status = 'PENDING'",
+                       (actor, _stamp(at), change_id))
+    if cur.rowcount != 1:
+        return False
+    conn.execute("UPDATE ext_batch SET status = 'SENDING' WHERE batch_id = (SELECT batch_id FROM ext_change WHERE change_id = ?)"
+                 " AND status = 'APPROVED'", (change_id,))
+    conn.commit()
+    return True
+
+
+def unclaim(conn, change_id: int) -> None:
+    """The inverse of claim, for a change that was never sent (the writer
+    declined before calling BizBox): back to PENDING, the batch back to
+    APPROVED once none of its changes is being sent. Committed, as the claim was."""
+    conn.execute("UPDATE ext_change SET status = 'PENDING', decided_by = NULL, decided_at = NULL WHERE change_id = ? AND status = 'SENDING'",
+                 (change_id,))
+    conn.execute("UPDATE ext_batch SET status = 'APPROVED' WHERE batch_id = (SELECT batch_id FROM ext_change WHERE change_id = ?)"
+                 " AND status = 'SENDING' AND NOT EXISTS (SELECT 1 FROM ext_change WHERE batch_id = ext_batch.batch_id AND status = 'SENDING')",
+                 (change_id,))
+    conn.commit()
+
+
 def push(conn, writer: Writer | None = None, *, at: datetime, actor: str = "writer") -> dict:
-    """Offer every approved change to the writer. With NoWriter (today)
-    nothing moves and every change stays where it is. A change the writer
-    refuses with Refused stays; one that fails any other way is REJECTED
-    with BizBox's words."""
+    """Offer every approved change to the writer, one at a time: claim it
+    (PENDING -> SENDING, committed), apply it, then APPLIED or REJECTED with
+    BizBox's words, committed. With NoWriter nothing is claimed and nothing
+    moves. A change the writer refuses with Refused goes back to PENDING: it
+    was never sent. A row another run holds is skipped."""
     writer = writer or NoWriter()
-    counts = {"applied": 0, "rejected": 0, "pending": 0}
+    counts = {"applied": 0, "rejected": 0, "pending": 0, "skipped": 0}
     for ch in pushable(conn):
+        if isinstance(writer, NoWriter):
+            counts["pending"] += 1
+            continue
+        if not claim(conn, ch["change_id"], at=at, actor=actor):
+            counts["skipped"] += 1
+            continue
         item = dict(ch)
-        item.setdefault("change_kind", "EDIT")
         item["change_kind"] = item.get("change_kind") or "EDIT"
         try:
             answer = writer.apply(item)
         except Refused:
+            unclaim(conn, ch["change_id"])
             counts["pending"] += 1
             continue
         except Exception as exc:                    # noqa: BLE001 - BizBox's answer, recorded
             decide(conn, ch["change_id"], "REJECTED", answer=str(exc)[:500], at=at, actor=actor)
+            conn.commit()
             counts["rejected"] += 1
             continue
         decide(conn, ch["change_id"], "APPLIED", answer=answer, at=at, actor=actor)
+        conn.commit()
         counts["applied"] += 1
     return counts
+
+
+def stuck_sending(conn, *, now: datetime, older_than_minutes: int = 15) -> list:
+    """Changes claimed by a run that never finished (a crash between the claim
+    and the answer). Nobody retries them by accident: a person reads BizBox,
+    then decides each one APPLIED or REJECTED by hand (bizbox-changes)."""
+    cutoff = _stamp(now - timedelta(minutes=older_than_minutes))
+    return conn.execute("SELECT * FROM ext_change WHERE source_id = ? AND status = 'SENDING' AND COALESCE(decided_at, '') <= ?"
+                        " ORDER BY change_id", (SOURCE, cutoff)).fetchall()
 
 
 def vendors(conn, *, q: str = "") -> list:
@@ -1237,3 +1344,85 @@ def movement_window(conn) -> tuple[str | None, str | None]:
 def rr_lines(conn, rr_ref: str) -> list:
     return conn.execute("SELECT * FROM ext_rr_line WHERE source_id = ? AND rr_ref = ? AND present = 1 ORDER BY line_no, ext_ref",
                         (SOURCE, rr_ref)).fetchall()
+
+
+# ----------------------------------------------- after a restore (SQL01 §5)
+
+def reconcile(conn) -> list[dict]:
+    """Read-only: for every change the desk recorded as APPLIED, does the
+    mirror still show it? An edit: the field reads the value the desk sent.
+    A new record: the number BizBox gave it is present. Run after a restore
+    into BizBox's database (LiveDB_PMC was restored into twice, July 2026),
+    once the hourly read has run; what is missing is re-queued deliberately
+    (requeue), never by a guard on every write."""
+    import json as _json
+    out = []
+    for ch in conn.execute("SELECT c.*, b.change_kind, b.payload FROM ext_change c LEFT JOIN ext_batch b ON b.batch_id = c.batch_id"
+                           " WHERE c.source_id = ? AND c.status = 'APPLIED' ORDER BY c.change_id", (SOURCE,)):
+        kind = BACK_KIND.get(ch["kind"])
+        row = {"change_id": ch["change_id"], "kind": kind or ch["kind"], "ext_ref": ch["ext_ref"], "field": ch["field"],
+               "sent": ch["new_value"], "decided_at": ch["decided_at"], "mirror": None, "verdict": ""}
+        if kind not in KINDS:
+            row["verdict"] = "not mirrored: cannot be checked from the desk"
+            out.append(row)
+            continue
+        if (ch["change_kind"] or "EDIT") == "ADD":
+            ref = ch["ext_ref"]
+            try:
+                parsed = _json.loads(ch["answer"] or "{}")
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, dict) and parsed.get("ext_ref"):
+                ref = str(parsed["ext_ref"])
+            rec = get(conn, kind, ref) if ref and not ref.startswith("NEW-") else None
+            row["ext_ref"] = ref
+            row["mirror"] = "present" if rec is not None and rec["present"] else ("absent" if rec is not None else "none")
+            row["verdict"] = "holds" if rec is not None and rec["present"] else "missing: BizBox no longer has the record the desk created"
+        else:
+            rec = get(conn, kind, ch["ext_ref"])
+            if rec is None or ch["field"] not in rec.keys():
+                row["verdict"] = "missing: the record is not in the mirror"
+            else:
+                now = rec[ch["field"]]
+                row["mirror"] = None if now is None else str(now)
+                same = (str(now) if now is not None else "") == (ch["new_value"] or "")
+                try:
+                    same = same or float(now) == float(ch["new_value"])
+                except (TypeError, ValueError):
+                    pass
+                row["verdict"] = "holds" if same else "differs: BizBox reads another value now (a later edit, or a restore)"
+        out.append(row)
+    return out
+
+
+def requeue(conn, change_ids, *, reason: str, at: datetime, actor: str) -> list[int]:
+    """Deliberately, after reconcile: an APPLIED change BizBox no longer shows
+    becomes a new batch, PENDING, for a second person to approve again. The
+    old row is left as it was. Returns the new batch ids."""
+    reason = _reason(reason)
+    out = []
+    for cid in change_ids:
+        if not str(cid).strip().isdigit():
+            raise Refused(f"{cid!r} is not a change id")
+        ch = conn.execute("SELECT c.*, b.change_kind, b.payload FROM ext_change c LEFT JOIN ext_batch b ON b.batch_id = c.batch_id"
+                          " WHERE c.change_id = ? AND c.source_id = ?", (int(str(cid).strip()), SOURCE)).fetchone()
+        if ch is None or ch["status"] != "APPLIED":
+            raise Refused(f"change {cid} is not an applied change")
+        kind = BACK_KIND.get(ch["kind"])
+        if kind not in KINDS:
+            raise Refused(f"change {cid} is a {KIND_WORDS.get(kind, ch['kind'].lower())}, which the desk does not mirror; propose it again from its page")
+        change_kind = ch["change_kind"] or "EDIT"
+        payload = ch["payload"]
+        bid = _new_batch(conn, kind, change_kind, reason, at=at, actor=actor,
+                         payload=json.loads(payload) if payload else None)
+        rec = get(conn, kind, ch["ext_ref"]) if change_kind == "EDIT" else None
+        conn.execute(
+            "INSERT INTO ext_change (source_id, kind, ext_ref, field, old_value, new_value, reason, status, requested_at,"
+            " requested_by, batch_id, expected_tstamp, change_uid) VALUES (?,?,?,?,?,?,?, 'PENDING', ?,?,?,?,?)",
+            (SOURCE, ch["kind"], ch["ext_ref"] if change_kind == "EDIT" else f"NEW-{bid}", ch["field"],
+             None if rec is None or ch["field"] not in rec.keys() or rec[ch["field"]] is None else str(rec[ch["field"]]),
+             ch["new_value"], reason, _stamp(at), actor, bid, _tstamp_of(rec) if rec is not None else None, new_uid()))
+        db.audit(conn, at=_stamp(at), actor=actor, action="BIZBOX_BATCH", subject_kind="ext_batch", subject_id=str(bid),
+                 detail=f"re-queued change {cid} after reconcile: {reason}")
+        out.append(bid)
+    return out

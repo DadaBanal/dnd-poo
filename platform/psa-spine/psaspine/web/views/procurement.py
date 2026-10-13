@@ -68,6 +68,12 @@ def _can_write(ctx, kind: str) -> bool:
     return _may(ctx, kind, "WRITE")
 
 
+def _seen_changes(ctx) -> set:
+    """The change kinds (LINK_KIND values) whose area the role may see: the
+    mirrored kinds and the MMS document kinds alike (085)."""
+    return {bizbox.LINK_KIND[k] for k in security.PROCUREMENT_AREA_OF if k in bizbox.LINK_KIND and _may(ctx, k)}
+
+
 def _seen(ctx) -> list:
     return [k for k in KINDS if _may(ctx, k)]
 
@@ -90,9 +96,10 @@ def _tabs(ctx, on: str) -> str:
     if "purchase_order" in seen or "invoice" in seen:
         counts["vendor"] = len(bizbox.vendors(ctx.conn))
     marks = ",".join("?" * len(seen))
+    kinds_seen = sorted(_seen_changes(ctx))
     counts["changes"] = ctx.conn.execute(
-        "SELECT COUNT(*) FROM ext_batch WHERE source_id = ? AND status IN ('PENDING', 'APPROVED')"
-        f" AND kind IN ({marks})", [bizbox.SOURCE, *(bizbox.LINK_KIND[k] for k in seen)]).fetchone()[0] if seen else 0
+        "SELECT COUNT(*) FROM ext_batch WHERE source_id = ? AND status IN ('PENDING', 'APPROVED', 'SENDING')"
+        f" AND kind IN ({','.join('?' * len(kinds_seen))})", [bizbox.SOURCE, *kinds_seen]).fetchone()[0] if kinds_seen else 0
     if seen and mms_reports.ready(ctx.conn):
         counts["reports"] = ctx.conn.execute(
             f"SELECT COUNT(*) FROM mms_report WHERE present = 1 AND shown = 1 AND area IN ({marks})", seen).fetchone()[0]
@@ -321,8 +328,8 @@ def _vendors(ctx):
 # ------------------------------------------------------------------ changes
 
 def _batch_what(b) -> str:
-    kind = {v: k for k, v in bizbox.LINK_KIND.items()}[b["kind"]]
-    word = {"purchase_order": "purchase order", "invoice": "receipt", "product": "item", "agreement": "agreement"}[kind]
+    kind = bizbox.BACK_KIND[b["kind"]]
+    word = bizbox.KIND_WORDS.get(kind, kind.replace("_", " "))
     if b["change_kind"] == "ADD":
         p = bizbox.payload_of(b)
         rec = p.get("record", {})
@@ -355,14 +362,14 @@ def _changes(ctx):
     from .. import Response
     q = ctx.request.query
     status = q.get("status", "OPEN")
-    if status not in ("OPEN", "PENDING", "APPROVED", "APPLIED", "REJECTED", "CANCELLED", "ALL"):
+    if status not in ("OPEN", "PENDING", "APPROVED", "SENDING", "APPLIED", "REJECTED", "CANCELLED", "ALL"):
         status = "OPEN"
     rows = bizbox.batches(ctx.conn, status=None if status in ("OPEN", "ALL") else status)
-    seen = {bizbox.LINK_KIND[k] for k in _seen(ctx)}
-    rows = [b for b in rows if b["kind"] in seen and (status != "OPEN" or b["status"] in ("PENDING", "APPROVED"))]
+    seen = _seen_changes(ctx)
+    rows = [b for b in rows if b["kind"] in seen and (status != "OPEN" or b["status"] in ("PENDING", "APPROVED", "SENDING"))]
     opts = "".join(f"<option value={k}{' selected' if k == status else ''}>{v}</option>" for k, v in (
         ("OPEN", "Waiting to be approved or sent"), ("PENDING", "Waiting for approval"), ("APPROVED", "Approved, waiting to be sent"),
-        ("APPLIED", "Applied in BizBox"), ("REJECTED", "Refused by BizBox"), ("CANCELLED", "Cancelled"), ("ALL", "All")))
+        ("SENDING", "Being sent to BizBox"), ("APPLIED", "Applied in BizBox"), ("REJECTED", "Refused by BizBox"), ("CANCELLED", "Cancelled"), ("ALL", "All")))
     trs = "".join(
         f"<tr><td><a href='/procurement/batch/{b['batch_id']}'>#{b['batch_id']}</a></td><td>{_batch_what(b)}</td>"
         f"<td>{t.esc(b['reason'])}</td><td>{t.esc(b['requested_by'])}<div class=muted>{t.esc(b['requested_at'])}</div></td>"
@@ -373,7 +380,7 @@ def _changes(ctx):
         writer = bizbox.writer_in_force().name
     except bizbox.Refused:
         writer = "none"
-    how = ("Approved changes are sent to BizBox by the scheduled run on the host."
+    how = ("Approved changes are sent to BizBox by the scheduled run on the host: each is claimed, sent, then marked applied or refused."
            if writer != "none" else
            "<b>Changes are not sent to BizBox automatically yet:</b> that link is still being set up. An approved change "
            "waits here until it is, or until someone makes the change in BizBox by hand and marks it applied here.")
@@ -396,7 +403,7 @@ def batch_page(ctx, batch_id):
     _gate(ctx, BACK_KIND[b["kind"]])
     rows = bizbox.batch_changes(ctx.conn, b["batch_id"])
     b = dict(b) | {"n": len(rows)}
-    kind = {v: k for k, v in bizbox.LINK_KIND.items()}[b["kind"]]
+    kind = bizbox.BACK_KIND[b["kind"]]
     extra = ""
     if b["change_kind"] == "ADD":
         p = bizbox.payload_of(b)
@@ -1254,7 +1261,7 @@ def _home(ctx):
                          + "</tbody></table></div>" if recent else "<div class=muted>Nothing moved in the last 7 days, as of the last read.</div>")
                      + "<p class=why><a href='/procurement?tab=movement'>Every movement</a></p></div>")
     if seen:
-        waiting = [b for b in bizbox.batches(conn, status="PENDING", limit=6) if b["kind"] in {bizbox.LINK_KIND[k] for k in seen}]
+        waiting = [b for b in bizbox.batches(conn, status="PENDING", limit=6) if b["kind"] in _seen_changes(ctx)]
         cards.append("<div class=card><h3>" + t.icon("checks") + f"Waiting for approval · {pending_batches}</h3>"
                      + ("<ul class='plain rptlist'>" + "".join(
                          f"<li><a href='/procurement/batch/{b['batch_id']}'>#{b['batch_id']}</a> {t.esc(_batch_what(b))} · <span class=muted>{t.esc(b['requested_by'])}, {t.esc(b['requested_at'])}</span></li>"

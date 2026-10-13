@@ -28,7 +28,7 @@ COLUMNS = {
 }
 TABS = (("agreement", "Agreements"), ("purchase_order", "Procurement"), ("product", "Products"),
         ("invoice", "Invoices"))
-ONE = {"agreement": "Agreement", "purchase_order": "Purchase order", "product": "Product", "invoice": "Invoice"}
+ONE = {"agreement": "Agreement", "purchase_order": "Purchase order", "product": "Product", "invoice": "Invoice"} | bizbox.MMS_WORDS
 # The kinds with a status summary above the list: a tile per status BizBox
 # uses, with the count and the sum. The statuses are BizBox's own words; the
 # desk adds none (it cannot: "paid" is not knowable from BizBox's receiving
@@ -165,8 +165,7 @@ def _changes_table(ctx, rows, *, with_record: bool = True, pending_word: str = "
     (080) that is its batch's word (approval first), not BizBox's."""
     can = common.allows(ctx, "FINANCE", "WRITE")
     back = {v: k for k, v in bizbox.LINK_KIND.items()}
-    words = {"PENDING": pending_word, "APPLIED": "Applied in BizBox", "REJECTED": "Refused by BizBox",
-             "CANCELLED": "Cancelled"}
+    words = bizbox.CHANGE_WORDS | {"PENDING": pending_word}
     trs, labels = [], {}
     for c in rows:
         kind = back[c["kind"]]

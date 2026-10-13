@@ -1695,6 +1695,45 @@ class PortTest(unittest.TestCase):
 
     # ------------------------------------------------------------ the decisions
 
+    def test_a_rebuilt_table_is_a_constraint_swap_on_the_server_and_the_new_definition_on_a_fresh_one(self):
+        """085 (SQL01, 14 Oct 2026): SQLite cannot alter a CHECK, so ext_change
+        and ext_batch are rebuilt; the port swaps the constraint under its own
+        name, guarded by a value the old one did not allow, and adds the new
+        columns; a fresh install creates the widened definition outright."""
+        from tools import sqlite_ddl
+        self.assertIn("-- CONSTRAINTS WIDENED ON TABLES THAT ALREADY EXIST", self.tsql)
+        for name, token in (("CK_ext_change_01", "EXPENSE_REQ"), ("CK_ext_change_02", "SENDING"),
+                            ("CK_ext_batch_01", "EXPENSE_REQ"), ("CK_ext_batch_03", "SENDING")):
+            table = name.split("_", 1)[1].rsplit("_", 1)[0]
+            self.assertIn(f"IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = N'{name}' AND parent_object_id = OBJECT_ID(N'psa.[{table}]')"
+                          f" AND definition NOT LIKE N'%''{token}''%')\nBEGIN\n    ALTER TABLE psa.[{table}] DROP CONSTRAINT [{name}];\n"
+                          f"    ALTER TABLE psa.[{table}] WITH CHECK ADD CONSTRAINT [{name}] CHECK (", self.tsql, name)
+        self.assertEqual(self.tsql.count("DROP CONSTRAINT [CK_"), 4)
+        self.assertNotIn("DROP TABLE psa.[ext_change];\n", self.tsql.split("ROLLBACK")[0])            # never a drop in the apply
+        self.assertIn("CONSTRAINT [CK_ext_change_01] CHECK (kind IN ('AGREEMENT', 'PRODUCT', 'PURCHASE_ORDER', 'INVOICE', 'EXPENSE_REQ'", self.tsql)
+        self.assertIn("IF COL_LENGTH(N'psa.[ext_change]', N'expected_tstamp') IS NULL\nALTER TABLE psa.[ext_change] ADD [expected_tstamp] NVARCHAR(32) NULL;", self.tsql)
+        self.assertIn("IF COL_LENGTH(N'psa.[ext_change]', N'change_uid') IS NULL", self.tsql)
+        self.assertEqual(self.tsql.count("CREATE TABLE psa.[ext_change] ("), 1)
+        self.assertLess(self.tsql.index("CREATE TABLE psa.[ext_batch] ("), self.tsql.index("CREATE TABLE psa.[ext_change] ("))   # the FK's parent first
+        # the idiom is read as one construct; anything else a rebuild changes is refused by name
+        base = ("CREATE TABLE t (id INTEGER PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('A')), note TEXT);\n"
+                "CREATE INDEX ix_t ON t (kind);\n")
+        ok = base + ("CREATE TABLE t_new (id INTEGER PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('A', 'B')), note TEXT, extra TEXT);\n"
+                     "INSERT INTO t_new (id, kind, note) SELECT id, kind, note FROM t;\nDROP TABLE t;\nALTER TABLE t_new RENAME TO t;\n"
+                     "CREATE INDEX ix_t ON t (kind);\n")
+        tables, indexes, _, alters, rebuilds = sqlite_ddl.parse_schema([("001.sql", ok)])
+        self.assertEqual(([t.name for t in tables], [i.name for i in indexes], [a.column.name for a in alters], len(rebuilds)),
+                         (["t"], ["ix_t"], ["extra"], 1))
+        self.assertEqual(sqlite_to_tsql._check_swaps(rebuilds[0]), [("CK_t_01", "kind IN ('A')", "kind IN ('A', 'B')")])
+        for bad, why in ((base + "CREATE TABLE t_new (id INTEGER PRIMARY KEY, note TEXT);\nINSERT INTO t_new SELECT id, note FROM t;\nDROP TABLE t;\nALTER TABLE t_new RENAME TO t;", "column 2"),
+                         (base + "CREATE TABLE t_new (id INTEGER PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('A')), note TEXT NOT NULL);\nINSERT INTO t_new SELECT * FROM t;\nDROP TABLE t;\nALTER TABLE t_new RENAME TO t;", "more than a CHECK"),
+                         (base + "DROP TABLE t;", "only inside a rebuild"),
+                         (base + "CREATE TABLE t_new (id INTEGER PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('A')), note TEXT);\nINSERT INTO t_new SELECT * FROM t;\nALTER TABLE t_new RENAME TO t;\nDROP TABLE t;", "in that order"),
+                         (base + "CREATE TABLE t_new (id INTEGER PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('A')), note TEXT);\nINSERT INTO t_new SELECT * FROM t;", "needs INSERT, DROP TABLE and RENAME")):
+            with self.assertRaises(sqlite_ddl.Unsupported, msg=why) as cm:
+                sqlite_ddl.parse_schema([("001.sql", bad)])
+            self.assertIn(why, str(cm.exception))
+
     def test_integer_primary_key_becomes_identity_and_a_text_key_does_not(self):
         self.assertIn("[time_entry_id] INT IDENTITY(1,1) NOT NULL", self.tsql)
         self.assertIn("[work_item_id] NVARCHAR(64) NOT NULL", self.tsql)
@@ -8070,18 +8109,18 @@ class ModulesTest(unittest.TestCase):
         self.assertIn("err=", dict(h)["Location"])                                              # not an editable field
         conn = self._conn()
         self.assertEqual(bizbox.get(conn, "purchase_order", "PO-1")["status"], "Approved")    # BizBox's value stands
-        self.assertEqual(bizbox.push(conn, at=self.at), {"applied": 0, "rejected": 0, "pending": 0})
+        self.assertEqual(bizbox.push(conn, at=self.at), {"applied": 0, "rejected": 0, "pending": 0, "skipped": 0})
 
         class Fake(bizbox.Writer):
             def apply(self, change):
                 return "applied by the test writer"
         # 080: a change reaches the writer only once a second person has approved its batch
-        self.assertEqual(bizbox.push(conn, Fake(), at=self.at), {"applied": 0, "rejected": 0, "pending": 0})
+        self.assertEqual(bizbox.push(conn, Fake(), at=self.at), {"applied": 0, "rejected": 0, "pending": 0, "skipped": 0})
         [b] = bizbox.batches(conn, status="PENDING")
         with self.assertRaises(bizbox.Refused):
             bizbox.approve(conn, b["batch_id"], at=self.at, actor="alice")                  # not by the asker
         bizbox.approve(conn, b["batch_id"], at=self.at, actor="root")
-        self.assertEqual(bizbox.push(conn, Fake(), at=self.at), {"applied": 1, "rejected": 0, "pending": 0})
+        self.assertEqual(bizbox.push(conn, Fake(), at=self.at), {"applied": 1, "rejected": 0, "pending": 0, "skipped": 0})
         self.assertEqual(bizbox.batch(conn, b["batch_id"])["status"], "APPLIED")
         conn.commit()
         _, _, page = self._call("GET", "/finance", cookie=self.alice, query="tab=changes&status=APPLIED")
@@ -18169,7 +18208,7 @@ class CwShapeTest(unittest.TestCase):
         _, h, _ = self._call("POST", "/procurement/batch/4/cancel", cookie=self.alice)
         self.assertIn("cancelled", dict(h)["Location"])
         self.assertEqual(bizbox.batch(conn, 4)["status"], "CANCELLED")
-        self.assertEqual(bizbox.push(conn, at=self.at), {"applied": 0, "rejected": 0, "pending": 2})   # NoWriter: batch 1 waits
+        self.assertEqual(bizbox.push(conn, at=self.at), {"applied": 0, "rejected": 0, "pending": 2, "skipped": 0})   # NoWriter: batch 1 waits
         seen = []
 
         class Fake(bizbox.Writer):
@@ -18180,28 +18219,27 @@ class CwShapeTest(unittest.TestCase):
                 if change["ext_ref"] == "PO-2":
                     raise RuntimeError("PO-2 is closed in BizBox")
                 return "done"
-        self.assertEqual(bizbox.push(conn, Fake(), at=self.at), {"applied": 1, "rejected": 1, "pending": 0})
+        self.assertEqual(bizbox.push(conn, Fake(), at=self.at), {"applied": 1, "rejected": 1, "pending": 0, "skipped": 0})
         self.assertEqual(seen, [("PO-1", "status", "Ordered", "EDIT", "root"), ("PO-2", "status", "Ordered", "EDIT", "root")])
         b = bizbox.batch(conn, 1)
         self.assertEqual((b["status"], b["answer"]), ("REJECTED", "done; PO-2 is closed in BizBox"))
         conn.commit()
         _, _, page = self._call("GET", "/procurement", query="tab=changes&status=REJECTED", cookie=self.alice)
         self.assertIn("PO-2 is closed in BizBox", page)
-        # the write login is fenced like the read one
+        # the write string: one condition (SQL01, 14 Oct 2026: identity is the grant; psa_desk, Windows, no password)
         with self.assertRaises(bizbox.Refused):
             bizbox.write_odbc_string("")
-        with self.assertRaises(bizbox.Refused):
-            bizbox.write_odbc_string("Driver={x};Server=y;UID=sa;PWD=z")
         from unittest import mock
-        with mock.patch.dict(os.environ, {"PSA_BIZBOX_ODBC": "Driver={x};Server=y;UID=psa_reader;PWD=z"}):
-            with self.assertRaises(bizbox.Refused):
-                bizbox.write_odbc_string("Driver={x};Server=y;UID=psa_reader;PWD=z")
-            self.assertEqual(bizbox.write_odbc_string("Driver={x};Server=y;UID=psa_writer;PWD=z;ApplicationIntent=ReadOnly"),
-                             "Driver={x};Server=y;UID=psa_writer;PWD=z")
+        for uid in ("UID=sa", "Uid=psa_writer", "User ID={psa_desk}", "user=x"):
+            with self.assertRaises(bizbox.Refused) as cm:
+                bizbox.write_odbc_string(f"Driver={{x}};Server=y;{uid};PWD=z")
+            self.assertIn("Windows-authenticated by decision of 14 Oct 2026", str(cm.exception))
+        self.assertEqual(bizbox.write_odbc_string("Driver={x};Server=y;Database=LiveDB_PMC;Trusted_Connection=yes;ApplicationIntent=ReadOnly"),
+                         "Driver={x};Server=y;Database=LiveDB_PMC;Trusted_Connection=yes")
         with mock.patch.dict(os.environ, {"PSA_BIZBOX_WRITE_ODBC": ""}):
             self.assertEqual(bizbox.writer_in_force().name, "none")
         with self.assertRaises(bizbox.Refused):
-            bizbox.ProcedureWriter("Driver={x};UID=w;PWD=z", procedure="psa.sp; DROP TABLE x")
+            bizbox.ProcedureWriter("Driver={x};Server=y;Trusted_Connection=yes", procedure="psa.sp; DROP TABLE x")
         # the push on the host: preview says what waits and sends nothing
         import contextlib
         from psaspine.__main__ import main
@@ -18657,8 +18695,10 @@ class MmsReportsTest(unittest.TestCase):
         with self.assertRaises(ssrs.ServerError) as cm:
             bad.request("GET", "http://reports.invalid/ReportServer")
         self.assertIn("Could not resolve host", str(cm.exception))
-        with self.assertRaises(ImportError):
-            ssrs.CurlTransport(exe="")                      # nothing to run: the next transport is tried
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"PSA_SSRS_CURL": ""}), mock.patch.object(ssrs, "_find_curl", return_value=""):
+            with self.assertRaises(ImportError):
+                ssrs.CurlTransport(exe="")                  # nothing to run: the next transport is tried
     def test_the_catalogue_is_the_servers_folder_in_words_by_area(self):
         from psaspine import mms_reports, ssrs
         conn, client, fake, counts = self._catalogue()
@@ -18798,6 +18838,219 @@ class MmsReportsTest(unittest.TestCase):
         _, h, _ = self._call("POST", "/admin/mms-reports/sync", cookie=self.root)
         self.assertIn("4+reports+listed", dict(h)["Location"])
         self.assertEqual(conn.execute("SELECT area FROM mms_report WHERE report_id = ?", (po,)).fetchone()[0], "invoice")   # the set area survives a read
+
+
+class WritePathTest(unittest.TestCase):
+    """085 (SQL01, 14 Oct 2026, the write path simplified): the sender claims
+    a change before it applies it, the mirror carries BizBox's row version
+    and a change sends it back, the ten MMS kinds are allowed, the write
+    string has one condition, and after a restore the desk can say which
+    applied changes BizBox no longer shows."""
+    _environ = WebWSGITest._environ
+    _call = WebWSGITest._call
+    _cookie_for = WebWSGITest._cookie_for
+    _csvs = ModulesTest._csvs
+    _conn = ModulesTest._conn
+    setUp = ModulesTest.setUp
+
+    def _mirror(self):
+        from psaspine import bizbox, security
+        conn = self._conn()
+        folder = self._csvs("PONo,VendorName,PODate,Status,TotalAmount,Currency,RowVersion\r\n"
+                            "PO-1,Vendor A,2026-09-02,Approved,1000,PHP,0x00000000000F4240\r\n"
+                            "PO-2,Vendor B,2026-09-03,Ordered,250,PHP,0x00000000000F4241\r\n")
+        m = bizbox.load_map(Path(__file__).parent.parent / "bizbox" / "bizbox-map.sample.json")
+        m["objects"]["purchase_order"]["columns"]["tstamp"] = "RowVersion"
+        bizbox.sync(conn, bizbox.read_csv_dir(folder, bizbox.check_map(m)), at=self.at, actor="t", apply=True)
+        security.ensure_roles(conn)
+        security.assign(conn, "alice", "SERVICE_MANAGER", at=self.at, actor="root")
+        conn.commit()
+        return conn
+
+    def test_the_mirror_carries_the_row_version_and_a_change_sends_it_back(self):
+        from psaspine import bizbox
+        conn = self._mirror()
+        self.assertEqual(bizbox.get(conn, "purchase_order", "PO-1")["tstamp"], "0x00000000000F4240")
+        cid = bizbox.propose(conn, "purchase_order", "PO-1", "status", "Ordered", reason="sent today", at=self.at, actor="alice")
+        ch = conn.execute("SELECT * FROM ext_change WHERE change_id = ?", (cid,)).fetchone()
+        self.assertEqual(ch["expected_tstamp"], "0x00000000000F4240")
+        self.assertRegex(ch["change_uid"], r"^[0-9a-f]{32}$")
+        bid = bizbox.propose_add(conn, "product", {"name": "Drum unit", "unit": "pc"}, reason="new", at=self.at, actor="alice")
+        new = conn.execute("SELECT * FROM ext_change WHERE batch_id = ?", (bid,)).fetchone()
+        self.assertIsNone(new["expected_tstamp"])
+        self.assertRegex(new["change_uid"], r"^[0-9a-f]{32}$")
+        self.assertNotEqual(new["change_uid"], ch["change_uid"])
+        # the procedure's ten parameters: the tenth is BINARY(8), from the text the view gave
+        bizbox.approve(conn, ch["batch_id"], at=self.at, actor="root")
+        [due] = [c for c in bizbox.pushable(conn) if c["change_id"] == cid]
+        params = bizbox.ProcedureWriter.params(due)
+        self.assertEqual(len(params), 10)
+        self.assertEqual(params[:4], (cid, "PURCHASE_ORDER", "EDIT", "PO-1"))
+        self.assertEqual(params[9], bytes.fromhex("00000000000F4240"))
+        self.assertEqual(bizbox.tstamp_bytes("0F4240"), bytes.fromhex("00000000000F4240"))
+        self.assertIsNone(bizbox.tstamp_bytes(None))
+        with self.assertRaises(bizbox.Refused):
+            bizbox.tstamp_bytes("not hex")
+
+    def test_the_sender_claims_before_it_applies_and_a_claimed_change_is_skipped(self):
+        from psaspine import bizbox
+        conn = self._mirror()
+        cid = bizbox.propose(conn, "purchase_order", "PO-1", "status", "Ordered", reason="sent today", at=self.at, actor="alice")
+        b = conn.execute("SELECT batch_id FROM ext_change WHERE change_id = ?", (cid,)).fetchone()["batch_id"]
+        bizbox.approve(conn, b, at=self.at, actor="root")
+        conn.commit()
+        seen, at = {}, self.at
+
+        class Writer(bizbox.Writer):
+            name = "fake"
+
+            def apply(self, change):
+                try:
+                    row = conn.execute("SELECT status FROM ext_change WHERE change_id = ?", (change["change_id"],)).fetchone()
+                    bt = conn.execute("SELECT status FROM ext_batch WHERE batch_id = ?", (change["batch_id"],)).fetchone()
+                    seen["during"] = (row["status"], bt["status"])
+                    # a second run that overlaps: it finds the row held and sends nothing
+                    seen["overlap"] = bizbox.push(conn, Writer(), at=at)
+                except Exception as exc:                    # noqa: BLE001 - shown by the assertion below
+                    seen["error"] = repr(exc)
+                    raise
+                return "done"
+        self.assertEqual(bizbox.push(conn, bizbox.NoWriter(), at=self.at), {"applied": 0, "rejected": 0, "pending": 1, "skipped": 0})   # nothing claimed
+        self.assertEqual(conn.execute("SELECT status FROM ext_change WHERE change_id = ?", (cid,)).fetchone()["status"], "PENDING")
+        counts = bizbox.push(conn, Writer(), at=self.at)
+        self.assertIsNone(seen.get("error"), seen.get("error"))
+        self.assertEqual(seen["during"], ("SENDING", "SENDING"))
+        self.assertEqual(seen["overlap"], {"applied": 0, "rejected": 0, "pending": 0, "skipped": 0})      # pushable saw no PENDING row
+        self.assertEqual(counts, {"applied": 1, "rejected": 0, "pending": 0, "skipped": 0})
+        self.assertEqual(bizbox.batch(conn, b)["status"], "APPLIED")
+        # a row another run holds is skipped; one the writer declines goes back to PENDING
+        cid2 = bizbox.propose(conn, "purchase_order", "PO-2", "status", "Approved", reason="x", at=self.at, actor="alice")
+        b2 = conn.execute("SELECT batch_id FROM ext_change WHERE change_id = ?", (cid2,)).fetchone()["batch_id"]
+        bizbox.approve(conn, b2, at=self.at, actor="root")
+        conn.commit()
+        self.assertTrue(bizbox.claim(conn, cid2, at=self.at, actor="other-run"))
+        self.assertFalse(bizbox.claim(conn, cid2, at=self.at, actor="this-run"))
+        self.assertEqual(bizbox.push(conn, Writer(), at=self.at)["skipped"], 0)                           # pushable lists PENDING rows only
+        with self.assertRaises(bizbox.Refused):
+            bizbox.cancel_batch(conn, b2, at=self.at, actor="root")                                   # being sent: not cancellable
+        with self.assertRaises(bizbox.Refused):
+            bizbox.decide(conn, cid2, "CANCELLED", at=self.at, actor="root")
+        late = self.at + timedelta(minutes=20)
+        self.assertEqual([c["change_id"] for c in bizbox.stuck_sending(conn, now=late)], [cid2])
+        self.assertEqual(bizbox.stuck_sending(conn, now=self.at + timedelta(minutes=5)), [])
+        bizbox.decide(conn, cid2, "REJECTED", answer="re-read and ask again", at=late, actor="sql01")   # by hand, after reading BizBox
+        self.assertEqual(bizbox.batch(conn, b2)["status"], "REJECTED")
+        conn.execute("UPDATE ext_change SET status = 'PENDING', decided_at = NULL, decided_by = NULL, answer = NULL WHERE change_id = ?", (cid2,))
+        conn.execute("UPDATE ext_batch SET status = 'APPROVED', decided_at = NULL, decided_by = NULL, answer = NULL WHERE batch_id = ?", (b2,))
+        conn.commit()
+
+        class Declines(bizbox.Writer):
+            name = "declines"
+
+            def apply(self, change):
+                raise bizbox.Refused("not now")
+        self.assertEqual(bizbox.push(conn, Declines(), at=self.at)["pending"], 1)
+        self.assertEqual((conn.execute("SELECT status FROM ext_change WHERE change_id = ?", (cid2,)).fetchone()["status"],
+                          bizbox.batch(conn, b2)["status"]), ("PENDING", "APPROVED"))
+        # a batch of two, one claimed by a run that died: the other is still offered, and the batch ends once both have
+        bizbox.propose_many(conn, "purchase_order", ["PO-1", "PO-2"], "ordered_on", "2026-09-30", reason="both", at=self.at, actor="alice")
+        b3 = bizbox.batches(conn, status="PENDING")[0]["batch_id"]
+        bizbox.approve(conn, b3, at=self.at, actor="root")
+        conn.commit()
+        c1, c2 = [c["change_id"] for c in bizbox.batch_changes(conn, b3)]
+        self.assertTrue(bizbox.claim(conn, c1, at=self.at, actor="dead-run"))
+        self.assertEqual([c["change_id"] for c in bizbox.pushable(conn)], [cid2, c2])                   # the batch is SENDING, c2 still offered
+        bizbox.decide(conn, c1, "APPLIED", answer="done, read in BizBox", at=late, actor="sql01")
+        self.assertEqual(bizbox.batch(conn, b3)["status"], "SENDING")
+        counts = bizbox.push(conn, Writer(), at=self.at)                     # cid2 and c2; the overlapping run inside apply may take c2 first
+        self.assertEqual(counts["applied"] + counts["skipped"], 2)
+        self.assertEqual({r["status"] for r in bizbox.batch_changes(conn, b3)}, {"APPLIED"})
+        self.assertEqual(bizbox.batch(conn, b3)["status"], "APPLIED")
+        # the desk's own bad data is a refusal with a reason, never a decline retried for ever
+        row = {"change_id": 1, "kind": "PURCHASE_ORDER", "change_kind": "EDIT", "ext_ref": "PO-1", "field": "status", "new_value": "x",
+               "payload": None, "requested_by": "a", "approved_by": "b", "expected_tstamp": "zz-not-hex"}
+        with self.assertRaises(ValueError) as cm:
+            bizbox.ProcedureWriter.params(row)
+        self.assertIn("re-propose it from the record's page", str(cm.exception))
+        # the Changes tab says it in words
+        bizbox.claim(conn, cid2, at=self.at, actor="run")
+        _, _, page = self._call("GET", "/procurement", query="tab=changes&status=SENDING", cookie=self.alice)
+        self.assertIn("Being sent to BizBox", page)
+
+    def test_the_ten_mms_kinds_are_allowed_and_named_in_words(self):
+        from psaspine import bizbox
+        conn = self._mirror()
+        for kind, code in bizbox.MMS_KINDS.items():
+            conn.execute("INSERT INTO ext_batch (source_id, kind, change_kind, reason, status, requested_at, requested_by)"
+                         " VALUES (?,?, 'ADD', 'x', 'PENDING', ?, 'alice')", (bizbox.SOURCE, code, "2026-10-14 09:00"))
+        with self.assertRaises(sqlite3.IntegrityError):
+            conn.execute("INSERT INTO ext_batch (source_id, kind, change_kind, reason, status, requested_at, requested_by)"
+                         " VALUES (?, 'JOB_ORDER', 'ADD', 'x', 'PENDING', '2026-10-14 09:00', 'alice')", (bizbox.SOURCE,))
+        with self.assertRaises(sqlite3.IntegrityError):
+            conn.execute("UPDATE ext_batch SET status = 'FLYING' WHERE kind = 'STOCK_REQ'")
+        conn.execute("UPDATE ext_batch SET status = 'SENDING' WHERE kind = 'STOCK_REQ'")
+        conn.commit()
+        _, _, page = self._call("GET", "/procurement", query="tab=changes&status=ALL", cookie=self.alice)
+        for word in ("New stock requisition", "New expense issuance", "New physical count", "New quantity adjustment", "New delivery/receiving"):
+            self.assertIn(word, page, word)
+        self.assertEqual(bizbox.KIND_WORDS["material_production"], "material production")
+
+    def test_reconcile_says_which_applied_changes_bizbox_no_longer_shows_and_requeue_is_deliberate(self):
+        from psaspine import bizbox
+        conn = self._mirror()
+        cid = bizbox.propose(conn, "purchase_order", "PO-1", "status", "Ordered", reason="sent", at=self.at, actor="alice")
+        b = conn.execute("SELECT batch_id FROM ext_change WHERE change_id = ?", (cid,)).fetchone()["batch_id"]
+        bizbox.approve(conn, b, at=self.at, actor="root")
+        bid = bizbox.propose_add(conn, "product", {"name": "Drum unit", "unit": "pc"}, reason="new", at=self.at, actor="alice")
+        bizbox.approve(conn, bid, at=self.at, actor="root")
+        conn.commit()
+
+        class Writer(bizbox.Writer):
+            name = "fake"
+
+            def apply(self, change):
+                return '{"message": "ok", "ext_ref": "IT-77"}' if change["change_kind"] == "ADD" else "ok"
+        self.assertEqual(bizbox.push(conn, Writer(), at=self.at)["applied"], 2)
+        # BizBox as the next read shows it: PO-1 is Ordered, IT-77 exists -> both hold
+        folder = self._csvs("PONo,VendorName,PODate,Status,TotalAmount,Currency\r\nPO-1,Vendor A,2026-09-02,Ordered,1000,PHP\r\n")
+        (folder / "product.csv").write_text("ItemCode,ItemName,Category,Unit,UnitCost\r\nIT-1,Toner,Consumables,pc,4250\r\nIT-77,Drum unit,,pc,\r\n", encoding="utf-8")
+        m = bizbox.check_map(bizbox.load_map(Path(__file__).parent.parent / "bizbox" / "bizbox-map.sample.json"))
+        bizbox.sync(conn, bizbox.read_csv_dir(folder, m), at=self.at, actor="t", apply=True)
+        rows = bizbox.reconcile(conn)
+        self.assertEqual([(r["kind"], r["ext_ref"], r["verdict"]) for r in rows], [("purchase_order", "PO-1", "holds"), ("product", "IT-77", "holds")])
+        # after a restore into BizBox: PO-1 reads Approved again and IT-77 is gone
+        folder2 = self._csvs("PONo,VendorName,PODate,Status,TotalAmount,Currency\r\nPO-1,Vendor A,2026-09-02,Approved,1000,PHP\r\n")
+        bizbox.sync(conn, bizbox.read_csv_dir(folder2, m), at=self.at, actor="t", apply=True)
+        rows = bizbox.reconcile(conn)
+        self.assertEqual([r["verdict"][:8] for r in rows], ["differs:", "missing:"])
+        self.assertEqual(rows[0]["mirror"], "Approved")
+        with self.assertRaises(bizbox.Refused):
+            bizbox.requeue(conn, [999], reason="x", at=self.at, actor="sql01")
+        with self.assertRaises(bizbox.Refused):
+            bizbox.requeue(conn, ["12a"], reason="x", at=self.at, actor="sql01")
+        # an MMS-kind change the desk does not mirror: said, not crashed; a by-hand answer that is JSON but no object: read past
+        conn.execute("INSERT INTO ext_batch (source_id, kind, change_kind, reason, status, requested_at, requested_by)"
+                     " VALUES (?, 'STOCK_REQ', 'ADD', 'x', 'APPLIED', '2026-10-14 09:00', 'alice')", (bizbox.SOURCE,))
+        mb = conn.execute("SELECT MAX(batch_id) FROM ext_batch").fetchone()[0]
+        conn.execute("INSERT INTO ext_change (source_id, kind, ext_ref, field, new_value, reason, status, requested_at, requested_by, batch_id, answer)"
+                     " VALUES (?, 'STOCK_REQ', 'NEW-9', 'NEW', 'x', 'x', 'APPLIED', '2026-10-14 09:00', 'alice', ?, 'null')", (bizbox.SOURCE, mb))
+        mc = conn.execute("SELECT MAX(change_id) FROM ext_change").fetchone()[0]
+        self.assertEqual(bizbox.reconcile(conn)[-1]["verdict"], "not mirrored: cannot be checked from the desk")
+        with self.assertRaises(bizbox.Refused) as cm:
+            bizbox.requeue(conn, [mc], reason="x", at=self.at, actor="sql01")
+        self.assertIn("stock requisition, which the desk does not mirror", str(cm.exception))
+        conn.execute("UPDATE ext_change SET answer = '\"done\"' WHERE change_id = ?", (cid,))
+        self.assertEqual(bizbox.reconcile(conn)[0]["ext_ref"], "PO-1")
+        bids = bizbox.requeue(conn, [r["change_id"] for r in rows], reason="Re-queued after the July restore", at=self.at, actor="sql01")
+        self.assertEqual(len(bids), 2)
+        again = [bizbox.batch(conn, x) for x in bids]
+        self.assertEqual([(a["status"], a["change_kind"], a["requested_by"]) for a in again], [("PENDING", "EDIT", "sql01"), ("PENDING", "ADD", "sql01")])
+        ch = conn.execute("SELECT * FROM ext_change WHERE batch_id = ?", (bids[0],)).fetchone()
+        self.assertEqual((ch["ext_ref"], ch["field"], ch["old_value"], ch["new_value"]), ("PO-1", "status", "Approved", "Ordered"))
+        self.assertEqual(bizbox.payload_of(again[1])["record"]["name"], "Drum unit")
+        self.assertEqual(conn.execute("SELECT status FROM ext_change WHERE change_id = ?", (cid,)).fetchone()["status"], "APPLIED")   # the old row stays
+        with self.assertRaises(bizbox.Refused):
+            bizbox.approve(conn, bids[0], at=self.at, actor="sql01")                                 # a second person, still
 
 
 class StockAndMovementsTest(unittest.TestCase):

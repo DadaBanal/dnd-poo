@@ -190,6 +190,28 @@ class AlterAddColumn:
 
 
 @dataclass
+class Rebuild:
+    """A table rebuilt to widen a CHECK (SQLite cannot alter one): in one file,
+
+        CREATE TABLE <name>_new ( ...the whole definition, changed... );
+        INSERT INTO <name>_new (...) SELECT ... FROM <name>;
+        DROP TABLE <name>;
+        ALTER TABLE <name>_new RENAME TO <name>;
+
+    then its indexes created again by their old names. Recognised as one
+    construct, deliberately: on a live database the port never drops a table,
+    so SQL Server gets a constraint swap (DROP CONSTRAINT, ADD CONSTRAINT) and
+    an ADD for each new column, both guarded, and the rebuilt definition is
+    what a fresh install creates. Anything a rebuild changes beyond a CHECK's
+    text and new columns at the end is refused, not ported silently.
+    """
+    table: "Table"                  # the new definition, under the final name
+    original: "Table"               # as it stood before
+    comment: str
+    source_file: str
+
+
+@dataclass
 class Index:
     name: str
     table: str
@@ -224,6 +246,9 @@ _CREATE_INDEX = re.compile(
     r"\s*(?:WHERE\s+(.*?))?\s*;?\s*$", re.I | re.S)
 _PRAGMA = re.compile(r"^\s*PRAGMA\s+\w+\s*=\s*\w+\s*;?\s*$", re.I)
 _ALTER = re.compile(r"^\s*ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(.*?);?\s*$", re.I | re.S)
+_REBUILD_INSERT = re.compile(r"^\s*INSERT\s+INTO\s+(\w+)\s*(?:\([^)]*\))?\s*SELECT\b.*?\bFROM\s+(\w+)\s*;?\s*$", re.I | re.S)
+_DROP_TABLE = re.compile(r"^\s*DROP\s+TABLE\s+(\w+)\s*;?\s*$", re.I)
+_RENAME = re.compile(r"^\s*ALTER\s+TABLE\s+(\w+)\s+RENAME\s+TO\s+(\w+)\s*;?\s*$", re.I)
 _TRIGGER_HEAD = re.compile(
     r"^\s*CREATE\s+TRIGGER\s+(\w+)\s+(BEFORE|AFTER|INSTEAD\s+OF)\s+"
     r"(INSERT|DELETE|UPDATE)(?:\s+OF\s+([\w\s,]+?))?\s+ON\s+(\w+)\s+",
@@ -442,31 +467,101 @@ def parse_alter(raw: str, code: str, source_file: str) -> AlterAddColumn:
                           comment=leading_comment(raw), source_file=source_file)
 
 
-def parse_schema(files: list[tuple[str, str]]) -> tuple[list[Table], list[Index], list[Trigger], list[AlterAddColumn]]:
-    """Parse (filename, sql) pairs in the order given."""
+def _rebuild_diff(old: Table, new: Table) -> list[Column]:
+    """What a rebuild may change: a CHECK's text, and columns added at the
+    end. Everything else is refused by name. Returns the new columns."""
+    name = new.name
+    old_cols = {c.name: c for c in old.columns}
+    for i, c in enumerate(new.columns):
+        if i < len(old.columns):
+            o = old.columns[i]
+            if o.name != c.name:
+                raise Unsupported(f"rebuild of {name}: column {i + 1} is {c.name!r}, was {o.name!r}; a rebuild keeps the columns in order")
+            same = (o.sqlite_type, o.not_null, o.primary_key, o.default, o.references, len(o.checks))
+            if same != (c.sqlite_type, c.not_null, c.primary_key, c.default, c.references, len(c.checks)):
+                raise Unsupported(f"rebuild of {name}: column {c.name!r} changes more than a CHECK's text; only that is ported")
+        elif c.name in old_cols:
+            raise Unsupported(f"rebuild of {name}: column {c.name!r} moved; a rebuild keeps the columns in order")
+        elif c.not_null and c.default is None and not c.primary_key:
+            raise Unsupported(f"rebuild of {name}: new column {c.name!r} is NOT NULL with no DEFAULT; existing rows have no value for it")
+    if len(new.columns) < len(old.columns):
+        raise Unsupported(f"rebuild of {name}: drops column(s); the port never drops a column")
+    others = lambda t: [c for c in t.constraints if c.split(" ", 1)[0].upper() != "CHECK"]
+    checks = lambda t: [c for c in t.constraints if c.split(" ", 1)[0].upper() == "CHECK"]
+    if len(checks(old)) != len(checks(new)) or others(old) != others(new):
+        raise Unsupported(f"rebuild of {name}: table constraints added, removed or reordered; a rebuild changes a CHECK's text only")
+    return new.columns[len(old.columns):]
+
+
+def parse_schema(files: list[tuple[str, str]]) -> tuple[list[Table], list[Index], list[Trigger], list[AlterAddColumn], list[Rebuild]]:
+    """Parse (filename, sql) pairs in the order given. A rebuilt table (see
+    Rebuild) replaces its original in `tables` at the point of the rebuild,
+    its new columns join `alters`, and its re-created indexes are matched
+    to the ones already parsed rather than counted twice."""
     tables: list[Table] = []
     indexes: list[Index] = []
     triggers: list[Trigger] = []
     alters: list[AlterAddColumn] = []
+    rebuilds: list[Rebuild] = []
     for filename, sql in files:
-        for raw, code in split_statements(sql):
-            clean = strip_comments(code).strip()
-            if not clean:
-                continue
+        statements = [(raw, code, strip_comments(code).strip()) for raw, code in split_statements(sql)]
+        statements = [s for s in statements if s[2]]
+        i = 0
+        while i < len(statements):
+            raw, code, clean = statements[i]
             if _PRAGMA.match(clean):
+                i += 1
                 continue                               # recognised; see the emitter
             if _ALTER.match(clean):
                 alters.append(parse_alter(raw, code, filename))
+            elif re.match(r"\s*CREATE\s+TABLE\s+\w+_new\s*\(", clean, re.I):
+                # the rebuild idiom: four statements, read as one
+                if i + 3 >= len(statements):
+                    raise Unsupported(f"{filename}: CREATE TABLE ..._new is a rebuild and needs INSERT, DROP TABLE and RENAME after it")
+                new = parse_table(raw, code, filename)
+                m_ins = _REBUILD_INSERT.match(statements[i + 1][2])
+                m_drop = _DROP_TABLE.match(statements[i + 2][2])
+                m_ren = _RENAME.match(statements[i + 3][2])
+                final = new.name[:-len("_new")]
+                if not (m_ins and m_drop and m_ren and m_ins.group(1) == new.name and m_ins.group(2) == final
+                        and m_drop.group(1) == final and m_ren.group(1) == new.name and m_ren.group(2) == final):
+                    raise Unsupported(f"{filename}: the rebuild of {final} must be INSERT INTO {new.name} ... SELECT ... FROM {final};"
+                                      f" DROP TABLE {final}; ALTER TABLE {new.name} RENAME TO {final}; in that order")
+                originals = [t for t in tables if t.name == final]
+                if not originals:
+                    raise Unsupported(f"{filename}: rebuild of {final}, which this schema never created")
+                old = originals[-1]
+                new.name = final
+                # as the table stands: its CREATE plus every column added since
+                stands = Table(name=old.name, columns=old.columns + [a.column for a in alters if a.table == final],
+                               constraints=old.constraints, comment=old.comment, source_file=old.source_file)
+                for col in _rebuild_diff(stands, new):
+                    alters.append(AlterAddColumn(table=final, column=col, comment="", source_file=filename))
+                tables[:] = [t for t in tables if t.name != final] + [new]
+                rebuilds.append(Rebuild(table=new, original=old, comment=leading_comment(raw), source_file=filename))
+                i += 4
+                continue
             elif re.match(r"\s*CREATE\s+TABLE\b", clean, re.I):
                 # FOR EACH ROW never appears in a table; guard the order below.
                 tables.append(parse_table(raw, code, filename))
             elif re.match(r"\s*CREATE\s+(UNIQUE\s+)?INDEX\b", clean, re.I):
-                indexes.append(parse_index(raw, code))
+                index = parse_index(raw, code)
+                before = [x for x in indexes if x.name == index.name]
+                if before:
+                    # an index created again after a rebuild: the same one, or refused
+                    b = before[-1]
+                    if (b.table, " ".join(b.columns.split()), b.unique, b.where) != (index.table, " ".join(index.columns.split()), index.unique, index.where):
+                        raise Unsupported(f"{filename}: index {index.name} already exists with another definition")
+                else:
+                    indexes.append(index)
             elif re.match(r"\s*CREATE\s+TRIGGER\b", clean, re.I):
                 triggers.append(parse_trigger(raw, _consume_for_each_row(code), filename))
+            elif _REBUILD_INSERT.match(clean) or _DROP_TABLE.match(clean) or _RENAME.match(clean):
+                raise Unsupported(f"{filename}: {clean.split()[0].upper()} is ported only inside a rebuild (CREATE TABLE <name>_new ...)")
             else:
                 raise Unsupported(f"{filename}: statement not recognised: {clean[:100]!r}")
-    return tables, indexes, triggers, alters
+            i += 1
+    return tables, indexes, triggers, alters, rebuilds
 
 
 def _consume_for_each_row(code: str) -> str:

@@ -1301,6 +1301,15 @@
     "ext_rr_line.product_ref": "REF",
     "ext_rr_line.description": "NAME",
     "ext_rr_line.po_ref": "REF",
-    "ext_rr_line.synced_at": "TIMESTAMP_TEXT"
+    "ext_rr_line.synced_at": "TIMESTAMP_TEXT",
+    "ext_change.expected_tstamp": "CODE",
+    "ext_change.change_uid": "CODE",
+    "ext_purchase_order.tstamp": "CODE",
+    "ext_product.tstamp": "CODE",
+    "ext_invoice.tstamp": "CODE",
+    "ext_po_line.tstamp": "CODE",
+    "ext_stock.tstamp": "CODE",
+    "ext_movement.tstamp": "CODE",
+    "ext_rr_line.tstamp": "CODE"
   }
 }

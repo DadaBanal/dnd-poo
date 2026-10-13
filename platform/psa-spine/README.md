@@ -2749,6 +2749,41 @@ mirrored hourly like everything else, never read live, and the ledger comes thro
   cross-linked both ways, with the words taken back from the note the import left; preview by default. Dada, for
   the 30: raise them.
 
+## The write path on the desk's side (14 Oct 2026, schema 085)
+
+SQL01's rulings of 14 Oct 2026 (`docs/handoffs/HANDOFF-sql01-cloud-WS36-20261014-write-path-simplified.md`): identity is
+the grant, concurrency is one parameter, replay is one UPDATE in the sender. The desk's side, answered in
+`docs/handoffs/HANDOFF-cloud-sql01-WS36-20261014-write-path-085.md`:
+
+- **Schema 085.** `ext_change.status` and `ext_batch.status` gain `SENDING`; `ext_change.kind` and `ext_batch.kind` gain
+  the ten MMS document kinds the Bizbox Chat session measured in scope (`bizbox.MMS_KINDS`, on screen as the MMS names
+  them: Stock Requisition, Delivery/Receiving, Quantity Adjustment…; `ext_stock` has no kind). `ext_change` gains
+  `expected_tstamp` and `change_uid`; the seven mirror kinds the desk may write to gain `tstamp`.
+- **A rebuilt table in the schema.** SQLite cannot alter a CHECK, so the two tables are rebuilt in place (`CREATE TABLE
+  x_new`, `INSERT … SELECT`, `DROP TABLE x`, `ALTER TABLE x_new RENAME TO x`, then the indexes again). The port translator
+  reads that idiom as one construct (`sqlite_ddl.Rebuild`): a server that already has the table gets a **constraint swap**
+  under the same name (`CK_ext_change_01`…), guarded by a value the old CHECK did not allow, and a guarded ADD per new
+  column; a fresh install creates the widened definition outright. The port never drops a table; a rebuild that changes
+  anything but a CHECK's text and new columns at the end is refused by name.
+- **The sender claims before it applies** (`bizbox.claim`, `push`): `UPDATE ext_change SET status = 'SENDING' … WHERE
+  change_id = ? AND status = 'PENDING'`, rowcount 1, committed; then the procedure; then APPLIED or REJECTED, committed.
+  A row another run holds is skipped and counted; `NoWriter` claims nothing; a writer that declines with `Refused` puts
+  the row back to PENDING; a SENDING change or batch cannot be cancelled. `stuck_sending` lists rows a dead run left,
+  and `bizbox-push` prints them as STUCK with the by-hand remedy.
+- **The row version.** The read views carry `tstamp` (text, as `CONVERT(VARCHAR(18), tstamp, 1)` gives it); a proposed
+  edit copies the record's into `expected_tstamp`; `ProcedureWriter.params` passes it back as the tenth parameter,
+  `BINARY(8)` (`tstamp_bytes`). `ok = 0, re-read and ask again` is a REJECTED change in those words.
+- **The guard is one condition** (`write_odbc_string`): unset is the off-switch; a string that names a login is refused
+  with the remedy (Windows-authenticated as `psa_desk` by decision of 14 Oct 2026). The `sa` check and the reused
+  read-login check are deleted.
+- **After a restore into BizBox:** `bizbox-reconcile <db>` reads, for every APPLIED change, whether the mirror still
+  shows it (an edit's field reads the value sent; a new record's number is present); `--requeue 12,15` re-queues the
+  ones named as new PENDING batches for approval again. Read-only otherwise; nothing runs on every write.
+- **change_id, answered:** never minted twice from the desk's own running (SQLite never deletes a change row; SQL Server
+  IDENTITY is monotonic); minted again after a RESEED or a restore of PMC_PSA, which is why `change_uid` exists: a UUID
+  minted at proposal that the procedure can refuse twice without a replay table. The uid is not passed yet; the
+  handoff offers it as the eleventh parameter.
+
 ## Changing a booking in place, and your own Outlook entries (9 Oct 2026, schema 077)
 
 Dada, 9 Oct 2026: *"u can dispatch but when changing a schedule there is no modify on calendars and dispatch portal"*,

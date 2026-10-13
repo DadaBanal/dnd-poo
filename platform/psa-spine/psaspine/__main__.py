@@ -198,6 +198,14 @@ def main(argv: list[str] | None = None) -> int:
     pisd.add_argument("--since", default=None, help="only mail received on or after this day (YYYY-MM-DD)")
     pisd.add_argument("--actor", default="sql01", help="who is recorded as doing it")
 
+    prc = sub.add_parser("bizbox-reconcile",
+                         help="14 Oct 2026, after a restore into BizBox's database: for every change the desk recorded as"
+                              " applied, does the mirror still show it? Read-only; --requeue re-queues the ones named")
+    prc.add_argument("database", help=DB_HELP)
+    prc.add_argument("--requeue", default="", help="change ids to re-queue as new batches, comma-separated")
+    prc.add_argument("--reason", default="Re-queued after a restore into BizBox: the desk had it applied and BizBox no longer shows it")
+    prc.add_argument("--actor", default="sql01")
+
     pbp = sub.add_parser("bizbox-push",
                          help="13 Oct 2026: offer every APPROVED change to the BizBox writer. With "
                               "PSA_BIZBOX_WRITE_ODBC set the writer calls psa.sp_apply_change in BizBox (SQL01's "
@@ -400,7 +408,7 @@ def main(argv: list[str] | None = None) -> int:
 
     a = p.parse_args(argv)
     db.set_source({"import-mail": "INTAKE", "run-rules": "RULES", "sync-bizbox": "BIZBOX",
-                   "bizbox-changes": "BIZBOX", "serve": "DESK"}.get(a.cmd, "CLI"))
+                   "bizbox-changes": "BIZBOX", "bizbox-push": "BIZBOX", "bizbox-reconcile": "BIZBOX", "serve": "DESK"}.get(a.cmd, "CLI"))
 
     if a.cmd == "backup":
         # Before connect(): a backup must not create the database it was asked
@@ -798,6 +806,25 @@ def _run(conn, a) -> int:
                                          else "would be raised as their own tickets (PREVIEW, nothing written; re-run with --apply)"))
         return 0
 
+    if a.cmd == "bizbox-reconcile":
+        from . import bizbox
+        rows = bizbox.reconcile(conn)
+        bad = [r for r in rows if r["verdict"] != "holds"]
+        for r in rows:
+            print(f"#{r['change_id']}  {r['kind']} {r['ext_ref']} {r['field']}  sent {r['sent']!r}  mirror {r['mirror']!r}  {r['verdict']}")
+        print(f"{len(rows)} applied change(s) checked against the mirror; {len(bad)} not holding")
+        if a.requeue:
+            ids = [x.strip() for x in a.requeue.split(",") if x.strip()]
+            try:
+                bids = bizbox.requeue(conn, ids, reason=a.reason, at=datetime.now(), actor=a.actor)
+                conn.commit()
+            except bizbox.Refused as exc:
+                conn.rollback()
+                print(f"refused: {exc}", file=sys.stderr)
+                return 1
+            print(f"re-queued as batch(es) {', '.join(f'#{b}' for b in bids)}: a second person approves them on the Changes tab")
+        return 0
+
     if a.cmd == "bizbox-push":
         from . import bizbox
         due = bizbox.pushable(conn)
@@ -805,6 +832,11 @@ def _run(conn, a) -> int:
         for ch in due:
             kinds[ch["kind"]] = kinds.get(ch["kind"], 0) + 1
         print(f"approved and waiting: {len(due)} change(s)" + (" (" + ", ".join(f"{k.lower()} {n}" for k, n in sorted(kinds.items())) + ")" if kinds else ""))
+        stuck = bizbox.stuck_sending(conn, now=datetime.now())
+        if stuck:
+            print(f"STUCK: {len(stuck)} change(s) claimed by a run that never finished (SENDING for over 15 minutes): "
+                  + ", ".join(f"#{c['change_id']} {c['kind'].lower()} {c['ext_ref']} {c['field']} since {c['decided_at']}" for c in stuck))
+            print("  read BizBox, then decide each by hand: bizbox-changes --decide <id> --as APPLIED|REJECTED --answer '...'")
         if not a.apply:
             print("PREVIEW: nothing sent; re-run with --apply")
             conn.rollback()
@@ -817,7 +849,7 @@ def _run(conn, a) -> int:
         counts = bizbox.push(conn, writer, at=datetime.now(), actor=f"writer:{writer.name}")
         conn.commit()
         print(f"writer {writer.name}: {counts['applied']} applied, {counts['rejected']} refused by BizBox, "
-              f"{counts['pending']} still waiting")
+              f"{counts['pending']} still waiting, {counts['skipped']} held by another run")
         return 0
 
     if a.cmd == "bizbox-changes":

@@ -196,7 +196,6 @@ BEGIN
     PRINT N'    psa.ext_invoice';
     PRINT N'    psa.ext_link';
     PRINT N'    psa.ext_po_line';
-    PRINT N'    psa.ext_change';
     PRINT N'    psa.agreement';
     PRINT N'    psa.agreement_item';
     PRINT N'    psa.timesheet';
@@ -250,7 +249,6 @@ BEGIN
     PRINT N'    psa.portal_tile';
     PRINT N'    psa.portal_tile_question';
     PRINT N'    psa.portal_answer';
-    PRINT N'    psa.ext_batch';
     PRINT N'    psa.ext_lookup';
     PRINT N'    psa.mms_report';
     PRINT N'    psa.mms_report_run';
@@ -259,6 +257,8 @@ BEGIN
     PRINT N'    psa.ext_stock';
     PRINT N'    psa.ext_movement';
     PRINT N'    psa.ext_rr_line';
+    PRINT N'    psa.ext_batch';
+    PRINT N'    psa.ext_change';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -2654,39 +2654,6 @@ CREATE TABLE psa.[ext_po_line] (
 END;
 
 -- --------------------------------------------------------------------------
--- ext_change   (from schema/043_bizbox_mirror.sql)
--- Room for edits back to BizBox, later. A person proposes a change to a
--- mirrored field; it is recorded here, PENDING, and BizBox is NOT touched. When
--- a write path is approved (a BizBox API or a stored procedure SQL01 creates),
--- a writer takes PENDING rows, applies them, and marks each APPLIED or
--- REJECTED with BizBox's answer; the next sync then shows the new value. Until
--- then the desk says plainly that BizBox has not changed.
-IF OBJECT_ID(N'psa.[ext_change]', N'U') IS NULL
-BEGIN
-CREATE TABLE psa.[ext_change] (
-    [change_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_ext_change] PRIMARY KEY,
-    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_change_source_id] REFERENCES psa.[ext_source]([source_id]),
-    [kind] NVARCHAR(32) NOT NULL CONSTRAINT [CK_ext_change_01] CHECK (kind IN ('AGREEMENT', 'PRODUCT', 'PURCHASE_ORDER', 'INVOICE')),
-    [ext_ref] NVARCHAR(400) NOT NULL,
-    [field] NVARCHAR(32) NOT NULL,
-    [old_value] NVARCHAR(400) NULL,
-    [new_value] NVARCHAR(400) NULL,
-    [reason] NVARCHAR(MAX) NOT NULL,
-    [status] NVARCHAR(32) NOT NULL CONSTRAINT [DF_ext_change_status] DEFAULT ('PENDING') CONSTRAINT [CK_ext_change_02] CHECK (status IN ('PENDING', 'APPLIED', 'REJECTED', 'CANCELLED')),
-    [requested_at] NVARCHAR(64) NOT NULL,
-    [requested_by] NVARCHAR(200) NOT NULL,
-    [decided_at] NVARCHAR(64) NULL,
-    [decided_by] NVARCHAR(200) NULL,
-    [answer] NVARCHAR(MAX) NULL,
-
-    -- Dates are kept as the source wrote them. These read them,
-    -- without deciding for the reader which shape was meant.
-    [requested_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [requested_at], 126), CASE WHEN [requested_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [requested_at], 112) END)),
-    [decided_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [decided_at], 126), CASE WHEN [decided_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [decided_at], 112) END))
-);
-END;
-
--- --------------------------------------------------------------------------
 -- agreement   (from schema/045_agreements.sql)
 IF OBJECT_ID(N'psa.[agreement]', N'U') IS NULL
 BEGIN
@@ -3890,45 +3857,6 @@ CREATE TABLE psa.[portal_answer] (
 END;
 
 -- --------------------------------------------------------------------------
--- ext_batch   (from schema/080_cw_shape.sql)
--- 3. Changes to BizBox in batches. 043's ext_change is one field on one
---    record; a bulk edit on ticked rows, an edit of many cells saved at once,
---    or a new record (a purchase order with its lines, an item) is a batch:
---    one reason, one approval, one answer from BizBox. A batch is PENDING
---    (waiting for a person with Procurement WRITE, never the one who asked),
---    APPROVED (waiting for the push), then APPLIED, REJECTED or CANCELLED.
---    ADD carries the new record as JSON in payload; its one ext_change row
---    has field NEW and ext_ref NEW-<batch> until BizBox answers with its own
---    number. Nothing here reaches BizBox: the push (bizbox.push) hands each
---    change to the writer in force, which until SQL01 builds the procedure
---    is NoWriter.
-IF OBJECT_ID(N'psa.[ext_batch]', N'U') IS NULL
-BEGIN
-CREATE TABLE psa.[ext_batch] (
-    [batch_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_ext_batch] PRIMARY KEY,
-    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_batch_source_id] REFERENCES psa.[ext_source]([source_id]),
-    [kind] NVARCHAR(32) NOT NULL CONSTRAINT [CK_ext_batch_01] CHECK (kind IN ('AGREEMENT', 'PRODUCT', 'PURCHASE_ORDER', 'INVOICE')),
-    [change_kind] NVARCHAR(32) NOT NULL CONSTRAINT [CK_ext_batch_02] CHECK (change_kind IN ('EDIT', 'ADD')),
-    [reason] NVARCHAR(MAX) NOT NULL,
-    [status] NVARCHAR(32) NOT NULL CONSTRAINT [DF_ext_batch_status] DEFAULT ('PENDING') CONSTRAINT [CK_ext_batch_03] CHECK (status IN ('PENDING', 'APPROVED', 'APPLIED', 'REJECTED', 'CANCELLED')),
-    [payload] NVARCHAR(MAX) NULL,
-    [requested_at] NVARCHAR(64) NOT NULL,
-    [requested_by] NVARCHAR(200) NOT NULL,
-    [approved_at] NVARCHAR(64) NULL,
-    [approved_by] NVARCHAR(200) NULL,
-    [decided_at] NVARCHAR(64) NULL,
-    [decided_by] NVARCHAR(200) NULL,
-    [answer] NVARCHAR(MAX) NULL,
-
-    -- Dates are kept as the source wrote them. These read them,
-    -- without deciding for the reader which shape was meant.
-    [requested_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [requested_at], 126), CASE WHEN [requested_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [requested_at], 112) END)),
-    [approved_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [approved_at], 126), CASE WHEN [approved_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [approved_at], 112) END)),
-    [decided_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [decided_at], 126), CASE WHEN [decided_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [decided_at], 112) END))
-);
-END;
-
--- --------------------------------------------------------------------------
 -- ext_lookup   (from schema/081_bizbox_lookup.sql)
 IF OBJECT_ID(N'psa.[ext_lookup]', N'U') IS NULL
 BEGIN
@@ -4126,6 +4054,70 @@ CREATE TABLE psa.[ext_rr_line] (
 END;
 
 -- --------------------------------------------------------------------------
+-- ext_batch   (from schema/085_write_path.sql)
+IF OBJECT_ID(N'psa.[ext_batch]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_batch] (
+    [batch_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_ext_batch] PRIMARY KEY,
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_batch_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [kind] NVARCHAR(32) NOT NULL CONSTRAINT [CK_ext_batch_01] CHECK (kind IN ('AGREEMENT', 'PRODUCT', 'PURCHASE_ORDER', 'INVOICE', 'EXPENSE_REQ', 'STOCK_REQ', 'EXPENSE_ISSUANCE', 'DELIVERY_RECEIVING', 'STOCK_ISSUANCE', 'PURCHASE_REQ', 'MATERIAL_PRODUCTION', 'PHYSICAL_COUNT', 'QTY_ADJUSTMENT')),
+    [change_kind] NVARCHAR(32) NOT NULL CONSTRAINT [CK_ext_batch_02] CHECK (change_kind IN ('EDIT', 'ADD')),
+    [reason] NVARCHAR(MAX) NOT NULL,
+    [status] NVARCHAR(32) NOT NULL CONSTRAINT [DF_ext_batch_status] DEFAULT ('PENDING') CONSTRAINT [CK_ext_batch_03] CHECK (status IN ('PENDING', 'APPROVED', 'SENDING', 'APPLIED', 'REJECTED', 'CANCELLED')),
+    [payload] NVARCHAR(MAX) NULL,
+    [requested_at] NVARCHAR(64) NOT NULL,
+    [requested_by] NVARCHAR(200) NOT NULL,
+    [approved_at] NVARCHAR(64) NULL,
+    [approved_by] NVARCHAR(200) NULL,
+    [decided_at] NVARCHAR(64) NULL,
+    [decided_by] NVARCHAR(200) NULL,
+    [answer] NVARCHAR(MAX) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [requested_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [requested_at], 126), CASE WHEN [requested_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [requested_at], 112) END)),
+    [approved_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [approved_at], 126), CASE WHEN [approved_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [approved_at], 112) END)),
+    [decided_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [decided_at], 126), CASE WHEN [decided_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [decided_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ext_change   (from schema/085_write_path.sql)
+IF OBJECT_ID(N'psa.[ext_change]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_change] (
+    [change_id] INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_ext_change] PRIMARY KEY,
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_change_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [kind] NVARCHAR(32) NOT NULL CONSTRAINT [CK_ext_change_01] CHECK (kind IN ('AGREEMENT', 'PRODUCT', 'PURCHASE_ORDER', 'INVOICE', 'EXPENSE_REQ', 'STOCK_REQ', 'EXPENSE_ISSUANCE', 'DELIVERY_RECEIVING', 'STOCK_ISSUANCE', 'PURCHASE_REQ', 'MATERIAL_PRODUCTION', 'PHYSICAL_COUNT', 'QTY_ADJUSTMENT')),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [field] NVARCHAR(32) NOT NULL,
+    [old_value] NVARCHAR(400) NULL,
+    [new_value] NVARCHAR(400) NULL,
+    [reason] NVARCHAR(MAX) NOT NULL,
+    [status] NVARCHAR(32) NOT NULL CONSTRAINT [DF_ext_change_status] DEFAULT ('PENDING') CONSTRAINT [CK_ext_change_02] CHECK (status IN ('PENDING', 'SENDING', 'APPLIED', 'REJECTED', 'CANCELLED')),
+    [requested_at] NVARCHAR(64) NOT NULL,
+    [requested_by] NVARCHAR(200) NOT NULL,
+    [decided_at] NVARCHAR(64) NULL,
+    [decided_by] NVARCHAR(200) NULL,
+    [answer] NVARCHAR(MAX) NULL,
+    [batch_id] INT NULL CONSTRAINT [FK_ext_change_batch_id] REFERENCES psa.[ext_batch]([batch_id]),
+
+    -- The record's BizBox row version (tstamp, as the read view gives it) when
+    -- the change was proposed; the procedure updates only if it still holds.
+    [expected_tstamp] NVARCHAR(32) NULL,
+
+    -- Minted by the desk when the change is proposed: a change keeps this id
+    -- through a restore of PMC_PSA, where change_id would be minted again.
+    [change_uid] NVARCHAR(32) NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [requested_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [requested_at], 126), CASE WHEN [requested_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [requested_at], 112) END)),
+    [decided_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [decided_at], 126), CASE WHEN [decided_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [decided_at], 112) END))
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -4177,6 +4169,38 @@ CREATE TABLE psa.[local_account] (
     [created_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [created_at], 126), CASE WHEN [created_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [created_at], 112) END)),
     [last_login_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [last_login_at], 126), CASE WHEN [last_login_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [last_login_at], 112) END))
 );
+END;
+
+-- ==========================================================================
+-- CONSTRAINTS WIDENED ON TABLES THAT ALREADY EXIST
+--
+-- A rebuilt table in schema/ (SQLite cannot alter a CHECK) is a swap here:
+-- the old constraint goes, the new one comes, under the same name, only
+-- when the old one is still there. A fresh install creates the rebuilt
+-- definition above and this does nothing.
+
+IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = N'CK_ext_batch_01' AND parent_object_id = OBJECT_ID(N'psa.[ext_batch]') AND definition NOT LIKE N'%''EXPENSE_REQ''%')
+BEGIN
+    ALTER TABLE psa.[ext_batch] DROP CONSTRAINT [CK_ext_batch_01];
+    ALTER TABLE psa.[ext_batch] WITH CHECK ADD CONSTRAINT [CK_ext_batch_01] CHECK (kind IN ('AGREEMENT', 'PRODUCT', 'PURCHASE_ORDER', 'INVOICE', 'EXPENSE_REQ', 'STOCK_REQ', 'EXPENSE_ISSUANCE', 'DELIVERY_RECEIVING', 'STOCK_ISSUANCE', 'PURCHASE_REQ', 'MATERIAL_PRODUCTION', 'PHYSICAL_COUNT', 'QTY_ADJUSTMENT'));
+END;
+
+IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = N'CK_ext_batch_03' AND parent_object_id = OBJECT_ID(N'psa.[ext_batch]') AND definition NOT LIKE N'%''SENDING''%')
+BEGIN
+    ALTER TABLE psa.[ext_batch] DROP CONSTRAINT [CK_ext_batch_03];
+    ALTER TABLE psa.[ext_batch] WITH CHECK ADD CONSTRAINT [CK_ext_batch_03] CHECK (status IN ('PENDING', 'APPROVED', 'SENDING', 'APPLIED', 'REJECTED', 'CANCELLED'));
+END;
+
+IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = N'CK_ext_change_01' AND parent_object_id = OBJECT_ID(N'psa.[ext_change]') AND definition NOT LIKE N'%''EXPENSE_REQ''%')
+BEGIN
+    ALTER TABLE psa.[ext_change] DROP CONSTRAINT [CK_ext_change_01];
+    ALTER TABLE psa.[ext_change] WITH CHECK ADD CONSTRAINT [CK_ext_change_01] CHECK (kind IN ('AGREEMENT', 'PRODUCT', 'PURCHASE_ORDER', 'INVOICE', 'EXPENSE_REQ', 'STOCK_REQ', 'EXPENSE_ISSUANCE', 'DELIVERY_RECEIVING', 'STOCK_ISSUANCE', 'PURCHASE_REQ', 'MATERIAL_PRODUCTION', 'PHYSICAL_COUNT', 'QTY_ADJUSTMENT'));
+END;
+
+IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = N'CK_ext_change_02' AND parent_object_id = OBJECT_ID(N'psa.[ext_change]') AND definition NOT LIKE N'%''SENDING''%')
+BEGIN
+    ALTER TABLE psa.[ext_change] DROP CONSTRAINT [CK_ext_change_02];
+    ALTER TABLE psa.[ext_change] WITH CHECK ADD CONSTRAINT [CK_ext_change_02] CHECK (status IN ('PENDING', 'SENDING', 'APPLIED', 'REJECTED', 'CANCELLED'));
 END;
 
 -- ==========================================================================
@@ -4781,6 +4805,35 @@ ALTER TABLE psa.[ext_change] ADD [batch_id] INT NULL CONSTRAINT [FK_ext_change_b
 IF COL_LENGTH(N'psa.[intake_message]', N'body_hash') IS NULL
 ALTER TABLE psa.[intake_message] ADD [body_hash] NVARCHAR(32) NULL;
 
+IF COL_LENGTH(N'psa.[ext_change]', N'expected_tstamp') IS NULL
+ALTER TABLE psa.[ext_change] ADD [expected_tstamp] NVARCHAR(32) NULL;
+
+IF COL_LENGTH(N'psa.[ext_change]', N'change_uid') IS NULL
+ALTER TABLE psa.[ext_change] ADD [change_uid] NVARCHAR(32) NULL;
+
+-- The row version BizBox keeps on every MMS write target (23 of 23, measured):
+-- the read view gives it as text, the desk keeps it, a change sends it back.
+IF COL_LENGTH(N'psa.[ext_purchase_order]', N'tstamp') IS NULL
+ALTER TABLE psa.[ext_purchase_order] ADD [tstamp] NVARCHAR(32) NULL;
+
+IF COL_LENGTH(N'psa.[ext_product]', N'tstamp') IS NULL
+ALTER TABLE psa.[ext_product] ADD [tstamp] NVARCHAR(32) NULL;
+
+IF COL_LENGTH(N'psa.[ext_invoice]', N'tstamp') IS NULL
+ALTER TABLE psa.[ext_invoice] ADD [tstamp] NVARCHAR(32) NULL;
+
+IF COL_LENGTH(N'psa.[ext_po_line]', N'tstamp') IS NULL
+ALTER TABLE psa.[ext_po_line] ADD [tstamp] NVARCHAR(32) NULL;
+
+IF COL_LENGTH(N'psa.[ext_stock]', N'tstamp') IS NULL
+ALTER TABLE psa.[ext_stock] ADD [tstamp] NVARCHAR(32) NULL;
+
+IF COL_LENGTH(N'psa.[ext_movement]', N'tstamp') IS NULL
+ALTER TABLE psa.[ext_movement] ADD [tstamp] NVARCHAR(32) NULL;
+
+IF COL_LENGTH(N'psa.[ext_rr_line]', N'tstamp') IS NULL
+ALTER TABLE psa.[ext_rr_line] ADD [tstamp] NVARCHAR(32) NULL;
+
 IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
 ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
 
@@ -5250,6 +5303,8 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[ext_change];
+    DROP TABLE IF EXISTS psa.[ext_batch];
     DROP TABLE IF EXISTS psa.[ext_rr_line];
     DROP TABLE IF EXISTS psa.[ext_movement];
     DROP TABLE IF EXISTS psa.[ext_stock];
@@ -5258,7 +5313,6 @@ PRINT N'target is enforced until somebody with the authority says so.';
     DROP TABLE IF EXISTS psa.[mms_report_run];
     DROP TABLE IF EXISTS psa.[mms_report];
     DROP TABLE IF EXISTS psa.[ext_lookup];
-    DROP TABLE IF EXISTS psa.[ext_batch];
     DROP TABLE IF EXISTS psa.[portal_answer];
     DROP TABLE IF EXISTS psa.[portal_tile_question];
     DROP TABLE IF EXISTS psa.[portal_tile];
@@ -5312,7 +5366,6 @@ PRINT N'target is enforced until somebody with the authority says so.';
     DROP TABLE IF EXISTS psa.[timesheet];
     DROP TABLE IF EXISTS psa.[agreement_item];
     DROP TABLE IF EXISTS psa.[agreement];
-    DROP TABLE IF EXISTS psa.[ext_change];
     DROP TABLE IF EXISTS psa.[ext_po_line];
     DROP TABLE IF EXISTS psa.[ext_link];
     DROP TABLE IF EXISTS psa.[ext_invoice];
