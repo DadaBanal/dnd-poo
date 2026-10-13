@@ -3669,3 +3669,31 @@ lookup:          152 rows, 152 new,  0 changed
 **Rollback:** `DROP VIEW psa.vw_lookup;` in LiveDB_PMC, and restore the map from the backup. Nothing else was touched; the view writes nothing and reads only BizBox reference tables.
 
 **Also settled today:** Dada on the wallpaper hours — *"7-5 as whats there ill tell u to change it when i want to"*. **Closed.** And MMS reports: *"mms reprots on the desk from ssrs if possible"* — measured as possible and then some: SSRS is running on this instance and `/BizBox MMS Reports/` already holds **164 reports** (MMS_ReorderPoint, MMS_PerpetualInventory, MMS_InventoryCriticalReport, MMS_Store_Tran_Rep_*, MMS_SuppliesMaterialsIssued_Summ, MMS_PurcSum_* …), so nothing needs writing — the desk needs a Reports tab that renders them. Handed to WS36.
+
+### Part 80: 2026-10-13, ~14:45 +08:00. **Design and accessibility audit of the desk UI: it passes; four assistive-technology gaps sent to WS36.** MEASURED.
+
+Dada: *"load design and web skills and check if the current web is on par and passes or are better things can be done to it"*, then *"yes send them to ws36"*. Skills loaded: `design:design-critique` and `design:accessibility-review` (WCAG 2.1 AA). Measured against `psaspine/web/templates.py` (3,157 lines), not against a screenshot. Script: `scripts/psa-080-081-20261013/Audit-DeskUI-20261013.py`.
+
+**Verdict: it passes, comfortably.** Contrast computed *within* each theme — crossing themes is meaningless and the first pass that did so produced nine false failures:
+
+| Theme | Worst pair | Ratio |
+|---|---|---|
+| Dark (default) | `#eef1f8` on chip `#232833` | **13.05:1** |
+| Light | `#121726` on canvas `#dfe5f1` | 14.13:1 |
+| Warm / violet / pink | — | 14.4:1 to 16.7:1 |
+
+Against a 4.5:1 requirement. Accents as text also pass: 6.64:1 and 4.82:1; error colours 7.08:1 and 5.19:1.
+
+Also measured and good: **`prefers-reduced-motion` honoured 13 times** (uncommon in internal tools), 83 design tokens, 132 `data-theme` hooks, 6 `prefers-color-scheme`, 19 breakpoints, 34 grid layouts, 72 `color-mix()`, 17 of 20 `min-height` values at or above the 44 px touch target, and all three `outline:none` correctly paired with a visible ring.
+
+**Two findings from the first pass were wrong and were corrected before anything was sent:** the viewport meta **is** present (line 3096; the regex expected quotes around `name="viewport"` and it is written unquoted), and the `outline:none` uses **are** properly paired (lines 243, 438, 710). Neither is a defect. Recording this because an audit that reports false positives is worse than none — the same discipline as the watchdog lesson in `pmc-estate` §12.
+
+**The four real gaps, all assistive-technology, sent to WS36:**
+1. **No skip link** (WCAG 2.4.1) — zero matches anywhere in `psaspine/`. Every keyboard user tabs the whole nav on every page, worst on the grids people live in. Two `<main>` elements already exist to target.
+2. **No screen-reader-only class** — zero matches for `sr-only`/`visually-hidden`. Without it there is no way to name something for a screen reader without showing it; 34 `<button>` against 3 `alt=` and 4 `<label>`. Gap 1 depends on this.
+3. **`aria-describedby` used zero times** (WCAG 3.3.1) — and this desk *refuses input by design* ("That is not a status BizBox uses…", "Line 2: IT-9 is not an item BizBox has"). Those sentences are the product working, and none is tied to the field that caused it.
+4. **`aria-live` used once** (4.1.3 in spirit) — tick-and-send, inline edits, batch counts and the Tasks *n/m* counter all change without a reload.
+
+**Two code-health notes, not accessibility:** `!important` appears **101** times, which will make the design system harder to hold as warehousing and the Reports tab land; and `:focus` 31 against `:focus-visible` 5.
+
+Nothing was changed. The UI is WS36's code.
