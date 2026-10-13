@@ -3729,3 +3729,17 @@ The quantity column is **`actualqty`**; the other 20-odd quantity columns on tha
 Steps 10 and 11 (the first `sync-mms-reports` read and the walk-through) wait on 1 to 3. Nothing else in the desk is affected.
 
 **Still not built, per instruction:** the write path. `PSA_BIZBOX_WRITE_ODBC` is set nowhere.
+
+**Part 81, update (16:35 +08:00): Dada ran the script; two of the three are now closed; everything rests on the package.** MEASURED.
+
+- **`PSA_SSRS_URL` is set.** Dada ran `Set-PsaDeskSsrsUrl.ps1 -Apply`. Read back, **8 checks all PASS**: the value is `http://dnd-sql01/ReportServer`, the other six environment values survive, the account is still `psa_desk` with logon `Password`, `PSA_BIZBOX_WRITE_ODBC` is still absent, the task is Running and `:8085` answers 401. Task XML backups in `D:\psa\logs` (`PSA-Desk-task-before-20261013-1632*.xml`).
+- **Step 7, the SSRS *Browser* role, was ALREADY SATISFIED - no grant was needed.** MEASURED from the ReportServer catalog: `/BizBox MMS Reports` carries its own policy (`PolicyRoot=False`) and **`\Everyone` holds Browser** on it (along with Content Manager, Publisher, Report Builder and My Reports), plus `BUILTIN\Administrators` Content Manager and `PMCNE\HIS Reporting` Browser. So `psa_desk` already has what the handoff asked Dada to give it. Nothing was changed. *(Worth a separate look one day: `\Everyone` holding Content Manager on a reports folder is broader than it needs to be. Not touched, not in scope.)*
+- **The report server is reachable:** `http://dnd-sql01/ReportServer` answers **200** to an authenticated request from this host.
+
+**The first read still fails, and the cause is the package, not permissions.** Running the 082 step-10 read under `EXECUTE AS psa_desk` (the CLI is refused under a sysadmin login by the dbo guard, as `sync-bizbox` and `mail-words` are) and with `PSA_SSRS_URL` supplied, it answers:
+
+> `refused: The report server refused the desk's sign-in. SQL01 gives the account PSA-Desk runs under the Browser role on the reports folder.`
+
+**That sentence is misleading in this case and the evidence says so:** `\Everyone` already has Browser, and the same server answers 200 to an authenticated request. The real cause is read from `psaspine/ssrs.py` line 82-89: `WinHttpTransport` is the class that sends the process's Windows identity, and its `__init__` does `import win32com.client`. Without **pywin32** the code falls back to a plain `urllib` request, which sends no Windows identity, gets a 401, and reports it as a sign-in refusal. Exactly as the handoff's step 9 predicted, though the sentence points at the wrong remedy.
+
+**So one thing now blocks steps 10 and 11 entirely: the pywin32 allow-list entry, which only Dada can add.** Everything else for the MMS reports tab is in place. Worth passing to Cloud Build: when the transport is the plain fallback, the refusal sentence should say so rather than naming the Browser role, because here the role was already granted.
