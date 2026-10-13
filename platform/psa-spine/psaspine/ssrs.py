@@ -28,6 +28,9 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import time
 import urllib.parse
 import urllib.request
@@ -108,10 +111,70 @@ class WinHttpTransport(Transport):
             raise ServerError(0, f"The report server could not be reached: {exc}") from None
 
 
+class CurlTransport(Transport):
+    """Windows' own curl.exe with --negotiate: SSPI sends the process's
+    identity, so the desk signs in as the account PSA-Desk runs under with
+    nothing installed (SQL01, Part 81, proven end to end: the list, a PDF, an
+    Excel). `exe` is the program, or a command prefix as a list (the tests
+    run a stub through the interpreter)."""
+    name = "curl"
+
+    def __init__(self, exe=None):
+        exe = exe or os.environ.get("PSA_SSRS_CURL", "").strip() or _find_curl()
+        if not exe:
+            raise ImportError("no curl.exe")
+        self.cmd = list(exe) if isinstance(exe, (list, tuple)) else [exe]
+
+    def request(self, method, url, *, headers=None, body=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "answer.bin")
+            args = self.cmd + ["--negotiate", "-u", ":", "-sS", "--max-time", str(TIMEOUT), "-X", method,
+                               "-o", out, "-w", "%{http_code}\n%{content_type}"]
+            for k, v in (headers or {}).items():
+                args += ["-H", f"{k}: {v}"]
+            if body is not None:
+                sent = os.path.join(tmp, "request.bin")
+                with open(sent, "wb") as fh:
+                    fh.write(body)
+                args += ["--data-binary", f"@{sent}"]
+            args.append(url)
+            try:
+                run = subprocess.run(args, capture_output=True, timeout=TIMEOUT + 15)    # noqa: S603 - the host's own curl, fixed arguments
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise ServerError(0, f"The report server could not be reached: {exc}") from None
+            if run.returncode != 0:
+                said = (run.stderr.decode("utf-8", "replace").strip().splitlines() or ["curl failed"])[-1][:200]
+                raise ServerError(0, f"The report server could not be reached: {said}")
+            lines = run.stdout.decode("utf-8", "replace").strip().splitlines()
+            status = int(lines[0].strip()) if lines and lines[0].strip().isdigit() else 0
+            ctype = lines[1].strip() if len(lines) > 1 else ""
+            data = b""
+            if os.path.exists(out):
+                with open(out, "rb") as fh:
+                    data = fh.read()
+            return status, ctype, data
+
+
+def _find_curl() -> str:
+    """Windows ships curl.exe in System32 (8.x, Schannel, SSPI). Elsewhere a
+    curl has no Windows identity to send, so it is not picked up by itself."""
+    if os.name == "nt":
+        p = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "curl.exe")
+        if os.path.exists(p):
+            return p
+        return shutil.which("curl.exe") or ""
+    return ""
+
+
 def transport() -> Transport:
-    """Windows' stack where pywin32 is there (the host), else Python's."""
+    """Windows' stack where pywin32 is there; else Windows' curl.exe, which
+    needs nothing installed; else Python's, which has no identity to send."""
     try:
         return WinHttpTransport()
+    except ImportError:
+        pass
+    try:
+        return CurlTransport()
     except ImportError:
         return UrllibTransport()
 
@@ -174,6 +237,18 @@ class Ssrs:
         self.folder = folder(folder_path)
         self.transport = transport_ or transport()
 
+    def _refused(self) -> ServerError:
+        """A 401 in words that name the right fix (SQL01, Part 81: the old
+        sentence sent the reader to a Browser role that was already granted).
+        The server speaks only Negotiate and NTLM, so Python's own client,
+        which offers neither, is refused whatever the roles say."""
+        if self.transport.name == "urllib":
+            return ServerError(401, "The report server refused the desk's sign-in: the desk could not present a Windows identity "
+                                    "to it (neither curl.exe nor pywin32 is available to the desk's Python). SQL01 confirms "
+                                    "C:\\Windows\\System32\\curl.exe exists on the host, or names a curl in PSA_SSRS_CURL.")
+        return ServerError(401, "The report server refused the sign-in of the account PSA-Desk runs under. SQL01 gives that "
+                                "account the Browser role on the reports folder.")
+
     # ---- SOAP
     def _soap(self, action: str, body_xml: str) -> ET.Element:
         envelope = (f'<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="{SOAP_ENV}">'
@@ -182,8 +257,7 @@ class Ssrs:
             "POST", f"{self.url}/ReportService2010.asmx",
             headers={"Content-Type": "text/xml; charset=utf-8", "SOAPAction": f'"{NS}/{action}"'}, body=envelope)
         if status == 401:
-            raise ServerError(401, "The report server refused the desk's sign-in. SQL01 gives the account PSA-Desk runs "
-                                   "under the Browser role on the reports folder.")
+            raise self._refused()
         if status != 200:
             raise ServerError(status, f"The report server answered {status} to {action}: {_fault(data)}")
         try:
@@ -243,8 +317,7 @@ class Ssrs:
         started = time.monotonic()
         status, ctype, data = self.transport.request("GET", self.render_url(path, values, fmt))
         if status == 401:
-            raise ServerError(401, "The report server refused the desk's sign-in. SQL01 gives the account PSA-Desk runs "
-                                   "under the Browser role on the reports folder.")
+            raise self._refused()
         if status != 200:
             raise ServerError(status, f"The report server answered {status}: {_fault(data)}")
         want, ext = FORMATS[fmt]
