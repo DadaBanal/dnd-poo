@@ -4105,3 +4105,40 @@ The Bizbox Chat session sent the measured grant list as text, as asked, with fou
 **What changes for WS36, two things only:** `ext_stock` has no change kind and is not among the kinds when the CHECK is widened; and **`psa.sp_apply_change` needs no `EXECUTE AS`** because ownership chaining covers it, so a design that adds one is unnecessary here.
 
 Filed as `docs/handoffs/HANDOFF-sql01-cloud-WS36-20261014-write-grant-measured.md`. **Nothing written, nothing scheduled, `PSA_BIZBOX_WRITE_ODBC` confirmed unset, `writer_in_force()` returns `NoWriter`, and no password or hash was read by either session at any point.** The procedure is SQL01's to write; the user creation and the credential are Dada's steps. `bizboxsa`'s `modify_date` and `his_app_svc` stay open and unchased on both sides.
+
+---
+
+**Part 92, ruling (14 Oct 2026): `psa_desk`, uniform — one identity for reads and writes. `bizboxsa` is not used. The decision rests on SQL01's recommendation, and is recorded that way on purpose.**
+
+Dada: *"psa desk make it uniform"*, then, after asking what I thought was better, *"ok psa desk it is if its vetter"*.
+
+Read as, and acted on: **`psa_desk` is the single identity for the desk's BizBox access — reads as well as writes — with `psa_bizbox_reader` eventually retired. `bizboxsa` is not used at all.**
+
+**Whose decision this is, stated plainly because it matters if it turns out wrong.** He asked *"wjat do y think us better"* and then accepted the answer. **So this is SQL01's recommendation that he approved, not an instruction he arrived at independently.** If uniform turns out to be the wrong call, the reasoning below is mine and traceable, not his.
+
+**The recommendation, and the trade it makes.** The split — `psa_bizbox_reader` for reads, `psa_desk` for writes — defends a **narrow and bounded** risk: the capability behind that boundary is `EXECUTE` on **one procedure**, not table writes, so the worst case of a read path reaching it is a change submitted through a procedure that validates it under BizBox's own rules with `requested_by` and `approved_by` on the row. The split meanwhile **sustains a broad and unbounded** one: `psa_bizbox_reader` is a SQL login, so a password exists, and it sits in plaintext in a scheduled task's environment, rotated by nobody. **Standing credentials are what actually leak on this estate; privilege boundaries between two of the desk's own processes are not.** Uniform trades the theoretical boundary for the removal of a real credential, and with `psa_desk` on both sides it is Trusted_Connection throughout — **no BizBox password anywhere in the estate.** Secondary gains: BizBox's audit shows "the desk" unambiguously, and there is one principal to grant, document and get right rather than two.
+
+**Where I would not extend it, recorded so it is not read as a general licence:** uniform across the desk's *own* BizBox access is right. Uniform meaning one login shared with anything else would give back exactly what made `bizboxsa` wrong.
+
+**A finding from the code that this decision depends on. MEASURED.** `write_odbc_string()` in `psaspine/bizbox.py` refuses a shared login **only when both connection strings carry an explicit `uid=`**:
+
+```python
+read = os.environ.get("PSA_BIZBOX_ODBC", "")
+uid = lambda s: (re.search(r"(?i)(?:^|;)\s*(?:uid|user id|user)\s*=\s*\{?([^;}]*)", s) or [None, ""])[1].strip().lower()
+if read and uid(read) and uid(read) == uid(cs):
+    raise Refused("refused: the write login must be a login of its own, not the read-only one")
+```
+
+Under uniform, **both strings are Trusted_Connection with no `uid=`**, so `uid(read)` is empty, the condition is false, and **the guard never fires. It does not refuse the decision — it passes silently.** The check was written for SQL logins.
+
+**So the guard becomes decorative, and that is not acceptable as-is.** It is the `Watch-PMCBridge` failure shape from this estate's own record: a glob that returned nothing reported healthy for **17 days, 16 emails, 4,128 throttled passes**, while the thing it watched was fine — and the lesson filed then was that **a check which cannot fail is worse than no check**, because it also spends the trust that would have made a real alarm land. **Therefore: the guard is fixed to compare the effective identity, or deleted with the docstring saying separation was traded for a single credential-free identity. Both are honest; leaving it unchanged is the only bad option.** That is part of this work, not a follow-up.
+
+**Also corrected, before anyone relies on it:** `ApplicationIntent=ReadOnly`, which `odbc_string()` appends to every read string, is **a routing hint for availability-group replicas, not a permission**. It does not prevent a write and buys nothing here. It should not be cited as residual separation under uniform.
+
+**The caution that outranks the grant, and it is not negotiable.** `psa_bizbox_reader` measured **0 live sessions**, and **that is not "unused"** — it is a point-in-time sample, and a nightly job not running when the probe fired would show exactly the same zero. **This is the estate's most repeated mistake in a new costume, and the whole reason R3 exists.** So: nothing is retired or revoked in this step. `psa_bizbox_reader` stays exactly as it is until it is established that nothing else names it — another task, another connection string, an SSRS data source, an Agent job — and its removal is then a **separate** step on Dada's word. **An unused login costs nothing sitting there; finding out which nightly job owned it costs a morning.**
+
+**Asked of the Bizbox Chat session**, per the standing routing rule (Part 89 addition): the full uniform grant list — everything `psa_bizbox_reader` actually holds, so nothing is lost in the move, including anything object-level that would otherwise be dropped, and whether schema-level `SELECT` is genuinely what it has; and whether it is **actually** unused, with the explicit instruction that **"cannot tell" is an acceptable answer** and preferable to a confident zero. Text, not a script, with the same explicit not-to-be-granted list as before.
+
+**The order, unchanged from Part 91 except for the guard going first:** fix or delete the guard → write `psa.sp_apply_change` → `CREATE USER [psa_desk] FOR LOGIN [DND-SQL01\psa_desk] WITH DEFAULT_SCHEMA = psa` → the grants (`SELECT ON SCHEMA::psa` carried over, `EXECUTE ON OBJECT::psa.sp_apply_change`, object-level deliberately) → verify with the controls that must fail, wrapped in `EXECUTE AS USER = 'psa_desk'` … `REVERT` → prove on `TrainingDB_HIS8` against what the vendor client produces. **`psa.sp_apply_change` does not exist, so the grant cannot precede it.**
+
+**Nothing run. Nothing scheduled. `PSA_BIZBOX_WRITE_ODBC` confirmed unset, `writer_in_force()` returns `NoWriter`, no credential read by anyone at any point, and `bizboxsa` untouched and staying untouched** — the Bizbox Chat session's assessment carried that decision.
