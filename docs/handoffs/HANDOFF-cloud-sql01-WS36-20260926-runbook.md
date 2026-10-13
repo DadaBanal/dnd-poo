@@ -3883,3 +3883,33 @@ They sent an addendum unprompted after I told them WS36 had shipped 084 on their
 **Unchanged:** the brief still governs, Rule 0 is untouched, and both collisions from Part 83 remain open and remain Dada's — Bizbox Chat explicitly declined to resolve either, confirming the "modern design as rendering vs Rule 0 as information architecture" reading is a reasonable *reading* with nothing measured that settles it, and confirming my relay of their build rules 1–3 as what not to foreclose rather than a licence to write. This addendum needs no write either; the derivation is a read and `PSA_BIZBOX_WRITE_ODBC` stays unset.
 
 Filed as `docs/bizbox-mms-stock-truth-addendum-20261014.md` (verbatim, theirs) and `docs/handoffs/HANDOFF-sql01-cloud-WS36-20261014-mms-stock-truth-addendum.md` (mine). **Nothing changed on any host.**
+
+---
+
+**Part 85, ruling (14 Oct 2026): build how MMS *functions*, better — not how its screens look. Rule 0 is overturned and Collision 1 is closed.**
+
+Dada, after being told the brief's Rule 0 was *"same tree, same screens, same steps, same words — a department head must recognise the screen"*:
+
+> *"no i want it built how mms functions but better"*
+
+Read as, and acted on: **function parity, not screen parity.** Every function MMS has, every step it takes, the same outcome at the end — built better. How it looks is not the constraint; what it does is.
+
+**What this overturns.** Rule 0 of `docs/bizbox-mms-design-brief-20261014.md`, written in good faith by the Bizbox Chat session, required the captions, grid bands, button labels, footers and screen tree to be reproduced. **That was their inference from his earlier words and he has now corrected it.** The utterance it was built on — *"it should functio nsimilar to bixbox but better"* — has **function** as its operative word; it was read as reaching the screen layer and it does not.
+
+| | |
+|---|---|
+| Binding | every MMS **function**, every **step**, the same **outcome** — and better |
+| Not binding | the captions, the grid bands, the button labels, the footers, the screen tree |
+| Still binding, 13 Oct | *"conforms to modern design load skills needed"* |
+
+**Collision 1 from Part 83 is closed, in favour of the modern design WS36 already shipped.** The 083 Procurement screens are not in question and **must not have BizBox captions retro-fitted onto them**. Part 83 told WS36 not to re-architect them on the strength of the brief; that is now superseded by something stronger — there is nothing to retro-fit.
+
+**Function parity is the stricter half, not the lighter one**, because a caption can be read off a form and a behaviour cannot. What still binds, from the brief's own measurements: the document chain end to end (PR → PO → Delivery/Receiving → Stock Req → Stock Issuance, plus Expense Req → Expense Issuance, Purchase Return, Qty Adjustment, Material Production, Physical Count, Job Order); the statuses and who moves a document between them (PR FS/NS/PS; PO `postatus` plus two approval stages genuinely used at 802/35 and 762/75); the same outcome from the same inputs, down to the ledger row; **the printed document at the same click, day one** (~21,700 runs in 60 days, eight of the top ten are document prints, and the 629 RDL reports stay where they are); and one writer among several, since 128,462 of 227,077 ledger rows are HIS patient charging.
+
+"But better" remains the brief's §5 — seven measured defects, as corrected by the stock-truth addendum, where **`actualqty` is the outlier, not the buckets**. The strongest fit with what WS36 has already built is unchanged and is a function to add rather than a screen to copy: **655 hold Expense Requisition Details, 640 Purchase Requisition Details, and neither document has an approval field anywhere in BizBox's schema.** MMS has no requester experience at all.
+
+**Not changed by this ruling:** MMS only, not HIS/PIS/FMS; his standing constraint *"dont make anuy changes that will destroy things ok"*; every measurement in the brief and the addendum; and priority, which stays his. **Collision 2 remains open and remains his** — the brief's build rules 1–3 assume writing BizBox's own tables, the desk forbids it, `PSA_BIZBOX_WRITE_ODBC` stays unset, and they are relayed as what not to foreclose rather than a licence to write.
+
+**One consequence worth recording.** The brief's §1 said *"do not re-measure the screen layer"* and named five artefacts, four of which WS36 cannot reach because they live in the OneDrive record. **That now matters much less** — the screen inventory, the 239 grid columns and the caption list existed to let somebody reproduce screens, and nobody is reproducing screens. What WS36 needs instead is the **function and status inventory**, which is in the brief itself and reachable. The question changes from *"what does the screen say"* to *"what does this status transition do, and what does this save write"*, which is both a better question and one SQL01 or Bizbox Chat can answer on request. Still gating estimating, unchanged: **the count of save paths, not the count of screens.**
+
+Filed as `docs/handoffs/HANDOFF-sql01-cloud-WS36-20261014-dada-ruling-function-not-screens.md` and sent to WS36; the Bizbox Chat session was told their Rule 0 is superseded, since it carries their name in the repo. **Nothing changed on any host.**
