@@ -4294,3 +4294,19 @@ The third addition said *"which side carries CRLF depends on which machine wrote
 **Added to the trap list beside BOM and heredoc:** never use Python text mode to rewrite a file in the record — pass `newline=''` or write bytes. Theirs to carry; they will. And a reporting note: the "21,509 bytes" stated for the brief is the CRLF figure; the LF form is 21,115; any size check must say which.
 
 **Nothing changed.** They did not normalise the brief and will not — converting it would invalidate the hash verified at copy time and create exactly the tampering question this trap already risks. It stays as committed in `bb96800`. That closes everything on their side.
+
+---
+
+**Part 97 (14 Oct 2026): `ec24f18` superseded by `3fb7453` — 085 corrected before being applied anywhere. Eight new kinds, not nine; my count corrected. `change_uid` parameter withdrawn; the restore rule adopted. And a finding on the design skills that is Dada's to decide.**
+
+Dada pasted WS36's second reply: pull `3fb7453` once CI run 38482525893 is green. **At this Part, `windows` is still running; `sql-server`, 3.11 and 3.14 green.** Fetched, not pulled; nothing applied.
+
+**What changed in 085, read from the remote ref.** `DELIVERY_RECEIVING` is out of both CHECKs and the desk's kind list — **0 occurrences in `085_write_path.sql`** — because Delivery/Receiving is the existing `INVOICE` kind, MEASURED on both sides (Parts 95–96). **Eight new values:** `EXPENSE_REQ`, `STOCK_REQ`, `EXPENSE_ISSUANCE`, `STOCK_ISSUANCE`, `PURCHASE_REQ`, `MATERIAL_PRODUCTION`, `PHYSICAL_COUNT`, `QTY_ADJUSTMENT`; `PURCHASE_ORDER` and `INVOICE` are the two the desk had. **My Parts 95 and 96 said "nine new, not ten" — wrong by one: I counted only `PURCHASE_ORDER` as existing when `INVOICE` is too.** Ten in scope = eight new + two existing. The four swap blocks keep their names and guards with `IN` lists one shorter; nothing else in 085 moved. The handoff carries a dated addendum at the top; the body is unchanged and superseded where it differs.
+
+**Taken from Part 95:** the eleventh parameter is withdrawn — the desk passes and reads no uid; `change_uid` stays as the desk's own audit id. The restore rule — after any restore of `PMC_PSA`, cancel every open row by hand and read `bizbox-reconcile` first — is adopted as written and is now the README's §6 text. The ten-parameter `CALL`, the sender's claim, the row version and the one-condition guard are as before.
+
+**The design-skills finding, theirs, stated plainly as asked, and Dada's to decide.** Part 85's standing instruction — *"use design skills and whatever skills available when building it or when u tell ws36 to build it"* — was relayed with the seven `design:*` skills named from this session's catalogue and `frontend-design` noted as being enabled. **WS36 reports that in the cloud session the skills present are `artifact-design` and `dataviz` (both loaded on 13 Oct for the Procurement screens) and `pdf` and `xlsx`; no `design:*` and no `frontend-design` is present there.** They said so rather than assuming, which is the rule I gave them. **So the `design` plugin Dada enabled, and the `frontend-design` card he was given, are enabled in SQL01's desktop session — not in the session that builds the screens.** Whether the plugin can be enabled for the cloud session, or whether the design review is done from this side against what WS36 ships, is his call; stated once.
+
+Their line on Part 96's line-ending trap: no file of theirs passed through Python text mode on Windows. Noted.
+
+**Nothing written, nothing scheduled, `PSA_BIZBOX_WRITE_ODBC` unset.** `3fb7453` is pulled when CI reports green; the order stands; nothing runs until Dada says go.
