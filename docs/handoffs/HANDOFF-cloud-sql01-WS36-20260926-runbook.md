@@ -3697,3 +3697,136 @@ Also measured and good: **`prefers-reduced-motion` honoured 13 times** (uncommon
 **Two code-health notes, not accessibility:** `!important` appears **101** times, which will make the design system harder to hold as warehousing and the Reports tab land; and `:focus` 31 against `:focus-visible` 5.
 
 Nothing was changed. The UI is WS36's code.
+
+### Part 81: 2026-10-13, ~16:25 +08:00. **082 applied; the lookup names confirmed; the stock measured. Three things now need Dada's hand.** MEASURED.
+
+Applies `HANDOFF-cloud-sql01-WS36-20261013-mms-reports-082.md` and begins `...-warehouses-drugs-083.md`.
+
+- **CI run 38362823461 on `c81f7fa`: windows, sql-server, test (3.11), test (3.14) all success.** Pulled fast-forward; 0 local-only, tree clean.
+- **Backup:** `D:\Backups\PMC_PSA\PMC_PSA_COPYONLY_pre082_20261013-162335.bak`, 132.1 MB, COPY_ONLY with CHECKSUM, `RESTORE VERIFYONLY` valid.
+- **082 applied**, 5 guarded blocks extracted from the port by their own text, one transaction, **11 checks all PASS** with the control probed first and again after: `psa.mms_report` and `psa.mms_report_run` exist, `report_id` is IDENTITY, `path` is 800, both tables empty, all three indexes present and `ux_mms_report_path` is UNIQUE. **COMMITTED.**
+- **PSA-Desk restarted**, down to 401, state Running.
+
+**Section 4a, confirmed.** `psa.ext_lookup` holds exactly the five expected `ListName` values and nothing else: `category` 58, `currency` 2, `po_status` 6, `rr_status` 3, `unit` 83 - **152 total**. Nothing missing, nothing extra that would be read and ignored.
+
+**Handoff 083's two measurements, done. The answer is better than expected.**
+
+| | |
+|---|---|
+| `dbo.iwWareitem` total rows | **591,369** |
+| rows with `actualqty` other than zero | **4,358** - **0.7%** of the table |
+| warehouses actually holding stock | **25** of the 73 |
+| largest: warehouse 1041 | 1,013 rows; then 1019 (682), 1071 (487), 1008 (357), 1052 (214) |
+
+The quantity column is **`actualqty`**; the other 20-odd quantity columns on that table are movement buckets (`purcqty`, `salesqty`, `adjinqty`, `issoutqty`), not a balance. **A view narrowed to non-zero rows mirrors 4,358 rows - a factor of 136 smaller than the table, and smaller than the desk's current largest mirror (product, 5,472).** So stock on hand is comfortably mirrorable after all, and this morning's warning is answered: narrow it, and the hourly pattern carries it unchanged.
+
+### NOT DONE - three things that need Dada, not SQL01
+
+1. **`pywin32` cannot be installed: the package hook blocks it.** Step 9 needs it so the desk reaches the report server with its own Windows sign-in. `C:\PMC\Python312\python.exe -c "import win32com.client"` fails; pip is present (26.2.1). **Verified on PyPI this session** before attempting: *pywin32*, author **Mark Hammond (et al)**, `mhammond@skippinet.com.au`, OSI-approved Python Software Foundation License, project `github.com/mhammond/pywin32`, releases back to at least 2018, page <https://pypi.org/project/pywin32/>. The install was nevertheless refused twice by `pmc_session.py` with *"PyPI '2': does not exist on PyPI"* - **the hook is parsing the trailing digits of the name as the package**. Not retried with any other spelling. Only Dada edits the allow-list. **Without it the reports tab still loads and reports the server's 401 in a sentence; it simply cannot render.**
+2. **The SSRS *Browser* role for `DND-SQL01\psa_desk` on `/BizBox MMS Reports`.** `rs.exe` is **absent** on this host, so it cannot be scripted; it needs Report Manager's web UI. Measured: SSRS knows 244 users and **`psa_desk` is not among them**.
+3. **`PSA_SSRS_URL` in PSA-Desk's environment.** The desk sets its environment **inside its own task action**, and that task runs as `psa_desk` with a **stored password**, so Windows refuses the change without it - the same wall as Parts 75 and 76. Script written for him: **`platform/psa-spine/scripts/Set-PsaDeskSsrsUrl.ps1`** - preview by default, `-Apply` asks for the password once at the Windows prompt, exports the task XML to `D:\psa\logs` first, verifies only `PSA_SSRS_URL` was added and the logon is unchanged, restarts the desk and ends in a verdict. Parses clean under PowerShell 5.1, plain ASCII, previewed.
+
+Steps 10 and 11 (the first `sync-mms-reports` read and the walk-through) wait on 1 to 3. Nothing else in the desk is affected.
+
+**Still not built, per instruction:** the write path. `PSA_BIZBOX_WRITE_ODBC` is set nowhere.
+
+**Part 81, update (16:35 +08:00): Dada ran the script; two of the three are now closed; everything rests on the package.** MEASURED.
+
+- **`PSA_SSRS_URL` is set.** Dada ran `Set-PsaDeskSsrsUrl.ps1 -Apply`. Read back, **8 checks all PASS**: the value is `http://dnd-sql01/ReportServer`, the other six environment values survive, the account is still `psa_desk` with logon `Password`, `PSA_BIZBOX_WRITE_ODBC` is still absent, the task is Running and `:8085` answers 401. Task XML backups in `D:\psa\logs` (`PSA-Desk-task-before-20261013-1632*.xml`).
+- **Step 7, the SSRS *Browser* role, was ALREADY SATISFIED - no grant was needed.** MEASURED from the ReportServer catalog: `/BizBox MMS Reports` carries its own policy (`PolicyRoot=False`) and **`\Everyone` holds Browser** on it (along with Content Manager, Publisher, Report Builder and My Reports), plus `BUILTIN\Administrators` Content Manager and `PMCNE\HIS Reporting` Browser. So `psa_desk` already has what the handoff asked Dada to give it. Nothing was changed. *(Worth a separate look one day: `\Everyone` holding Content Manager on a reports folder is broader than it needs to be. Not touched, not in scope.)*
+- **The report server is reachable:** `http://dnd-sql01/ReportServer` answers **200** to an authenticated request from this host.
+
+**The first read still fails, and the cause is the package, not permissions.** Running the 082 step-10 read under `EXECUTE AS psa_desk` (the CLI is refused under a sysadmin login by the dbo guard, as `sync-bizbox` and `mail-words` are) and with `PSA_SSRS_URL` supplied, it answers:
+
+> `refused: The report server refused the desk's sign-in. SQL01 gives the account PSA-Desk runs under the Browser role on the reports folder.`
+
+**That sentence is misleading in this case and the evidence says so:** `\Everyone` already has Browser, and the same server answers 200 to an authenticated request. The real cause is read from `psaspine/ssrs.py` line 82-89: `WinHttpTransport` is the class that sends the process's Windows identity, and its `__init__` does `import win32com.client`. Without **pywin32** the code falls back to a plain `urllib` request, which sends no Windows identity, gets a 401, and reports it as a sign-in refusal. Exactly as the handoff's step 9 predicted, though the sentence points at the wrong remedy.
+
+**So one thing now blocks steps 10 and 11 entirely: the pywin32 allow-list entry, which only Dada can add.** Everything else for the MMS reports tab is in place. Worth passing to Cloud Build: when the transport is the plain fallback, the refusal sentence should say so rather than naming the Browser role, because here the role was already granted.
+
+**Part 81, second update (16:40 +08:00): the report server accepts ONLY Windows integrated authentication, so the fallback transport can never work.** MEASURED.
+
+Dada: *"find out from the bizbox chat as to why it errors"*. Asked the Bizbox Reporting SSRS session (it owns the BizBox SSRS work) and, while waiting, measured the one thing that settles it.
+
+`rsreportserver.config` on this host (`C:\Program Files\Microsoft SQL Server Reporting Services\SSRS\ReportServer\`):
+
+```
+<AuthenticationTypes>
+  <RSWindowsNegotiate />
+  <RSWindowsNTLM />
+</AuthenticationTypes>
+<RSWindowsExtendedProtectionLevel>Off</RSWindowsExtendedProtectionLevel>
+EnableAuthPersistence = true
+```
+
+**`RSWindowsBasic` is absent. `Custom` is absent.** The server speaks Negotiate and NTLM and nothing else. URL reservations are `http://+:80/ReportServer/` and `http://+:80/Reports/`, both owned by `NT SERVICE\SQLServerReportingServices`, Listen: Yes.
+
+So the diagnosis is no longer an inference from a stack trace:
+
+- the desk's `WinHttpTransport` performs a Negotiate/NTLM handshake with the process identity; it needs **pywin32**;
+- without it the code falls back to plain `urllib`, which performs **neither** handshake;
+- a caller that offers neither is refused by a server that accepts only those two. **There is no configuration of permissions that would make the fallback succeed** - `\Everyone` already holds Browser and it still 401s.
+
+**Therefore pywin32 is structurally required, not merely preferred.** The only alternative would be enabling `RSWindowsBasic`, which would send credentials over plain HTTP on this server and is a security downgrade; **not proposed, not done**.
+
+**For Cloud Build:** the refusal sentence should distinguish the two cases. When the transport in use is the urllib fallback, it should say the desk could not present a Windows identity and name pywin32 - not tell SQL01 to grant a Browser role that, here, was already granted. As written it sends the reader to the wrong fix.
+
+**Part 81, third update (16:50 +08:00): there is a package-free route, and it is proven end to end. pywin32 is no longer needed.** MEASURED.
+
+The Bizbox Reporting SSRS session answered (Dada: *"find out from the bizbox chat as to why it errors"*). It confirmed the authentication diagnosis independently and supplied the fix: **Windows ships `C:\Windows\System32\curl.exe`, which speaks SSPI NTLM and SPNEGO and sends the calling process's own identity.** Under the PSA-Desk task that identity is `psa_desk`. Verified here rather than taken on trust:
+
+| Probe | Result |
+|---|---|
+| `curl.exe --version` | **8.13.0**, Windows, Schannel |
+| **control:** ListChildren with no credentials | **401** |
+| ListChildren with `--negotiate -u :` | **200, 26,890 bytes, 163 report names** |
+| Render `MMS_ListOfVendorsOrSuppliers` to PDF | **200, 253,320 bytes, `%PDF-`, 30 pages, letter** |
+| Render `MMS_ADHOC_CriticalInventoryLevel` to PDF | **200, 60,286 bytes, 1 page** |
+| Render the same to `rs:Format=EXCELOPENXML` | **200, 78,887 bytes, magic `504b` - a real .xlsx** |
+
+So listing, PDF rendering and Excel rendering all work today with nothing installed. **The pywin32 blocker is dissolved**; it remains the tidier transport, but it is no longer required and need not be forced through the allow-list for this.
+
+Also measured while proving it: rendering `MMS_PerpetualInventory` and `MMS_ReorderPoint` without parameters returns **HTTP 500 `ParameterInfoCollection.ThrowParameterValueNotSet`** - the report engine asking for input, *not* an authentication failure. Authentication had already succeeded at that point.
+
+**Parameters, measured from `ReportServer.dbo.Catalog.Parameter` across all 164:** exactly **2** have every parameter defaulted or optional (`MMS_ADHOC_CriticalInventoryLevel`, `MMS_ListOfVendorsOrSuppliers`); the other **162 need at least one value typed**. That matches the Bizbox session's count independently.
+
+**What that session reported, kept separate because it is theirs and I have not re-measured it:** of the 164 reports only **52 have ever run** since 9 Aug (21,673 runs, 121 users); the heaviest are `MMS_ADHOC_ExpRequisition` 3,229, `StockReq` 3,023, `DelReceiveRep` 2,982, `POSLIP` 2,979, `ExpIssuance` 2,445. Trouble list: `MMS_ElectronicStockCard` 90 failures and up to 294 s, `MMS_PerpetualInventoryPerItemGroup` fails every time (4 of 4), `POSLIP` 12 failures, `InvMstrLstperCateg` up to 200 s. Their suggestion, which I agree with: surface the 52 that are used and hide the 112 that never have been. Most ADHOC reports want a BizBox document number, so they belong on a record's page rather than in a general list.
+
+**Two findings from that session for Dada, neither mine to act on:**
+1. `\Everyone` (S-1-1-0) holds Browser, **Content Manager**, My Reports, Publisher and Report Builder on the **root and every BizBox folder**, plus the system roles **System Administrator and System User**. Any authenticated account can publish, delete or change server settings. Vendor-set, not PMC-set. Flagged, not changed.
+2. **The SSRS service runs as `pmcne\dada.banal`** - Dada's own account, not a service account. A password change on it stops the report server.
+
+---
+
+**Part 82 (17:15 +08:00): a Billing email raised no ticket. The intake duplicate guard is suppressing genuinely new requests - 30 of them, three distinct faults.** MEASURED.
+
+Dada: *"this billing ticket isnt appearing"*. Read as: the email-to-ticket pickup did not raise a ticket for that 16:43 message, and he wants to know why. His Outlook renders +3 h, so his "7:43 PM" is 16:43 PH; not a clock fault.
+
+**The pickup is healthy.** `PSA-Mail-Helpdesk`, `PSA-Mail-Support`, `PSA-Mail-Procurement`, `PSA-Notify`, `PSA-Calendar` all ran 17:00:00, result 0, next 17:01:01, triggers PT1M. The message reached `support@pmcne.ph` at `2026-10-13T08:43:32Z` and **was imported**.
+
+It did not become a ticket because the desk decided it was a duplicate:
+
+| column | value |
+|---|---|
+| `disposition` | **DUPLICATE** |
+| `work_item_id` | **NULL** |
+| `duplicate_of` | the 11:31 message from the same sender |
+| `run_id` | `mail-support-pmcne-ph-20261013084404` |
+
+The text was **appended as a note to `PMC-001580`** - the 11:31 ticket, a *different doctor*. Nothing lost; filed onto the wrong person's ticket, no new ticket raised.
+
+**The rule** is `psaspine/intake.py` `_recent_same_subject()` (~line 540, called ~line 708): match on `from_address` + **exact `subject`** + `received_at >= at - 24 h`, take the newest with a ticket. Its own docstring calls it *"the weaker guard... INFERRED"*.
+
+**Fault 1 - a reused subject line is not a duplicate.** PMC departments use a standing subject line, one mail per case, and the normaliser strips `Re:` so a reply's subject becomes byte-identical to the original's (22 chars in both rows here, confirmed equal in SQL). Across all **30** DUPLICATE rows: **30 of 30** subjects byte-identical to the parent's, **30 of 30** inside the window, **30 of 30** appended as a note, **none raised its own ticket**. Dispositions over 478 rows: NEW_TICKET 325, APPENDED 105, DUPLICATE 30, UNCLASSIFIED 18. Worst absorbers: `PMC-000148`, `PMC-000303`, `PMC-000407` took 3 other people's requests each; `PMC-000386` took 2. **10 sender+subject pairs are in active reuse** (3+ uses), led by `premieremedfm252022@gmail.com` at 11 - so the exposure is structural, not a one-off.
+
+**Fault 2 - the parent may arrive after the child.** The query has a lower bound only; no `received_at < at`. With `ORDER BY received_at DESC` a message can be filed as a duplicate of one not yet received. **MEASURED: 4 of 30 have a negative gap** (-49, -48, -22, -15 min). `import_drop` iterates `sorted(drop.iterdir())` - **filename order, not time order** - so this is reachable in normal operation.
+
+**Fault 3 - it crosses channels and boards.** The guard filters sender and subject only. `PMC-000148` was raised from **support**; a **helpdesk** message from the same sender on 1 Oct 15:52 was suppressed against it and its text appended there. A Helpdesk request can vanish into a PMC Service Board ticket, where no Helpdesk member will see it.
+
+**Against Dada's own ruling.** He ruled on this guard on 2 Oct: two no-subject requests from one ward are **two requests**. This is that ruling one step on - an empty subject is not an identity, and neither is a reused one. INFERRED: the 2 Oct fix treated the empty subject as the special case; the measurement says the general case is the problem.
+
+**Controls:** `disposition='ZZZ_NOPE'` 0 against `'NEW_TICKET'` 325; `from_address='zzz-nobody@nowhere.invalid'` 0; all 30 `duplicate_of` values resolved to a real parent, no orphans. Two of my own queries failed first and the schema notes are worth keeping: `psa.intake_message` has **no** `status`/`state` column (it is `disposition`), and `psa.work_item` has **no** `created_at`.
+
+**Sent to WS36** as `docs/handoffs/HANDOFF-sql01-cloud-WS36-20261013-intake-duplicate-guard.md`, with the full 30-row table for fixtures (no subjects, no bodies - lengths only, per the content fence) and four suggestions in confidence order: bound the window at both ends, add channel/board to the match key, stop matching on subject alone (Dada's policy call, not ours), and make the DUPLICATE path visible so a suppressed request cannot look like one that never arrived.
+
+**Nothing changed on this host.** Read-only throughout. Dada was offered the recovery of `PMC-001580`'s note as its own ticket and chose this handoff instead, so that note and the other 29 stay where they are until he says otherwise.
