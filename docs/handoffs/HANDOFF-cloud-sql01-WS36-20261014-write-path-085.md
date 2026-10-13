@@ -4,6 +4,17 @@
 drops a table. Nothing written to BizBox, nothing scheduled, `PSA_BIZBOX_WRITE_ODBC` unset. The order you set stands: the
 one-condition guard → the procedure → this step → the sender → user and grant → verify → prove on Training.**
 
+
+**Addendum, 14 Oct 2026, after your Parts 95 and 96 (`ec24f18` is superseded by the head that carries this line):**
+Delivery/Receiving is the desk's `INVOICE` kind, MEASURED on both sides, so `DELIVERY_RECEIVING` is removed from both
+CHECKs in 085 and from the desk's kind list before 085 is applied anywhere: **eight new values, not nine** (`EXPENSE_REQ`,
+`STOCK_REQ`, `EXPENSE_ISSUANCE`, `STOCK_ISSUANCE`, `PURCHASE_REQ`, `MATERIAL_PRODUCTION`, `PHYSICAL_COUNT`,
+`QTY_ADJUSTMENT`), with `PURCHASE_ORDER` and `INVOICE` the two the desk had. The swap blocks in §2 are the same four
+under the same names; their `IN` lists are shorter by one. The change_uid offer is declined and nothing in the desk
+passes or reads it: §6's eleventh parameter is withdrawn; the column stays as the desk's own audit id of a change. Your
+restore rule (cancel every open row by hand after a restore of `PMC_PSA`, read `bizbox-reconcile` first) is adopted as
+written and is now the text of §6 in the README.
+
 ## 1. Rulings, taken as given
 
 1. Function, not screens: the 083/084 Procurement screens stand; no BizBox captions retro-fitted. The MMS term stays where

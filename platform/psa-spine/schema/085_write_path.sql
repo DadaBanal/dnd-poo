@@ -5,9 +5,12 @@
 --   * ext_change.status and ext_batch.status gain SENDING: the sender claims a
 --     change (PENDING -> SENDING, rowcount 1) before it applies it, so two
 --     overlapping runs cannot both send the same change.
---   * ext_change.kind and ext_batch.kind gain the ten MMS document kinds the
---     Bizbox Chat session measured in scope (Part 90). ext_stock has no kind:
---     a position is derived; the correctable thing is a movement.
+--   * ext_change.kind and ext_batch.kind gain the MMS document kinds the
+--     Bizbox Chat session measured in scope (Part 90): ten, of which Purchase
+--     Order and Delivery/Receiving are the desk's PURCHASE_ORDER and INVOICE
+--     already (SQL01, Part 95, MEASURED: psa.vw_invoice reads the receiving
+--     header), so eight new values. ext_stock has no kind: a position is
+--     derived; the correctable thing is a movement.
 --   * ext_change carries expected_tstamp, the record's BizBox row version as
 --     the desk read it when the change was proposed, sent back to the
 --     procedure as @expected_tstamp; and change_uid, a desk-minted id that
@@ -25,9 +28,8 @@ CREATE TABLE ext_batch_new (
   batch_id      INTEGER PRIMARY KEY,
   source_id     TEXT NOT NULL REFERENCES ext_source(source_id),
   kind          TEXT NOT NULL CHECK (kind IN ('AGREEMENT', 'PRODUCT', 'PURCHASE_ORDER', 'INVOICE',
-                                              'EXPENSE_REQ', 'STOCK_REQ', 'EXPENSE_ISSUANCE', 'DELIVERY_RECEIVING',
-                                              'STOCK_ISSUANCE', 'PURCHASE_REQ', 'MATERIAL_PRODUCTION', 'PHYSICAL_COUNT',
-                                              'QTY_ADJUSTMENT')),
+                                              'EXPENSE_REQ', 'STOCK_REQ', 'EXPENSE_ISSUANCE', 'STOCK_ISSUANCE',
+                                              'PURCHASE_REQ', 'MATERIAL_PRODUCTION', 'PHYSICAL_COUNT', 'QTY_ADJUSTMENT')),
   change_kind   TEXT NOT NULL CHECK (change_kind IN ('EDIT', 'ADD')),
   reason        TEXT NOT NULL,
   status        TEXT NOT NULL DEFAULT 'PENDING'
@@ -53,9 +55,8 @@ CREATE TABLE ext_change_new (
   change_id     INTEGER PRIMARY KEY,
   source_id     TEXT NOT NULL REFERENCES ext_source(source_id),
   kind          TEXT NOT NULL CHECK (kind IN ('AGREEMENT', 'PRODUCT', 'PURCHASE_ORDER', 'INVOICE',
-                                              'EXPENSE_REQ', 'STOCK_REQ', 'EXPENSE_ISSUANCE', 'DELIVERY_RECEIVING',
-                                              'STOCK_ISSUANCE', 'PURCHASE_REQ', 'MATERIAL_PRODUCTION', 'PHYSICAL_COUNT',
-                                              'QTY_ADJUSTMENT')),
+                                              'EXPENSE_REQ', 'STOCK_REQ', 'EXPENSE_ISSUANCE', 'STOCK_ISSUANCE',
+                                              'PURCHASE_REQ', 'MATERIAL_PRODUCTION', 'PHYSICAL_COUNT', 'QTY_ADJUSTMENT')),
   ext_ref       TEXT NOT NULL,
   field         TEXT NOT NULL,
   old_value     TEXT,

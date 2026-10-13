@@ -37,7 +37,7 @@ MODULES = {"KNOWLEDGE": "Knowledge base", "PROJECTS": "Projects", "REPORTS": "Re
 PROCUREMENT_AREAS = ("PROC_PO", "PROC_RR", "PROC_ITEM", "PROC_DRUG")
 PROCUREMENT_AREA_OF = {"purchase_order": "PROC_PO", "invoice": "PROC_RR", "product": "PROC_ITEM", "medicine": "PROC_DRUG",
                        # the MMS document kinds (14 Oct 2026): purchasing, receiving, and the rest with the stores
-                       "purchase_req": "PROC_PO", "delivery_receiving": "PROC_RR", "expense_req": "PROC_ITEM", "stock_req": "PROC_ITEM",
+                       "purchase_req": "PROC_PO", "expense_req": "PROC_ITEM", "stock_req": "PROC_ITEM",
                        "expense_issuance": "PROC_ITEM", "stock_issuance": "PROC_ITEM", "material_production": "PROC_ITEM",
                        "physical_count": "PROC_ITEM", "qty_adjustment": "PROC_ITEM"}
 AREA_WORDS = {"NONE": "None", "READ": "See", "WRITE": "Propose", "ADMIN": "Approve"}

@@ -2756,9 +2756,11 @@ the grant, concurrency is one parameter, replay is one UPDATE in the sender. The
 `docs/handoffs/HANDOFF-cloud-sql01-WS36-20261014-write-path-085.md`:
 
 - **Schema 085.** `ext_change.status` and `ext_batch.status` gain `SENDING`; `ext_change.kind` and `ext_batch.kind` gain
-  the ten MMS document kinds the Bizbox Chat session measured in scope (`bizbox.MMS_KINDS`, on screen as the MMS names
-  them: Stock Requisition, Delivery/Receiving, Quantity Adjustment…; `ext_stock` has no kind). `ext_change` gains
-  `expected_tstamp` and `change_uid`; the seven mirror kinds the desk may write to gain `tstamp`.
+  the MMS document kinds the Bizbox Chat session measured in scope: ten, of which Purchase Order and Delivery/Receiving
+  are the desk's `PURCHASE_ORDER` and `INVOICE` already (SQL01, Part 95: `psa.vw_invoice` reads the receiving header),
+  so eight new values (`bizbox.MMS_KINDS`, on screen as the MMS names them: Stock Requisition, Quantity Adjustment…;
+  `ext_stock` has no kind). `ext_change` gains `expected_tstamp` and `change_uid`; the seven mirror kinds the desk may
+  write to gain `tstamp`.
 - **A rebuilt table in the schema.** SQLite cannot alter a CHECK, so the two tables are rebuilt in place (`CREATE TABLE
   x_new`, `INSERT … SELECT`, `DROP TABLE x`, `ALTER TABLE x_new RENAME TO x`, then the indexes again). The port translator
   reads that idiom as one construct (`sqlite_ddl.Rebuild`): a server that already has the table gets a **constraint swap**
@@ -2780,9 +2782,11 @@ the grant, concurrency is one parameter, replay is one UPDATE in the sender. The
   shows it (an edit's field reads the value sent; a new record's number is present); `--requeue 12,15` re-queues the
   ones named as new PENDING batches for approval again. Read-only otherwise; nothing runs on every write.
 - **change_id, answered:** never minted twice from the desk's own running (SQLite never deletes a change row; SQL Server
-  IDENTITY is monotonic); minted again after a RESEED or a restore of PMC_PSA, which is why `change_uid` exists: a UUID
-  minted at proposal that the procedure can refuse twice without a replay table. The uid is not passed yet; the
-  handoff offers it as the eleventh parameter.
+  IDENTITY is monotonic); minted again after a RESEED or a restore of PMC_PSA. SQL01 (Part 95) declined the offer of a
+  procedure that refuses a seen `change_uid` (it would need memory in BizBox: three mechanisms stay three) and closed
+  the case by a rule: after any restore of PMC_PSA, every PENDING, APPROVED or SENDING row is cancelled by hand before
+  the sender runs again, and `bizbox-reconcile` is read first. `change_uid` stays as the desk's own audit id of a
+  change; nothing reads it and it is not passed to the procedure.
 
 ## Changing a booking in place, and your own Outlook entries (9 Oct 2026, schema 077)
 

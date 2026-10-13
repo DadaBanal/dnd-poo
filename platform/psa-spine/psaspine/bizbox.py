@@ -78,14 +78,16 @@ WINDOWED = {"movement"}
 LABEL = {"agreement": "Agreements", "product": "Products", "purchase_order": "Purchase orders", "invoice": "Invoices"}
 LINK_KIND = {"agreement": "AGREEMENT", "product": "PRODUCT", "purchase_order": "PURCHASE_ORDER", "invoice": "INVOICE"}
 # The MMS document kinds a change may carry (14 Oct 2026, the Bizbox Chat
-# session's measurement, Part 90: the ten in scope by volume; a purchase order
-# already exists). Where the word is the function the MMS term stays (ruling 2).
+# session's measurement, Part 90: the ten in scope by volume). Two of the ten
+# are kinds the desk had: Purchase Order is purchase_order, and Delivery/
+# Receiving is invoice (SQL01, Part 95, MEASURED: psa.vw_invoice reads the
+# receiving header). Where the word is the function the MMS term stays (ruling 2).
 MMS_KINDS = {"expense_req": "EXPENSE_REQ", "stock_req": "STOCK_REQ", "expense_issuance": "EXPENSE_ISSUANCE",
-             "delivery_receiving": "DELIVERY_RECEIVING", "stock_issuance": "STOCK_ISSUANCE", "purchase_req": "PURCHASE_REQ",
-             "material_production": "MATERIAL_PRODUCTION", "physical_count": "PHYSICAL_COUNT", "qty_adjustment": "QTY_ADJUSTMENT"}
+             "stock_issuance": "STOCK_ISSUANCE", "purchase_req": "PURCHASE_REQ", "material_production": "MATERIAL_PRODUCTION",
+             "physical_count": "PHYSICAL_COUNT", "qty_adjustment": "QTY_ADJUSTMENT"}
 MMS_WORDS = {"expense_req": "Expense Requisition", "stock_req": "Stock Requisition", "expense_issuance": "Expense Issuance",
-             "delivery_receiving": "Delivery/Receiving", "stock_issuance": "Stock Issuance", "purchase_req": "Purchase Requisition",
-             "material_production": "Material Production", "physical_count": "Physical Count", "qty_adjustment": "Quantity Adjustment"}
+             "stock_issuance": "Stock Issuance", "purchase_req": "Purchase Requisition", "material_production": "Material Production",
+             "physical_count": "Physical Count", "qty_adjustment": "Quantity Adjustment"}
 LINK_KIND.update(MMS_KINDS)
 BACK_KIND = {v: k for k, v in LINK_KIND.items()}
 # One record, in words, for every kind a change can name.

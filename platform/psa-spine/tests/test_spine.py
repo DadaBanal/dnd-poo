@@ -18991,8 +18991,10 @@ class WritePathTest(unittest.TestCase):
         conn.execute("UPDATE ext_batch SET status = 'SENDING' WHERE kind = 'STOCK_REQ'")
         conn.commit()
         _, _, page = self._call("GET", "/procurement", query="tab=changes&status=ALL", cookie=self.alice)
-        for word in ("New stock requisition", "New expense issuance", "New physical count", "New quantity adjustment", "New delivery/receiving"):
+        for word in ("New stock requisition", "New expense issuance", "New physical count", "New quantity adjustment"):
             self.assertIn(word, page, word)
+        self.assertNotIn("DELIVERY_RECEIVING", open(Path(__file__).parent.parent / "schema" / "085_write_path.sql", encoding="utf-8").read())
+        self.assertEqual(len(bizbox.MMS_KINDS), 8)                                               # ten in scope; two were the desk's already
         self.assertEqual(bizbox.KIND_WORDS["material_production"], "material production")
 
     def test_reconcile_says_which_applied_changes_bizbox_no_longer_shows_and_requeue_is_deliberate(self):
