@@ -3631,3 +3631,41 @@ Every other module on the two new roles is an exact copy of the role it came fro
 **Not built, as instructed:** the write path to BizBox (the 080 handoff's section 5 — the procedure, its EXECUTE-only login, the push-task setting). `PSA_BIZBOX_WRITE_ODBC` is set nowhere. Section 5 of the 081 handoff (`psa.vw_lookup` inside BizBox, plus the `lookup` object in the host map) is **not done**; until it exists the dropdowns offer what BizBox has used on real records, which the handoff says is fine.
 
 **For Dada:** the guide went to Shane on 13 Oct as a PDF (Teams and email), in Area 54 › Handover and in `deliverables/`.
+
+### Part 79: 2026-10-13, ~14:30 +08:00. **The dropdowns read words, not codes: `psa.vw_lookup` built and wired (081 section 5).** MEASURED.
+
+Dada, with a screenshot of the category dropdown listing 1001, 1002, 1010…: *"this displays as numbers which isnt ideal and the sort isnt friendly"*.
+
+**Cause, measured:** `psa.vw_product.Category` is `CAST(i.FK_mscItemCategory AS nvarchar(20))` — the raw code. The label table `dbo.mscItemCategory` (58 rows) was never read, because the `lookup` object of 081 section 5 had not been built. Status and unit were never affected: `vw_purchase_order`/`vw_invoice` compute their Status words in a CASE, and `vw_product.Unit` is already text.
+
+**Built: `psa.vw_lookup` in `LiveDB_PMC`.** Read-only, five lists, 152 entries:
+
+| List | Source | Entries |
+|---|---|---|
+| `category` | `dbo.mscItemCategory` — Code `PK_mscItemCategory`, Label `description`, SortNo `sorter` | 58 |
+| `unit` | `dbo.mscUnits` — the item master stores the unit as text, so Code = Label = the word | 83 |
+| `currency` | `dbo.mscCurrency` — Code `PK_mscCurrency`, Label `description`; `N/A` excluded | 2 |
+| `po_status` | no BizBox table exists; the view's own CASE vocabulary, in **working order**: Draft, Ordered, Approved, Partly received, Received, Cancelled | 6 |
+| `rr_status` | likewise from `vw_invoice`: Draft, Posted, Cancelled | 3 |
+
+The sort was the second half of his complaint: categories now come out A to Z by name, and the two status lists in the order the work actually happens rather than alphabetically.
+
+**No grant was needed, and that is a measured finding, not an assumption.** `psa_bizbox_reader` holds **SELECT on the whole `[psa]` schema** (`sys.database_permissions` class SCHEMA), not per-view grants — which is why no per-object grant existed for the four older views either. Proven by `EXECUTE AS USER = psa_bizbox_reader`: it read **152 rows** from the new view and `category 1001` came back as *Drugs / Medicines*, while the same session was still correctly **refused** `dbo.iwItems`. The original script's grant step was removed once this was known.
+
+**Host map:** `lookup` added to `D:\psa\bizbox-map.json`; backup beside it as `bizbox-map.json.bak_20261013_142901`. 5 checks PASS including a control.
+
+**The read.** The handoff's preview could not be run from this session: `sync-bizbox` without `--apply` is refused under a sysadmin login by the desk's dbo guard (*"the desk's login must have default schema [psa]… it has [dbo]"*), and a scratch SQLite target has no schema to compare against. So `PSA-BizBox` — the hourly task, which runs as `DND-SQL01\psa_desk` — was started early instead, doing exactly what it does every hour. Result 0:
+
+```
+product:        5472 rows,   0 new,  1 changed
+purchase_order:  803 rows,   3 new,  8 changed
+po_line:        2082 rows,  13 new,  2 changed
+invoice:        1004 rows,   2 new,  0 changed
+lookup:          152 rows, 152 new,  0 changed
+```
+
+`psa.ext_lookup` now holds 152 rows, `present = 1` on all, and a made-up list name returns 0.
+
+**Rollback:** `DROP VIEW psa.vw_lookup;` in LiveDB_PMC, and restore the map from the backup. Nothing else was touched; the view writes nothing and reads only BizBox reference tables.
+
+**Also settled today:** Dada on the wallpaper hours — *"7-5 as whats there ill tell u to change it when i want to"*. **Closed.** And MMS reports: *"mms reprots on the desk from ssrs if possible"* — measured as possible and then some: SSRS is running on this instance and `/BizBox MMS Reports/` already holds **164 reports** (MMS_ReorderPoint, MMS_PerpetualInventory, MMS_InventoryCriticalReport, MMS_Store_Tran_Rep_*, MMS_SuppliesMaterialsIssued_Summ, MMS_PurcSum_* …), so nothing needs writing — the desk needs a Reports tab that renders them. Handed to WS36.
