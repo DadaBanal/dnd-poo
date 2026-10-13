@@ -3592,3 +3592,42 @@ So a department is written at one of three doors only:
 - **After:** PSA-Desk Running, `:8085` 401; PSA-Notify result 0 at 11:15.
 
 **Still waiting on WS36 (cloud, one-way):** take the department half out of `ticket-fill`, so the command cannot backfill. Until then `ticket-fill` is not to be run at all — the company half is done and the department half is ruled out.
+
+### Part 78: 2026-10-13, ~13:50 +08:00. **080 and 081 applied; Procurement rights set as Dada named them.** MEASURED.
+
+Applies `HANDOFF-cloud-sql01-WS36-20261013-procurement-rights-lookups-081.md` (which replaces section 3 of the 080 handoff of the same day).
+
+- **CI run on `a671768`: windows, sql-server, test (3.11), test (3.14) all success.** The sql-server job was the one red on runs 92 and 93; it is green on `0be85ef`, `a8351b3` and `a671768`. `a671768` differs from `0be85ef` by one file, the guide markdown, 263 lines, no code. Pulled fast-forward, 0 local-only commits, tree clean.
+- **Backup:** `D:\Backups\PMC_PSA\PMC_PSA_COPYONLY_pre080_081_20261013-134611.bak`, 129.1 MB, COPY_ONLY with CHECKSUM, `RESTORE VERIFYONLY` valid.
+- **PSA-Desk stopped** (`:8085` 401 → down). PSA-Notify, PSA-Calendar and PSA-Teams left Ready and untouched.
+- **Counts before: `ticket_task` 1, `configuration` 0, `ext_change` 0.**
+- **080 + 081 in ONE transaction, 15 guarded blocks**, each located in `sqlserver/PMC_PSA_Spine_SqlServer.sql` by its own text and run verbatim — never retyped. **22 checks, all PASS**, including the control probed first (a made-up column read −999 before anything ran, and again after). Widths as the handoff demands: `ticket_task.notes` −1, `schedule_id` 4, `priority` 4, `resolution` −1; `configuration.tag_number` 800, `installed_by` 400, `parent_configuration_id` 128; `ext_change.batch_id` 4 with **0** rows carrying one; `ext_lookup.list` 64, `code` 800, **0 rows**; `ext_batch.batch_id` is IDENTITY; all four indexes present; the three counts unchanged. **COMMITTED.**
+- **PSA-Desk restarted:** down → 401, state Running.
+
+**Procurement rights.** Dada: *"place me and shane de castro and ethel luciano with access and approve the rest on procurement read only"*.
+
+Measured before deciding, because the obvious move would have been wrong:
+- Areas are `PROC_PO`, `PROC_RR`, `PROC_ITEM`; levels NONE=None, READ=See, WRITE=Propose, ADMIN=Approve.
+- **No role held any procurement grant**, which is exactly why Dada saw no Procurement menu.
+- **A member holds exactly one role** (`role_of` takes one row; `assign` deletes then inserts). There is no stacking.
+- **`dada.banal` is `is_sysadmin = 1`**, and `security.level()` returns ADMIN for a sysadmin in every module. **His role was not touched**; he already approves everywhere.
+- `shane.decastro` shared SERVICE_MANAGER with `jefferson.simon`, `rubylyn.martinez` and `thobie.delacruz`. Granting that role Approve would have given those three Approve as well — the opposite of *"the rest read only"*.
+- `ethel.luciano` was on no role, so she took the default TECHNICIAN. Putting her on a SERVICE_MANAGER-shaped role would also have raised her Knowledge, Projects, Reports, Schedule and Finance, and given her **Timesheets ADMIN**. Not asked for, so not done.
+
+Applied under `EXECUTE AS psa_desk` through the desk's own `security` functions, so Setup › Audit records it:
+
+| Role | PO | Receiving | Items | Who |
+|---|---|---|---|---|
+| Service manager | See | See | See | jefferson.simon, rubylyn.martinez, thobie.delacruz, dada.banal |
+| Technician (default) | See | See | See | the other 17 active members |
+| Read only | None | None | None | nobody today |
+| **Procurement approver** (copy of Service manager) | **Approve** | **Approve** | **Approve** | **shane.decastro** |
+| **Procurement approver (technician)** (copy of Technician) | **Approve** | **Approve** | **Approve** | **ethel.luciano** |
+
+Every other module on the two new roles is an exact copy of the role it came from, so nobody's rights changed anywhere else. 11 checks, all PASS, including a control.
+
+**One honest note on method.** The first apply **rolled back on a FAIL** — and the fault was in the check, not the data: `save_grants` stores no row for NONE, so an absent row *is* None, and the assertion demanded the literal string. The gate did its job; the assertion was corrected and the second run passed. Nothing was committed in between.
+
+**Not built, as instructed:** the write path to BizBox (the 080 handoff's section 5 — the procedure, its EXECUTE-only login, the push-task setting). `PSA_BIZBOX_WRITE_ODBC` is set nowhere. Section 5 of the 081 handoff (`psa.vw_lookup` inside BizBox, plus the `lookup` object in the host map) is **not done**; until it exists the dropdowns offer what BizBox has used on real records, which the handoff says is fine.
+
+**For Dada:** the guide went to Shane on 13 Oct as a PDF (Teams and email), in Area 54 › Handover and in `deliverables/`.
