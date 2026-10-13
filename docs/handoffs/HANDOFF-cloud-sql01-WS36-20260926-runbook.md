@@ -4268,3 +4268,17 @@ They re-measured despite my saying it could wait, on the grounds that leaving a 
 **Named rather than dropped, not chased:** `FK_ASUapproval2` is a second, distinct approver identity column, so BizBox supports two *different* approvers at the two stages. Whether stage one and stage two are ever the same person — approver-versus-approver separation — was not measured. The 1-of-775 covers poster-versus-approver only.
 
 Every item of theirs on this thread is closed. Nothing outstanding from their side; they are running nothing in MMS.
+
+**Part 96, third addition (14 Oct 2026): the "byte-identical, sha256 matches" claims on the eight BizBox files are true at copy time and in the worktree — the committed blobs differ by line endings. Recorded so a later verifier does not read tampering into `core.autocrlf`.** MEASURED, mine.
+
+After the rebase onto `ec24f18` re-checked-out the tree, the worktree hash of `bizbox-mms-section3-flag-audit-20261014.md` read `7f0ddf3a…` against the `6842b0a0…` verified minutes earlier. **Not tampering: `core.autocrlf=true` on this checkout.** The committed blob is the LF form; a Windows checkout writes CRLF; `sha256sum` on the worktree then differs from the blob.
+
+| File | Committed blob | Worktree now | Their stated hash |
+|---|---|---|---|
+| `bizbox-mms-section3-flag-audit` | **`6842b0a0`** | `7f0ddf3a` (CRLF) | `6842b0a0` — record copy was LF; blob matches |
+| `bizbox-mms-section56-approval-remeasured` | `125d4a29` | `125d4a29` | `125d4a29` — not yet re-checked-out |
+| `bizbox-mms-design-brief` | `49cde08e` | **`0b3072d1`** | `0b3072d1` — record copy was CRLF; **git normalised it to LF on commit**, so the blob differs and the worktree matches |
+
+**So the rule for re-verifying any of the eight files against the Bizbox Chat session's stated hashes:** compare either `git show HEAD:<path> | sha256sum` against an LF-normalised copy, or the worktree against the record copy with both converted the same way — never a bare `sha256sum` on the worktree against a stated hash, because which side carries CRLF depends on which machine wrote the record copy. **Content is identical in every case; only the line terminators differ.** The `cmp` checks at copy time were valid because both sides were then the same bytes; what changed afterwards is git's storage form, not the content.
+
+Same family as the estate's own BOM-less UTF-8 and bash-heredoc traps (`pmc-estate` §6): an invisible byte-level transform that reads as a content difference to anyone checking later. One line here saves a false tampering alarm.
