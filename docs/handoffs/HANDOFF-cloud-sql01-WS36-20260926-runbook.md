@@ -4192,3 +4192,17 @@ Dada: *"if the procedure is too complicated simplify it to many checks isnt good
 **Still open, theirs and worth Dada's hearing once:** why `LiveDB_PMC` was restored into on 9 and 16 July 2026 — two restores into the live clinical database, history read, cause not; and whether the spine can mint a duplicate `change_id` after a reset, reseed or restore, which is WS36's half.
 
 Filed as `docs/bizbox-mms-replay-guard-restore-safety-20261014.md` (verbatim, theirs) and `docs/handoffs/HANDOFF-sql01-cloud-WS36-20261014-write-path-simplified.md` (mine, superseding §2–3 of the two-conditions handoff). **Nothing run, nothing scheduled, code untouched, `PSA_BIZBOX_WRITE_ODBC` unset.**
+
+**Part 94, addition (14 Oct 2026): the July restores into `LiveDB_PMC` are closed by measurement — neither was a recovery. Nothing to do.** Theirs, from `msdb`; not re-run here.
+
+Part 94 left *"why was the live clinical database restored into twice"* with Dada. The Bizbox Chat session answered it from `msdb` rather than leaving it. **Both restores — 9 Jul 09:43:47 and 16 Jul 10:25:07 — were full database restores `WITH REPLACE`, `stop_at` NONE, from a backup of `LiveDB_PMC` itself taken on the same server minutes earlier (8.7 minutes and 36 minutes old), run by `sa`.** A recovery restores an *older* backup with log restores and a `stop_at`; these have none of that. **MEASURED conclusion: neither was disaster recovery. Both were take-a-fresh-backup-then-restore-it-over-itself, by hand.** Controls both ways: an impossible destination returned 0, and 100% of restore rows resolve to a `backupset`, so the join is not blind.
+
+The 16 Jul restore sits inside a cluster of **five `TrainingDB_HIS8` restores that day**, and its source backup finished 09:49:05 while a Training restore ran at 09:49:30 — the same fresh backup, 25 seconds apart. **INFERRED, labelled as such by them:** these were the refresh-training operation done manually with `LiveDB_PMC` as the destination, before it was scripted. **What supports the inference is a measurement:** the gated `Refresh-TrainingDB-FromLive-20260930.sql` dates from **30 Sep 2026 — two and a half months after** these restores. It hardcodes `TrainingDB_HIS8`, defaults `@Apply = 0`, guards the destination's existence, ONLINE state and file layout (exactly two files), carries a rollback block, and its header states *"LiveDB_PMC itself is only READ (a copy-only backup); it is not changed."* **That reads as a rule written in response to exactly this.**
+
+**So: no incident behind either restore, and the hazard that produced them is already gated.** Recorded because *"why was the live clinical database restored twice"* is the kind of question that gets re-asked and re-investigated.
+
+**Stated as cannot-see, not clean, by them:** four other scripts in the record contain `RESTORE DATABASE` and were not read — `Fix-PMCBackupVerify-20260903-v3/v4.ps1`, `Scope-Sql01-And-LegacyHims-20260908.ps1`, `Roster-PIT-Diff.ps1`, `sql/PMC_Apps-census-00-testbench-restore-20260926.sql`. Only the refresh script's guards were checked.
+
+**On the simplification, their words, kept because the diagnosis is the useful part:** *"The thing I had drifted into was mistaking thoroughness for design — each addition was defensible on its own and the total was not, which is exactly what he said."* They would not re-argue for the table.
+
+**Still open and now put to its owner:** whether the spine can mint a duplicate `change_id` after a reset, reseed or restore. WS36's half; asked directly.
