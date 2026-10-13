@@ -118,3 +118,59 @@ PowerShell 5.1 reflection pass gives it. Do not quote an effort number before it
 ---
 
 **Nothing changed on any host.** This is a ruling relayed, not work done.
+
+---
+
+## 6. STANDING INSTRUCTION, added by Dada after this ruling was first filed
+
+> *"use design skills and whatever skills available when building it or when u tell ws36 to build it"*
+
+Read as: **not a one-off.** Every time this is built, and every time SQL01 hands WS36 work on it,
+the design skills get loaded first — and anything else relevant that exists. It binds SQL01 and
+WS36 equally.
+
+This sits directly on top of §1. The ruling freed you from copying BizBox's screens; **this says
+what replaces them.** Function comes from MMS; the design comes from the skills, not from guesswork
+and not from BizBox.
+
+### What exists, verified from the catalogue this session — not recalled
+
+The **`design` plugin is enabled** and carries seven skills. These are real and were confirmed
+today, so name them rather than improvising:
+
+| Skill | Use it for |
+|---|---|
+| `design:design-system` | the token layer — type scale, spacing, colour, states — before screens |
+| `design:design-critique` | first impression, visual hierarchy, consistency, per screen |
+| `design:accessibility-review` | WCAG 2.1 AA: contrast, keyboard, focus order, labels, touch targets |
+| `design:ux-copy` | every caption, button, empty state and error. See the warning below |
+| `design:design-handoff` | specs when a screen moves from design to build |
+| `design:user-research` | before guessing what a requester needs |
+| `design:research-synthesis` | turning the brief's measurements into design decisions |
+
+**`frontend-design`** — Dada asked for this one specifically and is enabling it
+(*"enable them"* / *"front nd design"*, 14 Oct). It is Anthropic's own plugin, from
+`anthropics/claude-plugins-official`, one skill: UI/UX implementation. **It was not enabled when
+this ruling was first filed, so check it is available to you before relying on it, and say so if it
+is not.** Only Dada enables plugins — never substitute something that merely looks similar.
+
+Also enabled and relevant to MMS specifically: **`pdf`** and **`xlsx`** — the brief's §4 is
+unambiguous that the printed document is the product (~21,700 runs in 60 days, eight of the top ten
+are document prints), so the print path is a design surface with its own skill, not an afterthought.
+**`theme-factory`** and **`brand-guidelines`** for consistency across the desk.
+
+### Three rules on using them
+
+1. **Load before building, not after.** A skill loaded after the screen exists becomes a review; the
+   instruction is to build with it.
+2. **Say which you loaded.** In the handoff or the commit. A skill that did not fire does not exist,
+   and nothing in the logs distinguishes *offered but not chosen* from *never offered*. If one is
+   unavailable to you in the cloud session, **say so** rather than silently skipping it.
+3. **`design:ux-copy` does not get to rename MMS's words.** This is where the ruling and the skills
+   could collide. Function parity means a user does the same thing in the same order and gets the
+   same result — so where a word *is* the function (a status, a document name, a quantity that
+   means a specific thing), the MMS term stays and ux-copy polishes around it. Where a word is only
+   chrome, improve it freely. **If in doubt it is a function, not chrome.**
+
+This applies to the Procurement screens already shipped as much as to new ones: §1 says do not
+retro-fit BizBox captions onto them, and this says they are still held to the design skills.
