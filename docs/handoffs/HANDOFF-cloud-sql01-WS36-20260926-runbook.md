@@ -4499,3 +4499,5 @@ Dada, looking at Procurement › Purchase orders on the desk: *"this screen or g
 **Order revised so he sees it change — my reading, his to reorder:** Purchase Orders list + document (what he is looking at) → Receiving → Stock Requisition → the module menu with RBAC per module (Part 99) → Expense Requisition and the rest in volume order → the review's minor five. RBAC is not dropped; it moves behind the first screens because he is judging by the screen.
 
 Nothing on the host changes for this; it is all WS36's.
+
+**Part 102, addition (14 Oct 2026): the 73 negative stock balances are with Dada and the Bizbox Chat session.** Dada: *"ill talk to bizbox chat abut the 73 negative stock balances leave it with me"*. SQL01 holds nothing on it: `vw_stock_on_hand` stays as built (derived, cancelled excluded, negatives shown as the ledger has them), nothing is flagged or floored on the desk, and no message goes to the Bizbox Chat session from here. One owner.
