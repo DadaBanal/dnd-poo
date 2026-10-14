@@ -405,7 +405,9 @@ def make_app(db_path: str, *, config: Config | None = None, clock=datetime.now):
             request = Request.from_environ(environ)
             response = _route(conn, request, config, clock())
         except HttpError as exc:
-            response = Response(exc.status, f"<h1>{exc.status}</h1><p>{exc.message}</p>")
+            from . import templates
+            response = Response(exc.status, templates.error_page(
+                exc.status, exc.message, requester=bool(request and config.is_portal_host(request))))
         finally:
             db.close(conn)
             db.set_source(None)           # the request's audit source never outlives it
@@ -436,7 +438,7 @@ def _route(conn, request: Request, config: Config, now: datetime) -> Response:
         if request.path == "/":
             return redirect("/my")
         if not _portal_path(request.path):
-            return Response("404 Not Found", "<h1>404 Not Found</h1><p>No such page.</p>")
+            raise HttpError("404 Not Found", "No such page.")
 
     # The Employee Portal door has its own Origin rule and its own answers; it
     # is routed before the desk's Origin check, like the API, and answers 404
@@ -463,8 +465,7 @@ def _route(conn, request: Request, config: Config, now: datetime) -> Response:
             public = (o.scheme.lower() + "://" + _norm_netloc(o.scheme.lower(), o.netloc)
                       ) in config.public_origins
             if not (same_host or public):
-                return Response("403 Forbidden", "<h1>403 Forbidden</h1>"
-                                "<p>This form was posted from another site.</p>")
+                raise HttpError("403 Forbidden", "This form was posted from another site.")
 
     # The two doors that do not require an established identity.
     from . import templates
@@ -475,8 +476,7 @@ def _route(conn, request: Request, config: Config, now: datetime) -> Response:
     if request.path in ("/entra/start", "/entra/callback") and request.method == "GET":
         from . import entra
         if not config.entra_configured:
-            return Response("404 Not Found", "<h1>404</h1><p>Entra sign-in is not configured "
-                            "on this desk.</p>")
+            raise HttpError("404 Not Found", "Entra sign-in is not configured on this desk.")
         if request.path == "/entra/start":
             return entra.start(request, config)
         return entra.callback(conn, request, config, now)
@@ -496,7 +496,8 @@ def _route(conn, request: Request, config: Config, now: datetime) -> Response:
             next_url = request.query.get("next", "/")
             return Response(body=templates.login_page(
                 entra_configured=config.entra_configured, windows_domain=config.windows_domain,
-                next_url=_portal_next(next_url) if portal else next_url, requester=portal))
+                next_url=_portal_next(next_url) if portal else next_url, requester=portal,
+                door=request.query.get("door", "")))
         # Anything else, unauthenticated, becomes the sign-in page with a 401 so
         # a script gets a status and a browser gets a form.
         return Response("401 Unauthorized", templates.login_page(
@@ -531,7 +532,10 @@ def _route(conn, request: Request, config: Config, now: datetime) -> Response:
             from .. import live
             live.seen(user.id)
     conn.commit()
-    return router.dispatch(ctx)
+    try:
+        return router.dispatch(ctx)
+    except HttpError as exc:                       # the error in the desk's chrome, with the person's own bar
+        return Response(exc.status, templates.error_page(exc.status, exc.message, user=user))
 
 
 # What the portal host answers. Everything else there is a 404 before identity
@@ -572,11 +576,13 @@ def _do_login(conn, request: Request, config: Config, now: datetime, *,
     except auth.AuthConfigError as exc:
         return Response("401 Unauthorized", templates.login_page(
             entra_configured=config.entra_configured, windows_domain=config.windows_domain,
-            error=str(exc), next_url=next_url, requester=config.is_portal_host(request)))
+            error=str(exc), next_url=next_url, requester=config.is_portal_host(request),
+            door=door))
     except auth.Unauthenticated as exc:
         return Response("401 Unauthorized", templates.login_page(
             entra_configured=config.entra_configured, windows_domain=config.windows_domain,
-            error=str(exc), next_url=next_url, requester=config.is_portal_host(request)))
+            error=str(exc), next_url=next_url, requester=config.is_portal_host(request),
+            door=door))
     token = auth.open_session(user, config.session_secret)
     # Never redirect an open session to an absolute or off-site URL.
     if not next_url.startswith("/"):

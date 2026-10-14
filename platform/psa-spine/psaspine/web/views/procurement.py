@@ -1097,9 +1097,10 @@ def _movements(ctx):
               f"All · {sum(n for _, n in buckets)}</a>"
               + "".join(f"<a class='{'on' if bucket == b else ''}' href='/procurement?{urllib.parse.urlencode({kk: vv for kk, vv in (keep | {'bucket': b}).items() if vv and kk != 'kind'})}'>"
                         f"{t.esc(b)} · {n}</a>" for b, n in buckets))
-    chips = "".join(f"<a class='{'on' if kind.upper() == k else ''}' href='/procurement?{urllib.parse.urlencode({kk: vv for kk, vv in (keep | {'kind': k}).items() if vv})}'>{_chip_label(k, w)} · {n:,}</a>"
+    # one All (SQL01's review of 7d037f5): the kind row filters within the bucket; a chosen kind's chip lets go of it
+    chips = "".join(f"<a class='{'on' if kind.upper() == k else ''}'{' aria-current=true' if kind.upper() == k else ''} href='/procurement?"
+                    f"{urllib.parse.urlencode({kk: vv for kk, vv in (keep | {'kind': '' if kind.upper() == k else k}).items() if vv})}'>{_chip_label(k, w)} · {n:,}</a>"
                     for k, w, n in _kind_chips(kinds))
-    allchip = f"<a class='{'on' if not kind else ''}' href='/procurement?{urllib.parse.urlencode({kk: vv for kk, vv in keep.items() if kk != 'kind'})}'>All · {sum(n for _, _, n in kinds)}</a>"
     trs = "".join(
         f"<tr><td>{t.esc(r['moved_on'] or '')}</td><td>{finance._ref_link('product', r['item_ref'], AREA)}</td><td>{t.esc(r['item_name'] or '')}</td>"
         f"<td>{t.esc(r['warehouse_name'] or r['warehouse_ref'] or '')}</td><td>{move_label(r['kind'])}</td>"
@@ -1116,17 +1117,17 @@ def _movements(ctx):
             + (f"<input type=hidden name=bucket value='{t.esc(bucket)}'>" if bucket else "")
             + "<div style='flex:0 0 auto'><button class=ghost type=submit>Show</button></div></form>"
             f"<div class='stabs buckets' style='margin:10px 0 0' aria-label='Bucket'>{bchips}</div>"
-            f"<div class=stabs style='margin:6px 0 0' aria-label='Movement kind'>{allchip}{chips}</div>"
-            "<p class=why>Every movement of stock BizBox recorded inside the window: what came in, what went out, and the balance after, "
-            "with the document that moved it. The desk holds "
-            + (f"{t.esc(cov['oldest'])} to {t.esc(cov['today'])}, {cov['days']} day{'s' if cov['days'] != 1 else ''}" if cov["oldest"] else "nothing yet")
-            + "; older movements are in the MMS reports."
-            + (f" {cov['future']} movement{'s' if cov['future'] != 1 else ''} BizBox dated after today {'are' if cov['future'] != 1 else 'is'} not in any window."
-               if cov["future"] else "") + "</p>"
+            f"<div class=stabs style='margin:6px 0 0' aria-label='Movement kind'>{chips}</div>"
             "<div class=tablewrap><table class='compact pgrid'><thead><tr><th>Date</th><th>Item</th><th>Name</th><th>Warehouse</th>"
             "<th>Movement</th><th>Document</th><th class=num>In</th><th class=num>Out</th><th class=num>Balance</th></tr></thead><tbody>"
             + (trs or "<tr><td colspan=9 class=muted>No movement matches inside that window.</td></tr>")
-            + "</tbody></table></div>" + _pager(keep, page_no, total, "movement(s)") + "</div>")
+            + "</tbody></table></div>" + _pager(keep, page_no, total, "movement(s)")
+            # Part 102: the paragraph goes; one sentence stays, as a footnote: what the desk holds
+            + "<p class='why foot'>The desk holds "
+            + (f"{t.esc(cov['oldest'])} to {t.esc(cov['today'])}, {cov['days']} day{'s' if cov['days'] != 1 else ''}" if cov["oldest"] else "nothing yet")
+            + "; older movements are in the MMS reports."
+            + (f" {cov['future']} movement{'s' if cov['future'] != 1 else ''} BizBox dated after today {'are' if cov['future'] != 1 else 'is'} not in any window."
+               if cov["future"] else "") + "</p></div>")
     return Response(body=t.page("Procurement · Movements", body, user=ctx.user, active=MENU_KEY['movement']))
 
 

@@ -314,6 +314,17 @@ def fact_text(rec, field: str, labels: dict) -> str:
     return str(v) if v not in (None, "") else "—"
 
 
+def _named(lab: str, ctl: str, f: str, suffix: str = "") -> str:
+    """A header field with its label tied to its control (SQL01's review of
+    7d037f5: warehouse_src, warehouse_dst and doc_date were unnamed - WCAG
+    3.3.2 and 4.1.2). A read-only value has no control to name."""
+    fid = f"hd-{f}"
+    named, n = re.subn(r"^(<(?:select|input)\b[^>]*?)>", rf"\1 id={fid}>", ctl, count=1)
+    if not n:
+        return f"<div><label>{t.esc(lab)}{suffix}</label>{ctl}</div>"
+    return f"<div><label for={fid}>{t.esc(lab)}{suffix}</label>{named}</div>"
+
+
 def pickers(ctx, kind: str, rec, editable: dict, posted: dict, labels: dict) -> str:
     """The header's fields in one row, as the draft has them: a control for
     each field a person may change (prefilled with BizBox's value) in Edit
@@ -324,7 +335,7 @@ def pickers(ctx, kind: str, rec, editable: dict, posted: dict, labels: dict) -> 
             ctl = finance._edit_control(ctx, kind, f, editable[f], rec[f], posted.get(f"e:{f}"))
         else:
             ctl = f"<div class=ro>{t.esc(fact_text(rec, f, labels))}</div>"
-        out.append(f"<div><label>{t.esc(lab)}</label>{ctl}</div>")
+        out.append(_named(lab, ctl, f))
     return f"<div class=pickers>{''.join(out)}</div>"
 
 
@@ -831,7 +842,7 @@ def new_page(ctx, kind: str, *, posted: dict | None = None, dialog: str = "", er
                        fallback=f"<input name={f}{' required' if required else ''} maxlength=400 value='{t.esc(g(f))}' placeholder='{t.esc(bizbox.LIST_WORDS.get(bizbox.CHOICE_LIST.get((kind, f), ''), ''))}'>")
             if f == onhand_side(kind):                      # the warehouse whose stock the rows show
                 ctl = ctl.replace(f"name={f}", f"name={f} data-onhand", 1)
-        fields.append(f"<div><label>{t.esc(lab)}{' *' if required else ''}</label>{ctl}</div>")
+        fields.append(_named(lab, ctl, f, " *" if required else ""))
     items = "".join(f"<option value='{t.esc(p['ext_ref'])}'>{t.esc(p['name'])}</option>" for p in bizbox.pickable_items(ctx.conn))
     rows = "".join(
         f"<tr><td class=muted>{i}</td>"

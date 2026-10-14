@@ -2580,7 +2580,25 @@ class WebWSGITest(unittest.TestCase):
     def test_the_app_is_pep3333_conformant_when_unauthenticated(self):
         status, _, body = self._call("GET", "/")
         self.assertTrue(status.startswith("401"))
-        self.assertIn("Break-glass", body)
+        self.assertIn("<h1 id=si-title>Sign in</h1>", body)
+        self.assertNotIn("Break-glass", body)        # the emergency path's words are not every user's first sight
+
+    def test_the_sign_in_page_is_built_to_the_vitals_tokens_and_names_both_fields(self):
+        """SQL01's review of 7d037f5: the login was the old desk, and both fields
+        were unnamed textboxes - WCAG 3.3.2 and 4.1.2 on the first form anyone meets."""
+        import re
+        _, _, body = self._call("GET", "/login")
+        self.assertIn("class=vitals", body)
+        for field, name in (("si-user", "username"), ("si-pass", "password")):
+            self.assertIn(f"<label for={field}>", body)
+            self.assertRegex(body, rf"<input id={field} name={name}\b")
+        self.assertEqual(len(re.findall(r"<label for=", body)), 2)
+        self.assertNotIn("role=menu", body)            # no menu of pages the visitor cannot open yet
+        self.assertNotIn("Break-glass", body)
+        # a refused break-glass try comes back to the break-glass card, not the plain one
+        status, _, body = self._call("POST", "/login", form={"door": "local", "username": "x", "password": "y"})
+        self.assertTrue(status.startswith("401"), status)
+        self.assertIn("<label for=si-pass>", body)
 
     def test_a_break_glass_login_opens_a_session(self):
         conn = db.connect(self.db_path)
@@ -6036,7 +6054,7 @@ class MachineApiTest(unittest.TestCase):
         """One leaked machine credential must not become a user of the UI."""
         status, _, body = self._api("GET", "/", token=self.token)
         self.assertTrue(status.startswith("401"))
-        self.assertIn("Break-glass", body)
+        self.assertIn("<h1 id=si-title>Sign in</h1>", body)
 
     # ---------------------------------------------------------------- creating
 
@@ -11792,7 +11810,11 @@ class EntraSignInTest(unittest.TestCase):
     def test_the_login_page_offers_entra_when_a_tenant_is_configured(self):
         status, _, body = self._call("GET", "/login")
         self.assertIn("/entra/start", body)
-        self.assertIn("Break-glass", body)
+        self.assertNotIn("Break-glass", body)        # SQL01's review of 7d037f5: plain Sign in for everyone
+        self.assertIn('href="/login?door=local&amp;next=/"', body)    # the door is one muted line away
+        _, _, body = self._call("GET", "/login", query="door=local")
+        self.assertIn("Break-glass sign in", body)
+        self.assertIn('name="door" value="local"', body)
 
     def test_start_sends_the_browser_to_the_tenant_with_pkce_and_a_signed_flight(self):
         location, cookie = self._start()
@@ -11968,7 +11990,9 @@ class WindowsSignInTest(unittest.TestCase):
 
     def test_the_page_offers_the_windows_account_first_and_break_glass_last(self):
         status, _, body = self._call("GET", "/login")
-        self.assertLess(body.index("Your Windows account"), body.index("Break-glass"))
+        self.assertLess(body.index("Windows account"), body.index("Other ways to sign in"))
+        self.assertIn('name="door" value="windows"', body)
+        self.assertNotIn('name="door" value="local"', body)   # 15 Oct: the break-glass door is its own route
         self.assertIn("PMCNE", body)
         self.assertNotIn("/entra/start", body)          # no tenant configured
 
@@ -18400,8 +18424,8 @@ class CwShapeTest(unittest.TestCase):
         # Edit Mode: the pickers and the lines are controls; three rows take an item BizBox has
         _, _, page = self._call("GET", "/procurement/purchase_order", query="ref=PO-1&edit=1", cookie=self.alice)
         for words in ("› PO-1 › Approved › editing</p>", "Done editing", "<form method=post action='/procurement/purchase_order/review' class=fields data-record>",
-                      "<label>Vendor</label><select name='e:vendor' data-was='Vendor A'", "<input type=date name='e:ordered_on' value='2026-09-02'",
-                      "<label>Status</label><select name='e:status' data-was='Approved'",
+                      "<label for=hd-vendor>Vendor</label><select name='e:vendor' data-was='Vendor A'", "<input type=date name='e:ordered_on' value='2026-09-02'",
+                      "<label for=hd-status>Status</label><select name='e:status' data-was='Approved'",
                       "name='l:L-1:description' maxlength=400 value='Toner black' data-was='Toner black'",
                       "name='l:L-1:quantity' value='2' data-was='2'", "name='l:L-1:unit_cost' value='500' data-was='500'",
                       "name='n1_product_ref' list=docitems", "name='n3_unit_cost'", "<datalist id=docitems><option value='IT-1'>Toner</option></datalist>",
@@ -19486,7 +19510,7 @@ class StockAndMovementsTest(unittest.TestCase):
         # Edit Mode, for Propose: the header's fields are controls; the lines are not (a received quantity is a movement)
         _, _, page = self._call("GET", "/procurement/invoice", query="ref=INV-1&edit=1", cookie=self.root)
         for words in ("› INV-1 › Posted › editing</p>", "<form method=post action='/procurement/invoice/review' class=fields data-record>",
-                      "<select name='e:status' data-was='Posted'", "<input type=date name='e:due_on' value='2026-10-10' data-was='2026-10-10'>",
+                      "<select name='e:status' data-was='Posted'", "<input type=date name='e:due_on' value='2026-10-10' data-was='2026-10-10' id=hd-due_on>",
                       "name='e:supplier_ref' value='SI-1' data-was='SI-1'", "name=reason maxlength=400 required", " Save</button>"):
             self.assertIn(words, page, words)
         for absent in ("name='l:", "n1_product_ref", "Add item: type to search"):
@@ -19602,7 +19626,13 @@ class StockAndMovementsTest(unittest.TestCase):
             self.assertIn(words, page, words)
         for absent in ("<td>CS-7</td>", "<td>ST-2</td>", "Charged <span class='muted code'>CH</span>"):
             self.assertNotIn(absent, page, absent)
-        self.assertIn("All · 2</a>", page.split("aria-label='Movement kind'", 1)[1])                   # the kinds row counts the bucket
+        kinds_row = page.split("aria-label='Movement kind'", 1)[1].split("</div>", 1)[0]
+        self.assertNotIn("All · ", kinds_row)                       # one All, on the bucket row (SQL01's review of 7d037f5)
+        self.assertIn("Returned to supplier <span class='muted code'>PR</span> · 1", kinds_row)    # the kinds row counts the bucket
+        self.assertNotIn("Every movement of stock BizBox recorded", page)                          # Part 102: the paragraph goes
+        self.assertIn("<p class='why foot'>The desk holds ", page)                                  # one sentence stays, as a footnote
+        _, _, page = self._call("GET", "/procurement", query="tab=movement&days=90&bucket=Receipts&kind=PR", cookie=self.alice)
+        self.assertIn("<a class='on' aria-current=true href='/procurement?tab=movement&bucket=Receipts&days=8'>Returned to supplier", page)   # a chosen kind lets go
         _, _, page = self._call("GET", "/procurement", query="tab=movement&days=90&bucket=Issuances&kind=CH", cookie=self.alice)
         self.assertIn("<td>CS-7</td>", page)
         self.assertNotIn("<td>RR-1</td>", page)
@@ -19796,9 +19826,10 @@ class StockAndMovementsTest(unittest.TestCase):
         # the form: both departments are warehouses BizBox has (SQL01 and Bizbox Chat, measured: FK_mscWarehouseSRC and
         # FK_mscWarehouseDST); no Center (FK_psDatacenter is the patient-name table, never read); on hand at the issuing side
         _, _, page = self._call("GET", "/procurement/stock_req/new", cookie=self.alice)
-        for words in ("<h1>Stock Requisition Details</h1>", "<label>Issuing Department *</label><select name=warehouse_src data-onhand required>",
-                      "<label>Requesting Department *</label><select name=warehouse_dst required>",
-                      "<option value='W1'>Central store</option>", "<option value='W2'>Ward 3 store</option>", "<input type=date name=doc_date value='2026-09-17'",
+        for words in ("<h1>Stock Requisition Details</h1>", "<label for=hd-warehouse_src>Issuing Department *</label><select name=warehouse_src data-onhand required id=hd-warehouse_src>",
+                      "<label for=hd-warehouse_dst>Requesting Department *</label><select name=warehouse_dst required id=hd-warehouse_dst>",
+                      "<option value='W1'>Central store</option>", "<option value='W2'>Ward 3 store</option>",
+                      "<label for=hd-doc_date>Requisition Date</label><input type=date name=doc_date value='2026-09-17' id=hd-doc_date>",
                       "name='line1_product_ref' list=docitems", "name='line8_quantity'", "<th class=num>Unit Price (BizBox purchase price)</th>",
                       "<td class=num><span class=muted>at save</span></td>",
                       "On hand at source <span class=better>BETTER</span>", "var wh=f.querySelector('[data-onhand]')",

@@ -597,8 +597,10 @@ dialog.tedlg .teform{padding:16px 18px} .tehead{display:flex;gap:14px;align-item
 @keyframes clockglow{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 45%,transparent)}50%{box-shadow:0 0 0 6px color-mix(in srgb,var(--accent) 0%,transparent)}}
 a.backbtn{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--ink2);text-decoration:none;margin:0 0 6px;padding:3px 10px 3px 6px;border:1px solid var(--line);border-radius:999px} a.backbtn:hover{color:var(--ink);border-color:var(--ink2)} a.backbtn .ic{width:15px;height:15px}
 dialog.viewer{width:min(96vw,1200px);max-width:none;height:min(92vh,900px);max-height:none;padding:0;border:0;border-radius:var(--r);background:var(--card);color:var(--fg);overflow:hidden}
-dialog.viewer:not([open]){display:none} dialog.viewer::backdrop{background:#0E1520;-webkit-backdrop-filter:none;backdrop-filter:none}
-dialog.viewer{box-shadow:0 2px 6px rgba(22,32,43,.10)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+dialog.viewer:not([open]){display:none} dialog.viewer::backdrop{background:rgba(14,21,32,.85);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){dialog.viewer::backdrop{background:#0E1520}}
+@media (prefers-reduced-transparency:reduce){dialog.viewer::backdrop{background:#0E1520;-webkit-backdrop-filter:none;backdrop-filter:none}}
+dialog.viewer{box-shadow:0 12px 32px rgba(0,0,0,.22)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
 dialog.viewer .vbar .iconbtn svg,dialog.viewer .vbar .ic{width:16px;height:16px}
 dialog.viewer .vsize,dialog.viewer .vpos{font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums}
 dialog.viewer [data-vprev][hidden],dialog.viewer [data-vnext][hidden]{display:none}
@@ -1362,14 +1364,18 @@ tr.popen td{padding-top:0;border-top:0}
 
 /* ---- PMC Vitals Console (14 Oct 2026, SQL01's brief: "build the chrome to PMC Vitals Console") ----
    The house design system, from its project/tokens.json (px, not the Power BI points), on the Procurement
-   pages: dark chrome as the constant, white cards on canvas, one shadow, no glass or blur, Grape owns
-   selection, every numeric column in Consolas at 13px right-aligned, uppercase only on labels and column
+   pages: dark chrome as the constant, white cards on canvas, Grape owns selection, every numeric column in Consolas at 13px right-aligned, uppercase only on labels and column
    headers, no icon over 16px. Scoped by body.vitals so the rest of the desk and its personal themes are
-   unchanged until Dada decides otherwise. Values are the design system's tokens, swapped per theme. */
+   unchanged until Dada decides otherwise. Values are the design system's tokens, swapped per theme.
+   Version 7 (15 Oct 2026, Dada: "lift it"): glass - chrome.glass behind a glass-blur backdrop - on fixed
+   chrome and overlays only (the top bar, the menus, the keyboard card, the scrims behind the palette and the
+   viewer), never on a table, a list or a card; both fallbacks swap it for chrome.glass.solid. Three
+   elevations: shadow-card at rest, shadow-raised on a hovered link card, shadow-overlay on what floats. */
 body.vitals{--v-canvas:#F1F4F8;--v-surface:#FFFFFF;--v-sunken:#F7F9FB;--v-ink:#16202B;--v-muted:#5A6674;--v-rule:#D7DEE7;
   --v-accent:#6D3BD1;--v-accent2:#C24A12;--v-good:#0F7A3D;--v-warn:#A15C00;--v-bad:#C1122E;
   --v-chrome:#0E1520;--v-chrome-up:#131C29;--v-chrome-rule:#24334A;--v-on-dark:#FFFFFF;--v-on-dark-muted:#93A3B5;--v-rail-active:#1C2839;
-  --v-accent-on-chrome:#A98BFF;--v-shadow:0 2px 6px rgba(22,32,43,.10);
+  --v-accent-on-chrome:#A98BFF;--v-shadow:0 2px 6px rgba(22,32,43,.10);--v-shadow-raised:0 4px 12px rgba(22,32,43,.14);
+  --v-shadow-overlay:0 12px 32px rgba(0,0,0,.22);--v-glass:rgba(14,21,32,.85);--v-glass-solid:#0E1520;--v-blur:12px;--glow:transparent;--hi:transparent;
   --v-sans:"Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
   --v-mono:Consolas,"Cascadia Mono","SF Mono","Courier New",monospace;
   --canvas:var(--v-canvas);--surface:var(--v-surface);--card:var(--v-surface);--surface-2:var(--v-sunken);--surface-3:var(--v-sunken);
@@ -1381,25 +1387,53 @@ body.vitals{--v-canvas:#F1F4F8;--v-surface:#FFFFFF;--v-sunken:#F7F9FB;--v-ink:#1
   --v-muted:#93A3B5;--v-rule:#24334A;--v-accent:#A98BFF;--v-accent2:#FF9A62;--v-good:#3FCB86;--v-warn:#FFC14D;--v-bad:#FF6B6B;--on-accent:#0E1520;color-scheme:dark}}
 :root[data-theme=dark] body.vitals{--v-canvas:#0E1520;--v-surface:#131C29;--v-sunken:#182333;--v-ink:#FFFFFF;
   --v-muted:#93A3B5;--v-rule:#24334A;--v-accent:#A98BFF;--v-accent2:#FF9A62;--v-good:#3FCB86;--v-warn:#FFC14D;--v-bad:#FF6B6B;--on-accent:#0E1520;color-scheme:dark}
-/* the chrome: the top bar in chrome.deep in both themes, a 1px chrome.rule hairline, no frosting */
+/* the chrome: the top bar in chrome.glass in both themes over a 1px chrome.rule hairline */
 /* !important only where the desk's own floating glass bar and glass cards set theirs that way */
-body.vitals header.top{background:var(--v-chrome)!important;border:0!important;border-bottom:1px solid var(--v-chrome-rule)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;
+body.vitals header.top{border:0!important;border-bottom:1px solid var(--v-chrome-rule)!important;
   margin:0!important;border-radius:0!important;top:0!important;box-shadow:none!important;
   --ink:var(--v-on-dark);--ink-2:var(--v-on-dark-muted);--ink-3:var(--v-on-dark-muted);--surface-3:var(--v-rail-active);--line:var(--v-chrome-rule);
   --accent:var(--v-accent-on-chrome);color:var(--v-on-dark)}
 body.vitals header.top .brand{color:var(--v-on-dark);font-weight:600}
-body.vitals header.top .brand i{display:none}
+body.vitals header.top .brand i{display:none;box-shadow:none}
 body.vitals header.top nav button.top.on::after{left:50%;right:auto;width:20px;margin-left:-10px;height:3px;border-radius:0;bottom:-1px;background:var(--v-accent-on-chrome)}
-body.vitals header.top .panel{--ink:var(--v-ink);--ink-2:var(--v-muted);--ink-3:var(--v-muted);--surface-3:var(--v-sunken);--line:var(--v-rule);
-  --accent:var(--v-accent);color:var(--v-ink);background:var(--v-surface)!important;border:1px solid var(--v-rule)!important;box-shadow:var(--v-shadow)!important}
-body.vitals header.top .panel a.on{box-shadow:inset 3px 0 0 var(--v-accent)}
+/* the menus hang from the bar in the same glass, so their text takes the onDark inks */
+body.vitals header.top .panel{--ink:var(--v-on-dark);--ink-2:var(--v-on-dark-muted);--ink-3:var(--v-on-dark-muted);--muted:var(--v-on-dark-muted);
+  --surface-3:var(--v-rail-active);--line:var(--v-chrome-rule);--accent:var(--v-accent-on-chrome);color:var(--v-on-dark);
+  border:1px solid var(--v-chrome-rule)!important;box-shadow:var(--v-shadow-overlay)!important}
+body.vitals header.top .panel a.on{box-shadow:inset 3px 0 0 var(--v-accent-on-chrome)}
+/* glass: fixed chrome and overlays only; the solid fallback where blur is missing or unwanted */
+body.vitals header.top,body.vitals header.top nav .panel,body.vitals [popover]#keys{background:var(--v-glass)!important;
+  -webkit-backdrop-filter:blur(var(--v-blur))!important;backdrop-filter:blur(var(--v-blur))!important}
+body.vitals dialog#pal::backdrop,body.vitals dialog.viewer::backdrop{background:var(--v-glass);-webkit-backdrop-filter:blur(var(--v-blur));backdrop-filter:blur(var(--v-blur))}
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+  body.vitals header.top,body.vitals header.top nav .panel,body.vitals [popover]#keys{background:var(--v-glass-solid)!important}
+  body.vitals dialog#pal::backdrop,body.vitals dialog.viewer::backdrop{background:var(--v-glass-solid)}}
+@media (prefers-reduced-transparency:reduce){
+  body.vitals header.top,body.vitals header.top nav .panel,body.vitals [popover]#keys{background:var(--v-glass-solid)!important;
+    -webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+  body.vitals dialog#pal::backdrop,body.vitals dialog.viewer::backdrop{background:var(--v-glass-solid);-webkit-backdrop-filter:none;backdrop-filter:none}}
+body.vitals [popover]#keys{--ink:var(--v-on-dark);--ink-2:var(--v-on-dark-muted);--line-2:var(--v-chrome-rule);color:var(--v-on-dark);
+  border:1px solid var(--v-chrome-rule)!important;box-shadow:var(--v-shadow-overlay)!important}
+/* what floats but holds a list stays a flat surface, lifted by shadow-overlay */
+body.vitals .pal-box,body.vitals .ticker .tpanel,body.vitals dialog.viewer{background:var(--v-surface)!important;border:1px solid var(--v-rule)!important;
+  box-shadow:var(--v-shadow-overlay)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+/* fields: flat on the surface, a rule border, the focus ring the desk already draws */
+body.vitals input:not([type=checkbox]):not([type=radio]):not([type=range]),body.vitals select,body.vitals textarea{
+  background-color:var(--v-surface)!important;border:1px solid var(--v-rule)!important;border-radius:6px;box-shadow:none}
+:root body.vitals input:focus,:root body.vitals select:focus,:root body.vitals textarea:focus{border-color:var(--v-accent)!important;
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--v-accent) 30%,transparent)!important;outline:none}
+:root body.vitals input:not([type=checkbox]):not([type=radio]):not([type=range]):hover:not(:focus),:root body.vitals select:hover:not(:focus),
+:root body.vitals textarea:hover:not(:focus){box-shadow:none;border-color:var(--v-muted)}
+body.vitals header.top::after{display:none!important}
+body.vitals .pal-box input{border:0;border-bottom:1px solid var(--v-rule)}
 body.vitals .ic,body.vitals svg.ic{max-width:16px;max-height:16px}
 /* type: page-title 27/32 600; card titles and section labels; uppercase only on labels and column headers */
 body.vitals h1{font:600 27px/32px var(--v-sans);letter-spacing:0;color:var(--v-ink)}
 body.vitals h3{font:600 12px/16px var(--v-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--v-muted)}
-body.vitals .card,body.vitals .tile,body.vitals dialog,body.vitals .slabox{background:var(--v-surface)!important;border:1px solid var(--v-rule)!important;
+body.vitals .card,body.vitals .tile,body.vitals dialog:not(.viewer),body.vitals .slabox{background:var(--v-surface)!important;border:1px solid var(--v-rule)!important;
   border-radius:8px;box-shadow:var(--v-shadow)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
 body.vitals .card:hover{box-shadow:var(--v-shadow)!important}
+body.vitals a.card:hover,body.vitals a.tile:hover{box-shadow:var(--v-shadow-raised)!important}
 body.vitals .card,body.vitals .tile{transition:none!important}
 body.vitals tr.total td:first-child b{font-family:var(--v-sans);font-weight:600}
 body.vitals .card{padding:16px}
@@ -1412,7 +1446,26 @@ body.vitals th.num{font-family:var(--v-sans);font-size:12px}
 body.vitals td.num b,body.vitals .tot b,body.vitals .tile .n{font-family:var(--v-mono);font-variant-numeric:tabular-nums}
 body.vitals .tile .n{font-weight:700}
 body.vitals .tile .l,body.vitals .tot .l,body.vitals label{font:600 12px/16px var(--v-sans);color:var(--v-muted)}
-body.vitals .better{text-transform:uppercase;letter-spacing:.06em}
+/* BETTER is a note, not a selection: ink.muted on a surface.sunken pill (Grape owns selection only) */
+body.vitals .better{text-transform:uppercase;letter-spacing:.06em;background:var(--v-sunken);color:var(--v-muted);border:1px solid var(--v-rule)}
+/* break-glass in status.warning - the onDark value, since the bar is chrome in both themes - not Ember */
+body.vitals header.top .who .glass{color:#FFC14D}
+/* no glow anywhere: the menu words take the tick, not a halo, and the bar no shadow in the light theme */
+body.vitals header.top nav .top:hover,body.vitals header.top nav .top:focus-visible,body.vitals header.top nav .grp.open .top,
+body.vitals header.top .newbtn,body.vitals header.top .newbtn:hover{box-shadow:none!important}
+:root body.vitals header.top{box-shadow:none!important}
+/* no glow on a hovered card either: the desk's themed hover ring is out; a link card lifts to shadow-raised */
+:root[data-theme] body.vitals .card:hover,:root[data-theme] body.vitals .tile:hover{box-shadow:var(--v-shadow)!important}
+:root[data-theme] body.vitals a.card:hover,:root[data-theme] body.vitals a.tile:hover{box-shadow:var(--v-shadow-raised)!important}
+/* at 800px the menu keeps its width and the primary action its words; the account block gives way first:
+   the name truncates, the gaps close, the shortcut hint goes (SQL01's review of 7d037f5) */
+body.vitals header.top nav.mega{flex:1 0 auto}
+body.vitals header.top nav.mega>a.newbtn{flex-shrink:0;white-space:nowrap}
+body.vitals header.top .who{flex:0 1 auto;min-width:0}
+body.vitals header.top .who>*{flex-shrink:0}
+body.vitals header.top .who .name{flex-shrink:1;min-width:2ch;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:1100px){body.vitals header.top .who{gap:4px;margin-left:6px}body.vitals header.top .who .kbd,body.vitals header.top .who .sep{display:none}}
+body.vitals table th{white-space:nowrap}
 body.vitals .stabs a.on,body.vitals .chip.on{background:var(--v-accent);color:var(--on-accent)}
 body.vitals main h1:not(.sumline){background:none!important;-webkit-background-clip:initial!important;background-clip:initial!important;
   color:var(--v-ink)!important;-webkit-text-fill-color:currentColor}
@@ -1429,6 +1482,27 @@ body.vitals .ticker .tlabel{font:600 13px/20px var(--v-sans);color:var(--v-on-da
 body.vitals .ticker .btn{font-size:13px;padding:4px 10px}
 body.vitals .ticker .iconbtn{color:var(--v-on-dark-muted)}
 body.vitals main::before,body.vitals::before,body.vitals::after{display:none!important}
+/* the error page: the same card, the code small and muted, the sentence, a way back */
+body.vitals .errpage{max-width:560px;margin:clamp(24px,8vh,80px) auto 32px;display:flex;flex-direction:column;gap:8px}
+body.vitals .errpage .errcode{margin:0;font:600 12px/16px var(--v-mono);letter-spacing:.06em;color:var(--v-muted)}
+body.vitals .errpage h1,body.vitals .errpage p{margin:0}
+body.vitals .errpage .errback{margin-top:8px}
+/* the sign-in page: one card on the canvas under the glass bar; the break-glass note in status.warning */
+body.vitals .signin{display:flex;justify-content:center;padding-block:clamp(24px,10vh,96px) 32px}
+body.vitals .signcard{width:min(400px,100%);padding:28px 28px 20px!important;display:flex;flex-direction:column;gap:12px}
+body.vitals .signcard h1{margin:0}
+body.vitals .signcard .sub{margin:0;color:var(--v-muted)}
+body.vitals .signcard .glassnote{color:var(--v-warn);font-weight:600}
+body.vitals .signcard form.stack{display:flex;flex-direction:column;gap:14px;margin:4px 0 0}
+body.vitals .signcard .field{display:flex;flex-direction:column;gap:6px}
+body.vitals .signcard .field label{color:var(--v-ink)}
+body.vitals .signcard input{width:100%;min-height:36px;font:14px/20px var(--v-sans)}
+body.vitals .signcard button[type=submit],body.vitals .signcard .btn.wide{width:100%;min-height:36px;justify-content:center;font-weight:600}
+body.vitals .signcard .or{display:flex;align-items:center;gap:10px;margin:2px 0;color:var(--v-muted);font-size:12px}
+body.vitals .signcard .or::before,body.vitals .signcard .or::after{content:"";flex:1;border-top:1px solid var(--v-rule)}
+body.vitals .signcard .alt{margin:4px 0 0;padding-top:12px;border-top:1px solid var(--v-rule);font-size:12px;text-align:center}
+body.vitals .signcard .alt a{color:var(--v-muted)}
+body.vitals .signcard .banner.err{margin:0}
 """.replace("DARKTOKENS", """
   --canvas:#080b14; --surface:#0f1320; --surface-2:#141a29; --surface-3:#1b2234;
   --ink:#eef1f8; --ink-2:#b0b8c9; --ink-3:#7f889b; --line:#1e2638; --line-2:#2b3551;
@@ -3171,7 +3245,7 @@ def _vitals(active: str) -> bool:
     return active in VITALS_KEYS
 
 
-VITALS_KEYS = frozenset({"procurement", "popurchreq", "popo", "porr", "postockreq", "poexpreq", "poissue", "poexpissue", "pocount",
+VITALS_KEYS = frozenset({"signin", "error", "procurement", "popurchreq", "popo", "porr", "postockreq", "poexpreq", "poissue", "poexpissue", "pocount",
                          "poitems", "postock", "pomoves", "powh", "podrugs", "poreports", "pochanges"})
 
 
@@ -3316,6 +3390,8 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
             for g, label, pages in groups)
         nav += (f'<div class="grp all"><button type=button class="top" aria-haspopup=true aria-expanded=false>{icon("rows")}'
                 f'<span class=lbl>Menu</span></button><div class="panel full" role=menu aria-label="Menu">{cols}</div></div>')
+    if active == "signin":                        # the sign-in page: the bar and the brand, no menu to a page it cannot open
+        nav = ""
     nav += (f'<a class="newbtn" href="/ticket/new" title="New ticket (n)">{icon("plus")}<span class=lbl>New ticket</span></a>'
             if user is not None and not requester else "")
     who = ""
@@ -3338,7 +3414,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
     if user is not None and not requester:
         palette = (
             '<dialog id="pal" aria-label="Commands"><div class="pal-box">'
-            '<input id="pal-q" autocomplete="off" spellcheck="false" placeholder="Go to a page, open PMC-000123, or search this board…">'
+            '<input id="pal-q" aria-label="Search" autocomplete="off" spellcheck="false" placeholder="Go to a page, open PMC-000123, or search this board…">'
             '<ul id="pal-list"></ul><div class=hint><span><span class=kbd>↑↓</span> move</span>'
             '<span><span class=kbd>↵</span> open</span><span><span class=kbd>esc</span> close</span></div></div></dialog>'
             '<div id="keys" popover><b>Keyboard</b><dl>'
@@ -3378,41 +3454,67 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         f"{palette}<template id=viewertpl>{viewer_html()}</template><script>{SCRIPT}</script></body></html>")
 
 
+def error_page(status: str, message: str = "", *, user=None, requester: bool | None = None) -> str:
+    """One error template in the desk's chrome (SQL01's review of 7d037f5: a
+    403 or 404 was a bare heading in the browser's serif, no landmarks, no way
+    back). The bar, the sentence the view already says, and a way back."""
+    code, _, words = status.partition(" ")
+    words = words or "Error"
+    if requester is None:
+        requester = user is not None and getattr(user, "requester", False)
+    home = ("/my", "Back to my requests") if requester else ("/", "Back to the board")
+    body = (f'<section class="errpage card" aria-labelledby=err-title><p class=errcode>{esc(code)}</p>'
+            f'<h1 id=err-title>{esc(words)}</h1>'
+            + (f'<p>{esc(message)}</p>' if message else "")
+            + f'<p class=errback><a class="btn ghost" href="{home[0]}">{home[1]}</a></p></section>')
+    return page(words, body, user=user, requester=requester, active="error")
+
+
 def login_page(*, entra_configured: bool, error: str = "", next_url: str = "/",
-               windows_domain: str | None = None, requester: bool = False) -> str:
+               windows_domain: str | None = None, requester: bool = False, door: str = "") -> str:
     """The sign-in page. On the portal host it wears the requester's brand
     (PMC Requests), so a ward's first sight of its own address is not the
-    product's name (SQL01, part 14)."""
-    err = f'<div class="banner err">{esc(error)}</div>' if error else ""
-    windows = ""
-    if windows_domain:
-        windows = (
-            '<div class="card"><h1>Sign in</h1>'
-            f'<p class="sub">Your Windows account, the one you use on your PC ({esc(windows_domain)}).</p>'
-            '<form class="stack" method="post" action="/login">'
-            '<input type="hidden" name="door" value="windows">'
-            f'<input type="hidden" name="next" value="{esc(next_url)}">'
-            "<label>Username<input name=username autocomplete=username autofocus></label>"
-            "<label>Password<input name=password type=password "
-            "autocomplete=current-password></label>"
-            "<button type=submit>Sign in</button></form></div>")
-    entra = ""
-    if entra_configured:
-        entra = (
-            '<div class="card"><h1>Sign in with Entra</h1>'
-            '<p class="sub">The normal way in. Your organisation account.</p>'
-            f'<a class="btn" href="/entra/start?next={esc(next_url)}">Continue with Entra</a>'
-            "</div>")
-    glass = (
-        '<div class="card"><h1>Break-glass sign in</h1>'
-        '<p class="sub">For the on-call rota, when the WAN is down. Every use is '
-        "audited.</p>"
-        '<form class="stack" method="post" action="/login">'
-        '<input type="hidden" name="door" value="local">'
-        f'<input type="hidden" name="next" value="{esc(next_url)}">'
-        f"<label>Username<input name=username autocomplete=username{'' if windows_domain else ' autofocus'}></label>"
-        "<label>Password<input name=password type=password "
-        "autocomplete=current-password></label>"
-        "<button type=submit>Sign in</button></form></div>")
-    body = err + windows + entra + glass
-    return page("Sign in", body, requester=requester)
+    product's name (SQL01, part 14).
+
+    15 Oct 2026 (SQL01's review of 7d037f5; Dada: "we can do better on the
+    login screen"): one plain *Sign in* for everyone, built to the PMC Vitals
+    Console tokens, both fields named by a <label for>. The break-glass door's
+    wording - the on-call rota's, when the WAN is down - shows only on its own
+    route (`/login?door=local`) or after a sign-in through Microsoft fails;
+    the ordinary page links to it in one muted line. Where the desk has no
+    Windows or Entra sign-in, the local door is the only one and is just
+    *Sign in*."""
+    other = bool(windows_domain or entra_configured)   # is there a door besides the local one
+    glass = door == "local" and other
+    err = f'<div class="banner err" role=alert>{esc(error)}</div>' if error else ""
+    nxt = f'<input type="hidden" name="next" value="{esc(next_url)}">'
+    from urllib.parse import quote
+    q = esc(quote(next_url, safe="/"))
+
+    def fields(which: str) -> str:
+        return (f'<form class="stack" method="post" action="/login"><input type="hidden" name="door" value="{which}">{nxt}'
+                '<div class=field><label for=si-user>Username</label>'
+                '<input id=si-user name=username autocomplete=username autocapitalize=none spellcheck=false required autofocus></div>'
+                '<div class=field><label for=si-pass>Password</label>'
+                '<input id=si-pass name=password type=password autocomplete=current-password required></div>'
+                '<button type=submit>Sign in</button></form>')
+    if glass:
+        card = ('<h1>Break-glass sign in</h1>'
+                '<p class="sub glassnote">For the on-call rota, when the WAN is down. Every use is audited.</p>'
+                + err + fields("local")
+                + f'<p class=alt><a href="/login?next={q}">Back to sign in</a></p>')
+    else:
+        sub = (f'With your Windows account, the one you use on your PC ({esc(windows_domain)}).' if windows_domain
+               else "With your organisation account." if entra_configured else "With your desk account.")
+        card = '<h1>Sign in</h1>' + f'<p class=sub>{sub}</p>' + err
+        if windows_domain or not entra_configured:
+            card += fields("windows" if windows_domain else "local")
+        if entra_configured:
+            card += (('<p class=or><span>or</span></p>' if windows_domain else "")
+                     + f'<a class="btn{" ghost" if windows_domain else ""} wide" href="/entra/start?next={q}">'
+                     "Sign in with Microsoft Entra</a>")
+        if other and not requester:
+            card += f'<p class=alt><a href="/login?door=local&amp;next={q}">Other ways to sign in</a></p>'
+    body = f'<section class="signin" aria-labelledby=si-title><div class="card signcard">{card}</div></section>'
+    body = body.replace("<h1>", "<h1 id=si-title>", 1)
+    return page("Sign in", body, requester=requester, active="signin")

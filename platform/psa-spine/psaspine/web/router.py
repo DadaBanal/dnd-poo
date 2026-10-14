@@ -427,5 +427,4 @@ def dispatch(ctx):
     if matched_path:
         raise HttpError("405 Method Not Allowed",
                         f"{ctx.request.method} not allowed on {ctx.request.path}")
-    return Response("404 Not Found",
-                    "<h1>404 Not Found</h1><p>No such page.</p>")
+    raise HttpError("404 Not Found", "No such page.")

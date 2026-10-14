@@ -130,16 +130,16 @@ def departments_open(conn, config) -> set[str] | None:
 
 def portal_login(conn, request, config, now):
     """POST /sso/portal on the portal host: the form field `token`."""
-    from . import Response, redirect, _session_cookie_value, _norm_netloc
+    from . import Response, redirect, _session_cookie_value, _norm_netloc, templates
     from .. import departments
 
     # Off, or the wrong address: not there. Says nothing about why.
     if not config.employee_portal_origin_set or not config.is_portal_host(request):
-        return Response("404 Not Found", "<h1>404 Not Found</h1><p>No such page.</p>")
+        return Response("404 Not Found", templates.error_page("404 Not Found", "No such page.", requester=True))
     if request.method == "GET":
         return refusal_page(request, config)
     if request.method != "POST":
-        return Response("405 Method Not Allowed", "<h1>405</h1><p>POST only.</p>")
+        return Response("405 Method Not Allowed", templates.error_page("405 Method Not Allowed", "POST only.", requester=True))
 
     stamp = now.isoformat(sep=" ", timespec="minutes")
 
