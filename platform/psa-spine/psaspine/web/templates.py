@@ -3125,9 +3125,9 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
     gate = {"schedule": "SCHEDULE", "projects": "PROJECTS", "kb": "KNOWLEDGE", "reports": "REPORTS",
             "finance": "FINANCE", "sales": "FINANCE", "time": "TIME", "calendar": "SCHEDULE",
             "procurement": "PROCUREMENT", "pochanges": "PROCUREMENT", "poreports": "PROCUREMENT", "podrugs": "PROC_DRUG",
-            "postock": "PROC_ITEM", "pomoves": "PROC_ITEM", "popurchreq": "PROC_PO", "popo": "PROC_PO", "porr": "PROC_RR",
-            "postockreq": "PROC_ITEM", "poexpreq": "PROC_ITEM", "poissue": "PROC_ITEM", "poexpissue": "PROC_ITEM", "pocount": "PROC_ITEM",
-            "poitems": "PROC_ITEM", "powh": "PROC_ITEM"}
+            "postock": "PROC_ITEM", "pomoves": "PROC_ITEM", "popurchreq": "PROC_PURCHREQ", "popo": "PROC_PO", "porr": "PROC_RR",
+            "postockreq": "PROC_STOCKREQ", "poexpreq": "PROC_EXPREQ", "poissue": "PROC_ISSUE", "poexpissue": "PROC_EXPISSUE",
+            "pocount": "PROC_COUNT", "poitems": "PROC_ITEM", "powh": "PROC_ITEM"}     # 086: one module per entry
     groups = [(g, label, [pg for pg in pages if pg[0] not in gate or levels.get(gate[pg[0]], "READ") != "NONE"])
               for g, label, pages in groups]
     # 073: the desk's Chat is for chat operators (Dada, 7 Oct 2026).

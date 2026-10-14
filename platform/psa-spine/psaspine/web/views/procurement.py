@@ -49,6 +49,8 @@ VENDOR_COL = {"purchase_order": "vendor", "invoice": "party"}
 # filter is the category (the reference PSA's Products list filters by one)
 FILTER_COL = {"purchase_order": "status", "invoice": "status", "product": "category"}
 FILTER_WORD = {"status": "status", "category": "category"}
+# the kinds whose document has lines in a mirror of its own: the list counts them
+LINE_OF = {"purchase_order": ("ext_po_line", "po_ref"), "invoice": ("ext_rr_line", "rr_ref")}
 
 
 BACK_KIND = {v: k for k, v in bizbox.LINK_KIND.items()}
@@ -198,16 +200,17 @@ def _list(ctx, kind, *, with_new: bool = True) -> str:
     can = _can_write(ctx, kind)
     labels = bizbox.labels_for(ctx.conn, kind)                                # the word for a stored code
     lines = {}
-    if kind == "purchase_order" and rows:
+    if kind in LINE_OF and rows and db.table_exists(ctx.conn, LINE_OF[kind][0]):
+        table, col = LINE_OF[kind]
         refs = [r["ext_ref"] for r in rows]
-        for r in ctx.conn.execute("SELECT po_ref, COUNT(*) AS n FROM ext_po_line WHERE source_id = ? AND present = 1"
-                                  f" AND po_ref IN ({','.join('?' * len(refs))}) GROUP BY po_ref", [bizbox.SOURCE, *refs]):
-            lines[r["po_ref"]] = r["n"]
+        for r in ctx.conn.execute(f"SELECT {col} AS ref, COUNT(*) AS n FROM {table} WHERE source_id = ? AND present = 1"
+                                  f" AND {col} IN ({','.join('?' * len(refs))}) GROUP BY {col}", [bizbox.SOURCE, *refs]):
+            lines[r["ref"]] = r["n"]
     pending = {}
     for c in bizbox.changes(ctx.conn, kind, status="PENDING"):
         pending.setdefault(c["ext_ref"], set()).add(c["field"])
     head = ("".join(f"<th{' class=num' if f in ('amount', 'total', 'unit_cost') else ''}>{t.esc(lab)}</th>" for f, lab in columns)
-            + ("<th class=num>Lines</th>" if kind == "purchase_order" else "") + "<th>Waiting</th>")
+            + ("<th class=num>Lines</th>" if kind in LINE_OF else "") + "<th>Waiting</th>")
 
     def cell(r, f):
         if f == "ext_ref":
@@ -220,9 +223,9 @@ def _list(ctx, kind, *, with_new: bool = True) -> str:
         wait_cell = f"<span class='chip sla-warn'>{t.esc(waiting)}</span>" if waiting else ""
         trs.append(f"<tr data-href='{t.esc(finance._url(kind, r['ext_ref'], AREA))}'>"
                    + "".join(cell(r, f) for f, _ in columns)
-                   + (f"<td class=num>{lines.get(r['ext_ref'], 0)}</td>" if kind == "purchase_order" else "")
+                   + (f"<td class=num>{lines.get(r['ext_ref'], 0)}</td>" if kind in LINE_OF else "")
                    + f"<td>{wait_cell}</td></tr>")
-    ncol = len(columns) + 1 + (1 if kind == "purchase_order" else 0)
+    ncol = len(columns) + 1 + (1 if kind in LINE_OF else 0)
     keep = {"tab": kind, "q": search, "status": status, "vendor": vendor} | ({"absent": "1"} if absent else {})
     keep = {k: v for k, v in keep.items() if v}
     first, last = (page_no - 1) * bizbox.PAGE + 1, min(page_no * bizbox.PAGE, total)
@@ -909,6 +912,7 @@ def _warehouses(ctx):
         return Response(body=t.page("Procurement · Warehouses", body, user=ctx.user, active=MENU_KEY['warehouse']))
     rows = bizbox.warehouses(ctx.conn, q=search)
     held = {s["warehouse_ref"]: s for s in bizbox.stock_by_warehouse(ctx.conn)} if db.table_exists(ctx.conn, "ext_stock") else {}
+    cur = bizbox.desk_currency(ctx.conn)
     groups: dict = {}
     for r in rows:
         groups.setdefault(r["group_name"] or "No group", []).append(r)
@@ -918,7 +922,7 @@ def _warehouses(ctx):
         if not s:
             return ""
         return (f" <a class='ghost small' href='/procurement?tab=stock&warehouse={urllib.parse.quote(w['ext_ref'])}'>"
-                f"{s['items']} item{'s' if s['items'] != 1 else ''} in stock · {t.esc(finance._money(s['value']))}</a>")
+                f"{s['items']} item{'s' if s['items'] != 1 else ''} in stock · {t.esc(finance._money(s['value'], cur))}</a>")
     cards = "".join(
         f"<div class=card><h3>{t.icon('layers')}{t.esc(g)} · {len(ws)}</h3><ul class='plain rptlist'>"
         + "".join(f"<li><b>{t.esc(w['name'])}</b> <span class=muted>· {t.esc(w['ext_ref'])}</span>"
@@ -987,31 +991,39 @@ def _stock(ctx):
     rows, total = bizbox.stock(ctx.conn, warehouse=warehouse, q=search, limit=bizbox.PAGE, offset=(page_no - 1) * bizbox.PAGE)
     labels = bizbox.labels_for(ctx.conn, "product")
     keep = {k: v for k, v in {"tab": "stock", "warehouse": warehouse, "q": search}.items() if v}
+    cur = bizbox.desk_currency(ctx.conn)                                   # 084 review, item 5: the currency once, on the caption
+    money_cap = lambda word: f"{word} ({t.esc(cur)})" if cur else word
+    # 084 review, item 6: "As of" repeated on every row says nothing; when the rows agree it goes in the caption
+    as_ofs = {r["as_of"] for r in rows}
+    as_of_rows = len(as_ofs) > 1
     trs = "".join(
         f"<tr><td>{t.esc(r['warehouse_name'] or r['warehouse_ref'])}" + (f" <span class=muted>· {t.esc(r['group_name'])}</span>" if r["group_name"] else "") + "</td>"
         f"<td>{finance._ref_link('product', r['item_ref'], AREA)}" + ("" if r["item_present"] in (1, None) else " <span class=pill>gone from BizBox</span>") + "</td>"
         f"<td>{t.esc(r['item_name'] or '')}</td><td>{t.esc(bizbox.word(labels, 'category', r['category']))}</td>"
         f"<td class=num>{float(r['quantity'] or 0):g} {t.esc(r['unit'] or '')}</td>"
         f"<td class=num>{t.esc(finance._money(r['unit_cost']))}</td><td class=num>{t.esc(finance._money(r['value']))}</td>"
-        f"<td class=muted>{t.esc(r['as_of'] or '')}</td></tr>" for r in rows)
+        + (f"<td class=muted>{t.esc(r['as_of'] or '')}</td>" if as_of_rows else "") + "</tr>" for r in rows)
     tiles = ("<div class='tiles six'>"
-             f"<div class=tile><div class=n>{summary['lines']:,}</div><div class=l>stock lines</div></div>"
-             f"<div class=tile><div class=n>{summary['items']:,}</div><div class=l>items in stock</div></div>"
-             f"<div class=tile><div class=n>{summary['warehouses']:,}</div><div class=l>warehouses holding stock</div></div>"
-             f"<div class=tile><div class=n>{t.esc(finance._money(summary['value']))}</div><div class=l>value at unit cost</div></div>"
-             f"<div class=tile><div class=n>{t.esc((summary['as_of'] or '—')[:10])}</div><div class=l>BizBox's as-of</div></div>"
-             f"<div class=tile><div class=n>{t.esc((summary['synced_at'] or '—')[:16])}</div><div class=l>read by the desk</div></div></div>")
+             f"<div class=tile><div class=n>{summary['lines']:,}</div> <div class=l>stock lines</div></div>"
+             f"<div class=tile><div class=n>{summary['items']:,}</div> <div class=l>items in stock</div></div>"
+             f"<div class=tile><div class=n>{summary['warehouses']:,}</div> <div class=l>warehouses holding stock</div></div>"
+             f"<div class=tile><div class=n>{t.esc(finance._money(summary['value'], cur))}</div> <div class=l>value at unit cost</div></div>"
+             f"<div class=tile><div class=n>{t.esc((summary['as_of'] or '—')[:10])}</div> <div class=l>BizBox's as-of</div></div>"
+             f"<div class=tile><div class=n>{t.esc((summary['synced_at'] or '—')[:16])}</div> <div class=l>read by the desk</div></div></div>")
+    one_as_of = next(iter(as_ofs)) if rows and not as_of_rows else None
     body = (_head(ctx, "stock", q) + tiles + "<div class=card><form method=get action='/procurement' class='row schedbar'>"
             "<input type=hidden name=tab value=stock>"
             f"<div style='flex:0 0 260px'>{_warehouse_pick(ctx, warehouse)}</div>"
             f"<div style='flex:1 1 240px'><input name=q value='{t.esc(search)}' placeholder='Search by item code or name'></div>"
             "<div style='flex:0 0 auto'><button class=ghost type=submit>Show</button></div></form>"
-            "<p class=why>What each warehouse holds, as BizBox's stock ledger has it at the last hourly read. The value is quantity at the "
+            "<p class=why>What each warehouse holds, as BizBox's stock ledger has it at the last hourly read"
+            + (f" (every line below as of <b>{t.esc(one_as_of)}</b>)" if one_as_of else "") + ". The value is quantity at the "
             "item's unit cost; BizBox's own valuation is in Perpetual inventory on the Reports tab. A warehouse or item that is not here "
             "holds nothing.</p>"
             "<div class=tablewrap><table class='compact pgrid'><thead><tr><th>Warehouse</th><th>Item</th><th>Name</th><th>Category</th>"
-            "<th class=num>On hand</th><th class=num>Unit cost</th><th class=num>Value</th><th>As of</th></tr></thead><tbody>"
-            + (trs or "<tr><td colspan=8 class=muted>Nothing in stock matches, or BizBox has not been read for stock yet.</td></tr>")
+            f"<th class=num>On hand</th><th class=num>{money_cap('Unit cost')}</th><th class=num>{money_cap('Value')}</th>"
+            + ("<th>As of</th>" if as_of_rows else "") + "</tr></thead><tbody>"
+            + (trs or f"<tr><td colspan={8 if as_of_rows else 7} class=muted>Nothing in stock matches, or BizBox has not been read for stock yet.</td></tr>")
             + "</tbody></table></div>" + _pager(keep, page_no, total, "line(s)") + "</div>")
     return Response(body=t.page("Procurement · Stock on hand", body, user=ctx.user, active=MENU_KEY['stock']))
 
@@ -1028,15 +1040,24 @@ def _movements(ctx):
     from .. import Response
     q = ctx.request.query
     item, warehouse, kind = q.get("item", ""), q.get("warehouse", ""), q.get("kind", "")
+    bucket = q.get("bucket", "")
+    if bucket and bucket not in bizbox.BUCKETS and bucket != bizbox.OTHER_BUCKET:
+        bucket = ""                                                        # a bucket that is not one of the stock card's: ignored
     days = _window(q)
     page_no = int(q["page"]) if q.get("page", "").isdigit() and int(q["page"]) > 0 else 1
     if not db.table_exists(ctx.conn, "ext_movement"):
         return Response(body=t.page("Procurement · Movements", _not_mapped(ctx, "movement", "The item ledger"), user=ctx.user, active=MENU_KEY['movement']))
-    rows, total = bizbox.movements(ctx.conn, item=item, warehouse=warehouse, days=days, kind=kind, now=ctx.now,
+    rows, total = bizbox.movements(ctx.conn, item=item, warehouse=warehouse, days=days, kind=kind, bucket=bucket, now=ctx.now,
                                    limit=bizbox.PAGE, offset=(page_no - 1) * bizbox.PAGE)
-    kinds = bizbox.movement_kinds(ctx.conn, days=days, now=ctx.now)
+    kinds = bizbox.movement_kinds(ctx.conn, days=days, now=ctx.now, bucket=bucket)
+    buckets = bizbox.movement_buckets(ctx.conn, days=days, now=ctx.now)
     oldest, newest = bizbox.movement_window(ctx.conn)
-    keep = {k: v for k, v in {"tab": "movement", "item": item, "warehouse": warehouse, "kind": kind, "days": str(days)}.items() if v}
+    keep = {k: v for k, v in {"tab": "movement", "item": item, "warehouse": warehouse, "kind": kind, "bucket": bucket, "days": str(days)}.items() if v}
+    # the stock card's three buckets first (SQL01's doctypes document: Receipts, Issuances, Transfers), then the kinds in the one chosen
+    bchips = (f"<a class='{'on' if not bucket else ''}' href='/procurement?{urllib.parse.urlencode({kk: vv for kk, vv in keep.items() if kk not in ('bucket', 'kind')})}'>"
+              f"All · {sum(n for _, n in buckets)}</a>"
+              + "".join(f"<a class='{'on' if bucket == b else ''}' href='/procurement?{urllib.parse.urlencode({kk: vv for kk, vv in (keep | {'bucket': b}).items() if vv and kk != 'kind'})}'>"
+                        f"{t.esc(b)} · {n}</a>" for b, n in buckets))
     chips = "".join(f"<a class='{'on' if kind.upper() == k else ''}' href='/procurement?{urllib.parse.urlencode({kk: vv for kk, vv in (keep | {'kind': k}).items() if vv})}'>{move_label(k)} · {n}</a>"
                     for k, w, n in kinds)
     allchip = f"<a class='{'on' if not kind else ''}' href='/procurement?{urllib.parse.urlencode({kk: vv for kk, vv in keep.items() if kk != 'kind'})}'>All · {sum(n for _, _, n in kinds)}</a>"
@@ -1053,8 +1074,10 @@ def _movements(ctx):
             f"<div style='flex:0 0 240px'>{_warehouse_pick(ctx, warehouse)}</div>"
             f"<div style='flex:1 1 200px'><input name=item value='{t.esc(item)}' placeholder='Item code' aria-label='Item code'></div>"
             + (f"<input type=hidden name=kind value='{t.esc(kind)}'>" if kind else "")
+            + (f"<input type=hidden name=bucket value='{t.esc(bucket)}'>" if bucket else "")
             + "<div style='flex:0 0 auto'><button class=ghost type=submit>Show</button></div></form>"
-            f"<div class=stabs style='margin:10px 0 0'>{allchip}{chips}</div>"
+            f"<div class='stabs buckets' style='margin:10px 0 0' aria-label='Bucket'>{bchips}</div>"
+            f"<div class=stabs style='margin:6px 0 0' aria-label='Movement kind'>{allchip}{chips}</div>"
             "<p class=why>Every movement of stock BizBox recorded inside the window: what came in, what went out, and the balance after, "
             "with the document that moved it. The desk holds "
             + (f"{t.esc(oldest)} to {t.esc(newest)}" if oldest else "nothing yet") + "; older movements are in the MMS reports.</p>"
@@ -1076,12 +1099,18 @@ def stock_card(ctx, kind: str, ext_ref: str) -> str:
     ask = urllib.parse.urlencode({"summary": f"{name} ({ext_ref}): ", "bizbox_kind": "product", "bizbox_ref": ext_ref})
     total = sum(float(r["quantity"] or 0) for r in rows)
     value = sum(float(r["value"] or 0) for r in rows)
+    cur = bizbox.desk_currency(ctx.conn)
+    as_ofs = {r["as_of"] for r in rows}
+    as_of_rows = len(as_ofs) > 1                                           # 084 review, item 6
+    one_as_of = next(iter(as_ofs)) if rows and not as_of_rows else None
     trs = "".join(f"<tr><td>{t.esc(r['warehouse_name'] or r['warehouse_ref'])}" + (f" <span class=muted>· {t.esc(r['group_name'])}</span>" if r["group_name"] else "") + "</td>"
                   f"<td class=num>{float(r['quantity'] or 0):g} {t.esc(r['unit'] or '')}</td><td class=num>{t.esc(finance._money(r['value']))}</td>"
-                  f"<td class=muted>{t.esc(r['as_of'] or '')}</td></tr>" for r in rows)
-    return ("<div class=card><h3>" + t.icon("layers") + "Stock on hand</h3>"
-            + (f"<div class=tablewrap><table class=compact><thead><tr><th>Warehouse</th><th class=num>On hand</th><th class=num>Value</th><th>As of</th></tr></thead>"
-               f"<tbody>{trs}<tr><td><b>All warehouses</b></td><td class=num><b>{total:g}</b></td><td class=num><b>{t.esc(finance._money(value))}</b></td><td></td></tr></tbody></table></div>"
+                  + (f"<td class=muted>{t.esc(r['as_of'] or '')}</td>" if as_of_rows else "") + "</tr>" for r in rows)
+    return ("<div class=card><h3>" + t.icon("layers") + "Stock on hand" + (f" <span class=muted>· as of {t.esc(one_as_of)}</span>" if one_as_of else "") + "</h3>"
+            + (f"<div class=tablewrap><table class=compact><thead><tr><th>Warehouse</th><th class=num>On hand</th>"
+               f"<th class=num>Value{(' (' + t.esc(cur) + ')') if cur else ''}</th>" + ("<th>As of</th>" if as_of_rows else "") + "</tr></thead>"
+               f"<tbody>{trs}<tr><td><b>All warehouses</b></td><td class=num><b>{total:g}</b></td><td class=num><b>{t.esc(finance._money(value))}</b></td>"
+               + ("<td></td>" if as_of_rows else "") + "</tr></tbody></table></div>"
                if rows else "<div class=muted>No warehouse holds this item, as of the last read.</div>")
             + f"<div style='margin-top:10px'><a class='btn ghost' href='/ticket/new?{ask}'>{t.icon('plus')} Raise a ticket about this item</a> "
               f"<a class='ghost small' href='/procurement?tab=movement&item={urllib.parse.quote(ext_ref)}&days=90'>Movements, last 90 days</a></div></div>")
@@ -1114,9 +1143,11 @@ def _home(ctx):
     seen = _seen(ctx)
     conn = ctx.conn
     tiles = []
+    cur = bizbox.desk_currency(conn)                  # 084 review, item 5: money says its currency
 
     def tile(n, label, href):
-        tiles.append(f"<a class=tile href='{href}'><div class=n>{n}</div><div class=l>{label}</div></a>")
+        # 084 review, item 3: the number and its caption are one name with a space between (never "0purchase orders")
+        tiles.append(f"<a class=tile href='{href}' aria-label='{n} {t.esc(label)}'><div class=n>{n}</div> <div class=l>{t.esc(label)}</div></a>")
     pending_batches = conn.execute("SELECT COUNT(*) FROM ext_batch WHERE source_id = ? AND status = 'PENDING'", (bizbox.SOURCE,)).fetchone()[0]
     approved = conn.execute("SELECT COUNT(*) FROM ext_batch WHERE source_id = ? AND status = 'APPROVED'", (bizbox.SOURCE,)).fetchone()[0]
     month = ctx.now.strftime("%Y-%m")
@@ -1135,7 +1166,7 @@ def _home(ctx):
         tile(f"{n:,}", "items", "/procurement?tab=product")
     if stock_ok:
         s = bizbox.stock_summary(conn)
-        tile(t.esc(finance._money(s["value"])), f"stock on hand at unit cost · {s['lines']:,} lines", "/procurement?tab=stock")
+        tile(t.esc(finance._money(s["value"], cur)), f"stock on hand at unit cost · {s['lines']:,} lines", "/procurement?tab=stock")
     if moves_ok:
         week = bizbox.movements(conn, days=7, now=ctx.now, limit=1)[1]
         tile(f"{week:,}", "movements in the last 7 days", "/procurement?tab=movement&days=7")
@@ -1150,7 +1181,7 @@ def _home(ctx):
                          f"<tr><td><a href='/procurement?tab=stock&warehouse={urllib.parse.quote(r['warehouse_ref'])}'>{t.esc(r['warehouse_name'] or r['warehouse_ref'])}</a>"
                          + (f" <span class=muted>· {t.esc(r['group_name'])}</span>" if r["group_name"] else "") + "</td>"
                          f"<td style='width:34%'><div class=bar><i style='width:{int(100 * float(r['value'] or 0) / top)}%'></i></div></td>"
-                         f"<td class=num>{r['items']} item{'s' if r['items'] != 1 else ''}</td><td class=num>{t.esc(finance._money(r['value']))}</td></tr>" for r in by)
+                         f"<td class=num>{r['items']} item{'s' if r['items'] != 1 else ''}</td><td class=num>{t.esc(finance._money(r['value'], cur))}</td></tr>" for r in by)
                          + "</tbody></table></div>" if by else "<div class=muted>No warehouse holds stock, as of the last read.</div>")
                      + "<p class=why><a href='/procurement?tab=warehouse'>All warehouses</a> · <a href='/procurement?tab=stock'>Every stock line</a></p></div>")
     if moves_ok:

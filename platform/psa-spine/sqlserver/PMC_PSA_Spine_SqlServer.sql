@@ -259,6 +259,7 @@ BEGIN
     PRINT N'    psa.ext_rr_line';
     PRINT N'    psa.ext_batch';
     PRINT N'    psa.ext_change';
+    PRINT N'    psa.member_module_grant';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -349,7 +350,7 @@ BEGIN
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  161 tables, 83 indexes, 4 triggers.';
+    PRINT N'  162 tables, 83 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -4118,6 +4119,52 @@ CREATE TABLE psa.[ext_change] (
 END;
 
 -- --------------------------------------------------------------------------
+-- member_module_grant   (from schema/086_module_rights.sql)
+-- 086 — rights per module, per person (SQL01's Part 99 ruling, 14 Oct 2026;
+-- Dada: "the procurement module should be like what's everything on bizbox
+-- mms but better, the menu on top and only visible to who has access to the
+-- procurement module and proper rbac to modules to users").
+--
+-- BizBox grants access per user per submodule (appsysUserSubmodules: 655
+-- people hold Expense Requisition Details, 570 Stock Requisition Details, a
+-- dozen hold receiving and physical count). The desk's four Procurement areas
+-- could not say that, so:
+--
+--   * the unit of grant is the MMS module. Six more modules join the four in
+--     security.MODULES — purchase requisitions, stock requisitions, expense
+--     requisitions, stock issuances, expense issuances, physical count — as
+--     rows in role_grant like every other module (its module column carries
+--     any name; no change to that table). A role written before 086 has no
+--     row for a new module and keeps the level of the area the module came
+--     out of (purchase requisitions from purchase orders, the rest from
+--     items) until Setup saves one: nobody loses or gains a page on the day
+--     this is applied.
+--   * a level set for one person on one module wins over their role for that
+--     module and that module only (SQL01, Part 100: "role as the base, a
+--     per-user override that wins, Setup able to set one person on one module
+--     in one screen"). That is this table. Removing the row puts the person
+--     back on their role. A system administrator holds everything regardless;
+--     "never one's own" on approval is unchanged.
+--
+-- Every write to it is audited (audit_event, action SECURITY_ROLE), as the
+-- roles are.
+IF OBJECT_ID(N'psa.[member_module_grant]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[member_module_grant] (
+    [member] NVARCHAR(200) NOT NULL,
+    [module] NVARCHAR(32) NOT NULL,
+    [level] NVARCHAR(32) NOT NULL CONSTRAINT [CK_member_module_grant_01] CHECK (level IN ('NONE', 'READ', 'WRITE', 'ADMIN')),
+    [set_at] NVARCHAR(64) NOT NULL,
+    [set_by] NVARCHAR(200) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [set_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [set_at], 126), CASE WHEN [set_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [set_at], 112) END)),
+    CONSTRAINT [PK_member_module_grant] PRIMARY KEY ([member], [module])
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -5240,10 +5287,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 161 OR @Triggers <> 4 OR @Indexes < 83
+IF @Tables <> 162 OR @Triggers <> 4 OR @Indexes < 83
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 161), %d triggers (expected 4), %d indexes (expected at least 83). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 162), %d triggers (expected 4), %d indexes (expected at least 83). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -5303,6 +5350,7 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[member_module_grant];
     DROP TABLE IF EXISTS psa.[ext_change];
     DROP TABLE IF EXISTS psa.[ext_batch];
     DROP TABLE IF EXISTS psa.[ext_rr_line];

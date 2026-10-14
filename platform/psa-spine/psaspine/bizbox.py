@@ -1495,6 +1495,35 @@ MOVE_WORDS = {"CH": "Charged", "CA": "Charged", "CN": "Returned by patient", "DC
               "ADJUST": "Adjusted", "ADJUSTMENT": "Adjusted", "ADJ_IN": "Adjusted up", "ADJ_OUT": "Adjusted down",
               "COUNT": "Counted", "RETURN": "Returned", "CONSUME": "Used", "SALE": "Sold", "PURCHASE": "Received"}
 CODE_ONLY = {"PP", "AT", "DP", "GL", "RT", "RS"}
+# The stock card's own three buckets (SQL01's doctypes document, 14 Oct 2026:
+# "Receipts = PR, DR, PI · Issuances = CA, CH, CN, DC · Transfers = QA, SS, MP,
+# PC, EI"), the product's grouping and not the desk's. A view that spells a
+# kind out lands where its plain meaning puts it; a kind in no bucket (the
+# asset family, a word nobody has placed) is "Other" and still listed.
+BUCKETS = {"Receipts": ("PR", "DR", "PI", "RECEIPT", "RECEIVE", "RR", "PURCHASE"),
+           "Issuances": ("CA", "CH", "CN", "DC", "CONSUME", "SALE"),
+           "Transfers": ("QA", "SS", "MP", "PC", "EI", "ISSUE", "ISSUANCE", "TRANSFER_IN", "TRANSFER_OUT", "TRANSFER",
+                         "ADJUST", "ADJUSTMENT", "ADJ_IN", "ADJ_OUT", "COUNT")}
+OTHER_BUCKET = "Other"
+_BUCKET_OF = {code: name for name, codes in BUCKETS.items() for code in codes}
+
+
+def bucket_of(kind) -> str:
+    """The bucket a movement kind sits in, by BizBox's own grouping; Other when none."""
+    key = (kind or "").strip().upper().replace(" ", "_").replace("-", "_")
+    return _BUCKET_OF.get(key, OTHER_BUCKET)
+
+
+def _bucket_clause(bucket: str, alias: str = "m") -> tuple[str, list]:
+    """The SQL that keeps a bucket's kinds (or, for Other, drops every bucketed kind)."""
+    col = f"UPPER(COALESCE({alias}.kind, ''))" if alias else "UPPER(COALESCE(kind, ''))"
+    if bucket == OTHER_BUCKET:
+        every = sorted(_BUCKET_OF)
+        return f" AND {col} NOT IN ({','.join('?' * len(every))})", every
+    codes = BUCKETS.get(bucket)
+    if not codes:
+        return "", []
+    return f" AND {col} IN ({','.join('?' * len(codes))})", list(codes)
 
 
 def move_word(kind) -> str:
@@ -1564,10 +1593,11 @@ def stock_by_warehouse(conn) -> list:
         + _STOCK_FROM + " GROUP BY s.warehouse_ref, w.name, w.group_name ORDER BY value DESC, n DESC", (SOURCE,)).fetchall()
 
 
-def movements(conn, *, item: str = "", warehouse: str = "", days: int = 30, kind: str = "", now: datetime | None = None,
-              limit: int = PAGE, offset: int = 0) -> tuple[list, int]:
+def movements(conn, *, item: str = "", warehouse: str = "", days: int = 30, kind: str = "", bucket: str = "",
+              now: datetime | None = None, limit: int = PAGE, offset: int = 0) -> tuple[list, int]:
     """The item ledger inside a window of days, newest first, for one item,
-    one warehouse, or every one; with the names. (rows, total)."""
+    one warehouse, or every one; one kind, or one of the stock card's buckets;
+    with the names. (rows, total)."""
     since = ((now or datetime.now()).date() - timedelta(days=max(1, int(days)))).isoformat()
     sql = [" FROM ext_movement m LEFT JOIN ext_product p ON p.source_id = m.source_id AND p.ext_ref = m.item_ref"
            " LEFT JOIN ext_warehouse w ON w.source_id = m.source_id AND w.ext_ref = m.warehouse_ref"
@@ -1582,6 +1612,10 @@ def movements(conn, *, item: str = "", warehouse: str = "", days: int = 30, kind
     if kind:
         sql.append(" AND UPPER(COALESCE(m.kind, '')) = ?")
         args.append(kind.upper())
+    if bucket:
+        clause, more = _bucket_clause(bucket)
+        sql.append(clause)
+        args.extend(more)
     where = "".join(sql)
     total = conn.execute("SELECT COUNT(*)" + where, args).fetchone()[0]
     rows = conn.execute(
@@ -1590,12 +1624,23 @@ def movements(conn, *, item: str = "", warehouse: str = "", days: int = 30, kind
     return rows, total
 
 
-def movement_kinds(conn, *, days: int = 30, now: datetime | None = None) -> list:
-    """(kind, word, count) inside the window, most common first."""
+def movement_kinds(conn, *, days: int = 30, now: datetime | None = None, bucket: str = "") -> list:
+    """(kind, word, count) inside the window, most common first; one bucket's when asked."""
     since = ((now or datetime.now()).date() - timedelta(days=max(1, int(days)))).isoformat()
+    clause, more = _bucket_clause(bucket, alias="") if bucket else ("", [])
     out = conn.execute("SELECT UPPER(COALESCE(kind, '')) AS k, COUNT(*) AS n FROM ext_movement WHERE source_id = ? AND present = 1"
-                       " AND moved_on >= ? GROUP BY UPPER(COALESCE(kind, '')) ORDER BY n DESC, k", (SOURCE, since)).fetchall()
+                       f" AND moved_on >= ?{clause} GROUP BY UPPER(COALESCE(kind, '')) ORDER BY n DESC, k", (SOURCE, since, *more)).fetchall()
     return [(r["k"], move_word(r["k"]), r["n"]) for r in out]
+
+
+def movement_buckets(conn, *, days: int = 30, now: datetime | None = None) -> list:
+    """(bucket, count) inside the window in the stock card's order, Other last
+    and only when something sits in it."""
+    counts = {b: 0 for b in BUCKETS}
+    counts[OTHER_BUCKET] = 0
+    for k, _, n in movement_kinds(conn, days=days, now=now):
+        counts[bucket_of(k)] += n
+    return [(b, n) for b, n in counts.items() if b != OTHER_BUCKET or n]
 
 
 def movement_window(conn) -> tuple[str | None, str | None]:
@@ -1606,8 +1651,22 @@ def movement_window(conn) -> tuple[str | None, str | None]:
 
 
 def rr_lines(conn, rr_ref: str) -> list:
+    if not db.table_exists(conn, "ext_rr_line"):
+        return []
     return conn.execute("SELECT * FROM ext_rr_line WHERE source_id = ? AND rr_ref = ? AND present = 1 ORDER BY line_no, ext_ref",
                         (SOURCE, rr_ref)).fetchall()
+
+
+def received_against(conn, po_ref: str) -> list:
+    """The receiving lines that name a purchase order, each with its receiving
+    report's date, vendor and status beside it (the order's other half)."""
+    if not db.table_exists(conn, "ext_rr_line"):
+        return []
+    return conn.execute(
+        "SELECT l.*, i.invoiced_on, i.party, i.status AS rr_status FROM ext_rr_line l"
+        " LEFT JOIN ext_invoice i ON i.source_id = l.source_id AND i.ext_ref = l.rr_ref"
+        " WHERE l.source_id = ? AND l.present = 1 AND l.po_ref = ? ORDER BY i.invoiced_on, l.rr_ref, l.line_no, l.ext_ref",
+        (SOURCE, po_ref)).fetchall()
 
 
 # ----------------------------------------------- after a restore (SQL01 §5)

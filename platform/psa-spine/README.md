@@ -2850,6 +2850,52 @@ PMC_OwnApp_1to1_MMS_20261013.png` in the record), with its module list in the de
 
 Handoff: `HANDOFF-cloud-sql01-WS36-20261014-po-list-and-document.md`. No schema step.
 
+## The rest of SQL01's order: Receiving, rights per module, the 084 fixes, the buckets (14 Oct 2026, schema 086)
+
+SQL01's order of 14 Oct, after Purchase Orders, Receiving, the module menu and
+every MMS document went on: Receiving as a document, then rights per module
+per user, then the 084 review's minor fixes, then the Movements buckets.
+Dada: "yes do all".
+
+- **Receiving opens as a document.** It is the desk's `invoice` kind (SQL01,
+  Part 95: `psa.vw_invoice` reads the receiving header). The list is a list
+  with the lines counted; the document has the header as pickers (Vendor,
+  Receiving date, Supplier's invoice no., Due date, Status, Currency), the
+  lines from the receiving-lines mirror with **Purchase Order** on each line
+  opening that order, the footer totals, the desk's slip and BizBox's
+  `MMS_ADHOC_DelReceiveRep` by name once catalogued. Edit Mode covers the
+  header only: a received quantity is a stock movement and is corrected in
+  BizBox by its own adjustment, never by an edit here. There is no Add: BizBox
+  receives. A purchase order now shows **Received against this order**: each
+  receiving line naming it, with its report, date, vendor and status.
+- **Rights per module, per person (schema 086).** The unit of grant is the
+  MMS module. Six modules join the four: purchase requisitions, stock
+  requisitions, expense requisitions, stock issuances, expense issuances,
+  physical count, each its own menu entry and its own column in Setup ›
+  Security roles. A role written before 086 has no row for them and reads the
+  level of the area each came out of (purchase requisitions from purchase
+  orders, the rest from items) until the role is saved, so nobody gains or
+  loses a page the day it is applied. `member_module_grant` holds one
+  person's level on one module, which wins over their role for that module
+  only; Setup's **Rights for one person** card sets it and **Follow the role**
+  takes it back. Every write is audited. A system administrator holds
+  everything; approving one's own proposal stays refused.
+- **The 084 review's minor items.** Item 3: a tile's number and caption read
+  as one name with a space between. Item 4: the items list is a list (already
+  so since the morning; now tested). Item 5: money says its currency once, on
+  the column caption or the total, from what BizBox puts on its orders. Item
+  6: "As of" leaves the rows when every row agrees and goes in the caption.
+  Item 7: the Remarks column is gone (and remarks are rendered nowhere).
+- **The stock card's buckets on Movements.** From SQL01's doctypes document:
+  Receipts = PR, DR, PI; Issuances = CA, CH, CN, DC; Transfers = QA, SS, MP,
+  PC, EI. They are the first filter, the kinds inside the one chosen are the
+  second. A kind in no bucket (the asset family) is **Other**, shown only when
+  something sits in it.
+- **Fence.** No BizBox description or remarks string is rendered; no internal
+  address anywhere; test data is made up.
+- **Design skills.** artifact-design fired for the screens, on the desk's own
+  tokens; dataviz, pdf and xlsx did not (no chart, no file emitted).
+
 ## The write path on the desk's side (14 Oct 2026, schema 085)
 
 SQL01's rulings of 14 Oct 2026 (`docs/handoffs/HANDOFF-sql01-cloud-WS36-20261014-write-path-simplified.md`): identity is

@@ -344,6 +344,7 @@ ROUTES = [
     ("GET", "/admin/roles", admin.roles_setup),
     ("POST", "/admin/roles/add", admin.roles_add),
     ("POST", "/admin/roles/assign", admin.roles_assign),
+    ("POST", "/admin/roles/override", admin.roles_override),     # 086: one person's level on one module, apart from their role
     ("POST", "/admin/roles/<role_id>/save", admin.roles_save),
     ("POST", "/admin/roles/<role_id>/default", admin.roles_default),
     ("POST", "/admin/roles/<role_id>/retire", admin.roles_retire),

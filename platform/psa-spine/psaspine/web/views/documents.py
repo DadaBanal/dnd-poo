@@ -53,6 +53,16 @@ DOCS = {
         "fields": (("vendor", "Vendor"), ("ordered_on", "Order date"), ("status", "Status"), ("currency", "Currency")),
         "lines": "po", "slip": r"POSLIP", "slip_word": "Print Purchase Order Slip",
     },
+    # Delivery/Receiving is the desk's invoice kind (SQL01, Part 95, MEASURED:
+    # psa.vw_invoice reads the receiving header). Its lines come from the
+    # receiving-lines mirror, each naming the order it was received against.
+    "invoice": {
+        "word": "Receiving report", "many": "receiving reports", "title": "Receiving Report Details", "many_title": "Receiving",
+        "icon": "inbox", "menu": "porr",
+        "fields": (("party", "Vendor"), ("invoiced_on", "Receiving date"), ("supplier_ref", "Supplier's invoice no."),
+                   ("due_on", "Due date"), ("status", "Status"), ("currency", "Currency")),
+        "lines": "rr", "slip": r"DelReceive", "slip_word": "Print Receiving Report",
+    },
     "stock_req": {
         "word": "Stock requisition", "many": "stock requisitions", "title": "Stock Requisition Details", "many_title": "Stock Requisitions",
         "icon": "note", "menu": "postockreq", "desk": True,
@@ -98,6 +108,10 @@ LINE_COLUMNS = {
     "mms": (("line_no", "#", False, False), ("product_ref", "Item ID", False, False), ("description", "Item Description", False, False),
             ("generic", "Generic Name", False, False), ("unit", "Unit", False, False), ("quantity", "Quantity", True, False),
             ("unit_cost", "Unit Price", True, False)),
+    # a receiving report's lines: what was received, at what price, against which order (not edited from the desk:
+    # a received quantity is a stock movement, corrected in BizBox by its own adjustment, never by an edit here)
+    "rr": (("line_no", "#", False, False), ("product_ref", "Item ID", False, False), ("description", "Item Description", False, False),
+           ("quantity", "Quantity Received", True, False), ("unit_cost", "Unit Price", True, False), ("po_ref", "Purchase Order", False, False)),
 }
 
 
@@ -113,6 +127,8 @@ def _lines(conn, kind: str, ext_ref: str) -> list:
     how = DOCS[kind]["lines"]
     if how == "po":
         return bizbox.po_lines(conn, ext_ref)
+    if how == "rr":
+        return bizbox.rr_lines(conn, ext_ref)
     return []
 
 
@@ -318,6 +334,8 @@ def lines_table(ctx, kind: str, rec, lines: list, *, link_items: bool, css: str,
                     f" aria-label='{t.esc(bizbox.FIELD_WORDS.get(f, f))} on line {t.esc(l['ext_ref'])}'></td>")
         if f == "product_ref" and link_items:
             return f"<td>{finance._ref_link('product', v, AREA)}</td>"
+        if f == "po_ref":                                   # the order a receiving line came from opens as its document
+            return f"<td>{finance._ref_link('purchase_order', v, AREA) if link_items else t.esc(v or '')}</td>"
         if f == "unit_cost":
             return f"<td class=num>{t.esc(finance._money(v))}</td>"
         if num:
@@ -410,6 +428,31 @@ def _links_card(ctx, kind: str, ext_ref: str) -> str:
     return f"<div class=card><h3>{t.icon('note')}Work linked to it</h3>" + (f"<ul class=plain>{links}</ul>" if links else "<div class=muted>No ticket or project yet.</div>") + "</div>"
 
 
+def _received_card(ctx, kind: str, ext_ref: str) -> str:
+    """On a purchase order: every receiving line that names it, with the
+    receiving report it is on (the order's other half; the report opens as
+    its own document)."""
+    if kind != "purchase_order":
+        return ""
+    rows = bizbox.received_against(ctx.conn, ext_ref)
+    labels = bizbox.labels_for(ctx.conn, "invoice")
+    cur = None
+    rec = bizbox.get(ctx.conn, kind, ext_ref)
+    if rec is not None and "currency" in rec.keys():
+        cur = rec["currency"]
+    trs = "".join(
+        f"<tr><td>{finance._ref_link('invoice', r['rr_ref'], AREA)}</td><td>{t.esc(r['invoiced_on'] or '')}</td><td>{t.esc(r['party'] or '')}</td>"
+        f"<td>{t.esc(bizbox.word(labels, 'status', r['rr_status']) if r['rr_status'] else '')}</td>"
+        f"<td>{finance._ref_link('product', r['product_ref'], AREA)} {t.esc(r['description'] or '')}</td>"
+        f"<td class=num>{float(r['quantity'] or 0):g}</td><td class=num>{t.esc(finance._money(r['unit_cost']))}</td></tr>" for r in rows)
+    total = sum(float(r["quantity"] or 0) for r in rows)
+    return (f"<div class=card><h3>{t.icon('inbox')}Received against this order</h3>"
+            + ((f"<div class=tablewrap><table class=compact><thead><tr><th>Receiving report</th><th>Date</th><th>Vendor</th><th>Status</th><th>Item</th>"
+                f"<th class=num>Quantity Received</th><th class=num>Unit Price{(' (' + t.esc(cur) + ')') if cur else ''}</th></tr></thead><tbody>{trs}"
+                f"<tr class=total><td colspan=5 class=num><b>Received in all</b></td><td class=num><b>{total:g}</b></td><td></td></tr></tbody></table></div>")
+               if rows else "<div class=muted>Nothing received against this order yet, as of the last read.</div>") + "</div>")
+
+
 def _dochead(kind: str, title: str, crumbs: str, *, search: bool = True) -> str:
     spec = DOCS[kind]
     s = (f"<form method=get action='/procurement' class='docsearch noprint' role=search><input type=hidden name=tab value={kind}>"
@@ -494,7 +537,7 @@ def page(ctx, kind: str, ext_ref: str, *, dialog: str = "", err: str = "", poste
               + (f" › {t.esc(status_word)}" if status_word else "") + (" › editing" if editing else ""))
     body = (procurement_view._banners(q) + (f"<div class='banner err' id=flash-err role=alert>{t.esc(err)}</div>" if err else "") + dialog
             + "<div class=doc>" + _dochead(kind, spec["title"], crumbs) + f"<div class='card docsheet'>{bar}{sheet}</div>"
-            + approval_card(ctx, kind, ext_ref, batches) + _links_card(ctx, kind, ext_ref) + "</div>")
+            + approval_card(ctx, kind, ext_ref, batches) + _received_card(ctx, kind, ext_ref) + _links_card(ctx, kind, ext_ref) + "</div>")
     return Response(body=t.page(f"{spec['word']} {ext_ref}", body, user=ctx.user, active=spec["menu"]))
 
 

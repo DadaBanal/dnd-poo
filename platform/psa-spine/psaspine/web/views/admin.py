@@ -1661,7 +1661,7 @@ def roles_setup(ctx):
     ctx.conn.commit()
     head = "".join(f"<th>{t.esc(v)}</th>" for v in security.MODULES.values())
     generic = {"NONE": "None", "READ": "Read", "WRITE": "Add and edit", "ADMIN": "All"}
-    # Procurement's three areas read See / Propose / Approve (13 Oct 2026)
+    # Procurement's modules read See / Propose / Approve (13 Oct 2026; one entry per MMS module since 086)
     words = lambda m: security.AREA_WORDS if m in security.PROCUREMENT_AREAS else generic
     rows = []
     for r in roles:
@@ -1690,15 +1690,43 @@ def roles_setup(ctx):
         "<div><select name=role_id aria-label='Role'><option value=''>The default role</option>"
         + "".join(f"<option value='{t.esc(r['role_id'])}'{' selected' if assigned.get(m.lower()) == r['role_id'] else ''}>{t.esc(r['name'])}</option>" for r in live)
         + "</select></div><div style='flex:0 0 auto'><button class='ghost small' type=submit>Set</button></div></form></td></tr>" for m in members)
+    # 086: one person's level on one module, apart from their role (SQL01, Part 100: the override that wins)
+    overrides = security.overrides(ctx.conn)
+    proc_modules = [m for m in security.MODULES if m in security.PROCUREMENT_AREAS]
+    all_members = sorted(set(members) | {o["member"] for o in overrides}, key=str.lower)
+    own_rows = "".join(
+        f"<tr><td>{t.esc(o['member'])}</td><td>{t.esc(security.MODULES.get(o['module'], o['module']))}</td>"
+        f"<td>{t.esc(words(o['module'])[o['level']])}</td><td class=muted>{t.esc(o['set_by'])} · {t.esc(o['set_at'])}</td>"
+        f"<td><form method=post action='/admin/roles/override' class=inline><input type=hidden name=member value='{t.esc(o['member'])}'>"
+        f"<input type=hidden name=module value='{t.esc(o['module'])}'><input type=hidden name=level value=''>"
+        f"<button class='ghost small' type=submit>Follow the role</button></form></td></tr>" for o in overrides)
+    own_form = ("<form method=post action='/admin/roles/override' class=row style='margin-top:10px;align-items:flex-end'>"
+                "<div style='flex:1 1 200px'><label for=ovmember>Member</label><input id=ovmember name=member list=ovmembers required maxlength=120 "
+                "placeholder='Who' autocomplete=off><datalist id=ovmembers>" + "".join(f"<option value='{t.esc(m)}'>" for m in all_members) + "</datalist></div>"
+                "<div style='flex:1 1 240px'><label for=ovmodule>Module</label><select id=ovmodule name=module>"
+                + "".join(f"<option value={m}>{t.esc(security.MODULES[m])}</option>" for m in proc_modules) + "</select></div>"
+                "<div style='flex:0 0 180px'><label for=ovlevel>Level</label><select id=ovlevel name=level><option value=''>Follow the role</option>"
+                + "".join(f"<option value={lv}>{security.AREA_WORDS[lv]}</option>" for lv in security.LEVELS) + "</select></div>"
+                "<div style='flex:0 0 auto'><button class=ghost type=submit>Set</button></div></form>")
+    own_card = ("<div class=card><h3>" + t.icon("users") + "Rights for one person</h3>"
+                "<p class=why>BizBox grants its modules per person, so the desk does too: a level set here is that person's on that one "
+                "module, whatever their role says, and only there. <i>Follow the role</i> takes it back. A system administrator holds "
+                "everything regardless; approving one's own proposal stays refused.</p>"
+                + f"<div class=tablewrap><table><thead><tr><th>Member</th><th>Module</th><th>Level</th><th>Set by</th><th></th></tr></thead>"
+                f"<tbody>{own_rows or '<tr><td colspan=5 class=muted>Nobody is set apart from their role.</td></tr>'}</tbody></table></div>"
+                + own_form + "</div>")
     body = ((f"<div class='banner ok'>{t.esc(q.get('msg', ''))}</div>" if q.get("msg") else "")
             + (f"<div class='banner err'>{t.esc(q.get('err', ''))}</div>" if q.get("err") else "")
             + "<h1>Security roles</h1><p class=sub>What each role may do in the modules that are not boards. A board's "
               "tickets are still governed by board membership, and a role never opens a restricted board. A member with "
               "no role has the default role; a system administrator has everything. <a href='/admin'>Setup</a></p>"
-              "<p class=why><b>Procurement</b> is three areas, as BizBox grants purchasing, receiving and inventory apart, and "
-              "each reads <i>See</i> (look), <i>Propose</i> (queue edits and new records for approval) or <i>Approve</i> "
-              "(approve what someone else proposed; never one's own). The desk pushes to BizBox under one login, so these "
-              "rows are what BizBox's own per-person rights used to be: a role that has nothing here sees no Procurement.</p>"
+              "<p class=why><b>Procurement</b> is one entry per BizBox MMS module (purchase requisitions, purchase orders, receiving, "
+              "stock and expense requisitions, stock and expense issuances, physical count, items, drugs and medicines), as BizBox "
+              "grants its modules apart, and each reads <i>See</i> (look), <i>Propose</i> (queue edits and new records for approval) "
+              "or <i>Approve</i> (approve what someone else proposed; never one's own). The desk pushes to BizBox under one login, so "
+              "these rows are what BizBox's own per-person rights used to be: a role that has nothing here sees no Procurement, and "
+              "the Procurement menu shows each module only to those who hold it. A module added after a role was written reads "
+              "as the module it came out of until the role is saved.</p>"
             + f"<div class=card><div class=tablewrap><table><thead><tr><th>Role</th>{head}<th></th></tr></thead><tbody>{''.join(rows)}</tbody></table></div>"
               "<form method=post action='/admin/roles/add' class=row style='margin-top:10px'>"
               "<div><input name=name required maxlength=60 placeholder='e.g. Biomedical engineer'></div>"
@@ -1706,7 +1734,8 @@ def roles_setup(ctx):
               + "".join(f"<option value='{t.esc(r['role_id'])}'>Copy {t.esc(r['name'])}</option>" for r in live)
               + "</select></div><div style='flex:0 0 auto'><button class=ghost type=submit>" + t.icon("plus") + " Add role</button></div></form></div>"
             + "<div class=card><h3>" + t.icon("users") + "Members</h3><div class=tablewrap><table><thead><tr><th>Member</th><th>Role</th>"
-              f"<th></th></tr></thead><tbody>{member_rows or '<tr><td colspan=3 class=muted>No board members yet.</td></tr>'}</tbody></table></div></div>")
+              f"<th></th></tr></thead><tbody>{member_rows or '<tr><td colspan=3 class=muted>No board members yet.</td></tr>'}</tbody></table></div></div>"
+            + own_card)
     return Response(body=t.page("Security roles", body, user=ctx.user, active="admin"))
 
 
@@ -1764,6 +1793,15 @@ def roles_assign(ctx):
     f = ctx.request.form()
     return _roles_try(ctx, lambda: security.assign(ctx.conn, f.get("member", ""), f.get("role_id") or None,
                                                    at=ctx.now, actor=ctx.user.id), lambda w: w)
+
+
+def roles_override(ctx):
+    """086: one person's level on one module, apart from their role; an empty
+    level puts them back on it."""
+    from ... import security
+    f = ctx.request.form()
+    return _roles_try(ctx, lambda: security.set_override(ctx.conn, f.get("member", ""), f.get("module", ""), f.get("level") or None,
+                                                         at=ctx.now, actor=ctx.user.id), lambda w: w)
 
 
 def _local_accounts_card(ctx) -> str:
