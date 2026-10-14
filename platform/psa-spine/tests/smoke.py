@@ -135,7 +135,8 @@ def main() -> int:
                         break
                     except urllib.error.HTTPError as exc:
                         body = exc.read().decode("utf-8", "replace")
-                        status = str(exc.code) if "Break-glass" in body else "no sign-in page"
+                        # job 01: a desk with only local accounts says plain "Sign in"; the field is the proof
+                        status = str(exc.code) if "<label for=si-user>" in body else "no sign-in page"
                         break
                     except OSError:
                         time.sleep(0.25)

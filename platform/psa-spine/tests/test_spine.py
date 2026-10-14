@@ -34,6 +34,13 @@ from sqlite_ddl import Unsupported  # noqa: E402
 TEST_DB = os.environ.get("PSA_TEST_DB")
 ON_SQLITE = not TEST_DB
 
+# A test never inherits the host's attachment store. On DND-SQL01 the variable is
+# set machine-wide to the live desk's folder, so a suite run there wrote its test
+# files into it (15 Oct 2026, 15 files). Unset here, each SQLite test keeps its
+# files beside its own temporary database; the SQL Server mode sets a temporary
+# folder per test in _fresh, and the tests that need one set their own.
+os.environ.pop("PSA_ATTACHMENT_DIR", None)
+
 
 def _target(tmp):
     """What a test hands to db.connect / make_app / the CLI."""
@@ -12171,7 +12178,7 @@ class HttpsServerTest(unittest.TestCase):
             ctx = ssl.create_default_context(cafile=self.cert)
             with urllib.request.urlopen(f"https://127.0.0.1:{port}/login", context=ctx, timeout=10) as r:
                 self.assertEqual(r.status, 200)
-                self.assertIn("Break-glass", r.read().decode())
+                self.assertIn("<label for=si-user>Username</label>", r.read().decode())   # the sign-in form (job 01)
             body = _urlparse.urlencode({"username": "glass", "password": "correct horse battery staple",
                                         "next": "/"}).encode()
             req = urllib.request.Request(f"https://127.0.0.1:{port}/login", data=body, method="POST")
@@ -18631,9 +18638,10 @@ class CwShapeTest(unittest.TestCase):
         self.assertEqual(bizbox.choices_from(conn, "purchase_order", "status"), "what BizBox has used so far")
         # the document: a dropdown for a field with a list, a date box for a date (the list itself has no control)
         _, _, page = self._call("GET", "/procurement/purchase_order", query="ref=PO-1&edit=1", cookie=self.alice)
-        self.assertIn("<select name='e:status' data-was='Approved' aria-label='Status'>"
+        self.assertIn("<select name='e:status' data-was='Approved' aria-label='Status' id=hd-status>"
                       "<option value='Approved' selected>Approved</option><option value='Ordered'>Ordered</option></select>", page)
-        self.assertIn("<select name='e:vendor' data-was='Vendor A' aria-label='Vendor'>", page)
+        self.assertIn("<label for=hd-status>Status</label>", page)          # the visible label names it (job 02)
+        self.assertIn("<select name='e:vendor' data-was='Vendor A' aria-label='Vendor' id=hd-vendor>", page)
         self.assertIn("<input type=date name='e:ordered_on'", page)
         _, _, page = self._call("GET", "/procurement", query="tab=purchase_order", cookie=self.alice)
         self.assertNotIn("form=grid", page)

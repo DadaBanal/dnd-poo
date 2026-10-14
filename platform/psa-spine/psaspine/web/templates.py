@@ -630,6 +630,8 @@ h1.sumline .sumform{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margi
 .docbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding-top:4px}
 .doc{display:flex;flex-direction:column;gap:14px}.doc>.card{margin:0}
 .dochead .crumbs{margin:0 0 10px;color:var(--ink-3);font-size:12.5px}.dochead .crumbs a{color:var(--ink-2)}
+/* Job 02: a breadcrumb link is a control, not text in a sentence, so it gets a 24px hit area (WCAG 2.5.8; MEASURED 15px on the document pages before) */
+.crumbs a{display:inline-block;min-height:24px;line-height:24px}
 .docsearch input{min-width:260px}
 .mmsbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 14px}.mmsbar .state{margin-left:auto;color:var(--ink-3);font-size:12.5px}
 .pickers{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px 16px;margin:0 0 14px}
@@ -1417,9 +1419,12 @@ body.vitals [popover]#keys{--ink:var(--v-on-dark);--ink-2:var(--v-on-dark-muted)
 /* what floats but holds a list stays a flat surface, lifted by shadow-overlay */
 body.vitals .pal-box,body.vitals .ticker .tpanel,body.vitals dialog.viewer{background:var(--v-surface)!important;border:1px solid var(--v-rule)!important;
   box-shadow:var(--v-shadow-overlay)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
-/* fields: flat on the surface, a rule border, the focus ring the desk already draws */
-body.vitals input:not([type=checkbox]):not([type=radio]):not([type=range]),body.vitals select,body.vitals textarea{
-  background-color:var(--v-surface)!important;border:1px solid var(--v-rule)!important;border-radius:6px;box-shadow:none}
+/* fields: flat on the surface, the focus ring the desk already draws. The edge is ink.muted, not rule: a field's edge
+   is what marks it as a field, and rule measured 1.34:1 there against WCAG 1.4.11's 3:1 (job 01 review, 15 Oct);
+   ink.muted is 5.85:1 on the light surface and 6.65:1 on the dark one (tokens.json). :root outranks the light
+   theme's transparent field edge, which otherwise left the light Vitals fields with no edge at all. */
+:root body.vitals input:not([type=checkbox]):not([type=radio]):not([type=range]),:root body.vitals select,:root body.vitals textarea{
+  background-color:var(--v-surface)!important;border:1px solid var(--v-muted)!important;border-radius:6px;box-shadow:none}
 :root body.vitals input:focus,:root body.vitals select:focus,:root body.vitals textarea:focus{border-color:var(--v-accent)!important;
   box-shadow:0 0 0 3px color-mix(in srgb,var(--v-accent) 30%,transparent)!important;outline:none}
 :root body.vitals input:not([type=checkbox]):not([type=radio]):not([type=range]):hover:not(:focus),:root body.vitals select:hover:not(:focus),
@@ -1482,6 +1487,14 @@ body.vitals .ticker .tlabel{font:600 13px/20px var(--v-sans);color:var(--v-on-da
 body.vitals .ticker .btn{font-size:13px;padding:4px 10px}
 body.vitals .ticker .iconbtn{color:var(--v-on-dark-muted)}
 body.vitals main::before,body.vitals::before,body.vitals::after{display:none!important}
+/* the primary action never goes blank (job 02 review, 15 Oct: MEASURED at 800px, New ticket was a 24x12 pill with
+   its words hidden by the nav's <=1000px rule and its plus by another): it keeps its words down to a phone, where
+   the plus stands in for them and the title still names it. To make the room, the keyboard-sheet button goes below
+   1000px as the 800px note above intended - the sheet still opens on ? (MEASURED: the bar overflowed 800px by 25px) */
+@media (max-width:1000px){header.top nav a.newbtn .lbl,header.top nav a.newbtn.on .lbl{display:inline}
+  header.top .who [popovertarget=keys]{display:none}}
+@media (max-width:480px){header.top nav a.newbtn .lbl,header.top nav a.newbtn.on .lbl{display:none}
+  header.top nav a.newbtn svg.ic{display:inline-block}}
 /* the error page: the same card, the code small and muted, the sentence, a way back */
 body.vitals .errpage{max-width:560px;margin:clamp(24px,8vh,80px) auto 32px;display:flex;flex-direction:column;gap:8px}
 body.vitals .errpage .errcode{margin:0;font:600 12px/16px var(--v-mono);letter-spacing:.06em;color:var(--v-muted)}
@@ -1501,7 +1514,7 @@ body.vitals .signcard button[type=submit],body.vitals .signcard .btn.wide{width:
 body.vitals .signcard .or{display:flex;align-items:center;gap:10px;margin:2px 0;color:var(--v-muted);font-size:12px}
 body.vitals .signcard .or::before,body.vitals .signcard .or::after{content:"";flex:1;border-top:1px solid var(--v-rule)}
 body.vitals .signcard .alt{margin:4px 0 0;padding-top:12px;border-top:1px solid var(--v-rule);font-size:12px;text-align:center}
-body.vitals .signcard .alt a{color:var(--v-muted)}
+body.vitals .signcard .alt a{color:var(--v-muted);display:inline-block;min-height:24px;line-height:24px}
 body.vitals .signcard .banner.err{margin:0}
 """.replace("DARKTOKENS", """
   --canvas:#080b14; --surface:#0f1320; --surface-2:#141a29; --surface-3:#1b2234;

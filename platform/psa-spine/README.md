@@ -2959,6 +2959,48 @@ Dada decides otherwise:
   readout strip in `chrome.elevated`;
 - every colour a custom property with the system's light and dark value.
 
+## Sign-in, and the rest of the 7d037f5 review, on Vitals v7 (15 Oct 2026, jobs 01 and 02)
+
+Dada, 15 Oct: *"we can do better on the login screen"*, and *"lift it"* for
+the glass and one-shadow bans (PMC Vitals Console v7). Built by WS36
+(`84bcb47`), then finished and verified by SQL01. The 14 Oct section's
+"no glass, no blur" is superseded by v7: glass is allowed on fixed chrome and
+overlays only, with both fallbacks.
+
+- **Sign-in.** One plain *Sign in* card on the Vitals tokens. It offers the
+  Windows account, then Entra, and the local account only where it is the one
+  door. The break-glass wording (the on-call rota, the WAN down, audited)
+  shows only on `/login?door=local` or after a failed Entra sign-in. Both
+  fields have `<label for>` (`si-user`, `si-pass`).
+- **Field edges** on every Vitals page are `ink.muted`, not `rule`. A field's
+  edge is what marks it as a field: `rule` measured 1.34:1 there against
+  WCAG 1.4.11's 3:1. `ink.muted` is 5.85:1 light and 6.65:1 dark. The light
+  theme's transparent field edge no longer wins on these pages.
+- **Glass and shadows.** `chrome.glass` with a 12px blur on the top bar, the
+  menu panels and the keyboard card only, with the `@supports` and
+  `prefers-reduced-transparency` fallbacks. Three shadows only:
+  `shadow-card`, `shadow-overlay`, and the grape tick (`shadow-raised` on a
+  hovered link card).
+- **One error template** for 403, 404 and 405, in the person's own bar, with
+  the view's sentence and a way back.
+- **Named controls.** The header pickers have `label for` (`hd-<field>`); the
+  palette input has `aria-label="Search"`. Breadcrumb links get a 24px hit
+  area.
+- **800px.** *New ticket* keeps its words down to phone width (it had gone
+  blank, words and plus both hidden). Below 1000px the keyboard-sheet button
+  goes (`?` still opens the sheet) and the account name truncates. Table
+  headers do not wrap.
+
+**Measured on a throwaway desk, 15 Oct.** Blur: 8 elements, all chrome or
+overlays, none on data. Distinct shadows: 3. Unnamed controls: 0 of 53 on
+`/procurement`, 0 of 49 on a new stock requisition. Targets under 24px: 7,
+all clear WCAG 2.5.8's spacing exception. No horizontal scroll at 800px.
+
+**Tests no longer inherit the host's attachment store.** On DND-SQL01,
+`PSA_ATTACHMENT_DIR` is set machine-wide to the live desk's folder, and a
+suite run there wrote 15 test files into it. `tests/test_spine.py` now unsets
+it at import.
+
 ## BizBox's numbers, and the stock requisition's save contract (14 Oct 2026, schema 088)
 
 BizBox numbers stock and expense requisitions, both issuances and physical
