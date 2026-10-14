@@ -597,7 +597,11 @@ dialog.tedlg .teform{padding:16px 18px} .tehead{display:flex;gap:14px;align-item
 @keyframes clockglow{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 45%,transparent)}50%{box-shadow:0 0 0 6px color-mix(in srgb,var(--accent) 0%,transparent)}}
 a.backbtn{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--ink2);text-decoration:none;margin:0 0 6px;padding:3px 10px 3px 6px;border:1px solid var(--line);border-radius:999px} a.backbtn:hover{color:var(--ink);border-color:var(--ink2)} a.backbtn .ic{width:15px;height:15px}
 dialog.viewer{width:min(96vw,1200px);max-width:none;height:min(92vh,900px);max-height:none;padding:0;border:0;border-radius:var(--r);background:var(--card);color:var(--fg);overflow:hidden}
-dialog.viewer:not([open]){display:none} dialog.viewer::backdrop{background:rgb(10 12 18/.55)}
+dialog.viewer:not([open]){display:none} dialog.viewer::backdrop{background:#0E1520;-webkit-backdrop-filter:none;backdrop-filter:none}
+dialog.viewer{box-shadow:0 2px 6px rgba(22,32,43,.10)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+dialog.viewer .vbar .iconbtn svg,dialog.viewer .vbar .ic{width:16px;height:16px}
+dialog.viewer .vsize,dialog.viewer .vpos{font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums}
+dialog.viewer [data-vprev][hidden],dialog.viewer [data-vnext][hidden]{display:none}
 dialog.viewer .vbar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line)} dialog.viewer .vbar .grow{flex:1}
 dialog.viewer .vname{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 dialog.viewer .vbody{height:calc(100% - 46px);display:flex;align-items:center;justify-content:center;background:var(--bg)}
@@ -2332,18 +2336,35 @@ var ti=d.querySelector('[data-slot-title]');if(ti)ti.textContent='Add on '+p[1]+
 show()})();
 // Files: a picture, a PDF or a text file opens in the page's viewer instead
 // of saving. The link itself still opens the file, so nothing depends on this.
+// Previous and Next (and the arrow keys) step through every viewable file on
+// the page in page order, the chat's pictures and a ticket's files alike (the
+// PMO Helpdesk's ask, 14 Oct 2026); Escape closes. A page with no viewer markup
+// (the chat) gets the same dialog, cloned from the page's <template>.
+(function(){var list=[],at=0;
+function dlg(){var d=document.getElementById('viewer');if(d)return d;var tp=document.getElementById('viewertpl');if(!tp)return null;
+ d=tp.content.firstElementChild.cloneNode(true);document.body.appendChild(d);wire(d);return d}
+function wire(d){if(d.dataset.wired)return;d.dataset.wired='1';
+ d.querySelector('[data-close]').addEventListener('click',function(){d.close()});
+ var p=d.querySelector('[data-vprev]'),n=d.querySelector('[data-vnext]');if(p)p.addEventListener('click',function(){step(-1)});if(n)n.addEventListener('click',function(){step(1)});
+ d.addEventListener('close',function(){d.querySelector('.vbody').innerHTML=''});
+ d.addEventListener('click',function(e){if(e.target===d)d.close()});
+ d.addEventListener('keydown',function(e){if(e.key==='ArrowLeft'){e.preventDefault();step(-1)}else if(e.key==='ArrowRight'){e.preventDefault();step(1)}})}
+function show(i){var d=dlg(),a=list[i];if(!a)return;at=i;
+ var kind=a.getAttribute('data-view'),href=a.getAttribute('href'),body=d.querySelector('.vbody');
+ d.querySelector('.vname').textContent=a.getAttribute('data-name')||a.textContent;
+ var sz=d.querySelector('.vsize');if(sz)sz.textContent=a.getAttribute('data-size')?' · '+a.getAttribute('data-size'):'';
+ var pos=d.querySelector('.vpos');if(pos)pos.textContent=list.length>1?' · '+(i+1)+' of '+list.length:'';
+ var p=d.querySelector('[data-vprev]'),n=d.querySelector('[data-vnext]');if(p){p.disabled=list.length<2;p.hidden=list.length<2}if(n){n.disabled=list.length<2;n.hidden=list.length<2}
+ d.querySelector('[data-vdl]').href=href+(href.indexOf('?')<0?'?':'&')+'dl=1';d.querySelector('[data-vopen]').href=href;
+ body.innerHTML='';var el;if(kind==='image'){el=document.createElement('img');el.alt=a.getAttribute('data-name')||a.textContent}
+ else{el=document.createElement('iframe');el.title=a.getAttribute('data-name')||a.textContent;if(kind==='text')el.setAttribute('sandbox','')}
+ el.src=href;body.appendChild(el);if(!d.open)d.showModal()}
+function step(k){if(list.length<2)return;show((at+k+list.length)%list.length)}
 document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[data-view]');if(!a)return;
-var d=document.getElementById('viewer');if(!d||!d.showModal)return;e.preventDefault();
-var kind=a.getAttribute('data-view'),href=a.getAttribute('href'),body=d.querySelector('.vbody');
-d.querySelector('.vname').textContent=a.getAttribute('data-name')||a.textContent;
-d.querySelector('[data-vdl]').href=href+(href.indexOf('?')<0?'?':'&')+'dl=1';d.querySelector('[data-vopen]').href=href;
-body.innerHTML='';var el;if(kind==='image'){el=document.createElement('img');el.alt=a.textContent}
-else{el=document.createElement('iframe');el.title=a.textContent;if(kind==='text')el.setAttribute('sandbox','')}
-el.src=href;body.appendChild(el);d.showModal()});
-(function(){var d=document.getElementById('viewer');if(!d)return;
-d.querySelector('[data-close]').addEventListener('click',function(){d.close()});
-d.addEventListener('close',function(){d.querySelector('.vbody').innerHTML=''});
-d.addEventListener('click',function(e){if(e.target===d)d.close()})})();
+ var d=dlg();if(!d||!d.showModal)return;e.preventDefault();
+ var seen={};list=[].slice.call(document.querySelectorAll('a[data-view]')).filter(function(x){var h=x.getAttribute('href');if(seen[h])return false;seen[h]=1;return true});
+ var i=list.findIndex(function(x){return x.getAttribute('href')===a.getAttribute('href')});show(i<0?0:i)});
+var d0=document.getElementById('viewer');if(d0)wire(d0)})();
 // The ticket summary: the pencil swaps the words for a one-line form.
 document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-edit]');if(!b)return;
 var h=b.closest('h1.sumline');if(!h)return;var f=h.querySelector('.sumform'),t=h.querySelector('.sumtext'),p=h.querySelector('.sumedit');
@@ -3130,6 +3151,20 @@ def _chat_banner_html(live, word, items) -> str:
             f"<div id=chatlive class=tpanel role=dialog aria-label='Live chats' hidden>{chat_panel(live)}</div></div>")
 
 
+def viewer_html() -> str:
+    """The file viewer's dialog (views/files.viewer_dialog, and the script's copy
+    for a page without one): Previous, Next, the name, the size, the place in
+    the list, Download, Open in a tab, Close."""
+    return ("<dialog id=viewer class=viewer aria-label='File viewer'><div class=vbar>"
+            "<button type=button class='iconbtn' data-vprev title='Previous (left arrow)' aria-label='Previous file'>" + icon("left") + "</button>"
+            "<button type=button class='iconbtn' data-vnext title='Next (right arrow)' aria-label='Next file'>" + icon("right") + "</button>"
+            "<b class=vname></b><span class='vsize muted'></span><span class='vpos muted' aria-live=polite></span>"
+            "<span class=grow></span><a class='btn ghost small' data-vdl href='#'>Download</a> "
+            "<a class='btn ghost small' data-vopen href='#' target=_blank rel=noopener>Open in a tab</a> "
+            "<button type=button class='iconbtn' data-close title='Close (Esc)' aria-label='Close'>" + icon("x") + "</button></div>"
+            "<div class=vbody></div></dialog>")
+
+
 def _vitals(active: str) -> bool:
     """The pages built to the PMC Vitals Console design system: Procurement's
     (every page whose menu key is the area's or one of its modules)."""
@@ -3340,7 +3375,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
            "<footer>PMC PSA spine — Phase B pilot. LAN only, Dada IT only. "
            "Kitameraki remains the system of record until dual-run ends.</footer>")
         +
-        f"{palette}<script>{SCRIPT}</script></body></html>")
+        f"{palette}<template id=viewertpl>{viewer_html()}</template><script>{SCRIPT}</script></body></html>")
 
 
 def login_page(*, entra_configured: bool, error: str = "", next_url: str = "/",

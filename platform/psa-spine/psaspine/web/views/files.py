@@ -91,7 +91,8 @@ def file_link(href: str, r) -> str:
     kind = view_kind(r["media_type"])
     if not kind:
         return f"<a href='{href}'>{name}</a>"
-    return (f"<a href='{href}' data-view='{kind}' data-name='{name}'>{name}</a> "
+    size = _size(r["size_received"]) if "size_received" in r.keys() and r["size_received"] else ""
+    return (f"<a href='{href}' data-view='{kind}' data-name='{name}' data-size='{size}'>{name}</a> "
             f"<a href='{href}?dl=1' class=muted title='Download {name}' aria-label='Download {name}'>" + t.icon("down") + "</a>")
 
 
@@ -127,12 +128,11 @@ def view_kind(media_type: str) -> str:
 
 def viewer_dialog() -> str:
     """The one dialog a page with viewable files carries: the picture or frame
-    goes in when a file is clicked (templates JS, [data-view])."""
-    return ("<dialog id=viewer class=viewer aria-label='File'><div class=vbar><b class=vname></b>"
-            "<span class=grow></span><a class='btn ghost small' data-vdl href='#'>Download</a> "
-            "<a class='btn ghost small' data-vopen href='#' target=_blank rel=noopener>Open in a tab</a> "
-            "<button type=button class='iconbtn' data-close title='Close'>" + t.icon("x") + "</button></div>"
-            "<div class=vbody></div></dialog>")
+    goes in when a file is clicked (templates JS, [data-view]). Previous and
+    Next step through every viewable file on the page, in page order, as do
+    the arrow keys (the PMO Helpdesk's ask, 14 Oct 2026); Escape closes. A page
+    without this markup gets the same dialog from the script."""
+    return t.viewer_html()
 
 
 def serve(ctx, row, *, board_id: str):

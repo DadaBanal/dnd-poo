@@ -1220,7 +1220,7 @@ def new_form(ctx, *, error: str = "", values: dict | None = None):
         _template_picker(ctx, tpl["template_id"] if tpl is not None else "") +
         "<h1>New ticket</h1><p class=sub>For the desk: a call, a walk-up, something you saw. "
         "Priority is computed from the two questions, never chosen.</p>"
-        "<div class=card><form method=post action='/ticket/new'>"
+        "<div class=card><form method=post action='/ticket/new' enctype='multipart/form-data'>"
         + (f"<input type=hidden name=template_id value='{t.esc(v.get('template_id', ''))}'>"
            if v.get("template_id") else "")
         + (f"<input type=hidden name=configuration_id value='{t.esc(machine['configuration_id'])}'>"
@@ -1249,6 +1249,13 @@ def new_form(ctx, *, error: str = "", values: dict | None = None):
         f"{radios('urgency', PATIENT_WAITING, v.get('urgency', ''))}</div>"
         "<div style='grid-column:1/-1'><label>Description</label><textarea name=description "
         f"placeholder='The ward or office, the room, the machine, and since when.'>{t.esc(v.get('description', ''))}</textarea></div>"
+        # the PMO Helpdesk's ask (14 Oct 2026): a file while raising the ticket, not only after. It lands exactly as
+        # one attached later does: on the Files card, awaiting the patient-information review
+        "<div style='grid-column:1/-1'><label for=newfiles>" + t.icon("paperclip") + " Attach files</label>"
+        "<input id=newfiles type=file name=file multiple aria-describedby=newfileswhy>"
+        "<p class=why id=newfileswhy style='margin:6px 0 0'>Up to 10 MB each. Screenshots, photos, PDFs, logs and Office documents. "
+        "Each file waits for a patient-information review on the ticket's Files card, as one attached later does."
+        + (" Choose them again: a page sent back does not keep the files." if error else "") + "</p></div>"
         + "<div><label>Owner</label>" + common.owner_select(ctx.conn, [b["board_id"] for b in boards], v.get("owner"), me=ctx.user.id)
         + "</div>"
         "</div><div style='margin-top:14px'><button type=submit>Create ticket</button> "
@@ -1258,6 +1265,7 @@ def new_form(ctx, *, error: str = "", values: dict | None = None):
 
 def new_create(ctx):
     from .. import redirect
+    from ... import attachments
     f = ctx.request.form()
     board_id = f.get("board_id", "")
     if not common.may_access_board(ctx, board_id, need="WORK"):
@@ -1314,11 +1322,25 @@ def new_create(ctx):
                 bizbox.link(ctx.conn, "TICKET", wid, f["bizbox_kind"], f["bizbox_ref"], at=ctx.now, actor=ctx.user.id)
             except (bizbox.Refused, KeyError):
                 pass                               # a record that vanished is not a reason to lose the ticket
+        # files attached while raising it: the same call as the Files card's Attach, so the same PENDING review;
+        # a file not kept is named and the ticket stands (as on the portal)
+        kept, refused = [], []
+        for filename, data in ctx.request.files("file"):
+            if not filename and not data:
+                continue                           # the field left empty
+            try:
+                attachments.add(ctx.conn, wid, data, filename, actor=ctx.user.id, at=ctx.now, source="DESK")
+                kept.append(attachments.safe_name(filename))
+            except attachments.Refused as exc:
+                refused.append(f"{attachments.safe_name(filename)}: {exc}")
         ctx.conn.commit()
     except Exception as exc:                                 # noqa: BLE001
         ctx.conn.rollback()
         return new_form(ctx, error=f"Not created: {exc}", values=f)
-    return redirect(f"/ticket/{wid}?msg=" + urllib.parse.quote(f"Created {wid}"))
+    q = {"msg": f"Created {wid}" + (f" with {len(kept)} file{'s' if len(kept) != 1 else ''} awaiting review" if kept else "")}
+    if refused:
+        q["err"] = "Not attached: " + "; ".join(refused)
+    return redirect(f"/ticket/{wid}?" + urllib.parse.urlencode(q))
 
 
 # ------------------------------------------------------ change and links

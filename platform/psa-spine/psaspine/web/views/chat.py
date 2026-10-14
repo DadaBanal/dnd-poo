@@ -57,9 +57,14 @@ def _line_dicts(ctx, c, rows, *, viewer: str, desk: bool, base: str) -> list:
             else:
                 d["file"] = {"id": f["file_id"], "name": f["filename"], "url": f"{base}/file/{f['file_id']}",
                              "image": f["media_type"].startswith("image/") and f["media_type"] != "image/svg+xml",
-                             "status": f["review_status"]}
+                             "size": _size(f["size_received"]), "status": f["review_status"]}
         out.append(d)
     return out
+
+
+def _size(n) -> str:
+    from .files import _size as size
+    return size(int(n or 0))
 
 
 def _rx(ctx, c, viewer: str) -> dict:
@@ -89,8 +94,10 @@ def _bubble(d, *, me_kind: str, rx: list, desk: bool, base: str) -> str:
             review = (f" <form method=post action='{base}/file/{f['id']}/review' class=inline>"
                       "<button class='ghost small' name=decision value=CLEARED type=submit>Clear</button>"
                       "<button class='ghost small danger' name=decision value=WITHHELD type=submit>Withhold</button></form>")
-        pic = (f"<a href='{t.esc(f['url'])}' target=_blank rel=noopener><img class=cimg src='{t.esc(f['url'])}' "
-               f"alt='{t.esc(f['name'])}' loading=lazy></a>" if f["image"] else "")
+        # the picture opens in the page's viewer with Previous and Next across the chat's pictures (PMO Helpdesk,
+        # 14 Oct 2026: "sa halip na automatic na magbukas sa bagong tab"); without script the link still opens it
+        pic = (f"<a href='{t.esc(f['url'])}' data-view=image data-name='{t.esc(f['name'])}' data-size='{t.esc(f.get('size', ''))}'>"
+               f"<img class=cimg src='{t.esc(f['url'])}' alt='{t.esc(f['name'])}' loading=lazy></a>" if f["image"] else "")
         fhtml = (f"<div class=cfile>{pic}<a href='{t.esc(f['url'])}?dl=1'>📎 {t.esc(f['name'])}</a>{pend}{review}</div>")
     body = "" if (f and d["body"].startswith("sent ")) else f"<div class=ctext>{t.esc(d['body'])}</div>"
     bar = "".join(f"<button type=button class='rx{' on' if x['mine'] else ''}' data-e='{x['e']}' title='{t.esc(x['who'])}'>"
@@ -136,7 +143,7 @@ function render(m,rx){var d=document.createElement('div');d.dataset.mid=m.id;
  if(m.kind==='SYSTEM'){d.className='cl sys';d.innerHTML=esc(m.body)+' \\u00b7 '+esc(m.at);return d}
  d.className='cl '+m.kind.toLowerCase()+(m.kind===me?' me':'');var f=m.file,fh='';
  if(f&&f.withheld){fh='<div class=cfile><i>A file the desk has held back.</i></div>'}
- else if(f){fh='<div class=cfile>'+(f.image?'<a href="'+esc(f.url)+'" target=_blank rel=noopener><img class=cimg src="'+esc(f.url)+'" alt="'+esc(f.name)+'"></a>':'')
+ else if(f){fh='<div class=cfile>'+(f.image?'<a href="'+esc(f.url)+'" data-view=image data-name="'+esc(f.name)+'" data-size="'+esc(f.size||'')+'"><img class=cimg src="'+esc(f.url)+'" alt="'+esc(f.name)+'"></a>':'')
   +'<a href="'+esc(f.url)+'?dl=1">\\ud83d\\udcce '+esc(f.name)+'</a>'+(f.status==='PENDING'?' <span class=chip>being checked</span>':'')
   +(desk&&f.status==='PENDING'?' <form method=post action="'+esc(base)+'/file/'+f.id+'/review" class=inline><button class="ghost small" name=decision value=CLEARED type=submit>Clear</button><button class="ghost small danger" name=decision value=WITHHELD type=submit>Withhold</button></form>':'')+'</div>'}
  var words=(f&&m.body.indexOf('sent ')===0)?'':'<div class=ctext>'+esc(m.body)+'</div>';

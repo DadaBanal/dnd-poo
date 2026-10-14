@@ -2973,6 +2973,16 @@ must differ for this kind only, a line must name an item BizBox has, the same
 item twice and a price of 0 are allowed, and the price is BizBox's purchase
 price at the moment of saving, sent with the item's unit and conversion.
 
+## The PMO Helpdesk's two asks: a viewer with Previous and Next, files on New Ticket (14 Oct 2026)
+
+- **One viewer** for a ticket's files and the chat's pictures (a chat picture
+  no longer opens a new tab). Previous and Next, and the arrow keys, step
+  through every viewable file on the page; the bar shows the name, the size
+  and "1 of 2"; Escape closes. Flat scrim, one shadow, 16px glyphs.
+- **Attach files on New Ticket**, through the same call as the Files card, so
+  each file is "Awaiting review" exactly as one attached later. A file the
+  desk refuses is named and the ticket stands, as on the portal.
+
 ## The write path on the desk's side (14 Oct 2026, schema 085)
 
 SQL01's rulings of 14 Oct 2026 (`docs/handoffs/HANDOFF-sql01-cloud-WS36-20261014-write-path-simplified.md`): identity is

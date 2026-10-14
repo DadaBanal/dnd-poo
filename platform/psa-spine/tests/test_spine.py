@@ -11075,6 +11075,50 @@ class AttachmentsWebTest(unittest.TestCase):
     def _conn(self):
         return db.connect(self.db_path)
 
+    def test_new_ticket_takes_files_into_the_same_review_and_the_viewer_steps_through_them(self):
+        """The PMO Helpdesk's two asks (14 Oct 2026): Attach File on New Ticket,
+        in the same review state as a file attached later; and a pop-up viewer
+        with Previous and Next instead of a new tab, on a ticket and in the chat."""
+        cookie = self._cookie_for("alice")
+        _, _, page = self._send("GET", "/ticket/new", cookie=cookie)
+        for words in (b"<form method=post action='/ticket/new' enctype='multipart/form-data'>",
+                      b"<input id=newfiles type=file name=file multiple aria-describedby=newfileswhy>",
+                      b"Each file waits for a patient-information review on the ticket's Files card, as one attached later does."):
+            self.assertIn(words, page, words)
+        fields = {"board_id": "IT_HELP", "source": "PHONE", "entity_id": "PMC", "summary": "Ward 5 printer jams",
+                  "impact": "I2", "urgency": "U2"}
+        status, headers, _ = self._send("POST", "/ticket/new", cookie=cookie, fields=fields,
+                                        files=[("jam one.png", _png()), ("jam two.png", _png()), ("setup.exe", b"MZ\x90\x00" + b"\x00" * 60)])
+        self.assertTrue(status.startswith("303"), status)
+        loc = urllib.parse.unquote_plus(headers["Location"])
+        wid = loc.split("/ticket/")[1].split("?")[0]
+        self.assertIn(f"Created {wid} with 2 files awaiting review", loc)
+        self.assertIn("Not attached: setup.exe: programs are not kept on tickets", loc)     # named; the ticket stands
+        conn = self._conn()
+        rows = conn.execute("SELECT filename, review_status, uploaded_by, source FROM attachment WHERE work_item_id = ? ORDER BY attachment_id",
+                            (wid,)).fetchall()
+        later = conn.execute("SELECT review_status, source FROM attachment WHERE work_item_id = 'ITO-1'").fetchall()
+        conn.close()
+        self.assertEqual([tuple(r) for r in rows], [("jam one.png", "PENDING", "alice", "DESK"), ("jam two.png", "PENDING", "alice", "DESK")])
+        self._send("POST", "/ticket/ITO-1/attach", cookie=cookie, files=[("later.png", _png())])
+        conn = self._conn()
+        later = conn.execute("SELECT review_status, source FROM attachment WHERE work_item_id = 'ITO-1'").fetchone()
+        conn.close()
+        self.assertEqual(tuple(later), ("PENDING", "DESK"))                                    # the same state as one attached later
+        _, _, page = self._send("GET", f"/ticket/{wid}", cookie=cookie)
+        self.assertIn(b"Files \xc2\xb7 2 \xc2\xb7 2 to review", page)
+        # no file at all: the ticket is created as before, nothing said about files
+        status, headers, _ = self._send("POST", "/ticket/new", cookie=cookie, fields=fields | {"summary": "No file"})
+        self.assertNotIn("awaiting review", urllib.parse.unquote_plus(headers["Location"]))
+        self.assertNotIn("Not attached", urllib.parse.unquote_plus(headers["Location"]))
+        # the viewer: Previous and Next, the name, the size and the place in the list; a flat scrim; on every page
+        for words in (b"<dialog id=viewer class=viewer aria-label='File viewer'>", b"data-vprev title='Previous (left arrow)'",
+                      b"data-vnext title='Next (right arrow)'", b"<span class='vsize muted'></span><span class='vpos muted' aria-live=polite></span>",
+                      b"data-close title='Close (Esc)'", b"data-size='", b"e.key==='ArrowLeft'", b"e.key==='ArrowRight'",
+                      b"' of '+list.length", b"<template id=viewertpl><dialog id=viewer class=viewer", b"dialog.viewer::backdrop{background:#0E1520;"):
+            self.assertIn(words, page, words)
+        self.assertEqual(page.count(b"data-view='image'"), 2)                                # both pictures in the one list
+
     def test_a_file_uploaded_at_the_desk_is_shown_in_place_and_downloads_on_request(self):
         cookie = self._cookie_for("alice")
         status, headers, _ = self._send("POST", "/ticket/ITO-1/attach", cookie=cookie,
@@ -11097,7 +11141,7 @@ class AttachmentsWebTest(unittest.TestCase):
         self.assertTrue(data.startswith(b"\x89PNG"))
         _, _, page = self._send("GET", "/ticket/ITO-1", cookie=cookie)
         self.assertIn(b"Awaiting review", page)
-        self.assertIn(f"<a href='/ticket/ITO-1/file/{aid}' data-view='image' data-name='error screen.png'>".encode(), page)
+        self.assertIn(f"<a href='/ticket/ITO-1/file/{aid}' data-view='image' data-name='error screen.png' data-size='".encode(), page)
         self.assertIn(f"<a href='/ticket/ITO-1/file/{aid}?dl=1' class=muted title='Download error screen.png'".encode(), page)
         self.assertIn(b"<dialog id=viewer class=viewer", page)
         # a PDF is drawn by the browser (no sandbox flag: Chromium's viewer will not run under it); a document downloads
