@@ -40,6 +40,7 @@ The `pmc-*` skills live in the record (`Documents/Claude/.claude/skills`) and ar
 
 | | |
 |---|---|
+| **Building** | **SQL01 sessions on this machine, one fresh session per job** (from 15 Oct 2026; Dada moved the build here from the cloud session WS36, which stops). |
 | **This repo / desk code** | `platform/psa-spine` (Python, SQLite tests, T-SQL port in `sqlserver/`, schema steps `schema/NNN_*.sql`, now at 088) |
 | **BizBox measurement** | the **Bizbox Chat** session — every question about what BizBox stores or how its client behaves goes there, never probed here. Findings and asks only; "nothing needed back" means no reply. |
 | **Decisions** | Dada. He decides fast on one recommendation and badly on a menu. |
@@ -53,6 +54,9 @@ The `pmc-*` skills live in the record (`Documents/Claude/.claude/skills`) and ar
 - Throwaway desk for reviews: `.claude/launch.json` `psa-review`, port 8086, SQLite in the scratchpad, seeded by
   `seed_desk.py`. Build it with `psaspine init` on a fresh file; an old file does not migrate.
 - BizBox side: schema `psa` on LiveDB_PMC **and** TrainingDB_HIS8 — 22 views, `fn_item_ledger`, `sp_apply_change`.
+- A spawned job session starts in a **git worktree**, not the live checkout: rebase on
+  `origin/claude/psa-ticketing-build`, push with `git push origin HEAD:claude/psa-ticketing-build`; deploy = pull in
+  `D:\dnd-poo` then restart, on Dada's word.
 - Python: `C:/PMC/Python312/python.exe -I`. Push: `claude/psa-ticketing-build`; verify local == remote after every push.
 
 ## 5. The gate — every write to a database
