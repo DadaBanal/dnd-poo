@@ -2583,7 +2583,10 @@ inside BizBox*.
 **Procurement** (`/procurement`): BizBox's MMS, the same mirror Finance shows, as a module of its own.
 - Tabs: Purchase orders, Receiving (BizBox's receiving reports, which Finance calls invoices), Products, Vendors (the
   names on orders and receipts, with counts and sums; a vendor's own record stays in BizBox's people table), Changes.
-- Each grid: search, a status filter (an item's is its category) and a vendor filter; tick rows, set one field to
+- *Superseded on 14 Oct 2026 (SQL01's review of the live desk): the grids described in this bullet are gone. A list is
+  read-only rows that open the document, and the change-proposal model lives inside the document; see "A list is a
+  list, a document is a document" below. The record kept as written.* Each grid: search, a status filter (an item's is
+  its category) and a vendor filter; tick rows, set one field to
   one value, say why, then *Review and send* (a batch); or edit cells in place and *Review edited cells and send*
   (a batch of only the cells that differ); *New purchase order* (with up to eight lines, each an item BizBox has) and
   *New item*. The words on screen are a person's, never a table's: the read banner says *5 purchase orders (5 new)*,
@@ -2748,6 +2751,104 @@ mirrored hourly like everything else, never read live, and the ledger comes thro
   filed as a resend of another's ticket as its own ticket, dated when it arrived, on its mailbox's board,
   cross-linked both ways, with the words taken back from the note the import left; preview by default. Dada, for
   the 30: raise them.
+
+## A list is a list, a document is a document: Purchase Orders replaced (14 Oct 2026, code only)
+
+SQL01, 14 Oct 2026, after looking at Procurement › Purchase orders on the live desk: *"This is not the GUI I asked
+for … mirror-table tabs with counts, an input box in every cell of every row, the '0 ticked · change' bar, the '0
+cell(s) edited' bar, the four-line paragraph. Rejected as a shape. Do not polish it — replace it."* The order set, so
+the change is seen screen by screen: Purchase Orders list + document → Receiving → Stock Requisition → the module menu
+with rights per module → the rest in volume order → the minor fixes from the 084 review. Dada, the same day, on the
+first cut: *"why is there no edit also for the PO … not just the logo but the whole template"* and *"the side bar
+should be placed on the top and make sure when the hover is done it doesn't go away immediately"*. So the purchase
+order is built to the whole template of the Bizbox Chat session's 1:1 draft of 13 Oct (`deliverables/
+PMC_OwnApp_1to1_MMS_20261013.png` in the record), with its module list in the desk's top menu rather than a side rail.
+
+- **The top menu is BizBox's MMS module list** (Procurement ▾): Overview · Purchase Requisitions · Purchase Orders ·
+  Receiving · Stock Requisitions · Expense Requisitions · Issuances · Physical Count · Items · Stock on hand ·
+  Movements · Warehouses · Drugs · Reports · Changes, each shown per the member's module rights (PROC_PO, PROC_RR,
+  PROC_ITEM, PROC_DRUG). A module the desk does not carry yet opens a page that says so and names the order. The
+  in-page tabs bar is gone. A panel opened by hover now stays open for a third of a second after the mouse leaves
+  its heading, and the gap under the heading is bridged, so crossing into the panel never closes it; it closes once
+  the mouse has left heading and panel together.
+- **A list is a list.** `/procurement?tab=purchase_order`: the title with its crumb (*Materials › Purchase Orders*),
+  *Add*, then read-only rows, *Number · Vendor · Ordered · Status · Total · Lines · Waiting*. The number opens the
+  document; so does the row (Ctrl-click for a new tab; a text selection or a control in the row keeps its own click).
+  No control in a row, no bulk-change bar, no edited-cells bar; their routes answer 404. The paragraph is gone; the
+  dated sync bar stays. The same list shape serves Receiving and Products.
+- **The document** (`/procurement/purchase_order?ref=…`, `psaspine/web/views/documents.py`), to the draft's template:
+  - *Title and breadcrumb* (`Purchase Order Details`, *Purchase Orders › PO-… › Approved*) with a *Find a purchase
+    order…* search on the right.
+  - *The action bar:* **Add** and **Edit Mode**, BizBox's own buttons; on the right, read from BizBox when and how
+    many changes wait.
+  - *The pickers in one row:* Vendor · Order date · Status · Currency. Plain values until Edit Mode; in it, BizBox's
+    vendor and status lists as dropdowns and a date box, prefilled with BizBox's value.
+  - *The grid:* `# · Item ID · Item Description · Quantity · Served Quantity · Unit Price · Total Amount`, BizBox's own
+    captions, from `ext_po_line`, with a lines total. In Edit Mode the description, quantity and unit price of each
+    line are controls, and three rows take a new item each, picked from the items BizBox has (*a new item is never
+    created from here*).
+  - *The footer:* **Total Record(s) · Total Item · Total Amount · Total in BizBox**, the approval sentence (*batch #n ·
+    waiting for approval*, or *nothing waiting*), **Print Purchase Order Slip**, **BizBox's slip (MMS_ADHOC_POSLIP)**
+    when the catalogue has it, and in Edit Mode *Why* and **Save**. One sentence when BizBox's total and the lines
+    differ.
+  - *Save* opens the window that says what will change (field, from → to, a line's change named *Quantity on line
+    L-1*, a new line spelled out *IT-1 Toner cyan · 1 @ 600.00*); **Send for approval** queues one batch; a second
+    person approves; BizBox changes only when the approved batch is pushed. Nothing is queued by the window.
+  - *The approval line* below the sheet: every batch that touches the document as a path **Proposed → Approval →
+    Sent to BizBox → In BizBox** (or Refused, or Cancelled) with who and when, the changes under it, **Approve** /
+    **Cancel** for an approver of the area, never on their own. Then *Work linked to it*.
+- **A line's change, in the write contract.** The header's fields travel as before. A line's change is one
+  `ext_change` whose field is `line:<line id>:<field>` (`quantity`, `unit_cost`, `description`;
+  `bizbox.EDITABLE_LINES`) with the line's own row version as `expected_tstamp`; a new line is `line:new:<n>` whose
+  `new_value` is the line as JSON (`product_ref`, `description`, `quantity`, `unit_cost`; `bizbox.NEW_LINE_FIELDS`).
+  `psa.sp_apply_change` takes the same ten parameters; its EDIT branch widens by exactly those two field shapes, and
+  until it does a line change is refused by the procedure and recorded REJECTED, never applied half.
+- **Print the slip at the same click.** `/procurement/purchase_order/slip?ref=…&now=1` is the desk's own slip (the PMC
+  · Materials Management kicker, the document word and number, the facts, the lines, totals, the approval on the
+  desk, four signature lines, who printed it and when, "BizBox is the system of record"), print-styled, opening the
+  print window on load; a Print button stays for a second copy. BizBox's slip opens the catalogued report with its
+  document-number parameter filled in from the link (`?doc=…`): the first parameter a person is asked for, text,
+  without a list of its own, whose name or prompt says *number* as a whole word (`PONo`, `Doc_No`; never *Company* or
+  *Paid*); when none fits the page says so and asks, never the values of the last run (`mms_reports.doc_values`).
+- **Movement words from BizBox's own codes** (SQL01, from the stock-card procedure): CH/CA Charged · CN Returned by
+  patient · DC Charge deleted · DR Received · PI Received (petty cash) · PR Returned to supplier · SS Transferred · EI
+  Issued · MP Produced · QA Adjusted · PC Counted; PP AT DP GL RT RS as the code alone. The code sits beside the word
+  for a two-letter doctype (`Charged · CH`); a view that spells the word out gets none (`procurement.move_label`).
+- **The fence.** BizBox's labels for the charge codes embed a patient-name subquery, so the desk never renders a
+  movement description or remarks string: `ext_movement.remarks` is no longer shown anywhere and the Remarks column is
+  gone from the Movements tab.
+- **Every MMS document is on the desk** (Dada, later the same day: *"everything not on the desk yet, add on the
+  desk"*). The desk has no mirror of BizBox's existing requisitions, issuances or counts (SQL01's ten views do not
+  include them), so each goes on as a document the desk raises and tracks itself, to the same template:
+  Stock Requisition, Expense Requisition, Purchase Requisition, Stock Issuance, Expense Issuance, Physical Count
+  (`documents.DESK_KINDS`; `bizbox.ADDABLE`, `MMS_DOC_FIELDS`).
+  - *The form* (`/procurement/<kind>/new`): the pickers in a row (Issuing Department from the desk's own department
+    list, Warehouse from BizBox's active warehouses, Center free text until SQL01 maps BizBox's list, the date), eight
+    rows that take an item each from the items BizBox has, and **On hand at source** filled in as a person picks
+    (`/procurement/stock.json`, from the ledger mirror, never `actualqty`), *Why*, **Save**. The window then shows the
+    header as it will be kept and the lines with on hand and the shortfall (*Short on 1 line: row 1: only 12 on hand
+    at the source against 20 requested*; the document can still be sent). A count shows the variance instead.
+  - *The document* (`/procurement/<kind>?ref=NEW-<batch>`): the same screen as a purchase order's, read from the
+    batch's payload, with the approval path, **Print … Slip** (the desk's own), and **BizBox's slip** once BizBox has
+    numbered it. **Edit Mode** while it still waits for approval (the requester or an approver of the area): the same
+    form, prefilled; Save keeps it waiting as it now reads (`bizbox.replace_add`, audited). Once approved it is
+    read-only here.
+  - *The list* (`/procurement?tab=<kind>`): the desk's own, open ones by default, newest first, the BizBox number once
+    applied; a row opens the document. BizBox's existing ones will list beside them once SQL01 maps a view per kind.
+  - *To BizBox:* one ADD under the kind (`STOCK_REQ`, `EXPENSE_REQ`, `PURCHASE_REQ`, `STOCK_ISSUANCE`,
+    `EXPENSE_ISSUANCE`, `PHYSICAL_COUNT`; 085's CHECKs carry them) with the payload
+    `{"record": {department, warehouse_ref, center, doc_date}, "lines": [{product_ref, description, quantity,
+    unit_cost}]}`; the procedure answers with the number, which the document then shows. A unit price left blank is
+    the item's unit cost from the mirror; *price × smallconversion* (SQL01's arithmetic note) needs the conversion on
+    the item view, asked for in the handoff.
+- **The PMC branding.** The draft carries the PMC wordmark with *Materials Management System* under it and no
+  separate logo file exists in the record; the slip carries the same wordmark. A logo file, when there is one, drops
+  into the shell's brand mark.
+- **Design skills, named** (SQL01's ruling 2): `artifact-design` fired (its fundamentals on the desk's own tokens and
+  type scale, both themes, nothing loaded from outside); `dataviz`, `pdf` and `xlsx` did not (no chart, no PDF or
+  workbook emitted by the desk: the slip is the page print-styled, BizBox's slip comes from the report server).
+
+Handoff: `HANDOFF-cloud-sql01-WS36-20261014-po-list-and-document.md`. No schema step.
 
 ## The write path on the desk's side (14 Oct 2026, schema 085)
 

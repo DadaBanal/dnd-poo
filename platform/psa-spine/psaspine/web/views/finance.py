@@ -174,9 +174,9 @@ def _changes_table(ctx, rows, *, with_record: bool = True, pending_word: str = "
         rec = (f"<td>{ONE[kind]} {_ref_link(kind, c['ext_ref'])}</td>" if with_record else "")
         cancel = (f"<form method=post action='/finance/change/{c['change_id']}/cancel' class=inline>"
                   "<button class='ghost small' type=submit>Cancel</button></form>" if can and c["status"] == "PENDING" else "")
-        trs.append(f"<tr><td>#{c['change_id']}</td>{rec}<td>{t.esc(bizbox.FIELD_WORDS.get(c['field'], c['field']))}</td>"
-                   f"<td>{t.esc(bizbox.word(labels[kind], c['field'], c['old_value']) or '—')} → "
-                   f"<b>{t.esc(bizbox.word(labels[kind], c['field'], c['new_value']) or '—')}</b></td>"
+        trs.append(f"<tr><td>#{c['change_id']}</td>{rec}<td>{t.esc(bizbox.field_word(c['field']))}</td>"
+                   f"<td>{t.esc(bizbox.value_word(labels[kind], c['field'], c['old_value']))} → "
+                   f"<b>{t.esc(bizbox.value_word(labels[kind], c['field'], c['new_value']))}</b></td>"
                    f"<td>{t.esc(c['reason'])}</td><td>{t.esc(c['requested_by'])}<div class=muted>{t.esc(c['requested_at'])}</div></td>"
                    f"<td>{t.chip(words[c['status']])}" + (f"<div class=muted>{t.esc(c['answer'])}</div>" if c["answer"] else "")
                    + f"</td><td>{cancel}</td></tr>")
@@ -381,6 +381,12 @@ def _review_dialog(kind: str, area: str, ext_ref: str, preview: dict, *, action:
 
 def _detail(ctx, kind, area, ext_ref, *, dialog: str = "", err: str = "", posted: dict | None = None):
     from .. import HttpError, Response
+    if area == "procurement":
+        from . import documents
+        if kind in documents.DOCS:        # a document kind opens as a document (SQL01, 14 Oct 2026)
+            return documents.page(ctx, kind, ext_ref, dialog=dialog, err=err, posted=posted)
+    if kind not in bizbox.KINDS:          # a kind the desk names but does not mirror (the MMS kinds under Finance)
+        raise HttpError("404 Not Found", "No such record.")
     rec = bizbox.get(ctx.conn, kind, ext_ref)
     if rec is None:
         raise HttpError("404 Not Found", "No such record in the BizBox mirror.")

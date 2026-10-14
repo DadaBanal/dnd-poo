@@ -204,6 +204,37 @@ def values_from(params: list, get, get_list, *, require: bool, prefix: str = "p.
     return values, missing
 
 
+_DOC_WORDS = {"no", "num", "number", "docno", "documentno", "refno", "slipno", "transno"}
+_DOC_PREFIX = {"po", "rr", "sr", "er", "pr", "si", "ei", "pc", "req", "doc", "document", "ref", "slip", "trans", "issuance", "requisition", "count", "order", "receiving", "control"}
+_WORD = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+")
+
+
+def _says_number(text: str) -> bool:
+    """Whole words only, split on case and punctuation: PONo, Doc_No, 'PO
+    number' say so; Company, Paid, Preferred do not."""
+    words = [w.lower() for w in _WORD.findall(text or "")]
+    if any(w in _DOC_WORDS for w in words):
+        return True
+    for w in words:                                            # PONo, DocNo, ReqNumber as one word
+        for suffix in ("no", "num", "number"):
+            if w.endswith(suffix) and w[:-len(suffix)] in _DOC_PREFIX:
+                return True
+    return any(a in _DOC_PREFIX and b in ("no", "num", "number") for a, b in zip(words, words[1:]))   # "PO number", "Doc No"
+
+
+def doc_values(params: list, doc_ref: str) -> dict:
+    """The slip link from a document's page (14 Oct 2026): the one parameter
+    that takes the document's number, filled in. The first parameter a person
+    is asked for, text, without a list of its own, whose name or prompt says
+    number as a whole word; nothing else is guessed. {} when none fits, and
+    the page says so and asks."""
+    for p in params:
+        if p.prompt_user and p.type == "String" and not p.valid_values and not p.multi \
+                and (_says_number(p.name) or _says_number(p.prompt or "")):
+            return {p.name: doc_ref}
+    return {}
+
+
 def defaults_of(params: list) -> dict:
     out = {}
     for p in params:

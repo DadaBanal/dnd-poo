@@ -510,11 +510,21 @@ EDITABLE = {
     "invoice": {"status": "text", "due_on": "date", "supplier_ref": "text"},
     "product": {"name": "text", "category": "text", "unit": "text", "unit_cost": "money"},
 }
+# A document's lines (14 Oct 2026, Dada: "why is there no edit also for the
+# PO"): the fields a person may change on a line that BizBox has, and what a
+# line added from the desk carries. A line change travels as one ext_change
+# whose field is "line:<line id>:<field>" with the line's own row version as
+# @expected_tstamp; a new line as "line:new:<n>" whose new_value is the line as
+# JSON. The procedure's EDIT contract widens by exactly those two field shapes.
+EDITABLE_LINES = {"purchase_order": {"quantity": "money", "unit_cost": "money", "description": "text"}}
+NEW_LINE_FIELDS = {"purchase_order": {"product_ref": "text", "description": "text", "quantity": "money", "unit_cost": "money"}}
+LINE_TABLE = {"purchase_order": ("ext_po_line", "po_ref")}
 FIELD_WORDS = {"status": "Status", "ends_on": "End date", "due_on": "Due date", "name": "Name", "unit_cost": "Unit cost",
                "vendor": "Vendor", "ordered_on": "Order date", "supplier_ref": "Supplier's invoice no.",
                "category": "Category", "unit": "Unit", "currency": "Currency", "total": "Total", "amount": "Amount",
                "party": "Vendor", "invoiced_on": "Invoice date", "starts_on": "Start date", "description": "Description",
-               "quantity": "Quantity", "NEW": "New record"}
+               "quantity": "Quantity", "NEW": "New record", "department": "Issuing Department", "warehouse_ref": "Warehouse (from)",
+               "center": "Center", "doc_date": "Date", "product_ref": "Item ID"}
 # What a person may ADD (13 Oct 2026, Dada: "edits and adds on the bizbox
 # system"): the fields a new record carries, which of them BizBox needs
 # before it will take the record, and, for a purchase order, its lines.
@@ -525,6 +535,21 @@ ADDABLE = {
     "product": {"fields": {"ext_ref": "text", "name": "text", "category": "text", "unit": "text", "unit_cost": "money"},
                 "required": ("name",), "lines": None},
 }
+# The MMS documents the desk raises and tracks itself (Dada, 14 Oct 2026:
+# "everything not on the desk yet, add on the desk"): a header of the fields
+# BizBox's forms carry in common and the lines, each an item BizBox has. They
+# go to BizBox as an ADD through psa.sp_apply_change under their own kind; the
+# desk has no mirror of BizBox's existing ones until SQL01 maps a view per kind.
+MMS_DOC_FIELDS = {"department": "text", "warehouse_ref": "text", "center": "text", "doc_date": "date"}
+MMS_DOC_LINES = {"product_ref": "text", "description": "text", "quantity": "money", "unit_cost": "money"}
+MMS_DOC_REQUIRED = {"stock_req": ("department", "warehouse_ref"), "expense_req": ("department", "warehouse_ref"),
+                    "purchase_req": ("department",), "stock_issuance": ("warehouse_ref", "department"),
+                    "expense_issuance": ("warehouse_ref", "department"), "physical_count": ("warehouse_ref",)}
+for _k, _req in MMS_DOC_REQUIRED.items():
+    ADDABLE[_k] = {"fields": dict(MMS_DOC_FIELDS), "required": _req, "lines": dict(MMS_DOC_LINES)}
+DESK_KINDS = tuple(MMS_DOC_REQUIRED)
+
+
 # ---------------------------------------------------------- choices (081)
 # Fields whose value must be one BizBox accepts (Dada, 13 Oct 2026: "status or
 # fields that needs a drop down to match bizbox choices must be done; all
@@ -535,12 +560,19 @@ ADDABLE = {
 CHOICE_LIST = {("purchase_order", "status"): "po_status", ("purchase_order", "currency"): "currency",
                ("purchase_order", "vendor"): "vendor", ("invoice", "status"): "rr_status",
                ("product", "unit"): "unit", ("product", "category"): "category"}
+# the desk's documents: a warehouse BizBox has, a department the desk knows, a
+# centre from BizBox's list once SQL01 maps it (free text until then)
+for _k in MMS_DOC_REQUIRED:
+    CHOICE_LIST[(_k, "warehouse_ref")] = "warehouse"
+    CHOICE_LIST[(_k, "department")] = "department"
+    CHOICE_LIST[(_k, "center")] = "center"
 SEEN_IN = {"po_status": ("ext_purchase_order", "status"), "rr_status": ("ext_invoice", "status"),
            "currency": ("ext_purchase_order", "currency"), "unit": ("ext_product", "unit"),
            "category": ("ext_product", "category")}
 LIST_WORDS = {"po_status": "a status BizBox uses on purchase orders", "rr_status": "a status BizBox uses on receiving reports",
               "currency": "a currency BizBox uses", "unit": "a unit BizBox uses", "category": "a category BizBox uses",
-              "vendor": "a vendor BizBox has"}
+              "vendor": "a vendor BizBox has", "warehouse": "a warehouse BizBox has", "department": "a department the desk knows",
+              "center": "a centre BizBox uses"}
 
 
 def choices(conn, kind: str, field: str) -> list[tuple[str, str]]:
@@ -550,11 +582,19 @@ def choices(conn, kind: str, field: str) -> list[tuple[str, str]]:
         return []
     if lst == "vendor":
         return [(v["name"], v["name"]) for v in vendors(conn)]
+    if lst == "warehouse":
+        return [(w["ext_ref"], w["name"]) for w in warehouses(conn, include_inactive=False)]
+    if lst == "department":
+        if not db.table_exists(conn, "department"):
+            return []
+        return [(d["name"], d["name"]) for d in conn.execute("SELECT name FROM department WHERE retired = 0 ORDER BY name")]
     if db.table_exists(conn, "ext_lookup"):
         rows = conn.execute("SELECT code, label FROM ext_lookup WHERE source_id = ? AND list = ? AND present = 1"
                             " ORDER BY sort_no, label, code", (SOURCE, lst)).fetchall()
         if rows:
             return [(r[0], r[1] or r[0]) for r in rows]
+    if lst not in SEEN_IN:
+        return []                                       # no list yet: free text until BizBox's is mapped
     table, col = SEEN_IN[lst]
     return [(r[0], r[0]) for r in conn.execute(
         f"SELECT DISTINCT {col} FROM {table} WHERE source_id = ? AND present = 1 AND {col} IS NOT NULL ORDER BY {col}",
@@ -568,6 +608,10 @@ def choices_from(conn, kind: str, field: str) -> str:
         return ""
     if lst == "vendor":
         return "the vendors BizBox has named"
+    if lst == "warehouse":
+        return "the warehouses BizBox has"
+    if lst == "department":
+        return "the desk's departments"
     if db.table_exists(conn, "ext_lookup") and conn.execute(
             "SELECT 1 FROM ext_lookup WHERE source_id = ? AND list = ? AND present = 1 LIMIT 1", (SOURCE, lst)).fetchone():
         return "BizBox's own list"
@@ -755,12 +799,114 @@ def _new_batch(conn, kind: str, change_kind: str, reason: str, *, at: datetime, 
 _SAME = object()      # the cell already reads so: not a change
 
 
+def line_of(conn, kind: str, doc_ref: str, line_ref: str):
+    """One line of a document, by the line's own BizBox id."""
+    table, col = LINE_TABLE[kind]
+    return conn.execute(f"SELECT * FROM {table} WHERE source_id = ? AND {col} = ? AND ext_ref = ? AND present = 1",
+                        (SOURCE, doc_ref, str(line_ref))).fetchone()
+
+
+def field_word(field: str) -> str:
+    """A change's field in a person's words, a line's included."""
+    if field.startswith("line:"):
+        parts = field.split(":", 2)
+        if parts[1] == "new":
+            return "New line"
+        sub = parts[2] if len(parts) > 2 else ""
+        return f"{FIELD_WORDS.get(sub, sub)} on line {parts[1]}"
+    return FIELD_WORDS.get(field, field)
+
+
+def line_words(value) -> str:
+    """A new line, as stored (JSON), in words: item, description, qty at cost."""
+    import json as _json
+    try:
+        d = _json.loads(value) if isinstance(value, str) else dict(value or {})
+    except ValueError:
+        return str(value)
+    bits = [d.get("product_ref") or "", d.get("description") or ""]
+    qty = d.get("quantity")
+    cost = d.get("unit_cost")
+    tail = (f"{float(qty):g}" if qty not in (None, "") else "") + (f" @ {float(cost):,.2f}" if cost not in (None, "") else "")
+    return " · ".join(b for b in (" ".join(x for x in bits if x).strip(), tail) if b) or "—"
+
+
+def value_word(labels: dict, field: str, value) -> str:
+    """A change's value in words: a list's word for a code, a new line spelled out."""
+    if field.startswith("line:new"):
+        return line_words(value) if value not in (None, "") else "—"
+    sub = field.split(":", 2)[2] if field.startswith("line:") else field
+    if value not in (None, "") and sub in ("quantity", "received_qty"):
+        try:
+            return f"{float(value):g}"
+        except ValueError:
+            pass
+    if value not in (None, "") and sub == "unit_cost":
+        try:
+            return f"{float(value):,.2f}"
+        except ValueError:
+            pass
+    return word(labels, sub, value) or "—"
+
+
+def _line_edit_check(conn, kind: str, rec, field: str, new_value):
+    import json as _json
+    parts = field.split(":", 2)
+    if parts[1] == "new":
+        spec = NEW_LINE_FIELDS.get(kind)
+        if spec is None:
+            raise Refused("A line cannot be added to this record from the desk.")
+        row = new_value if isinstance(new_value, dict) else (_json.loads(new_value) if isinstance(new_value, str) and new_value.startswith("{") else {})
+        kept = {}
+        for f, how in spec.items():
+            v = _value(row.get(f), how, f"{kind} line.{f}", WIDTH.get(f, MAX_TEXT))
+            if v is not None:
+                kept[f] = v
+        if not kept.get("product_ref") and not kept.get("description"):
+            return _SAME                                   # a blank row on the form
+        if not kept.get("quantity") or float(kept["quantity"]) <= 0:
+            raise Refused("A new line needs a quantity above zero.")
+        if kept.get("product_ref") and get(conn, "product", kept["product_ref"]) is None:
+            raise Refused(f"{kept['product_ref']} is not an item BizBox has.")
+        return _json.dumps(kept)
+    sub = parts[2] if len(parts) > 2 else ""
+    how = EDITABLE_LINES.get(kind, {}).get(sub)
+    if how is None:
+        raise Refused(f"{sub or field} is not a field that can be changed on a line of this record.")
+    line = line_of(conn, kind, rec["ext_ref"], parts[1])
+    if line is None:
+        raise Refused(f"Line {parts[1]} is not on {rec['ext_ref']} in the BizBox mirror.")
+    value = _value(new_value, how, f"{kind} line.{sub}", WIDTH.get(sub, MAX_TEXT))
+    current = line[sub]
+    if value == current or (how == "money" and value is not None and current is not None and float(value) == float(current)):
+        return _SAME
+    if sub == "quantity" and (value is None or float(value) <= 0):
+        raise Refused(f"Line {parts[1]}: a quantity above zero is needed.")
+    if conn.execute("SELECT 1 FROM ext_change WHERE source_id = ? AND kind = ? AND ext_ref = ? AND field = ?"
+                    " AND status = 'PENDING'", (SOURCE, LINK_KIND[kind], rec["ext_ref"], field)).fetchone():
+        raise Refused(f"A change to {field_word(field).lower()} on {rec['ext_ref']} is already pending; cancel it first.")
+    return value
+
+
+def current_value(conn, kind: str, rec, field: str):
+    """What BizBox has now for a change's field: the record's, or the line's."""
+    if field.startswith("line:"):
+        parts = field.split(":", 2)
+        if parts[1] == "new":
+            return None
+        line = line_of(conn, kind, rec["ext_ref"], parts[1])
+        return None if line is None or len(parts) < 3 else line[parts[2]]
+    return rec[field]
+
+
 def _edit_check(conn, kind: str, rec, field: str, new_value):
     """Every refusal an edit can meet, before any row is written: the field,
     the value's shape, BizBox's choices, a change already waiting. Returns the
     value to store, or _SAME. Checked first so a refused batch never opens:
     SQL Server keeps a burnt identity number on rollback where SQLite does
     not, and CI run 92 (13 Oct 2026) read "Batch #2" where the desk said #1."""
+    if field.startswith("line:"):
+        return _line_edit_check(conn, kind, rec, field, new_value)
     how = EDITABLE.get(kind, {}).get(field)
     if how is None:
         raise Refused(f"{field} is not a field that can be changed on this record.")
@@ -790,12 +936,18 @@ def _tstamp_of(rec) -> str | None:
 
 
 def _edit_insert(conn, kind: str, rec, field: str, value, *, reason: str, batch_id: int, at: datetime, actor: str) -> int:
-    old = rec[field]
+    if field.startswith("line:") and field.split(":", 2)[1] != "new":
+        line = line_of(conn, kind, rec["ext_ref"], field.split(":", 2)[1])
+        old, version = current_value(conn, kind, rec, field), _tstamp_of(line) if line is not None else None
+    elif field.startswith("line:"):
+        old, version = None, None                           # a new line: nothing to hold a version of
+    else:
+        old, version = rec[field], _tstamp_of(rec)
     cur = conn.execute(
         "INSERT INTO ext_change (source_id, kind, ext_ref, field, old_value, new_value, reason, status, requested_at,"
         " requested_by, batch_id, expected_tstamp, change_uid) VALUES (?,?,?,?,?,?,?, 'PENDING', ?,?,?,?,?)",
         (SOURCE, LINK_KIND[kind], rec["ext_ref"], field, None if old is None else str(old),
-         None if value is None else str(value), reason, _stamp(at), actor, batch_id, _tstamp_of(rec), new_uid()))
+         None if value is None else str(value), reason, _stamp(at), actor, batch_id, version, new_uid()))
     return cur.lastrowid
 
 
@@ -816,6 +968,10 @@ def propose(conn, kind: str, ext_ref: str, field: str, new_value: str, *, reason
     return cid
 
 
+# propose_many and preview_many have no screen since 14 Oct 2026 (SQL01: no
+# bulk-change bar over a list). They stay as the library's one-field-on-many
+# batch, for an action inside a document (several lines at once) when one is
+# asked for; the CLI and the tests keep them honest until then.
 def propose_many(conn, kind: str, refs, field: str, new_value: str, *, reason: str, at: datetime, actor: str) -> dict:
     """The same new value for one field on many records (ticked rows): one
     batch. A record that already has the value is left out and counted."""
@@ -864,9 +1020,10 @@ def preview_edits(conn, kind: str, edits, *, reason: str) -> dict:
         if kept is _SAME:
             same += 1
             continue
-        rows.append({"ref": rec["ext_ref"], "field": field, "word": FIELD_WORDS.get(field, field),
-                     "old": rec[field], "new": kept,
-                     "old_word": word(labels, field, rec[field]) or "—", "new_word": word(labels, field, kept) or "—"})
+        old = current_value(conn, kind, rec, field)
+        rows.append({"ref": rec["ext_ref"], "field": field, "word": field_word(field),
+                     "old": old, "new": kept,
+                     "old_word": value_word(labels, field, old), "new_word": value_word(labels, field, kept)})
     return {"rows": rows, "same": same, "reason": reason}
 
 
@@ -947,7 +1104,7 @@ def check_add(conn, kind: str, record: dict, lines=None, *, reason: str) -> dict
                 raise Refused(f"Line {n}: {row['product_ref']} is not an item BizBox has.")
             kept_lines.append(row)
         if not kept_lines:
-            raise Refused("A purchase order needs at least one line.")
+            raise Refused(f"A {KIND_WORDS.get(kind, kind.replace('_', ' '))} needs at least one line.")
     return {"record": rec, "lines": kept_lines, "reason": reason}
 
 
@@ -960,7 +1117,7 @@ def propose_add(conn, kind: str, record: dict, lines=None, *, reason: str, at: d
     rec, kept_lines, reason = checked["record"], checked["lines"], checked["reason"]
     payload = {"record": rec, "lines": kept_lines}
     bid = _new_batch(conn, kind, "ADD", reason, at=at, actor=actor, payload=payload)
-    summary = rec.get("name") or rec.get("vendor") or "new record"
+    summary = add_summary(rec)
     conn.execute(
         "INSERT INTO ext_change (source_id, kind, ext_ref, field, old_value, new_value, reason, status, requested_at,"
         " requested_by, batch_id, change_uid) VALUES (?,?,?,?,?,?,?, 'PENDING', ?,?,?,?)",
@@ -973,6 +1130,97 @@ def propose_add(conn, kind: str, record: dict, lines=None, *, reason: str, at: d
 
 def batch(conn, batch_id: int):
     return conn.execute("SELECT * FROM ext_batch WHERE batch_id = ? AND source_id = ?", (batch_id, SOURCE)).fetchone()
+
+
+def desk_document(conn, kind: str, ref: str):
+    """A document the desk raised (ext_ref NEW-<batch>): its batch, the header
+    as kept, its lines, and BizBox's number once applied. None when there is
+    no such batch of that kind."""
+    import json as _json
+    if not str(ref).startswith("NEW-") or not str(ref)[4:].isdigit():
+        return None
+    b = batch(conn, int(str(ref)[4:]))
+    if b is None or b["change_kind"] != "ADD" or b["kind"] != LINK_KIND.get(kind):
+        return None
+    p = payload_of(b)
+    return {"batch": b, "record": p.get("record", {}), "lines": p.get("lines", []), "number": desk_numbers(conn, kind, b["batch_id"]).get(b["batch_id"])}
+
+
+def _number_in(answer) -> str | None:
+    """BizBox's number from an applied NEW change's answer (the procedure's
+    JSON); None for anything that is not an object with ext_ref."""
+    import json as _json
+    if not answer:
+        return None
+    try:
+        parsed = _json.loads(answer)
+    except ValueError:
+        return None
+    return (str(parsed.get("ext_ref")).strip() or None) if isinstance(parsed, dict) and parsed.get("ext_ref") else None
+
+
+def desk_numbers(conn, kind: str, batch_id: int | None = None) -> dict:
+    """{batch_id: BizBox's number} for the desk documents of a kind that
+    BizBox has applied, in one query; one batch when asked for."""
+    sql = ("SELECT batch_id, answer FROM ext_change WHERE source_id = ? AND kind = ? AND field = 'NEW' AND status = 'APPLIED'"
+           " AND answer IS NOT NULL")
+    args = [SOURCE, LINK_KIND.get(kind, "")]
+    if batch_id is not None:
+        sql += " AND batch_id = ?"
+        args.append(batch_id)
+    out = {}
+    for r in conn.execute(sql, args):
+        n = _number_in(r["answer"])
+        if n:
+            out[r["batch_id"]] = n
+    return out
+
+
+def add_summary(rec: dict) -> str:
+    """A new record in a few words: its name, its vendor, or the department
+    and warehouse of a desk document."""
+    rec = rec or {}
+    return (rec.get("name") or rec.get("vendor")
+            or " · ".join(str(x) for x in (rec.get("department"), rec.get("warehouse_ref")) if x) or "new record")
+
+
+def replace_add(conn, kind: str, batch_id: int, record: dict, lines=None, *, reason: str, at: datetime, actor: str) -> None:
+    """A desk document edited while it still waits for approval: the header
+    and lines checked as on the first save, the batch's payload replaced, the
+    reason kept with it, audited. Refused once a second person has approved."""
+    b = batch(conn, batch_id)
+    if b is None or b["change_kind"] != "ADD" or b["kind"] != LINK_KIND.get(kind):
+        raise Refused("No such document on the desk.")
+    if b["status"] != "PENDING":
+        raise Refused(f"This document is {BATCH_WORDS[b['status']].lower()}; it can no longer be edited here.")
+    checked = check_add(conn, kind, record, lines, reason=reason)
+    import json as _json
+    rec, kept_lines, reason = checked["record"], checked["lines"], checked["reason"]
+    conn.execute("UPDATE ext_batch SET payload = ?, reason = ? WHERE batch_id = ?",
+                 (_json.dumps({"record": rec, "lines": kept_lines}), reason, batch_id))
+    summary = add_summary(rec)
+    conn.execute("UPDATE ext_change SET new_value = ?, reason = ? WHERE batch_id = ? AND field = 'NEW'",
+                 ((f"{summary} ({len(kept_lines)} line(s))" if kept_lines else summary)[:MAX_TEXT], reason, batch_id))
+    db.audit(conn, at=_stamp(at), actor=actor, action="BIZBOX_BATCH", subject_kind="ext_batch", subject_id=str(batch_id),
+             detail=f"edited while waiting: new {LINK_KIND[kind].lower()}, {len(kept_lines)} line(s)")
+
+
+def on_hand(conn, warehouse_ref: str, item_ref: str):
+    """What the warehouse holds of the item at the last read, from the ledger
+    mirror (never actualqty: Bizbox Chat's stock-truth addendum); None when
+    the mirror has no row, which reads as nothing there."""
+    if not warehouse_ref or not item_ref or not db.table_exists(conn, "ext_stock"):
+        return None
+    r = conn.execute("SELECT quantity FROM ext_stock WHERE source_id = ? AND warehouse_ref = ? AND item_ref = ? AND present = 1",
+                     (SOURCE, warehouse_ref, item_ref)).fetchone()
+    return None if r is None else float(r[0] or 0)
+
+
+def desk_currency(conn) -> str | None:
+    """The currency word for a document the desk raises: the one BizBox puts on
+    its purchase orders, when the mirror has seen exactly one; else none."""
+    seen = [c for c, _ in choices(conn, "purchase_order", "currency")]
+    return seen[0] if len(seen) == 1 else None
 
 
 def batches(conn, *, status: str | None = None, kind: str | None = None, limit: int = 200):
@@ -1235,16 +1483,30 @@ def po_lines(conn, po_ref: str):
 
 # ------------------------------------------------- stock and movements (084)
 
-# BizBox's movement kinds, as its ledger names them, in a person's words.
-MOVE_WORDS = {"RECEIPT": "Received", "RECEIVE": "Received", "RR": "Received", "ISSUE": "Issued", "ISSUANCE": "Issued",
+# BizBox's movement kinds in a person's words. The two-letter codes are the
+# ledger's doctype, named from BizBox's own stock-card procedure (SQL01, 14 Oct
+# 2026); the longer keys are what a view may already spell out. A code that is
+# BizBox's asset family (PP, AT, DP, GL, RT, RS) has no word: the code is shown.
+MOVE_WORDS = {"CH": "Charged", "CA": "Charged", "CN": "Returned by patient", "DC": "Charge deleted", "DR": "Received",
+              "PI": "Received (petty cash)", "PR": "Returned to supplier", "SS": "Transferred", "EI": "Issued",
+              "MP": "Produced", "QA": "Adjusted", "PC": "Counted",
+              "RECEIPT": "Received", "RECEIVE": "Received", "RR": "Received", "ISSUE": "Issued", "ISSUANCE": "Issued",
               "TRANSFER_IN": "Transferred in", "TRANSFER_OUT": "Transferred out", "TRANSFER": "Transferred",
               "ADJUST": "Adjusted", "ADJUSTMENT": "Adjusted", "ADJ_IN": "Adjusted up", "ADJ_OUT": "Adjusted down",
               "COUNT": "Counted", "RETURN": "Returned", "CONSUME": "Used", "SALE": "Sold", "PURCHASE": "Received"}
+CODE_ONLY = {"PP", "AT", "DP", "GL", "RT", "RS"}
 
 
 def move_word(kind) -> str:
+    """The word for a movement kind; the code itself for the asset family and
+    for a code nobody has named yet (never a BizBox description: the fence)."""
     k = (kind or "").strip()
-    return MOVE_WORDS.get(k.upper().replace(" ", "_").replace("-", "_"), k.replace("_", " ").capitalize() or "Moved")
+    key = k.upper().replace(" ", "_").replace("-", "_")
+    if key in CODE_ONLY:
+        return k
+    if key in MOVE_WORDS:
+        return MOVE_WORDS[key]
+    return k if len(k) <= 3 and k.isalpha() else (k.replace("_", " ").capitalize() or "Moved")
 
 
 _STOCK_FROM = (" FROM ext_stock s LEFT JOIN ext_product p ON p.source_id = s.source_id AND p.ext_ref = s.item_ref"

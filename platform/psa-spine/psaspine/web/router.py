@@ -120,17 +120,17 @@ ROUTES = [
     ("GET", "/admin/mms-reports", admin.mms_reports_setup),
     ("POST", "/admin/mms-reports/sync", admin.mms_reports_sync),
     ("POST", "/admin/mms-reports/<report_id>/save", admin.mms_reports_save),
+    ("GET", "/procurement/stock.json", procurement_view.stock_json),      # on hand at a warehouse for an item, for the form
     ("GET", "/procurement/batch/<batch_id>", procurement_view.batch_page),
     ("POST", "/procurement/batch/<batch_id>/approve", procurement_view.approve),
     ("POST", "/procurement/batch/<batch_id>/cancel", procurement_view.cancel),
     ("GET", "/procurement/<kind>/new", procurement_view.new_form),
     ("POST", "/procurement/<kind>/add/review", procurement_view.review_add),     # what will be created, before it is sent
     ("POST", "/procurement/<kind>/add", procurement_view.add),
-    ("POST", "/procurement/<kind>/bulk/review", procurement_view.review_bulk),   # the window first (13 Oct 2026)
-    ("POST", "/procurement/<kind>/bulk", procurement_view.bulk),
-    ("POST", "/procurement/<kind>/edits/review", procurement_view.review_edits),
-    ("POST", "/procurement/<kind>/edits", procurement_view.edits),
-    ("GET", "/procurement/<kind>", procurement_view.detail),             # ?ref=<BizBox reference>
+    ("GET", "/procurement/<kind>/slip", procurement_view.slip),          # ?ref=<BizBox reference>&now=1 prints at once
+    ("POST", "/procurement/<kind>/review", procurement_view.doc_review),  # Edit Mode's Save: the window first
+    ("POST", "/procurement/<kind>/send", procurement_view.doc_send),
+    ("GET", "/procurement/<kind>", procurement_view.detail),             # ?ref=<BizBox reference>: a document kind opens as a document
     ("GET", "/finance", finance_view.index),
     ("GET", "/finance/<kind>", finance_view.detail),                    # ?ref=<BizBox reference>
     ("POST", "/finance/<kind>/review", finance_view.review),             # what will change, before it is sent

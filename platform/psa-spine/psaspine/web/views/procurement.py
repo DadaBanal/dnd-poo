@@ -40,10 +40,9 @@ TABS = (("home", "Overview"), ("purchase_order", "Purchase orders"), ("invoice",
 # 2026: "views based on time or days or months").
 WINDOWS = ((7, "Last 7 days"), (30, "Last 30 days"), (90, "Last 90 days"), (183, "Last 6 months"), (365, "Last 12 months"))
 KINDS = ("purchase_order", "invoice", "product")
-NEW_WORDS = {"purchase_order": "New purchase order", "product": "New item"}
-# the record in words, one and many, for the review window's title
-ONE_WORD = {"purchase_order": "purchase order", "invoice": "receiving report", "product": "item"}
-MANY_WORD = {"purchase_order": "purchase orders", "invoice": "receiving reports", "product": "items"}
+NEW_WORDS = {"purchase_order": "New purchase order", "product": "New item", "stock_req": "New stock requisition",
+             "expense_req": "New expense requisition", "purchase_req": "New purchase requisition", "stock_issuance": "New stock issuance",
+             "expense_issuance": "New expense issuance", "physical_count": "New physical count"}
 # the column a vendor filter reads, per kind
 VENDOR_COL = {"purchase_order": "vendor", "invoice": "party"}
 # the column the first filter reads, per kind: an item has no status, so its
@@ -53,6 +52,23 @@ FILTER_WORD = {"status": "status", "category": "category"}
 
 
 BACK_KIND = {v: k for k, v in bizbox.LINK_KIND.items()}
+# The top menu's entry each page lights up (templates.page's `active`).
+MENU_KEY = {"home": "procurement", "purchase_order": "popo", "invoice": "porr", "product": "poitems", "stock": "postock",
+            "movement": "pomoves", "medicine": "podrugs", "vendor": "procurement", "warehouse": "powh", "changes": "pochanges",
+            "reports": "poreports", "stock_req": "postockreq", "expense_req": "poexpreq", "purchase_req": "popurchreq",
+            "stock_issuance": "poissue", "expense_issuance": "poexpissue", "physical_count": "pocount"}
+
+
+def move_label(kind) -> str:
+    """HTML: the movement's word with BizBox's code beside it when the code is
+    a two-letter doctype (SQL01, 14 Oct 2026: "code beside the word"), so
+    Charged · CH and Charged · CA stay apart; a view that spells the word out
+    needs no code beside it. The word itself is bizbox.move_word's."""
+    k = (kind or "").strip()
+    word = bizbox.move_word(k)
+    if not k or word == k or len(k) > 3:
+        return t.esc(word)
+    return f"{t.esc(word)} <span class='muted code'>{t.esc(k)}</span>"
 
 
 def _gate(ctx, kind: str | None = None, need: str = "READ"):
@@ -89,44 +105,15 @@ def _described(q) -> str:
     return " aria-describedby=flash-err" if q.get("err") else ""
 
 
-def _tabs(ctx, on: str) -> str:
-    seen = _seen(ctx)
-    counts = {k: ctx.conn.execute(f"SELECT COUNT(*) FROM {bizbox.KINDS[k][0]} WHERE source_id = ? AND present = 1",
-                                  (bizbox.SOURCE,)).fetchone()[0] for k in seen}
-    if "purchase_order" in seen or "invoice" in seen:
-        counts["vendor"] = len(bizbox.vendors(ctx.conn))
-    marks = ",".join("?" * len(seen))
-    kinds_seen = sorted(_seen_changes(ctx))
-    counts["changes"] = ctx.conn.execute(
-        "SELECT COUNT(*) FROM ext_batch WHERE source_id = ? AND status IN ('PENDING', 'APPROVED', 'SENDING')"
-        f" AND kind IN ({','.join('?' * len(kinds_seen))})", [bizbox.SOURCE, *kinds_seen]).fetchone()[0] if kinds_seen else 0
-    if seen and mms_reports.ready(ctx.conn):
-        counts["reports"] = ctx.conn.execute(
-            f"SELECT COUNT(*) FROM mms_report WHERE present = 1 AND shown = 1 AND area IN ({marks})", seen).fetchone()[0]
-    if _may(ctx, "medicine") and db.table_exists(ctx.conn, "ext_medicine"):
-        counts["medicine"] = ctx.conn.execute("SELECT COUNT(*) FROM ext_medicine WHERE source_id = ? AND present = 1", (bizbox.SOURCE,)).fetchone()[0]
-    if "product" in seen and db.table_exists(ctx.conn, "ext_warehouse"):
-        counts["warehouse"] = ctx.conn.execute("SELECT COUNT(*) FROM ext_warehouse WHERE source_id = ? AND present = 1", (bizbox.SOURCE,)).fetchone()[0]
-    if "product" in seen and db.table_exists(ctx.conn, "ext_stock"):
-        counts["stock"] = ctx.conn.execute("SELECT COUNT(*) FROM ext_stock WHERE source_id = ? AND present = 1", (bizbox.SOURCE,)).fetchone()[0]
-    if "product" in seen and db.table_exists(ctx.conn, "ext_movement"):
-        counts["movement"] = bizbox.movements(ctx.conn, days=30, now=ctx.now, limit=1)[1]
-    if seen:
-        counts["home"] = None
-    return ("<div class=stabs>" + "".join(
-        f"<a class='{'on' if k == on else ''}' href='/procurement?tab={k}'>{v}{'' if counts[k] is None else f' · {counts[k]}'}</a>"
-        for k, v in TABS if k in counts) + "</div>")
-
-
-def _head(ctx, on: str, q) -> str:
+def _head(ctx, on: str, q, *, title: bool = True) -> str:
     st = bizbox.status(ctx.conn)
     sync = (f"Read from BizBox {t.esc(st['last_sync_at'])}{t.esc(bizbox.read_words(st['last_result']))}" if st and st["last_sync_at"]
             else "Not read from BizBox yet: the hourly read has not run.")
-    return (_banners(q) + "<h1>Procurement</h1><p class=sub>Everything here is read from BizBox: purchase orders, "
-            "receiving, items, stock on hand and its movements, and vendors. To change something, tick rows and set one thing on all of them, or edit "
-            "the cells in a row, say why, and review it: a window shows what will change before it is sent for approval. "
-            "A second person approves it on the Changes tab. Nothing in BizBox changes until it is approved and sent.</p>"
-            f"<div class='banner ok'>{sync}</div>" + _tabs(ctx, on))
+    # SQL01, 14 Oct 2026 (the Procurement review): the paragraph on every tab
+    # goes; the dated sync bar stays. The tabs bar went the same day: BizBox's
+    # module list is the top menu (Dada: "the side bar should be placed on the top").
+    return (_banners(q) + (f"<h1>{t.esc(dict(TABS).get(on, 'Procurement'))}</h1>" if title else "")
+            + f"<div class='banner ok'>{sync}</div>")
 
 
 def index(ctx):
@@ -154,6 +141,10 @@ def index(ctx):
     if tab == "warehouse":
         _gate(ctx, "product")
         return _warehouses(ctx)
+    from . import documents
+    if tab in documents.DOCS and documents.DOCS[tab].get("desk"):
+        _gate(ctx, tab)
+        return documents.list_page(ctx, tab)
     if tab not in KINDS:
         # no tab asked for: the overview for a role that sees an area; a
         # role with drugs alone lands on Drugs, which is all it would find
@@ -161,7 +152,10 @@ def index(ctx):
             return _home(ctx)
         return _drugs(ctx) if _may(ctx, "medicine") else _changes(ctx)
     _gate(ctx, tab)
-    return Response(body=t.page("Procurement", _head(ctx, tab, q) + _grid(ctx, tab), user=ctx.user, active=AREA))
+    from . import documents
+    if tab in documents.DOCS:
+        return documents.list_page(ctx, tab)
+    return Response(body=t.page("Procurement", _head(ctx, tab, q) + _list(ctx, tab), user=ctx.user, active=MENU_KEY.get(tab, AREA)))
 
 
 # -------------------------------------------------------------------- grids
@@ -187,13 +181,11 @@ def _rows(ctx, kind, *, search, status, vendor, absent, page_no):
     return rows, total
 
 
-def _grid(ctx, kind, *, posted: dict | None = None) -> str:
-    """`posted`: what a review window was asked about, so "Go back and
-    change it" finds the grid as the person left it (edited cells, ticks,
-    the field and the reasons), not BizBox's values again."""
-    posted = posted or {}
-    cells = posted.get("cells", {})
-    ticked = posted.get("refs", set())
+def _list(ctx, kind, *, with_new: bool = True) -> str:
+    """A list is a list (SQL01, 14 Oct 2026, the Procurement review): read-only
+    rows, number, vendor, date, status, total, that open the document. No
+    control in a row, no bulk-change bar, no edited-cells bar: the
+    change-proposal model lives inside the document."""
     q = ctx.request.query
     search, status, vendor = q.get("q", ""), q.get("status", ""), q.get("vendor", "")
     absent = q.get("absent") == "1"
@@ -201,10 +193,9 @@ def _grid(ctx, kind, *, posted: dict | None = None) -> str:
     rows, total = _rows(ctx, kind, search=search, status=status, vendor=vendor, absent=absent, page_no=page_no)
     # Finance's columns, in Procurement's words: the receiving report's
     # counterparty is the vendor here, never "party" (Dada, 13 Oct 2026).
-    columns = [(f, "Vendor" if f == "party" else lab) for f, lab in finance._columns(ctx, kind)]
+    columns = [(f, "Vendor" if f == "party" else "Number" if f == "ext_ref" and kind != "product" else "Code" if f == "ext_ref" else lab)
+               for f, lab in finance._columns(ctx, kind)]
     can = _can_write(ctx, kind)
-    editable = bizbox.EDITABLE.get(kind, {}) if can else {}
-    choice = {f: bizbox.choices(ctx.conn, kind, f) for f in editable}     # [] for a free-text field
     labels = bizbox.labels_for(ctx.conn, kind)                                # the word for a stored code
     lines = {}
     if kind == "purchase_order" and rows:
@@ -215,43 +206,23 @@ def _grid(ctx, kind, *, posted: dict | None = None) -> str:
     pending = {}
     for c in bizbox.changes(ctx.conn, kind, status="PENDING"):
         pending.setdefault(c["ext_ref"], set()).add(c["field"])
-    head = ("<th><input type=checkbox data-tickall aria-label='Tick every row shown'></th>"
-            + "".join(f"<th{' class=num' if f in ('amount', 'total', 'unit_cost') else ''}>{t.esc(lab)}</th>" for f, lab in columns)
+    head = ("".join(f"<th{' class=num' if f in ('amount', 'total', 'unit_cost') else ''}>{t.esc(lab)}</th>" for f, lab in columns)
             + ("<th class=num>Lines</th>" if kind == "purchase_order" else "") + "<th>Waiting</th>")
 
     def cell(r, f):
         if f == "ext_ref":
             return (f"<td>{finance._ref_link(kind, r['ext_ref'], AREA)}"
                     + ("" if r["present"] else " <span class=pill>gone from BizBox</span>") + "</td>")
-        if f in editable and r["present"]:
-            v = r[f]
-            if f == "unit_cost" and v is not None:
-                v = f"{float(v):g}"
-            cur = "" if v is None else str(v)
-            shown = cells.get(f"e:{r['ext_ref']}:{f}", cur)          # BizBox's value, or what the person had typed
-            label = f"{bizbox.FIELD_WORDS.get(f, f)} of {r['ext_ref']}"
-            if choice[f]:
-                # a dropdown of what BizBox accepts; the row's own value stays
-                # choosable even when BizBox no longer lists it
-                options = "".join(f"<option value='{t.esc(c)}'{' selected' if c == shown else ''}>{t.esc(l)}</option>" for c, l in choice[f])
-                if cur and cur not in {c for c, _ in choice[f]}:
-                    options = f"<option value='{t.esc(cur)}'{' selected' if cur == shown else ''}>{t.esc(cur)} (as in BizBox)</option>" + options
-                return (f"<td class=ecell><select form=grid name='e:{t.esc(r['ext_ref'])}:{f}' data-was='{t.esc(cur)}'"
-                        f" aria-label='{t.esc(label)}'>{options}</select></td>")
-            typ = "date" if editable[f] == "date" else "text"
-            return (f"<td class='ecell{' num' if f == 'unit_cost' else ''}'><input form=grid type={typ} name='e:{t.esc(r['ext_ref'])}:{f}'"
-                    f" value='{t.esc(shown)}' data-was='{t.esc(cur)}' aria-label='{t.esc(label)}'></td>")
         return finance._cell(r, f, AREA, labels)
     trs = []
     for r in rows:
-        waiting = ", ".join(sorted(bizbox.FIELD_WORDS.get(f, f) for f in pending.get(r["ext_ref"], ())))
+        waiting = ", ".join(sorted(bizbox.field_word(f) for f in pending.get(r["ext_ref"], ())))
         wait_cell = f"<span class='chip sla-warn'>{t.esc(waiting)}</span>" if waiting else ""
-        trs.append(f"<tr><td><input type=checkbox form=bulk name=refs value='{t.esc(r['ext_ref'])}'{' checked' if r['ext_ref'] in ticked else ''}"
-                   f" aria-label='Tick {t.esc(r['ext_ref'])}'></td>"
+        trs.append(f"<tr data-href='{t.esc(finance._url(kind, r['ext_ref'], AREA))}'>"
                    + "".join(cell(r, f) for f, _ in columns)
                    + (f"<td class=num>{lines.get(r['ext_ref'], 0)}</td>" if kind == "purchase_order" else "")
                    + f"<td>{wait_cell}</td></tr>")
-    ncol = len(columns) + 2 + (1 if kind == "purchase_order" else 0)
+    ncol = len(columns) + 1 + (1 if kind == "purchase_order" else 0)
     keep = {"tab": kind, "q": search, "status": status, "vendor": vendor} | ({"absent": "1"} if absent else {})
     keep = {k: v for k, v in keep.items() if v}
     first, last = (page_no - 1) * bizbox.PAGE + 1, min(page_no * bizbox.PAGE, total)
@@ -264,40 +235,16 @@ def _grid(ctx, kind, *, posted: dict | None = None) -> str:
     vopts = "".join(f"<option value='{t.esc(v['name'])}'{' selected' if v['name'] == vendor else ''}>{t.esc(v['name'])}</option>"
                     for v in bizbox.vendors(ctx.conn)) if kind in VENDOR_COL else ""
     filters = (f"<form method=get action='/procurement' class='row schedbar'><input type=hidden name=tab value={kind}>"
-               f"<div style='flex:1 1 220px'><input name=q value='{t.esc(search)}' placeholder='Search {dict(TABS)[kind].lower()}'></div>"
+               f"<div style='flex:1 1 220px'><input name=q value='{t.esc(search)}' placeholder='Search {dict(TABS)[kind].lower()}' aria-label='Search'></div>"
                f"<div style='flex:0 0 160px'><select name=status aria-label='{FILTER_WORD[FILTER_COL[kind]].capitalize()}'><option value=''>Any {FILTER_WORD[FILTER_COL[kind]]}</option>{sopts}</select></div>"
                + (f"<div style='flex:0 0 200px'><select name=vendor aria-label=Vendor><option value=''>Any vendor</option>{vopts}</select></div>" if vopts else "")
                + f"<div style='flex:0 0 auto'><label><input type=checkbox name=absent value=1{' checked' if absent else ''}> Gone from BizBox too</label></div>"
                "<div style='flex:0 0 auto'><button class=ghost type=submit>Filter</button></div>"
                + (f"<div style='flex:0 0 auto'><a class=btn href='/procurement/{kind}/new'>{t.icon('plus')} {NEW_WORDS[kind]}</a></div>"
-                  if can and kind in bizbox.ADDABLE else "") + "</form>")
-    tools = ""
-    if can and editable:
-        fopts = "".join(f"<option value={f}{' selected' if f == posted.get('field') else ''}>{t.esc(bizbox.FIELD_WORDS[f])}</option>" for f in editable)
-        why_bulk = t.esc(posted.get("reason", "")) if posted.get("form") == "bulk" else ""
-        why_grid = t.esc(posted.get("reason", "")) if posted.get("form") == "grid" else ""
-        tools = (f"<form id=bulk method=post action='/procurement/{kind}/bulk/review' class='row schedbar bulkbar' style='margin-top:10px' data-valuepick{_described(q)}>"
-                 "<div style='flex:0 0 auto' aria-live=polite><b><span data-ticked>0</span> ticked</b> · change</div>"
-                 f"<div style='flex:0 0 170px'><select name=field aria-label='Field to change'>{fopts}</select></div>"
-                 f"<div style='flex:1 1 160px'>{finance.value_inputs(ctx, kind, list(editable))}</div>"
-                 f"<div style='flex:1 1 200px'><input name=reason required maxlength=400 value='{why_bulk}' placeholder='Why? The approver sees this'></div>"
-                 f"<div style='flex:0 0 auto'><button type=submit>{t.icon('checks')} Review and send</button></div></form>"
-                 f"<form id=grid method=post action='/procurement/{kind}/edits/review' class='row schedbar' style='margin-top:6px'{_described(q)}>"
-                 "<div style='flex:0 0 auto' aria-live=polite><b><span data-edited>0</span> cell(s) edited</b></div>"
-                 f"<div style='flex:1 1 260px'><input name=reason maxlength=400 value='{why_grid}' placeholder='Why? Needed before sending edited cells'></div>"
-                 f"<div style='flex:0 0 auto'><button class=ghost type=submit>{t.icon('checks')} Review edited cells and send</button></div></form>")
-    script = ("<script>(function(){var tick=document.querySelector('[data-tickall]');var n=document.querySelector('[data-ticked]');"
-              "var boxes=function(){return Array.prototype.slice.call(document.querySelectorAll(\"input[form=bulk][name=refs]\"))};"
-              "function count(){if(n)n.textContent=boxes().filter(function(b){return b.checked}).length}"
-              "if(tick)tick.addEventListener('change',function(){boxes().forEach(function(b){b.checked=tick.checked});count()});"
-              "boxes().forEach(function(b){b.addEventListener('change',count)});"
-              "var e=document.querySelector('[data-edited]');function edited(){var c=0;document.querySelectorAll('td.ecell input,td.ecell select').forEach(function(i){"
-              "if(i.value!==i.getAttribute('data-was')){c++;i.classList.add('edited')}else{i.classList.remove('edited')}});if(e)e.textContent=c}"
-              "document.querySelectorAll('td.ecell input,td.ecell select').forEach(function(i){i.addEventListener('input',edited);i.addEventListener('change',edited)});edited();count()})()</script>"
-              + finance.VALUE_PICK_SCRIPT)
-    return ("<div class=card>" + filters + tools + f"<div class=tablewrap><table class='compact pgrid'><thead><tr>{head}</tr></thead><tbody>"
+                  if can and with_new and kind in bizbox.ADDABLE else "") + "</form>")
+    return ("<div class=card>" + filters + f"<div class=tablewrap><table class='compact pgrid doclist'><thead><tr>{head}</tr></thead><tbody>"
             + ("".join(trs) or f"<tr><td colspan={ncol} class=muted>Nothing here yet.</td></tr>") + "</tbody></table></div>" + pager
-            + "</div>" + script)
+            + "</div>")
 
 
 # ------------------------------------------------------------------ vendors
@@ -322,7 +269,7 @@ def _vendors(ctx):
             "<div class=tablewrap><table class=compact><thead><tr><th>Vendor</th><th class=num>Purchase orders</th><th class=num>Ordered</th>"
             "<th class=num>Receipts</th><th class=num>Received</th></tr></thead><tbody>"
             + (trs or "<tr><td colspan=5 class=muted>No vendor named yet.</td></tr>") + "</tbody></table></div></div>")
-    return Response(body=t.page("Procurement · Vendors", body, user=ctx.user, active=AREA))
+    return Response(body=t.page("Procurement · Vendors", body, user=ctx.user, active=MENU_KEY['vendor']))
 
 
 # ------------------------------------------------------------------ changes
@@ -333,7 +280,7 @@ def _batch_what(b) -> str:
     if b["change_kind"] == "ADD":
         p = bizbox.payload_of(b)
         rec = p.get("record", {})
-        return f"New {word}: {t.esc(rec.get('name') or rec.get('vendor') or '')}" + (f", {len(p.get('lines') or [])} line(s)" if p.get("lines") else "")
+        return f"New {word}: {t.esc(bizbox.add_summary(rec))}" + (f", {len(p.get('lines') or [])} line(s)" if p.get("lines") else "")
     n = b["n"] if "n" in b.keys() else 0
     return f"{n} {word}{'s' if n != 1 else ''} changed"
 
@@ -391,7 +338,7 @@ def _changes(ctx):
             "<div class=tablewrap><table class=compact><thead><tr><th>Batch</th><th>What</th><th>Why</th><th>Asked by</th>"
             "<th>Approved by</th><th>State</th><th></th></tr></thead><tbody>"
             + (trs or "<tr><td colspan=7 class=muted>Nothing waiting.</td></tr>") + "</tbody></table></div></div>")
-    return Response(body=t.page("Procurement · Changes", body, user=ctx.user, active=AREA))
+    return Response(body=t.page("Procurement · Changes", body, user=ctx.user, active=MENU_KEY['changes']))
 
 
 def batch_page(ctx, batch_id):
@@ -469,120 +416,6 @@ def cancel(ctx, batch_id):
 
 # ------------------------------------------------------------ bulk and edits
 
-def _back(kind, **extra) -> str:
-    return "/procurement?" + urllib.parse.urlencode({"tab": kind} | extra)
-
-
-def bulk(ctx, kind):
-    from .. import redirect
-    _gate(ctx)
-    if kind not in KINDS:
-        return redirect("/procurement")
-    _gate(ctx, kind, "WRITE")
-    f = ctx.request.form()
-    try:
-        out = bizbox.propose_many(ctx.conn, kind, ctx.request.form_list("refs"), f.get("field", ""),
-                                  finance.picked_value(f, f.get("field", "")),
-                                  reason=f.get("reason", ""), at=ctx.now, actor=ctx.user.id)
-        ctx.conn.commit()
-    except bizbox.Refused as exc:
-        ctx.conn.rollback()
-        return redirect(_back(kind, err=f"Not queued: {exc}"))
-    return redirect(_back(kind, msg=f"Batch #{out['batch_id']} queued: {out['queued']} record(s)"
-                                    + (f", {out['same']} already so" if out["same"] else "") + ". A second person approves it on the Changes tab."))
-
-
-def edits(ctx, kind):
-    from .. import redirect
-    _gate(ctx)
-    if kind not in KINDS:
-        return redirect("/procurement")
-    _gate(ctx, kind, "WRITE")
-    f = ctx.request.form()
-    try:
-        out = bizbox.propose_edits(ctx.conn, kind, _cells(f), reason=f.get("reason", ""), at=ctx.now, actor=ctx.user.id)
-        ctx.conn.commit()
-    except bizbox.Refused as exc:
-        ctx.conn.rollback()
-        return redirect(_back(kind, err=f"Not queued: {exc}"))
-    return redirect(_back(kind, msg=f"Batch #{out['batch_id']} queued: {out['queued']} cell(s). A second person approves it on the Changes tab."))
-
-
-def _grid_page(ctx, kind, *, dialog: str = "", err: str = "", posted: dict | None = None):
-    """The tab as a POST answers it: the grid as the person left it, with the
-    review window on top or a refusal above."""
-    from .. import Response
-    banner = f"<div class='banner err' id=flash-err role=alert>{t.esc(err)}</div>" if err else ""
-    return Response(body=t.page("Procurement", banner + dialog + _head(ctx, kind, ctx.request.query) + _grid(ctx, kind, posted=posted),
-                                user=ctx.user, active=AREA))
-
-
-def _posted(f, form: str, refs=()) -> dict:
-    return {"form": form, "cells": {k: f.get(k, "") for k in f.keys() if k.startswith("e:")},
-            "refs": {str(r).strip() for r in refs}, "field": f.get("field", ""), "reason": f.get("reason", "")}
-
-
-def _cells(f) -> list:
-    triples = []
-    for key in f.keys():
-        if not key.startswith("e:"):
-            continue
-        parts = key.split(":", 2)
-        if len(parts) == 3:
-            triples.append((parts[1], parts[2], f.get(key, "")))
-    return triples
-
-
-def review_bulk(ctx, kind):
-    """POST from the tick-and-change bar: the window that says what will
-    change on the ticked rows. Nothing is queued yet (Dada, 13 Oct 2026)."""
-    from .. import redirect
-    _gate(ctx)
-    if kind not in KINDS:
-        return redirect("/procurement")
-    _gate(ctx, kind, "WRITE")
-    f = ctx.request.form()
-    refs = ctx.request.form_list("refs")
-    field = f.get("field", "")
-    value = finance.picked_value(f, field)
-    posted = _posted(f, "bulk", refs)
-    try:
-        preview = bizbox.preview_many(ctx.conn, kind, refs, field, value, reason=f.get("reason", ""))
-    except bizbox.Refused as exc:
-        return _grid_page(ctx, kind, err=f"Not sent: {exc}", posted=posted)
-    if not preview["rows"]:
-        return _grid_page(ctx, kind, err="Nothing is changed: every ticked record already has that value in BizBox.", posted=posted)
-    hidden = ([("refs", r) for r in dict.fromkeys(str(x).strip() for x in refs) if r]
-              + [("field", field), ("new_value", value), ("reason", preview["reason"])])
-    n = len(preview["rows"])
-    dialog = finance.review_dialog(f"What will change on {n} {ONE_WORD[kind] if n == 1 else MANY_WORD[kind]}", preview,
-                                   action=f"/procurement/{kind}/bulk", hidden=hidden, show_ref=True)
-    return _grid_page(ctx, kind, dialog=dialog, posted=posted)
-
-
-def review_edits(ctx, kind):
-    """POST from the grid's edited cells: the window that lists each cell
-    that differs from BizBox, from -> to. Nothing is queued yet."""
-    from .. import redirect
-    _gate(ctx)
-    if kind not in KINDS:
-        return redirect("/procurement")
-    _gate(ctx, kind, "WRITE")
-    f = ctx.request.form()
-    posted = _posted(f, "grid")
-    try:
-        preview = bizbox.preview_edits(ctx.conn, kind, _cells(f), reason=f.get("reason", ""))
-    except bizbox.Refused as exc:
-        return _grid_page(ctx, kind, err=f"Not sent: {exc}", posted=posted)
-    if not preview["rows"]:
-        return _grid_page(ctx, kind, err="Nothing is changed: every cell still reads what BizBox has.", posted=posted)
-    hidden = [(f"e:{r['ref']}:{r['field']}", "" if r["new"] is None else str(r["new"])) for r in preview["rows"]] + [("reason", preview["reason"])]
-    n, recs = len(preview["rows"]), len({r["ref"] for r in preview["rows"]})
-    dialog = finance.review_dialog(f"What will change: {n} cell{'s' if n != 1 else ''} on {recs} {ONE_WORD[kind] if recs == 1 else MANY_WORD[kind]}",
-                                   preview | {"same": 0}, action=f"/procurement/{kind}/edits", hidden=hidden, show_ref=True)   # every cell was posted
-    return _grid_page(ctx, kind, dialog=dialog, posted=posted)
-
-
 # ---------------------------------------------------------------------- adds
 
 def _pick(ctx, kind, field, name, chosen="", *, empty=None, required=False, fallback=""):
@@ -605,6 +438,9 @@ def new_form(ctx, kind):
         raise HttpError("404 Not Found", "Nothing of that kind is added from the desk.")
     _gate(ctx, kind, "WRITE")
     q = ctx.request.query
+    from . import documents
+    if kind in documents.DESK_KINDS:
+        return documents.new_page(ctx, kind, posted={k: q.get(k, "") for k in q.keys()}, err=q.get("err", ""))
     return _new_page(ctx, kind, posted={k: q.get(k, "") for k in q.keys()})
 
 
@@ -661,6 +497,18 @@ def _new_page(ctx, kind, *, posted: dict | None = None, dialog: str = "", err: s
     return Response(body=t.page(NEW_WORDS[kind], body, user=ctx.user, active=AREA))
 
 
+def _own_or_approver(ctx, kind, batch_id: int) -> None:
+    """A waiting desk document is edited by the person who raised it or by an
+    approver of its area; anyone else is refused, whatever the form says."""
+    from .. import HttpError
+    b = bizbox.batch(ctx.conn, batch_id)
+    if b is None:
+        raise HttpError("404 Not Found", "No such document on the desk.")
+    mine = (b["requested_by"] or "").lower() == (ctx.user.id or "").lower()
+    if not (mine or _may(ctx, kind, "ADMIN")):
+        raise HttpError("403 Forbidden", "This document was raised by someone else; only they, or an approver of the area, may edit it.")
+
+
 def _add_parts(f, kind) -> tuple:
     record = {k: f.get(k, "") for k in bizbox.ADDABLE[kind]["fields"]}
     lines = []
@@ -713,21 +561,33 @@ def review_add(ctx, kind):
     f = ctx.request.form()
     posted = {k: f.get(k, "") for k in f.keys()}
     record, lines = _add_parts(f, kind)
+    from . import documents
+    desk = kind in documents.DESK_KINDS
+    batch_id = int(f["batch"]) if f.get("batch", "").isdigit() else None
+    if batch_id:
+        _own_or_approver(ctx, kind, batch_id)
+    back = (lambda **kw: documents.new_page(ctx, kind, posted=posted, batch=batch_id, **kw)) if desk else (lambda **kw: _new_page(ctx, kind, posted=posted, **kw))
     try:
         checked = bizbox.check_add(ctx.conn, kind, record, lines, reason=f.get("reason", ""))
     except bizbox.Refused as exc:
-        return _new_page(ctx, kind, posted=posted, err=f"Not sent: {exc}")
-    hidden = [(k, v) for k, v in record.items() if v] + [("reason", checked["reason"])]
+        return back(err=f"Not sent: {exc}")
+    hidden = [(k, v) for k, v in record.items() if v] + [("reason", checked["reason"])] + ([("batch", str(batch_id))] if batch_id else [])
     for i, line in enumerate(lines, 1):
         hidden += [(f"line{i}_{k}", v) for k, v in line.items() if v]
     n = len(checked["lines"])
-    title = (f"What will be created: a purchase order with {n} line{'s' if n != 1 else ''}" if kind == "purchase_order"
-             else f"What will be created: the item {checked['record'].get('name', '')}")
+    word = bizbox.KIND_WORDS.get(kind, kind.replace("_", " "))
+    if batch_id:
+        title = f"What will change on NEW-{batch_id}: the {word} as it will now wait, {n} line{'s' if n != 1 else ''}"
+    elif kind == "product":
+        title = f"What will be created: the item {checked['record'].get('name', '')}"
+    else:
+        title = f"What will be created: a {word} with {n} line{'s' if n != 1 else ''}"
     dialog = finance.review_dialog(title, {"rows": [], "same": 0, "reason": checked["reason"]}, action=f"/procurement/{kind}/add",
-                                   hidden=hidden, body=_add_body(ctx, kind, checked),
-                                   note="Sending it queues the new record for a second person to approve. BizBox creates it, and "
-                                        "gives it its number, only after that, when the approved change is pushed.")
-    return _new_page(ctx, kind, posted=posted, dialog=dialog)
+                                   hidden=hidden, body=documents.add_window_body(ctx, kind, checked) if desk else _add_body(ctx, kind, checked),
+                                   note=("Saving it keeps the document as it now reads, still waiting for a second person to approve." if batch_id else
+                                         "Sending it queues the new record for a second person to approve. BizBox creates it, and "
+                                         "gives it its number, only after that, when the approved change is pushed."))
+    return back(dialog=dialog)
 
 
 def add(ctx, kind):
@@ -738,17 +598,54 @@ def add(ctx, kind):
     _gate(ctx, kind, "WRITE")
     f = ctx.request.form()
     record, lines = _add_parts(f, kind)
+    from . import documents
+    batch_id = int(f["batch"]) if f.get("batch", "").isdigit() else None
+    if batch_id:
+        _own_or_approver(ctx, kind, batch_id)
     try:
-        bid = bizbox.propose_add(ctx.conn, kind, record, lines, reason=f.get("reason", ""), at=ctx.now, actor=ctx.user.id)
+        if batch_id:
+            bizbox.replace_add(ctx.conn, kind, batch_id, record, lines, reason=f.get("reason", ""), at=ctx.now, actor=ctx.user.id)
+            bid = batch_id
+        else:
+            bid = bizbox.propose_add(ctx.conn, kind, record, lines, reason=f.get("reason", ""), at=ctx.now, actor=ctx.user.id)
         ctx.conn.commit()
     except bizbox.Refused as exc:
         ctx.conn.rollback()
+        if batch_id:
+            return redirect(finance._url(kind, f"NEW-{batch_id}", AREA) + "&" + urllib.parse.urlencode({"err": f"Not saved: {exc}", "edit": "1"}))
         return redirect(f"/procurement/{kind}/new?" + urllib.parse.urlencode({"err": f"Not queued: {exc}", **{k: v for k, v in record.items() if v}}))
+    if kind in documents.DESK_KINDS:
+        return redirect(finance._url(kind, f"NEW-{bid}", AREA) + "&" + urllib.parse.urlencode(
+            {"msg": (f"Saved: the document now reads as you left it; still waiting for a second person." if batch_id else
+                     f"Batch #{bid} queued: {NEW_WORDS[kind].lower()}, waiting for a second person to approve.")}))
     return redirect("/procurement?" + urllib.parse.urlencode({"tab": "changes", "msg": f"Batch #{bid} queued: {NEW_WORDS[kind].lower()}. A second person approves it here."}))
 
 
 def detail(ctx, kind):
+    """A record's page under the Procurement menu. The one place that decides
+    what a kind opens as is finance._detail: a document kind (documents.DOCS)
+    opens as a document, the rest as the record page the two menus share."""
     return finance.detail(ctx, kind, area=AREA)
+
+
+def slip(ctx, kind):
+    from . import documents
+    return documents.slip(ctx, kind)
+
+
+def doc_review(ctx, kind):
+    from . import documents
+    return documents.review(ctx, kind)
+
+
+def doc_send(ctx, kind):
+    from . import documents
+    return documents.send(ctx, kind)
+
+
+def stock_json(ctx):
+    from . import documents
+    return documents.stock_json(ctx)
 
 
 # ------------------------------------------------------------------ reports
@@ -776,7 +673,7 @@ def _reports(ctx):
     if not mms_reports.ready(ctx.conn):
         body = _head(ctx, "reports", q) + ("<div class=card><p class=muted>The desk cannot list reports until schema 082 "
                                            "is applied on the host. Nothing else is affected.</p></div>")
-        return Response(body=t.page("Procurement · Reports", body, user=ctx.user, active=AREA))
+        return Response(body=t.page("Procurement · Reports", body, user=ctx.user, active=MENU_KEY['reports']))
     rows = mms_reports.listed(ctx.conn, areas=[area] if area else seen, q=search)
     chips = "".join(
         f"<a class='{'on' if a == area else ''}' href='/procurement?{urllib.parse.urlencode({'tab': 'reports', 'q': search} | ({'area': a} if a else {}))}'>"
@@ -804,7 +701,7 @@ def _reports(ctx):
             "<p class=why>Each report is the report server's own, run with the values you choose here and shown as a PDF "
             "on this page, or handed over as an Excel file. Every run is logged.</p></div>"
             + ("".join(groups) or empty))
-    return Response(body=t.page("Procurement · Reports", body, user=ctx.user, active=AREA))
+    return Response(body=t.page("Procurement · Reports", body, user=ctx.user, active=MENU_KEY['reports']))
 
 
 def _report_or_404(ctx, report_id):
@@ -860,12 +757,20 @@ def report_page(ctx, report_id):
     r = _report_or_404(ctx, report_id)
     q = ctx.request.query
     rid = r["report_id"]
-    err, params = "", []
+    err, params, doc_note = "", [], ""
     try:
         client = _ssrs()
         base = client.parameters(r["path"])
         chosen, _ = mms_reports.values_from(base, q.get, ctx.request.query_list, require=False)
-        if not chosen and not q.get("refresh"):
+        if not chosen and q.get("doc"):
+            # the slip link from a document: its number filled in, or said plainly
+            # that it could not be, never the values of the last run
+            chosen = mms_reports.doc_values(base, q["doc"])
+            if not chosen:
+                doc_note = (f"This report did not say which of its fields takes the document number: type {q['doc']} "
+                            "where it asks for one, then run it.")
+                chosen = mms_reports.defaults_of(base)
+        elif not chosen and not q.get("refresh"):
             chosen = mms_reports.last_values(ctx.conn, rid, ctx.user.id) or mms_reports.defaults_of(base)
         params = client.parameters(r["path"], chosen) if chosen else base
         mms_reports.remember_params(ctx.conn, rid, params)
@@ -904,6 +809,7 @@ def report_page(ctx, report_id):
         + "</li>" for x in runs) + "</ul></div>") if runs else ""
     body = (_banners(q) + (f"<div class='banner err' id=flash-err role=alert>{t.esc(err)}</div>" if err and not q.get("err")
                            else (f"<div class='banner err' role=alert>{t.esc(err)}</div>" if err else ""))
+            + (f"<div class='banner warn' role=status>{t.esc(doc_note)}</div>" if doc_note else "")
             + f"<a class=backbtn data-back href='/procurement?tab=reports' title='Back to reports'>{t.icon('left')}<span class=lbl>Back to reports</span></a>"
             f"<h1>{t.esc(r['title'])}</h1><p class=sub>{t.esc(mms_reports.AREA_WORDS[r['area']])}"
             + (f" · {t.esc(r['description'])}" if r["description"] else "")
@@ -959,7 +865,7 @@ def _drugs(ctx):
     page_no = int(q["page"]) if q.get("page", "").isdigit() and int(q["page"]) > 0 else 1
     if not db.table_exists(ctx.conn, "ext_medicine"):
         body = _head(ctx, "medicine", q) + "<div class=card><p class=muted>The desk cannot list medicines until schema 083 is applied on the host.</p></div>"
-        return Response(body=t.page("Procurement · Drugs", body, user=ctx.user, active=AREA))
+        return Response(body=t.page("Procurement · Drugs", body, user=ctx.user, active=MENU_KEY['medicine']))
     rows, total = bizbox.medicines(ctx.conn, q=search, controlled=controlled, limit=bizbox.PAGE, offset=(page_no - 1) * bizbox.PAGE)
     labels = bizbox.labels_for(ctx.conn, "product")
     n_ctrl = ctx.conn.execute("SELECT COUNT(*) FROM ext_medicine WHERE source_id = ? AND present = 1 AND COALESCE(controlled, 0) = 1", (bizbox.SOURCE,)).fetchone()[0]
@@ -989,7 +895,7 @@ def _drugs(ctx):
             "<th>Category</th><th>Administration</th><th>DOH · MIMS</th></tr></thead><tbody>"
             + (trs or "<tr><td colspan=8 class=muted>No medicine matches, or BizBox has not been read for medicines yet.</td></tr>")
             + "</tbody></table></div>" + pager + "</div>")
-    return Response(body=t.page("Procurement · Drugs", body, user=ctx.user, active=AREA))
+    return Response(body=t.page("Procurement · Drugs", body, user=ctx.user, active=MENU_KEY['medicine']))
 
 
 def _warehouses(ctx):
@@ -1000,7 +906,7 @@ def _warehouses(ctx):
     search = q.get("q", "")
     if not db.table_exists(ctx.conn, "ext_warehouse"):
         body = _head(ctx, "warehouse", q) + "<div class=card><p class=muted>The desk cannot list warehouses until schema 083 is applied on the host.</p></div>"
-        return Response(body=t.page("Procurement · Warehouses", body, user=ctx.user, active=AREA))
+        return Response(body=t.page("Procurement · Warehouses", body, user=ctx.user, active=MENU_KEY['warehouse']))
     rows = bizbox.warehouses(ctx.conn, q=search)
     held = {s["warehouse_ref"]: s for s in bizbox.stock_by_warehouse(ctx.conn)} if db.table_exists(ctx.conn, "ext_stock") else {}
     groups: dict = {}
@@ -1025,7 +931,7 @@ def _warehouses(ctx):
             "<p class=why>BizBox's warehouses, by group. A warehouse that holds stock says how much; click it for the lines. "
             "Perpetual inventory on the Reports tab has the same with BizBox's own valuation.</p></div>"
             + (cards or "<div class=card><p class=muted>No warehouse matches, or BizBox has not been read for warehouses yet.</p></div>"))
-    return Response(body=t.page("Procurement · Warehouses", body, user=ctx.user, active=AREA))
+    return Response(body=t.page("Procurement · Warehouses", body, user=ctx.user, active=MENU_KEY['warehouse']))
 
 
 # ------------------------------------------------ stock and movements (084)
@@ -1076,7 +982,7 @@ def _stock(ctx):
     warehouse, search = q.get("warehouse", ""), q.get("q", "")
     page_no = int(q["page"]) if q.get("page", "").isdigit() and int(q["page"]) > 0 else 1
     if not db.table_exists(ctx.conn, "ext_stock"):
-        return Response(body=t.page("Procurement · Stock on hand", _not_mapped(ctx, "stock", "Stock on hand"), user=ctx.user, active=AREA))
+        return Response(body=t.page("Procurement · Stock on hand", _not_mapped(ctx, "stock", "Stock on hand"), user=ctx.user, active=MENU_KEY['stock']))
     summary = bizbox.stock_summary(ctx.conn)
     rows, total = bizbox.stock(ctx.conn, warehouse=warehouse, q=search, limit=bizbox.PAGE, offset=(page_no - 1) * bizbox.PAGE)
     labels = bizbox.labels_for(ctx.conn, "product")
@@ -1107,7 +1013,7 @@ def _stock(ctx):
             "<th class=num>On hand</th><th class=num>Unit cost</th><th class=num>Value</th><th>As of</th></tr></thead><tbody>"
             + (trs or "<tr><td colspan=8 class=muted>Nothing in stock matches, or BizBox has not been read for stock yet.</td></tr>")
             + "</tbody></table></div>" + _pager(keep, page_no, total, "line(s)") + "</div>")
-    return Response(body=t.page("Procurement · Stock on hand", body, user=ctx.user, active=AREA))
+    return Response(body=t.page("Procurement · Stock on hand", body, user=ctx.user, active=MENU_KEY['stock']))
 
 
 def _window(q) -> int:
@@ -1125,22 +1031,21 @@ def _movements(ctx):
     days = _window(q)
     page_no = int(q["page"]) if q.get("page", "").isdigit() and int(q["page"]) > 0 else 1
     if not db.table_exists(ctx.conn, "ext_movement"):
-        return Response(body=t.page("Procurement · Movements", _not_mapped(ctx, "movement", "The item ledger"), user=ctx.user, active=AREA))
+        return Response(body=t.page("Procurement · Movements", _not_mapped(ctx, "movement", "The item ledger"), user=ctx.user, active=MENU_KEY['movement']))
     rows, total = bizbox.movements(ctx.conn, item=item, warehouse=warehouse, days=days, kind=kind, now=ctx.now,
                                    limit=bizbox.PAGE, offset=(page_no - 1) * bizbox.PAGE)
     kinds = bizbox.movement_kinds(ctx.conn, days=days, now=ctx.now)
     oldest, newest = bizbox.movement_window(ctx.conn)
     keep = {k: v for k, v in {"tab": "movement", "item": item, "warehouse": warehouse, "kind": kind, "days": str(days)}.items() if v}
-    chips = "".join(f"<a class='{'on' if kind.upper() == k else ''}' href='/procurement?{urllib.parse.urlencode({kk: vv for kk, vv in (keep | {'kind': k}).items() if vv})}'>{t.esc(w)} · {n}</a>"
+    chips = "".join(f"<a class='{'on' if kind.upper() == k else ''}' href='/procurement?{urllib.parse.urlencode({kk: vv for kk, vv in (keep | {'kind': k}).items() if vv})}'>{move_label(k)} · {n}</a>"
                     for k, w, n in kinds)
     allchip = f"<a class='{'on' if not kind else ''}' href='/procurement?{urllib.parse.urlencode({kk: vv for kk, vv in keep.items() if kk != 'kind'})}'>All · {sum(n for _, _, n in kinds)}</a>"
     trs = "".join(
         f"<tr><td>{t.esc(r['moved_on'] or '')}</td><td>{finance._ref_link('product', r['item_ref'], AREA)}</td><td>{t.esc(r['item_name'] or '')}</td>"
-        f"<td>{t.esc(r['warehouse_name'] or r['warehouse_ref'] or '')}</td><td>{t.esc(bizbox.move_word(r['kind']))}</td>"
+        f"<td>{t.esc(r['warehouse_name'] or r['warehouse_ref'] or '')}</td><td>{move_label(r['kind'])}</td>"
         f"<td>{t.esc(r['doc_ref'] or '')}</td>"
         f"<td class=num>{_qty(r['qty_in'])}</td><td class=num>{_qty(r['qty_out'])}</td>"
-        f"<td class=num>{_bal(r['balance'])}</td>"
-        f"<td class=muted>{t.esc(r['remarks'] or '')}</td></tr>" for r in rows)
+        f"<td class=num>{_bal(r['balance'])}</td></tr>" for r in rows)
     wopts = "".join(f"<option value={d}{' selected' if d == days else ''}>{w}</option>" for d, w in WINDOWS)
     body = (_head(ctx, "movement", q) + "<div class=card><form method=get action='/procurement' class='row schedbar'>"
             "<input type=hidden name=tab value=movement>"
@@ -1154,10 +1059,10 @@ def _movements(ctx):
             "with the document that moved it. The desk holds "
             + (f"{t.esc(oldest)} to {t.esc(newest)}" if oldest else "nothing yet") + "; older movements are in the MMS reports.</p>"
             "<div class=tablewrap><table class='compact pgrid'><thead><tr><th>Date</th><th>Item</th><th>Name</th><th>Warehouse</th>"
-            "<th>Movement</th><th>Document</th><th class=num>In</th><th class=num>Out</th><th class=num>Balance</th><th>Remarks</th></tr></thead><tbody>"
-            + (trs or "<tr><td colspan=10 class=muted>No movement matches inside that window.</td></tr>")
+            "<th>Movement</th><th>Document</th><th class=num>In</th><th class=num>Out</th><th class=num>Balance</th></tr></thead><tbody>"
+            + (trs or "<tr><td colspan=9 class=muted>No movement matches inside that window.</td></tr>")
             + "</tbody></table></div>" + _pager(keep, page_no, total, "movement(s)") + "</div>")
-    return Response(body=t.page("Procurement · Movements", body, user=ctx.user, active=AREA))
+    return Response(body=t.page("Procurement · Movements", body, user=ctx.user, active=MENU_KEY['movement']))
 
 
 def stock_card(ctx, kind: str, ext_ref: str) -> str:
@@ -1188,7 +1093,7 @@ def movements_card(ctx, kind: str, ext_ref: str) -> str:
         return ""
     rows, total = bizbox.movements(ctx.conn, item=ext_ref, days=30, now=ctx.now, limit=10)
     trs = "".join(f"<tr><td>{t.esc(r['moved_on'] or '')}</td><td>{t.esc(r['warehouse_name'] or r['warehouse_ref'] or '')}</td>"
-                  f"<td>{t.esc(bizbox.move_word(r['kind']))}</td><td>{t.esc(r['doc_ref'] or '')}</td>"
+                  f"<td>{move_label(r['kind'])}</td><td>{t.esc(r['doc_ref'] or '')}</td>"
                   f"<td class=num>{_qty(r['qty_in'])}</td><td class=num>{_qty(r['qty_out'])}</td>"
                   f"<td class=num>{_bal(r['balance'])}</td></tr>" for r in rows)
     return ("<div class=card><h3>" + t.icon("rows") + f"Movements, last 30 days · {total}</h3>"
@@ -1253,10 +1158,10 @@ def _home(ctx):
         recent, _ = bizbox.movements(conn, days=7, now=ctx.now, limit=8)
         cards.append("<div class=card><h3>" + t.icon("rows") + "Moved in the last 7 days</h3>"
                      + ("<div class=stabs style='margin:0 0 8px'>" + "".join(
-                         f"<a href='/procurement?tab=movement&days=7&kind={urllib.parse.quote(k)}'>{t.esc(w)} · {n}</a>" for k, w, n in kinds) + "</div>" if kinds else "")
+                         f"<a href='/procurement?tab=movement&days=7&kind={urllib.parse.quote(k)}'>{move_label(k)} · {n}</a>" for k, w, n in kinds) + "</div>" if kinds else "")
                      + ("<div class=tablewrap><table class=compact><tbody>" + "".join(
                          f"<tr><td>{t.esc(r['moved_on'] or '')}</td><td>{finance._ref_link('product', r['item_ref'], AREA)} {t.esc(r['item_name'] or '')}</td>"
-                         f"<td>{t.esc(r['warehouse_name'] or r['warehouse_ref'] or '')}</td><td>{t.esc(bizbox.move_word(r['kind']))}</td>"
+                         f"<td>{t.esc(r['warehouse_name'] or r['warehouse_ref'] or '')}</td><td>{move_label(r['kind'])}</td>"
                          f"<td class=num>{_delta(r)}</td></tr>" for r in recent)
                          + "</tbody></table></div>" if recent else "<div class=muted>Nothing moved in the last 7 days, as of the last read.</div>")
                      + "<p class=why><a href='/procurement?tab=movement'>Every movement</a></p></div>")
@@ -1299,4 +1204,4 @@ def _home(ctx):
                      + "<p class=why><a href='/procurement?tab=reports'>All reports</a></p></div>")
     body = (_head(ctx, "home", q) + "<div class='tiles six'>" + "".join(tiles) + "</div>"
             + "<div class=home2>" + "".join(cards) + "</div>")
-    return Response(body=t.page("Procurement", body, user=ctx.user, active=AREA))
+    return Response(body=t.page("Procurement", body, user=ctx.user, active=MENU_KEY['home']))

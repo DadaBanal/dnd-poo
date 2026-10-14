@@ -103,6 +103,10 @@ header.top nav .panel a .ic{width:16px;height:16px;opacity:.8;grid-column:1;grid
 header.top nav .panel a .why{grid-column:2;grid-row:2;font-size:12px;color:var(--ink-3);margin:0;font-weight:400;line-height:1.3;display:block}
 header.top nav .panel a:hover{background:var(--surface-3);text-decoration:none} header.top nav .panel a.on{background:color-mix(in srgb,var(--accent) 10%,transparent)}
 header.top nav .panel.wide{grid-template-columns:repeat(2,minmax(220px,max-content));gap:2px 10px;padding:8px}
+header.top nav .panel.wide3{grid-template-columns:repeat(3,minmax(200px,max-content));gap:2px 10px;padding:8px}
+/* The open panel stays while the mouse crosses from the heading into it, and goes only when the mouse leaves the whole menu (Dada, 14 Oct 2026). */
+header.top nav .panel::before{content:"";position:absolute;left:0;right:0;top:-12px;height:12px}
+header.top nav .grp.hov .panel{display:grid}
 header.top nav .grp.on>button.top::after{content:"";position:absolute;left:10px;right:10px;bottom:-1px;height:2px;border-radius:2px;background:var(--accent)}
 header.top nav .grp.all{display:none}header.top nav .panel .col{display:flex;flex-direction:column;gap:2px}header.top nav .panel .modname{font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--ink-3);padding:10px 10px 4px;display:flex;align-items:center;gap:6px}header.top nav .panel .modname .ic{width:14px;height:14px;opacity:.7}@media (max-width:720px){header.top{padding:0 10px;gap:2px}header.top .brand{margin-right:4px}header.top .brand span{display:none}header.top nav.mega{overflow:visible;gap:0}header.top nav.mega.more{-webkit-mask-image:none;mask-image:none}header.top nav.mega>.grp:not(.all),header.top nav.mega>a.top,header.top nav.mega>a.newbtn{display:none}header.top nav .grp.all{display:inline-flex}header.top nav .grp.all .lbl{display:inline}header.top nav .grp{position:static}header.top nav .panel,header.top nav .panel.full{display:none;position:absolute;left:10px;right:10px;top:calc(100% + 4px);grid-template-columns:1fr;width:auto;min-width:0;max-height:calc(100vh - 70px);overflow:auto;padding:4px 6px 10px}header.top nav .grp.open .panel.full,header.top nav .grp:focus-within .panel.full{display:grid}}
 .dispatchwrap>.card{min-width:0} .dispatchwrap .schedwrap{max-height:calc(100vh - 330px);min-height:220px;overflow:auto;position:relative}
@@ -613,6 +617,69 @@ h1.sumline .sumform{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margi
   transition:background var(--fast) var(--ease),color var(--fast) var(--ease),border-color var(--fast) var(--ease)}
 .stabs a:hover{border-color:var(--line-2);color:var(--ink);text-decoration:none}
 .stabs a.on{background:var(--ink);color:var(--canvas);border-color:var(--ink)}
+/* The document screen (SQL01, 14 Oct 2026): a document, not a row in a spreadsheet. */
+.dochead{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;margin-bottom:6px}
+.dochead h1{margin-bottom:4px}.dochead .sub{margin-bottom:8px}
+.docbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding-top:4px}
+.doc{display:flex;flex-direction:column;gap:14px}.doc>.card{margin:0}
+.dochead .crumbs{margin:0 0 10px;color:var(--ink-3);font-size:12.5px}.dochead .crumbs a{color:var(--ink-2)}
+.docsearch input{min-width:260px}
+.mmsbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 14px}.mmsbar .state{margin-left:auto;color:var(--ink-3);font-size:12.5px}
+.pickers{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px 16px;margin:0 0 14px}
+.pickers label{display:block;font-size:12px;color:var(--ink-3);margin:0 0 3px}.pickers .ro{padding:8px 10px;background:var(--surface-2);border-radius:var(--r);font-size:13px;min-height:34px;box-sizing:border-box}
+.pickers select,.pickers input{width:100%;box-sizing:border-box}
+@media (max-width:900px){.pickers{grid-template-columns:repeat(2,minmax(0,1fr))}}@media (max-width:520px){.pickers{grid-template-columns:1fr}}
+table.doclines td.ecell input{width:100%;min-width:70px;box-sizing:border-box}table.doclines td.num.ecell input{text-align:right;max-width:120px}
+table.doclines tr.addrow td{background:color-mix(in srgb,var(--accent) 5%,transparent)}table.doclines tr.addrow input{width:100%;box-sizing:border-box;min-width:70px}
+table.doclines tr.addnote td{color:var(--ink-3);font-size:12px;border-bottom:0}
+.mmsfoot{display:flex;gap:14px 22px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:12px;margin-top:12px}
+.mmsfoot .nums{display:flex;gap:18px;flex-wrap:wrap}.mmsfoot .tot .l{color:var(--ink-3);font-size:12.5px}.mmsfoot .tot b{font-variant-numeric:tabular-nums}
+.mmsfoot .appr{color:var(--ink-2);font-size:12.5px}.mmsfoot .acts{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}.mmsfoot .acts .why input{min-width:220px}
+.docfields label{display:block;font-size:12px;color:var(--ink-3);margin:0 0 3px}
+.docfields .ro{padding:8px 10px;background:var(--surface-2);border-radius:var(--r);font-size:13px;min-height:34px;box-sizing:border-box}
+.docfields select,.docfields input{width:100%;box-sizing:border-box}
+table.doclines td.num,table.doclines th.num,table.doclist td.num,table.doclist th.num,.totals .n{font-variant-numeric:tabular-nums}
+table.doclines tr.total td{border-top:2px solid var(--line-2)}
+.totals{display:flex;gap:22px;flex-wrap:wrap}.totals>div{min-width:90px}
+.totals .n{font-size:20px;font-weight:650;letter-spacing:-.3px;line-height:1.15}.totals .l{font-size:12px;color:var(--ink-3);margin-top:2px}
+.path{list-style:none;display:flex;gap:0;padding:0;margin:10px 0 10px;flex-wrap:wrap;counter-reset:step}
+.path li{position:relative;flex:1 1 150px;padding:22px 12px 0 0;font-size:12.5px;min-width:0}
+.path li::before{content:"";position:absolute;left:0;top:3px;width:9px;height:9px;border-radius:50%;border:2px solid var(--line-2);background:var(--surface);box-sizing:content-box;z-index:1}
+.path li::after{content:"";position:absolute;left:16px;right:2px;top:8px;height:2px;background:var(--line)}
+.path li:last-child::after{display:none}
+.path li.done::before{background:var(--ok);border-color:var(--ok)}.path li.done::after{background:var(--ok)}
+.path li.now::before{background:var(--accent);border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-bg)}
+.path li.bad::before{background:var(--bad);border-color:var(--bad)}
+.path li b{display:block;color:var(--ink)}.path li span{display:block;color:var(--ink-3);overflow-wrap:anywhere}
+.doc-approval .batch+.batch{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.doc-approval .arrow{color:var(--ink-3);padding:0 4px}
+.code{font-size:11px;letter-spacing:.3px}
+.better{display:inline-block;font-size:9.5px;letter-spacing:.6px;padding:1px 6px;border-radius:999px;background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent);font-weight:700;vertical-align:middle}
+.banner.warn{background:color-mix(in srgb,var(--warn,#e3b341) 14%,transparent);color:var(--ink);border-color:color-mix(in srgb,var(--warn,#e3b341) 50%,transparent)}
+.doclines td.onhand{white-space:nowrap}
+tr[data-href]{cursor:pointer}tr[data-href]:hover td{background:var(--surface-2)}
+/* The slip: what a department accepts in place of the printed form. */
+.slip{max-width:860px;margin:0 auto;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:28px 32px;color:var(--ink)}
+.slip header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;border-bottom:2px solid var(--ink);padding-bottom:12px;margin-bottom:16px}
+.slip .kicker{font-size:12px;letter-spacing:.6px;text-transform:uppercase;color:var(--ink-3)}
+.slip h1{margin:2px 0 0;font-size:26px;letter-spacing:-.4px}.slip .stamp{text-align:right;font-size:12px;color:var(--ink-3)}.slip .stamp b{display:block;color:var(--ink);font-size:13px}
+.slip dl.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px 18px;margin:0 0 18px}
+.slip dl.facts div{min-width:0}.slip dt{font-size:11.5px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.4px}.slip dd{margin:2px 0 0;font-size:14px}
+.slip table{width:100%;border-collapse:collapse;font-size:13px}.slip th,.slip td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left}
+.slip th{font-size:11.5px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.4px}.slip td.num,.slip th.num{text-align:right;font-variant-numeric:tabular-nums}
+.slip tr.total td{border-top:2px solid var(--ink);border-bottom:0}.slip .tot{text-align:right;margin:10px 0 0;font-size:14px}
+.slip section h2{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--ink-3);margin:18px 0 6px}.slip section ul{margin:0;padding-left:18px;font-size:12.5px}
+.slip .sigs{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin-top:40px}
+.slip .sig{border-top:1px solid var(--ink);padding-top:6px;font-size:12px;color:var(--ink-2)}
+.slip footer{max-width:none;margin:22px 0 0;padding:10px 0 0;border-top:1px solid var(--line);font-size:11.5px;color:var(--ink-3)}
+@media (max-width:640px){.slip{padding:18px 16px}.slip .sigs{grid-template-columns:1fr 1fr}}
+/* Printing a document or its slip (and only those pages): the shell goes, black on white. */
+@media print{body:has(.slip,.doc) :is(header.top,footer,.skip,.noprint,#nprog,.stabs,.backbtn,.banner,dialog,[popover],#chatticker,#chatlive,.ticker,.tpanel,.toast){display:none!important}
+  body:has(.slip,.doc){background:#fff!important;color:#000}body:has(.slip,.doc) main{max-width:none!important;padding:0!important;margin:0!important}
+  body:has(.slip,.doc) main h1:not(.sumline){background:none!important;-webkit-background-clip:initial!important;background-clip:initial!important;color:#000!important}
+  body:has(.doc) .card{border:1px solid #999;box-shadow:none;background:#fff;break-inside:avoid;color:#000}body:has(.doc) a{color:inherit;text-decoration:none}
+  .slip,.slip *{color:#000!important}.slip dt,.slip th,.slip .kicker,.slip .stamp,.slip .sig,.slip footer{color:#444!important}
+  .slip{max-width:none;border:0;padding:0;background:#fff}.slip th,.slip td{border-bottom-color:#bbb}.slip header{border-bottom-color:#000}.slip .sig{border-top-color:#000}}
 .stream{list-style:none;padding:0;margin:0} .stream li{padding:8px 0;border-bottom:1px solid var(--line)} .stream li:last-child{border-bottom:none}
 .stream .meta{color:var(--ink-3);font-size:12px}
 .stream li.by-req,.stream li.by-staff{border:0;border-left:4px solid var(--accent);border-radius:var(--r-md,8px);padding:8px 12px;margin:0 0 8px;background:var(--accent-bg)} .stream li.by-req{border-left-color:var(--req);background:var(--req-bg)}
@@ -2030,6 +2097,13 @@ if(window.MutationObserver){
   if(last&&last.p===path)tr[tr.length-1]={u:here,p:path,n:name};else tr.push({u:here,p:path,n:name});
   if(tr.length>30)tr=tr.slice(-30);
   try{sessionStorage.setItem(K,JSON.stringify(tr))}catch(e){}
+  document.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest("[data-print]");if(b){e.preventDefault();window.print()}});
+  // a list row opens its document (SQL01, 14 Oct 2026); a control inside the row keeps its own click
+  document.addEventListener("click",function(e){var tr=e.target.closest&&e.target.closest("tr[data-href]");if(!tr)return;
+    if(e.button!==0||e.target.closest("a,button,input,select,label,form"))return;
+    try{if(window.getSelection&&String(window.getSelection()).length)return}catch(x){}
+    if(e.metaKey||e.ctrlKey){window.open(tr.getAttribute("data-href"),"_blank");return}
+    location.href=tr.getAttribute("data-href")});
   document.querySelectorAll("[data-back]").forEach(function(a){
     var prev=tr.length>1?tr[tr.length-2]:null;
     if(prev){a.href=prev.u.replace(/([?&])(msg|err)=[^&]*&?/g,"$1").replace(/[?&]$/,"");
@@ -2050,6 +2124,14 @@ if(!b){open.forEach(function(g){g.classList.remove('open');g.querySelector('butt
 var g=b.parentNode,was=g.classList.contains('open');open.forEach(function(x){if(x!==g){x.classList.remove('open');x.querySelector('button.top').setAttribute('aria-expanded','false')}});
 g.classList.toggle('open',!was);b.setAttribute('aria-expanded',String(!was))});
 document.addEventListener('keydown',function(e){if(e.key!=='Escape')return;document.querySelectorAll('header.top nav .grp.open').forEach(function(g){g.classList.remove('open');g.querySelector('button.top').setAttribute('aria-expanded','false');g.querySelector('button.top').focus()})});
+// Hover intent (Dada, 14 Oct 2026): a panel opened by hover stays open for a
+// third of a second after the mouse leaves its menu, so crossing into the
+// panel or passing a gap never closes it; it closes once the mouse has left
+// the heading and the panel together.
+(function(){var tm={};document.querySelectorAll('header.top nav .grp').forEach(function(g,i){
+  g.addEventListener('pointerenter',function(e){if(e.pointerType&&e.pointerType!=='mouse')return;clearTimeout(tm[i]);g.classList.add('hov')});
+  g.addEventListener('pointerleave',function(e){if(e.pointerType&&e.pointerType!=='mouse')return;clearTimeout(tm[i]);tm[i]=setTimeout(function(){g.classList.remove('hov')},320)})});
+  document.addEventListener('click',function(){document.querySelectorAll('header.top nav .grp.hov:not(.open)').forEach(function(g){g.classList.remove('hov')})},true)})();
 // The top menu fades at its right edge only when it has more than fits.
 (function(){var n=document.querySelector('header.top nav');if(!n)return;
 function f(){n.classList.toggle('more',n.scrollWidth>n.clientWidth+2&&n.scrollLeft+n.clientWidth<n.scrollWidth-2)}
@@ -3012,13 +3094,27 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         ("time", "Time", [("time", "/time", "Time", "")]),
         ("finance", "Finance", [("finance", "/finance", "Finance", "")]),
         # 13 Oct 2026: BizBox's MMS as its own Procurement module (Dada).
+        # 14 Oct 2026: BizBox's MMS module list, as its catalogue names them, each
+        # shown per the member's module rights (SQL01's review; Dada: "the side
+        # bar should be placed on the top"). What the desk does not carry yet
+        # says so on its page rather than hiding.
         ("procurement", "Procurement", [
-            ("procurement", "/procurement", "Procurement", "Purchase orders, receiving, items and vendors from BizBox"),
-            ("pochanges", "/procurement?tab=changes", "Changes to BizBox", "What waits for approval or the push"),
-            ("poreports", "/procurement?tab=reports", "MMS reports", "The report server's reports, as PDF or Excel"),
-            ("podrugs", "/procurement?tab=medicine", "Drugs and medicines", "Every item BizBox marks as a medicine, controlled ones flagged"),
-            ("postock", "/procurement?tab=stock", "Stock on hand", "What each warehouse holds, from BizBox's stock ledger"),
-            ("pomoves", "/procurement?tab=movement", "Stock movements", "Received, issued, transferred, adjusted: the item ledger by window")]),
+            ("procurement", "/procurement", "Overview", "What BizBox's MMS holds, what moved, what waits"),
+            ("popurchreq", "/procurement?tab=purchase_req", "Purchase Requisitions", "Raised here, approved here, created in BizBox"),
+            ("popo", "/procurement?tab=purchase_order", "Purchase Orders", "Every order, as a document"),
+            ("porr", "/procurement?tab=invoice", "Receiving", "BizBox's receiving reports"),
+            ("postockreq", "/procurement?tab=stock_req", "Stock Requisitions", "Stock on hand at the source as you pick"),
+            ("poexpreq", "/procurement?tab=expense_req", "Expense Requisitions", "The screen 655 people hold, on the desk"),
+            ("poissue", "/procurement?tab=stock_issuance", "Stock Issuances", "Issued from a warehouse to a department"),
+            ("poexpissue", "/procurement?tab=expense_issuance", "Expense Issuances", "Issued against an expense requisition"),
+            ("pocount", "/procurement?tab=physical_count", "Physical Count", "Counted against what the ledger says"),
+            ("poitems", "/procurement?tab=product", "Items", "Every item BizBox has"),
+            ("postock", "/procurement?tab=stock", "Stock on hand", "What each warehouse holds, from the ledger"),
+            ("pomoves", "/procurement?tab=movement", "Movements", "The item ledger by window"),
+            ("powh", "/procurement?tab=warehouse", "Warehouses", "The 73 warehouses in their groups"),
+            ("podrugs", "/procurement?tab=medicine", "Drugs", "Every item BizBox marks as a medicine"),
+            ("poreports", "/procurement?tab=reports", "Reports", "The report server's reports, as PDF or Excel"),
+            ("pochanges", "/procurement?tab=changes", "Changes", "What waits for approval or the push")]),
         ("reports", "Reports", [
             ("reports", "/reports", "Reports", "KPIs, monthly charts, the writer"),
             ("uplift", "/uplift", "Uplift", "The programme's evidence")]),
@@ -3029,7 +3125,9 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
     gate = {"schedule": "SCHEDULE", "projects": "PROJECTS", "kb": "KNOWLEDGE", "reports": "REPORTS",
             "finance": "FINANCE", "sales": "FINANCE", "time": "TIME", "calendar": "SCHEDULE",
             "procurement": "PROCUREMENT", "pochanges": "PROCUREMENT", "poreports": "PROCUREMENT", "podrugs": "PROC_DRUG",
-            "postock": "PROC_ITEM", "pomoves": "PROC_ITEM"}
+            "postock": "PROC_ITEM", "pomoves": "PROC_ITEM", "popurchreq": "PROC_PO", "popo": "PROC_PO", "porr": "PROC_RR",
+            "postockreq": "PROC_ITEM", "poexpreq": "PROC_ITEM", "poissue": "PROC_ITEM", "poexpissue": "PROC_ITEM", "pocount": "PROC_ITEM",
+            "poitems": "PROC_ITEM", "powh": "PROC_ITEM"}
     groups = [(g, label, [pg for pg in pages if pg[0] not in gate or levels.get(gate[pg[0]], "READ") != "NONE"])
               for g, label, pages in groups]
     # 073: the desk's Chat is for chat operators (Dada, 7 Oct 2026).
@@ -3047,7 +3145,9 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
     icons = {"admin": "setup", "schedule": "grip", "projects": "layers", "kb": "note", "finance": "tag", "sales": "briefcase",
              "help": "note", "time": "clock", "approvals": "check", "service": "ticket", "configurations": "monitor",
              "chat": "note", "cfgnew": "plus", "cfgcsv": "reports", "cfgtypes": "setup", "cfgint": "link",
-             "procurement": "cart", "pochanges": "checks", "poreports": "reports", "podrugs": "tag", "postock": "layers", "pomoves": "rows"}
+             "procurement": "cart", "pochanges": "checks", "poreports": "reports", "podrugs": "tag", "postock": "layers", "pomoves": "rows",
+             "popurchreq": "note", "popo": "cart", "porr": "inbox", "postockreq": "note", "poexpreq": "note", "poissue": "arrow", "poexpissue": "arrow",
+             "pocount": "checks", "poitems": "tag", "powh": "building"}
 
     def one(key, href, label, cls="", current=False):
         return (f'<a href="{esc(href)}" title="{esc(label)}" class="{cls}{" on" if current else ""}"'
@@ -3067,7 +3167,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         on = any(pg[0] == active for pg in pages)
         return (f'<div class="grp{" on" if on else ""}"><button type=button class="top{" on" if on else ""}" title="{esc(label)}" aria-haspopup=true'
                 f' aria-expanded=false>{icon(icons.get(g, g))}<span class=lbl>{esc(label)}</span>{icon("chevron", "chev")}</button>'
-                f'<div class="panel{" wide" if len(pages) > 4 else ""}" role=menu aria-label="{esc(label)}">{links}</div></div>')
+                f'<div class="panel{" wide3" if len(pages) > 9 else " wide" if len(pages) > 4 else ""}" role=menu aria-label="{esc(label)}">{links}</div></div>')
     if requester:                                 # three pages: plain links, no menu to open
         nav = "".join(one(pg[0], pg[1], pg[2], cls="top", current=pg[0] == active) for _, _, pages in groups for pg in pages)
     else:
