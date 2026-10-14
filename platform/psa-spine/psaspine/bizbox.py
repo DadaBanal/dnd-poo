@@ -80,7 +80,9 @@ KINDS = {
 # document by doc_ref (the view's DocNo). No column for remarks or any
 # BizBox-authored text: the views select none.
 DOC_MIRRORS = ("stock_req", "expense_req", "purchase_req", "stock_issuance", "expense_issuance", "physical_count")
-DOC_HEADER = {"ext_ref": "text", "trx_key": "text", "doc_date": "date", "warehouse_src": "text", "warehouse_dst": "text",
+# 088: ext_ref is the transaction key (BizBox numbers these per requesting department, so the number repeats);
+# doc_no is the printed number, shown beside its department and never used as the identity
+DOC_HEADER = {"ext_ref": "text", "doc_no": "text", "trx_key": "text", "doc_date": "date", "warehouse_src": "text", "warehouse_dst": "text",
               "status": "text", "total_qty": "money", "total_items": "int", "total": "money", "tstamp": "text"}
 DOC_LINE = {"ext_ref": "text", "doc_ref": "text", "line_no": "int", "product_ref": "text", "description": "text",
             "quantity": "money", "served_qty": "money", "system_qty": "money", "variance": "money", "unit": "text",
@@ -129,7 +131,7 @@ MAX_TEXT = 400
 # status, currency and unit are CODE, NVARCHAR(32)). SQLite has no widths, so
 # without this a 37-character BizBox status would pass every test and fail the
 # host's insert with "string or binary data would be truncated".
-WIDTH = {"status": 32, "currency": 32, "unit": 32, "list": 32, "kind": 32, "trx_key": 32}
+WIDTH = {"status": 32, "currency": 32, "unit": 32, "list": 32, "kind": 32, "trx_key": 32, "doc_no": 32}
 PAGE = 100
 # The longest key the mirror accepts. SQL Server caps an index key at 900 bytes
 # and warned on the first apply (29 Sep 2026) that ext_link's and ext_po_line's
@@ -576,6 +578,10 @@ DOC_SIDES = {"stock_req": ("warehouse_src", "warehouse_dst"), "expense_req": ("w
              "purchase_req": ("warehouse_src", "warehouse_dst"), "stock_issuance": ("warehouse_src", "warehouse_dst"),
              "expense_issuance": ("warehouse_src", "warehouse_dst"), "physical_count": ("warehouse_src",)}
 MMS_DOC_REQUIRED = dict(DOC_SIDES)
+# measured per document (Bizbox Chat's save-path profile, 14 Oct 2026): the kinds whose two sides may not be one
+# warehouse, and whose line price is a snapshot of the item's purchase price. Only the stock requisition so far.
+SAME_SIDE_REFUSED = {"stock_req"}
+PRICE_SNAPSHOT = {"stock_req"}
 for _k, _req in MMS_DOC_REQUIRED.items():
     ADDABLE[_k] = {"fields": {f: h for f, h in MMS_DOC_FIELDS.items() if f in DOC_SIDES[_k] or f == "doc_date"},
                    "required": _req, "lines": dict(MMS_DOC_LINES)}
@@ -1112,6 +1118,10 @@ def check_add(conn, kind: str, record: dict, lines=None, *, reason: str) -> dict
             raise Refused(f"{FIELD_WORDS.get(f, f.replace('_', ' ').capitalize())} is needed.")
     for f, v in rec.items():
         check_choice(conn, kind, f, v)
+    # BizBox's client refuses a stock requisition whose two departments are one (0 of 1,102 saved); a purchase
+    # requisition permits it (205 of 639). Different documents, different rule; the others are not measured.
+    if kind in SAME_SIDE_REFUSED and rec.get("warehouse_src") and rec.get("warehouse_src") == rec.get("warehouse_dst"):
+        raise Refused("A stock requisition's issuing and requesting departments must differ: BizBox refuses one to itself.")
     if "ext_ref" in rec:
         if len(rec["ext_ref"]) > MAX_KEY or not re.fullmatch(r"[A-Za-z0-9._/-]+", rec["ext_ref"]):
             raise Refused("An item code is letters, digits, dots, dashes or slashes, up to 64 of them.")
@@ -1129,11 +1139,18 @@ def check_add(conn, kind: str, record: dict, lines=None, *, reason: str) -> dict
                 continue                                   # a blank row on the form
             if not row.get("quantity") or float(row["quantity"]) <= 0:
                 raise Refused(f"Line {n}: a quantity above zero is needed.")
+            if kind in DESK_KINDS and not row.get("product_ref"):
+                raise Refused(f"Line {n}: pick an item BizBox has; a line without one is refused by BizBox.")
             item = get(conn, "product", row["product_ref"]) if row.get("product_ref") else None
             if row.get("product_ref") and item is None:
                 raise Refused(f"Line {n}: {row['product_ref']} is not an item BizBox has.")
-            if item is not None and item["is_active"] == 0:
-                raise Refused(f"Line {n}: {row['product_ref']} is inactive in BizBox; it cannot be picked.")
+            if kind in PRICE_SNAPSHOT and item is not None:
+                # the line's price is BizBox's purchase price at the moment it is picked, a snapshot never re-read;
+                # unit and conversion travel with it. The same item twice and a price of 0 are both permitted.
+                row["unit_cost"] = item["purc_price"]
+                row["unit"] = item["unit"]
+                row["conversion"] = item["conversion"]
+                row = {k: v for k, v in row.items() if v is not None}
             kept_lines.append(row)
         if not kept_lines:
             raise Refused(f"A {KIND_WORDS.get(kind, kind.replace('_', ' '))} needs at least one line.")
@@ -1175,8 +1192,24 @@ def desk_document(conn, kind: str, ref: str):
     if b is None or b["change_kind"] != "ADD" or b["kind"] != LINK_KIND.get(kind):
         return None
     p = payload_of(b)
-    return {"batch": b, "record": desk_record_of(p.get("record", {})), "lines": p.get("lines", []),
-            "number": desk_numbers(conn, kind, b["batch_id"]).get(b["batch_id"])}
+    number = desk_numbers(conn, kind, b["batch_id"]).get(b["batch_id"])
+    doc_no = None
+    if number:
+        a = conn.execute("SELECT answer FROM ext_change WHERE batch_id = ? AND field = 'NEW' AND status = 'APPLIED'", (b["batch_id"],)).fetchone()
+        doc_no = _docno_in(a["answer"]) if a else None
+        if doc_no is None and kind in DOC_MIRRORS:
+            m = get(conn, kind, number)
+            doc_no = m["doc_no"] if m is not None else None
+    return {"batch": b, "record": desk_record_of(p.get("record", {})), "lines": p.get("lines", []), "number": number, "doc_no": doc_no}
+
+
+def doc_label(doc_no, key) -> str:
+    """How a BizBox document of a per-department kind is named on screen: its
+    printed number with the key as a reference, or the key alone said as a
+    reference, never the key presented as the number (SQL01, Part 111)."""
+    if doc_no:
+        return f"No. {doc_no} · BizBox ref {key}" if key else f"No. {doc_no}"
+    return f"BizBox ref {key}" if key else ""
 
 
 def desk_record_of(rec: dict) -> dict:
@@ -1205,6 +1238,18 @@ def _number_in(answer) -> str | None:
     return (str(parsed.get("ext_ref")).strip() or None) if isinstance(parsed, dict) and parsed.get("ext_ref") else None
 
 
+def _docno_in(answer) -> str | None:
+    """BizBox's printed number from an applied NEW change's answer, when the
+    procedure sends it beside the key ({"ext_ref": TrxKey, "docno": n})."""
+    import json as _json
+    try:
+        parsed = _json.loads(answer or "")
+    except ValueError:
+        return None
+    v = parsed.get("docno") if isinstance(parsed, dict) else None
+    return str(v).strip() or None if v not in (None, "") else None
+
+
 def desk_numbers(conn, kind: str, batch_id: int | None = None) -> dict:
     """{batch_id: BizBox's number} for the desk documents of a kind that
     BizBox has applied, in one query; one batch when asked for."""
@@ -1217,6 +1262,18 @@ def desk_numbers(conn, kind: str, batch_id: int | None = None) -> dict:
     out = {}
     for r in conn.execute(sql, args):
         n = _number_in(r["answer"])
+        if n:
+            out[r["batch_id"]] = n
+    return out
+
+
+def desk_docnos(conn, kind: str) -> dict:
+    """{batch_id: BizBox's printed number} for the desk documents of a kind
+    BizBox has applied, where its answer carried one."""
+    out = {}
+    for r in conn.execute("SELECT batch_id, answer FROM ext_change WHERE source_id = ? AND kind = ? AND field = 'NEW' AND status = 'APPLIED'"
+                          " AND answer IS NOT NULL", (SOURCE, LINK_KIND.get(kind, ""))):
+        n = _docno_in(r["answer"])
         if n:
             out[r["batch_id"]] = n
     return out
@@ -1754,8 +1811,9 @@ def documents(conn, kind: str, *, q: str = "", status: str = "", limit: int = PA
              " WHERE d.source_id = ? AND d.present = 1"]
     args: list = [SOURCE]
     if q:
-        where.append(" AND (LOWER(d.ext_ref) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(ws.name, '')) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(wd.name, '')) LIKE ? ESCAPE '\\')")
-        args += [_like(q.lower())] * 3
+        where.append(" AND (LOWER(d.ext_ref) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(d.doc_no, '')) = ? OR LOWER(COALESCE(ws.name, '')) LIKE ? ESCAPE '\\'"
+                     " OR LOWER(COALESCE(wd.name, '')) LIKE ? ESCAPE '\\')")
+        args += [_like(q.lower()), q.lower().strip(), _like(q.lower()), _like(q.lower())]
     if status:
         where.append(" AND d.status = ?")
         args.append(status)

@@ -2959,6 +2959,20 @@ Dada decides otherwise:
   readout strip in `chrome.elevated`;
 - every colour a custom property with the system's light and dark value.
 
+## BizBox's numbers, and the stock requisition's save contract (14 Oct 2026, schema 088)
+
+BizBox numbers stock and expense requisitions, both issuances and physical
+counts per requesting department, so "No. 1" is many documents. The mirrors
+key on the transaction key; 088 keeps the printed number beside it in
+`doc_no`. On screen such a document is "No. 7 · BizBox ref 85476", or
+"BizBox ref 85476" before the number is read, never the key as the number.
+
+The stock requisition follows Bizbox Chat's save-path profile
+(`docs/bizbox-stock-requisition-save-path-20261014.md`): the two departments
+must differ for this kind only, a line must name an item BizBox has, the same
+item twice and a price of 0 are allowed, and the price is BizBox's purchase
+price at the moment of saving, sent with the item's unit and conversion.
+
 ## The write path on the desk's side (14 Oct 2026, schema 085)
 
 SQL01's rulings of 14 Oct 2026 (`docs/handoffs/HANDOFF-sql01-cloud-WS36-20261014-write-path-simplified.md`): identity is

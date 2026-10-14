@@ -1647,6 +1647,12 @@
     "ext_physical_count_line.description": "NAME",
     "ext_physical_count_line.unit": "CODE",
     "ext_physical_count_line.tstamp": "CODE",
-    "ext_physical_count_line.synced_at": "TIMESTAMP_TEXT"
+    "ext_physical_count_line.synced_at": "TIMESTAMP_TEXT",
+    "ext_stock_req.doc_no": "CODE",
+    "ext_expense_req.doc_no": "CODE",
+    "ext_purchase_req.doc_no": "CODE",
+    "ext_stock_issuance.doc_no": "CODE",
+    "ext_expense_issuance.doc_no": "CODE",
+    "ext_physical_count.doc_no": "CODE"
   }
 }

@@ -5288,6 +5288,34 @@ ALTER TABLE psa.[ext_product] ADD [purc_price] DECIMAL(19,4) NULL;
 IF COL_LENGTH(N'psa.[ext_product]', N'last_purc_price') IS NULL
 ALTER TABLE psa.[ext_product] ADD [last_purc_price] DECIMAL(19,4) NULL;
 
+-- 088 — BizBox's own document number on the six document mirrors (SQL01, 14 Oct 2026,
+-- HANDOFF-sql01-cloud-WS36-20261014-087-applied-and-docno-is-per-department.md).
+--
+-- BizBox numbers stock and expense requisitions, both issuances and physical
+-- counts per requesting department (docno = MAX(docno) + 1 per destination
+-- warehouse, never reset), so "1" is 33 different stock requisitions. The
+-- mirrors therefore key on the header's transaction key (TrxKey, PK_TRXNO), and
+-- the printed number is kept here beside it: shown with its department, never
+-- used as the identity. Purchase orders and purchase requisitions number
+-- globally; purchase_req carries the column too, for one shape across the six.
+IF COL_LENGTH(N'psa.[ext_stock_req]', N'doc_no') IS NULL
+ALTER TABLE psa.[ext_stock_req] ADD [doc_no] NVARCHAR(32) NULL;
+
+IF COL_LENGTH(N'psa.[ext_expense_req]', N'doc_no') IS NULL
+ALTER TABLE psa.[ext_expense_req] ADD [doc_no] NVARCHAR(32) NULL;
+
+IF COL_LENGTH(N'psa.[ext_purchase_req]', N'doc_no') IS NULL
+ALTER TABLE psa.[ext_purchase_req] ADD [doc_no] NVARCHAR(32) NULL;
+
+IF COL_LENGTH(N'psa.[ext_stock_issuance]', N'doc_no') IS NULL
+ALTER TABLE psa.[ext_stock_issuance] ADD [doc_no] NVARCHAR(32) NULL;
+
+IF COL_LENGTH(N'psa.[ext_expense_issuance]', N'doc_no') IS NULL
+ALTER TABLE psa.[ext_expense_issuance] ADD [doc_no] NVARCHAR(32) NULL;
+
+IF COL_LENGTH(N'psa.[ext_physical_count]', N'doc_no') IS NULL
+ALTER TABLE psa.[ext_physical_count] ADD [doc_no] NVARCHAR(32) NULL;
+
 IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
 ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
 
