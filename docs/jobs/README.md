@@ -16,8 +16,8 @@
 
 | Job | Card name | Status |
 |---|---|---|
-| `01-login-screen.md` | Job 01 · Login screen (Vitals v7) | running (started 15 Oct) |
-| `02-design-review-fixes.md` | Job 02 · Design review fixes | open |
+| `01-login-screen.md` | Job 01 · Login screen (Vitals v7) | running (started 15 Oct) — **continues WS36's unverified WIP `84bcb47`**, do not start over |
+| `02-design-review-fixes.md` | Job 02 · Design review fixes | open — part done in WS36's WIP `84bcb47`; check what is left first |
 | `03-waiting-rule.md` | Job 03 · Waiting rule | open |
 
 A new job: add a one-page brief here as `NN-<name>.md` (Status line first, then *First: read platform/psa-spine/CLAUDE.md*),
