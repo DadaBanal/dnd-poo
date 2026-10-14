@@ -141,7 +141,6 @@
       "Bash(ssh *)",
       "Bash(scp *)",
       "Bash(nc *)",
-      "Bash(sqlcmd *)",
       "Bash(Invoke-Sqlcmd*)",
       "Bash(net user*)",
       "Bash(netsh *)",
