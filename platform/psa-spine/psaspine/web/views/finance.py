@@ -476,6 +476,7 @@ def _detail(ctx, kind, area, ext_ref, *, dialog: str = "", err: str = "", posted
     from . import agreements as agreements_view
     from . import procurement as procurement_view
     extra = (agreements_view.covering_card(ctx, kind, ext_ref) + medicine_card(ctx, kind, ext_ref)
+             + procurement_view.item_flags(ctx, kind, ext_ref)
              + procurement_view.stock_card(ctx, kind, ext_ref) + procurement_view.movements_card(ctx, kind, ext_ref) + extra + changes_card)
     q = ctx.request.query
     body = ((f"<div class='banner ok' id=flash-ok role=status aria-live=polite>{t.esc(q.get('msg', ''))}</div>" if q.get("msg") else "")

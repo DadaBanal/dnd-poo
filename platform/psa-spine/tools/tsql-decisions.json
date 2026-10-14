@@ -212,6 +212,234 @@
     "ext_rr_line.unit_cost": {
       "sql": "DECIMAL(19,4)",
       "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_product.conversion": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_product.purc_price": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_product.last_purc_price": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_stock_req.total_qty": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_stock_req.total": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_stock_req_line.quantity": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_stock_req_line.served_qty": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_stock_req_line.system_qty": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_stock_req_line.variance": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_stock_req_line.conversion": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_stock_req_line.unit_cost": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_stock_req_line.total": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_expense_req.total_qty": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_expense_req.total": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_expense_req_line.quantity": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_expense_req_line.served_qty": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_expense_req_line.system_qty": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_expense_req_line.variance": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_expense_req_line.conversion": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_expense_req_line.unit_cost": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_expense_req_line.total": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_purchase_req.total_qty": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_purchase_req.total": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_purchase_req_line.quantity": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_purchase_req_line.served_qty": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_purchase_req_line.system_qty": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_purchase_req_line.variance": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_purchase_req_line.conversion": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_purchase_req_line.unit_cost": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_purchase_req_line.total": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_stock_issuance.total_qty": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_stock_issuance.total": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_stock_issuance_line.quantity": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_stock_issuance_line.served_qty": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_stock_issuance_line.system_qty": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_stock_issuance_line.variance": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_stock_issuance_line.conversion": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_stock_issuance_line.unit_cost": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_stock_issuance_line.total": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_expense_issuance.total_qty": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_expense_issuance.total": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_expense_issuance_line.quantity": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_expense_issuance_line.served_qty": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_expense_issuance_line.system_qty": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_expense_issuance_line.variance": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_expense_issuance_line.conversion": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_expense_issuance_line.unit_cost": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_expense_issuance_line.total": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_physical_count.total_qty": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_physical_count.total": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_physical_count_line.quantity": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_physical_count_line.served_qty": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_physical_count_line.system_qty": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_physical_count_line.variance": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_physical_count_line.conversion": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_physical_count_line.unit_cost": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
+    },
+    "ext_physical_count_line.total": {
+      "sql": "DECIMAL(19,4)",
+      "why": "A quantity or unit cost mirrored from BizBox; compared with BizBox's own, so exact."
     }
   },
   "columns": {
@@ -1315,6 +1543,110 @@
     "ext_po_line.tstamp": "CODE",
     "ext_stock.tstamp": "CODE",
     "ext_movement.tstamp": "CODE",
-    "ext_rr_line.tstamp": "CODE"
+    "ext_rr_line.tstamp": "CODE",
+    "ext_purchase_order.trx_key": "CODE",
+    "ext_invoice.trx_key": "CODE",
+    "ext_stock_req.source_id": "ID",
+    "ext_stock_req.ext_ref": "REF",
+    "ext_stock_req.trx_key": "CODE",
+    "ext_stock_req.doc_date": "DATE_TEXT",
+    "ext_stock_req.warehouse_src": "REF",
+    "ext_stock_req.warehouse_dst": "REF",
+    "ext_stock_req.status": "CODE",
+    "ext_stock_req.tstamp": "CODE",
+    "ext_stock_req.synced_at": "TIMESTAMP_TEXT",
+    "ext_stock_req_line.source_id": "ID",
+    "ext_stock_req_line.ext_ref": "REF",
+    "ext_stock_req_line.doc_ref": "REF",
+    "ext_stock_req_line.product_ref": "REF",
+    "ext_stock_req_line.description": "NAME",
+    "ext_stock_req_line.unit": "CODE",
+    "ext_stock_req_line.tstamp": "CODE",
+    "ext_stock_req_line.synced_at": "TIMESTAMP_TEXT",
+    "ext_expense_req.source_id": "ID",
+    "ext_expense_req.ext_ref": "REF",
+    "ext_expense_req.trx_key": "CODE",
+    "ext_expense_req.doc_date": "DATE_TEXT",
+    "ext_expense_req.warehouse_src": "REF",
+    "ext_expense_req.warehouse_dst": "REF",
+    "ext_expense_req.status": "CODE",
+    "ext_expense_req.tstamp": "CODE",
+    "ext_expense_req.synced_at": "TIMESTAMP_TEXT",
+    "ext_expense_req_line.source_id": "ID",
+    "ext_expense_req_line.ext_ref": "REF",
+    "ext_expense_req_line.doc_ref": "REF",
+    "ext_expense_req_line.product_ref": "REF",
+    "ext_expense_req_line.description": "NAME",
+    "ext_expense_req_line.unit": "CODE",
+    "ext_expense_req_line.tstamp": "CODE",
+    "ext_expense_req_line.synced_at": "TIMESTAMP_TEXT",
+    "ext_purchase_req.source_id": "ID",
+    "ext_purchase_req.ext_ref": "REF",
+    "ext_purchase_req.trx_key": "CODE",
+    "ext_purchase_req.doc_date": "DATE_TEXT",
+    "ext_purchase_req.warehouse_src": "REF",
+    "ext_purchase_req.warehouse_dst": "REF",
+    "ext_purchase_req.status": "CODE",
+    "ext_purchase_req.tstamp": "CODE",
+    "ext_purchase_req.synced_at": "TIMESTAMP_TEXT",
+    "ext_purchase_req_line.source_id": "ID",
+    "ext_purchase_req_line.ext_ref": "REF",
+    "ext_purchase_req_line.doc_ref": "REF",
+    "ext_purchase_req_line.product_ref": "REF",
+    "ext_purchase_req_line.description": "NAME",
+    "ext_purchase_req_line.unit": "CODE",
+    "ext_purchase_req_line.tstamp": "CODE",
+    "ext_purchase_req_line.synced_at": "TIMESTAMP_TEXT",
+    "ext_stock_issuance.source_id": "ID",
+    "ext_stock_issuance.ext_ref": "REF",
+    "ext_stock_issuance.trx_key": "CODE",
+    "ext_stock_issuance.doc_date": "DATE_TEXT",
+    "ext_stock_issuance.warehouse_src": "REF",
+    "ext_stock_issuance.warehouse_dst": "REF",
+    "ext_stock_issuance.status": "CODE",
+    "ext_stock_issuance.tstamp": "CODE",
+    "ext_stock_issuance.synced_at": "TIMESTAMP_TEXT",
+    "ext_stock_issuance_line.source_id": "ID",
+    "ext_stock_issuance_line.ext_ref": "REF",
+    "ext_stock_issuance_line.doc_ref": "REF",
+    "ext_stock_issuance_line.product_ref": "REF",
+    "ext_stock_issuance_line.description": "NAME",
+    "ext_stock_issuance_line.unit": "CODE",
+    "ext_stock_issuance_line.tstamp": "CODE",
+    "ext_stock_issuance_line.synced_at": "TIMESTAMP_TEXT",
+    "ext_expense_issuance.source_id": "ID",
+    "ext_expense_issuance.ext_ref": "REF",
+    "ext_expense_issuance.trx_key": "CODE",
+    "ext_expense_issuance.doc_date": "DATE_TEXT",
+    "ext_expense_issuance.warehouse_src": "REF",
+    "ext_expense_issuance.warehouse_dst": "REF",
+    "ext_expense_issuance.status": "CODE",
+    "ext_expense_issuance.tstamp": "CODE",
+    "ext_expense_issuance.synced_at": "TIMESTAMP_TEXT",
+    "ext_expense_issuance_line.source_id": "ID",
+    "ext_expense_issuance_line.ext_ref": "REF",
+    "ext_expense_issuance_line.doc_ref": "REF",
+    "ext_expense_issuance_line.product_ref": "REF",
+    "ext_expense_issuance_line.description": "NAME",
+    "ext_expense_issuance_line.unit": "CODE",
+    "ext_expense_issuance_line.tstamp": "CODE",
+    "ext_expense_issuance_line.synced_at": "TIMESTAMP_TEXT",
+    "ext_physical_count.source_id": "ID",
+    "ext_physical_count.ext_ref": "REF",
+    "ext_physical_count.trx_key": "CODE",
+    "ext_physical_count.doc_date": "DATE_TEXT",
+    "ext_physical_count.warehouse_src": "REF",
+    "ext_physical_count.warehouse_dst": "REF",
+    "ext_physical_count.status": "CODE",
+    "ext_physical_count.tstamp": "CODE",
+    "ext_physical_count.synced_at": "TIMESTAMP_TEXT",
+    "ext_physical_count_line.source_id": "ID",
+    "ext_physical_count_line.ext_ref": "REF",
+    "ext_physical_count_line.doc_ref": "REF",
+    "ext_physical_count_line.product_ref": "REF",
+    "ext_physical_count_line.description": "NAME",
+    "ext_physical_count_line.unit": "CODE",
+    "ext_physical_count_line.tstamp": "CODE",
+    "ext_physical_count_line.synced_at": "TIMESTAMP_TEXT"
   }
 }

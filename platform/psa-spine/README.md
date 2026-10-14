@@ -2896,6 +2896,69 @@ Dada: "yes do all".
 - **Design skills.** artifact-design fired for the screens, on the desk's own
   tokens; dataviz, pdf and xlsx did not (no chart, no file emitted).
 
+## SQL01's answers acted on: BizBox's own documents, slips by key, the corrected payload (14 Oct 2026, schema 087)
+
+SQL01's Parts 103 to 106 answered the asks of the morning. Three of the
+answers changed what was on the desk; 087 is the one mirror step they asked
+for, so every map line can go on in one day.
+
+- **Schema 087.** `trx_key` on `ext_purchase_order` and `ext_invoice` (the
+  header's identity key, PK_TRXNO); `is_active`, `is_inventory`, `conversion`,
+  `purc_price`, `last_purc_price` on `ext_product`; and twelve mirrors for
+  BizBox's six existing documents, `ext_<kind>` and `ext_<kind>_line`, on the
+  one contract SQL01 built the views to. No column for remarks: the views
+  select none.
+- **BizBox's own documents list beside the desk's.** Each document kind's page
+  has *Raised on the desk* and *In BizBox*; a BizBox document opens read-only
+  in the template, its lines as BizBox stored them. The stored total is read,
+  never recomputed (recomputing disagrees with history on about 9% of lines).
+  A count shows Counted, System Quantity and Variance together, and says so
+  when the system figure is zero or below.
+- **The payload, corrected.** A requisition's or issuance's "department" is a
+  warehouse in two roles (issuing and requesting), so the record is
+  `{warehouse_src, warehouse_dst, doc_date}`: both pickers list BizBox's
+  warehouses, the same one on both sides is a normal document (Procurement
+  requisitions its own stock), and stock on hand shows for the issuing side. **Center is gone**: it was `FK_psDatacenter`, the table the
+  stock card joins for patient names, which the desk never reads. A document
+  saved before the correction reads in today's shape.
+- **Slips by key.** Every MMS slip filters on the header's identity key, not
+  the printed number, which renders an empty slip without an error. The link
+  now carries `PK_TRXNO` (or `TranNo`, the same key on the issuances), the
+  receiving number where DelReceiveRep wants it, the issuing department's name
+  where the slip prints it, and `isfourdigit` pinned. Until the desk has the
+  key the page says so instead of linking.
+- **Items.** The mirror now carries every item, so the list opens on active
+  inventory items with a box for the rest; an inactive item keeps its page,
+  says so, and cannot be picked on a new document.
+- **The menu carries BizBox's module numbers** (MM02, MM03, MM04, MM06, MM07,
+  MM08, MM09, MM12, MM20); Warehouses and Drugs are submodules and carry none.
+- **Movements offers only the windows the mirror holds** (it keeps about ten
+  days), each ending today; BizBox's few future-dated rows are counted, not
+  shown in a window. Charged is one chip for CH and CA.
+
+## The Procurement pages in PMC Vitals Console (14 Oct 2026)
+
+SQL01, passing on Dada's decision: the document shape, all five BETTER items,
+chrome free, built to the house design system. Dada's own ruling is the four
+words "well similar not 1:!"; the expansion is SQL01's, confirmed by his
+selection from three options, and is cited that way here.
+
+The chrome follows PMC Vitals Console's `project/tokens.json` (the px values,
+not the Power BI points) on every Procurement page, scoped by `body.vitals`
+(`templates.VITALS_KEYS`) so the rest of the desk keeps its own look until
+Dada decides otherwise:
+
+- the top bar in `chrome.deep` in both themes, a `chrome.rule` hairline, no
+  frosting, the active module in white with a 20×3 Grape tick;
+- white `surface` cards on `canvas`, one shadow (`shadow-card`), no glass,
+  no blur, no card transitions;
+- page title 27/32px; every numeric column in Consolas 13/20px, right-aligned,
+  tabular; uppercase only on labels and column headers;
+- buttons flat in `accent.primary`; icons at most 16px; no emoji: the chat
+  bar on these pages draws the desk's 16px icons and becomes the console's
+  readout strip in `chrome.elevated`;
+- every colour a custom property with the system's light and dark value.
+
 ## The write path on the desk's side (14 Oct 2026, schema 085)
 
 SQL01's rulings of 14 Oct 2026 (`docs/handoffs/HANDOFF-sql01-cloud-WS36-20261014-write-path-simplified.md`): identity is

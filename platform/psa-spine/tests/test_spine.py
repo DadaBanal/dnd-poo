@@ -18443,8 +18443,14 @@ class CwShapeTest(unittest.TestCase):
         conn.commit()
         _, _, page = self._call("GET", "/procurement/purchase_order", query="ref=PO-1", cookie=self.alice)
         rid = conn.execute("SELECT report_id FROM mms_report").fetchone()[0]
-        self.assertIn(f"href='/procurement/report/{rid}?doc=PO-1'", page)
-        self.assertIn("BizBox's slip (MMS_ADHOC_POSLIP)", page)
+        self.assertIn("BizBox's slip (MMS_ADHOC_POSLIP) opens once the desk has read this document's key from BizBox", page)  # no key: no link
+        self.assertNotIn(f"/procurement/report/{rid}?", page)
+        # the slip filters on the header's identity key, not the printed number (SQL01, Part 103: PK_TRXNO 419462 is PO 867)
+        conn.execute("UPDATE ext_purchase_order SET trx_key = '419462' WHERE ext_ref = 'PO-1'")
+        conn.commit()
+        _, _, page = self._call("GET", "/procurement/purchase_order", query="ref=PO-1", cookie=self.alice)
+        self.assertIn(f"href='/procurement/report/{rid}?p.PK_TRXNO=419462&amp;p.isfourdigit=false'>", page)
+        self.assertIn("BizBox's slip (MMS_ADHOC_POSLIP)</a>", page)
         self.assertEqual(mms_reports.doc_values([Param(name="DateFrom", prompt="From", type="DateTime"), Param(name="PONo", prompt="PO Number")], "PO-1"),
                          {"PONo": "PO-1"})
         self.assertEqual(mms_reports.doc_values([Param(name="Company", prompt="Company"), Param(name="PONumber", prompt="")], "PO-1"), {"PONumber": "PO-1"})
@@ -19233,16 +19239,17 @@ class WritePathTest(unittest.TestCase):
         with self.assertRaises(bizbox.Refused):
             bizbox.requeue(conn, ["12a"], reason="x", at=self.at, actor="sql01")
         # an MMS-kind change the desk does not mirror: said, not crashed; a by-hand answer that is JSON but no object: read past
+        # (087 mirrors the six document kinds, so the one still unmirrored is a quantity adjustment)
         conn.execute("INSERT INTO ext_batch (source_id, kind, change_kind, reason, status, requested_at, requested_by)"
-                     " VALUES (?, 'STOCK_REQ', 'ADD', 'x', 'APPLIED', '2026-10-14 09:00', 'alice')", (bizbox.SOURCE,))
+                     " VALUES (?, 'QTY_ADJUSTMENT', 'ADD', 'x', 'APPLIED', '2026-10-14 09:00', 'alice')", (bizbox.SOURCE,))
         mb = conn.execute("SELECT MAX(batch_id) FROM ext_batch").fetchone()[0]
         conn.execute("INSERT INTO ext_change (source_id, kind, ext_ref, field, new_value, reason, status, requested_at, requested_by, batch_id, answer)"
-                     " VALUES (?, 'STOCK_REQ', 'NEW-9', 'NEW', 'x', 'x', 'APPLIED', '2026-10-14 09:00', 'alice', ?, 'null')", (bizbox.SOURCE, mb))
+                     " VALUES (?, 'QTY_ADJUSTMENT', 'NEW-9', 'NEW', 'x', 'x', 'APPLIED', '2026-10-14 09:00', 'alice', ?, 'null')", (bizbox.SOURCE, mb))
         mc = conn.execute("SELECT MAX(change_id) FROM ext_change").fetchone()[0]
         self.assertEqual(bizbox.reconcile(conn)[-1]["verdict"], "not mirrored: cannot be checked from the desk")
         with self.assertRaises(bizbox.Refused) as cm:
             bizbox.requeue(conn, [mc], reason="x", at=self.at, actor="sql01")
-        self.assertIn("stock requisition, which the desk does not mirror", str(cm.exception))
+        self.assertIn("quantity adjustment, which the desk does not mirror", str(cm.exception))
         conn.execute("UPDATE ext_change SET answer = '\"done\"' WHERE change_id = ?", (cid,))
         self.assertEqual(bizbox.reconcile(conn)[0]["ext_ref"], "PO-1")
         bids = bizbox.requeue(conn, [r["change_id"] for r in rows], reason="Re-queued after the July restore", at=self.at, actor="sql01")
@@ -19271,8 +19278,8 @@ class StockAndMovementsTest(unittest.TestCase):
 
     STOCK = "WarehouseCode,ItemCode,ActualQty,UnitCost,AsOf\r\nW1,IT-1,12,,2026-09-29\r\nW2,IT-1,3,4000,2026-09-29\r\nW1,MD-1,500,,2026-09-29\r\n"
     MOVES = ("LedgerID,ItemCode,WarehouseCode,TranDate,TranType,DocNo,QtyIn,QtyOut,Balance,UnitCost,Remarks\r\n"
-             "L1,IT-1,W1,2026-09-27,RECEIPT,RR-1,10,,12,4250,\r\nL2,IT-1,W2,2026-09-28,ISSUE,ISS-7,,2,3,,Ward 3\r\n"
-             "L3,MD-1,W1,2026-08-20,ADJUST,ADJ-2,,5,500,,count\r\n")
+             "L1,IT-1,W1,2026-09-13,RECEIPT,RR-1,10,,12,4250,\r\nL2,IT-1,W2,2026-09-14,ISSUE,ISS-7,,2,3,,Ward 3\r\n"
+             "L3,MD-1,W1,2026-08-06,ADJUST,ADJ-2,,5,500,,count\r\n")
     MAP2 = {"objects": {
         "warehouse": {"view": "psa.vw_warehouse", "columns": {"ext_ref": "WarehouseCode", "name": "WarehouseName", "group_name": "GroupName", "active": "IsActive"}},
         "stock": {"view": "psa.vw_stock_on_hand", "columns": {"warehouse_ref": "WarehouseCode", "item_ref": "ItemCode", "quantity": "ActualQty",
@@ -19323,7 +19330,7 @@ class StockAndMovementsTest(unittest.TestCase):
         self.assertEqual(bizbox.movements(conn, item="IT-1", warehouse="W2", days=30, now=at)[0][0]["doc_ref"], "ISS-7")
         self.assertEqual(bizbox.movements(conn, kind="issue", days=30, now=at)[1], 1)
         self.assertEqual(bizbox.movement_kinds(conn, days=90, now=at), [("ADJUST", "Adjusted", 1), ("ISSUE", "Issued", 1), ("RECEIPT", "Received", 1)])
-        self.assertEqual(bizbox.movement_window(conn), ("2026-08-20", "2026-09-28"))
+        self.assertEqual(bizbox.movement_window(conn), ("2026-08-06", "2026-09-14"))
         self.assertEqual([(l["product_ref"], l["quantity"], l["po_ref"]) for l in bizbox.rr_lines(conn, "INV-1")], [("IT-1", 10.0, "PO-1")])
         # the view's window moved on: a movement it no longer returns leaves the desk, nothing is kept absent
         (folder / "movement.csv").write_text(self.MOVES.rsplit("L3,", 1)[0], encoding="utf-8")
@@ -19364,9 +19371,10 @@ class StockAndMovementsTest(unittest.TestCase):
         self.assertNotIn("<td>Toner</td>", page)
         # movements: a window of days or months, a kind, an item, a warehouse
         _, _, page = self._call("GET", "/procurement", query="tab=movement&days=90", cookie=self.alice)
-        for words in ("<option value=90 selected>Last 90 days</option>", "<option value=183>Last 6 months</option>", "All · 3",
-                      "Received · 1", "Issued · 1", "Adjusted · 1", "<td>2026-09-28</td>", "<td>ISS-7</td>", "<td class=num>2</td>",
-                      "The desk holds 2026-08-20 to 2026-09-28"):
+        # the window list offers only what the mirror holds (SQL01, Part 109): 43 days here, so no 90 and no year
+        for words in ("<option value=7>Last 7 days</option><option value=30>Last 30 days</option><option value=43 selected>All 43 days the desk holds</option>",
+                      "All · 3", "Received · 1", "Issued · 1", "Adjusted · 1", "<td>2026-09-14</td>", "<td>ISS-7</td>", "<td class=num>2</td>",
+                      "The desk holds 2026-08-06 to 2026-09-17, 43 days"):
             self.assertIn(words, page, words)
         _, _, page = self._call("GET", "/procurement", query="tab=movement&days=90&kind=ISSUE", cookie=self.alice)
         self.assertIn("<td>Issued</td>", page)
@@ -19471,9 +19479,11 @@ class StockAndMovementsTest(unittest.TestCase):
                      " ('/MMS/MMS_ADHOC_DelReceiveRep', 'MMS_ADHOC_DelReceiveRep', 'Delivery receiving report', 'invoice', 1, 1, '2026-09-29 10:00')")
         conn.commit()
         rid = conn.execute("SELECT report_id FROM mms_report WHERE name = 'MMS_ADHOC_DelReceiveRep'").fetchone()[0]
+        conn.execute("UPDATE ext_invoice SET trx_key = '88001' WHERE ext_ref = 'INV-1'")
+        conn.commit()
         _, _, page = self._call("GET", "/procurement/invoice", query="ref=INV-1", cookie=self.alice)
-        self.assertIn(f"href='/procurement/report/{rid}?doc=INV-1'", page)
-        self.assertIn("BizBox's slip (MMS_ADHOC_DelReceiveRep)", page)
+        self.assertIn(f"href='/procurement/report/{rid}?p.RRno=INV-1&amp;p.TranNo=88001&amp;p.isfourdigit=false'>", page)   # both: the number and the key
+        self.assertIn("BizBox's slip (MMS_ADHOC_DelReceiveRep)</a>", page)
         self.assertEqual(mms_reports.doc_values([Param(name="RRNo", prompt="RR No."), Param(name="Vendor", prompt="Vendor")], "INV-1"), {"RRNo": "INV-1"})
         self.assertEqual(mms_reports.doc_values([Param(name="DRNo", prompt="DR No.")], "INV-1"), {"DRNo": "INV-1"})
         # rights: receiving is its own module; a role without it is refused the list and the document
@@ -19495,9 +19505,9 @@ class StockAndMovementsTest(unittest.TestCase):
         sits in it."""
         from psaspine import bizbox
         moves = ("LedgerID,ItemCode,WarehouseCode,TranDate,TranType,DocNo,QtyIn,QtyOut,Balance,UnitCost,Remarks\r\n"
-                 "L1,IT-1,W1,2026-09-27,DR,RR-1,10,,12,4250,\r\nL2,IT-1,W2,2026-09-28,CH,CS-7,,2,3,,Charges to \"A Patient\"\r\n"
-                 "L3,MD-1,W1,2026-09-20,SS,ST-2,,5,500,,\r\nL4,MD-1,W1,2026-09-21,PC,PC-9,3,,503,,\r\n"
-                 "L5,IT-1,W1,2026-09-22,PR,PR-1,,1,11,,\r\nL6,IT-1,W1,2026-09-23,PP,AS-1,1,,12,,\r\n")
+                 "L1,IT-1,W1,2026-09-13,DR,RR-1,10,,12,4250,\r\nL2,IT-1,W2,2026-09-14,CH,CS-7,,2,3,,Charges to \"A Patient\"\r\n"
+                 "L3,MD-1,W1,2026-09-10,SS,ST-2,,5,500,,\r\nL4,MD-1,W1,2026-09-11,PC,PC-9,3,,503,,\r\n"
+                 "L5,IT-1,W1,2026-09-12,PR,PR-1,,1,11,,\r\nL6,IT-1,W1,2026-09-15,PP,AS-1,1,,12,,\r\n")
         conn, _, _ = self._mirror(moves=moves)
         self.assertEqual(bizbox.movement_buckets(conn, days=90, now=self.at), [("Receipts", 2), ("Issuances", 1), ("Transfers", 2), ("Other", 1)])
         self.assertEqual([bizbox.bucket_of(k) for k in ("DR", "pr", "CH", "CN", "DC", "SS", "EI", "PC", "QA", "MP", "RECEIPT", "ISSUE", "PP", "")],
@@ -19535,14 +19545,14 @@ class StockAndMovementsTest(unittest.TestCase):
         self.assertNotIn("<th>As of</th>", page)
         # Movements: the buckets first, then the kinds inside the one chosen; Remarks nowhere (item 7, and the fence)
         _, _, page = self._call("GET", "/procurement", query="tab=movement&days=90", cookie=self.alice)
-        for words in ("<div class='stabs buckets' style='margin:10px 0 0' aria-label='Bucket'><a class='on' href='/procurement?tab=movement&days=90'>All · 6</a>",
-                      "href='/procurement?tab=movement&days=90&bucket=Receipts'>Receipts · 2</a>", ">Issuances · 1</a>", ">Transfers · 2</a>", ">Other · 1</a>",
+        for words in ("<div class='stabs buckets' style='margin:10px 0 0' aria-label='Bucket'><a class='on' href='/procurement?tab=movement&days=8'>All · 6</a>",
+                      "href='/procurement?tab=movement&days=8&bucket=Receipts'>Receipts · 2</a>", ">Issuances · 1</a>", ">Transfers · 2</a>", ">Other · 1</a>",
                       "Received <span class='muted code'>DR</span> · 1", "Charged <span class='muted code'>CH</span> · 1", "<td>PP</td>"):
             self.assertIn(words, page, words)
         for absent in ("Remarks", "A Patient", "Charges to"):
             self.assertNotIn(absent, page, absent)
         _, _, page = self._call("GET", "/procurement", query="tab=movement&days=90&bucket=Receipts", cookie=self.alice)
-        for words in ("<a class='on' href='/procurement?tab=movement&bucket=Receipts&days=90'>Receipts · 2</a>", "<td>RR-1</td>", "<td>PR-1</td>",
+        for words in ("<a class='on' href='/procurement?tab=movement&bucket=Receipts&days=8'>Receipts · 2</a>", "<td>RR-1</td>", "<td>PR-1</td>",
                       "Received <span class='muted code'>DR</span> · 1", "Returned to supplier <span class='muted code'>PR</span> · 1",
                       "<input type=hidden name=bucket value='Receipts'>"):
             self.assertIn(words, page, words)
@@ -19560,6 +19570,127 @@ class StockAndMovementsTest(unittest.TestCase):
         self.assertNotIn("Nonsense", page)
         self.assertEqual(bizbox.movements(conn, days=90, bucket="Transfers", now=self.at)[1], 2)
         self.assertEqual([k for k, _, _ in bizbox.movement_kinds(conn, days=90, now=self.at, bucket="Other")], ["PP"])
+        # one chip per word: CH and CA are both "Charged" in BizBox's words, so one chip carries both codes (SQL01, Part 109)
+        conn.execute("INSERT INTO ext_movement (source_id, ext_ref, item_ref, warehouse_ref, moved_on, kind, doc_ref, qty_out, present, synced_at)"
+                     " VALUES (?, 'L7', 'IT-1', 'W1', '2026-09-16', 'CA', 'CS-8', 1, 1, '2026-09-29 10:00')", (bizbox.SOURCE,))
+        # and a row BizBox dated in December is in no window, and the page says how many
+        conn.execute("INSERT INTO ext_movement (source_id, ext_ref, item_ref, warehouse_ref, moved_on, kind, doc_ref, qty_out, present, synced_at)"
+                     " VALUES (?, 'L8', 'IT-1', 'W1', '2026-12-08', 'CA', 'CS-9', 1, 1, '2026-09-29 10:00')", (bizbox.SOURCE,))
+        conn.commit()
+        _, _, page = self._call("GET", "/procurement", query="tab=movement", cookie=self.alice)
+        kinds_row = page.split("aria-label='Movement kind'", 1)[1].split("</div>", 1)[0]
+        self.assertIn("kind=CA%2CCH'>Charged <span class='muted code'>CA CH</span> · 2</a>", kinds_row)
+        self.assertEqual(kinds_row.count("Charged"), 1)
+        self.assertIn("1 movement BizBox dated after today is not in any window.", page)
+        self.assertNotIn("<td>CS-9</td>", page)
+        _, _, page = self._call("GET", "/procurement", query="tab=movement&kind=CH%2CCA", cookie=self.alice)
+        self.assertIn("<td>CS-7</td>", page)
+        self.assertIn("<td>CS-8</td>", page)
+        self.assertNotIn("<td>RR-1</td>", page)
+
+    def test_bizbox_existing_documents_are_read_hourly_and_open_as_documents_with_the_slip_by_key(self):
+        """087 (SQL01, Parts 103 to 106): the twelve views for BizBox's six
+        existing documents reach the desk through mirrors on one contract; each
+        lists beside the desk's own and opens read-only in the template; the
+        stored total is read, never recomputed; a count shows counted, system
+        and variance together; the slip opens by the identity key with the
+        values each report's definition wants; inactive items keep their page
+        and leave the pickers; the menu carries BizBox's own module numbers."""
+        from psaspine import bizbox
+        conn, folder, _ = self._mirror()
+        (folder / "stock_req.csv").write_text("DocNo,TrxKey,DocDate,WarehouseSrc,WarehouseDst,Status,TotalQty,TotalItems,TotalAmount\r\n"
+                                              "SR-901,5501,2026-09-20,W1,W2,Posted,13,2,8500.33\r\nSR-902,5502,2026-09-21,W1,W2,Cancelled,1,1,\r\n", encoding="utf-8")
+        (folder / "stock_req_line.csv").write_text("LineID,DocNo,LineNo,ItemCode,Description,Quantity,QtyServed,SystemQty,Variance,Unit,Conversion,UnitCost,TotalAmount\r\n"
+                                                   "SL-1,SR-901,1,IT-1,Toner black,2,2,,,pc,1,4250,8500.33\r\nSL-2,SR-901,2,MD-1,Paracetamol,11,,,,tab,1,,\r\n"
+                                                   ",SR-901,3,MD-1,no key,1,,,,tab,1,,\r\n", encoding="utf-8")
+        (folder / "physical_count.csv").write_text("DocNo,TrxKey,DocDate,WarehouseSrc,WarehouseDst,Status,TotalQty,TotalItems,TotalAmount\r\n"
+                                                   "PC-77,6601,2026-09-25,W1,,Posted,9,1,\r\n", encoding="utf-8")
+        (folder / "physical_count_line.csv").write_text("LineID,DocNo,LineNo,ItemCode,Description,Quantity,QtyServed,SystemQty,Variance,Unit,Conversion,UnitCost,TotalAmount\r\n"
+                                                        "PL-1,PC-77,1,IT-1,Toner black,9,,-3,12,pc,1,,\r\n", encoding="utf-8")
+        header = {"ext_ref": "DocNo", "trx_key": "TrxKey", "doc_date": "DocDate", "warehouse_src": "WarehouseSrc", "warehouse_dst": "WarehouseDst",
+                  "status": "Status", "total_qty": "TotalQty", "total_items": "TotalItems", "total": "TotalAmount"}
+        line = {"ext_ref": "LineID", "doc_ref": "DocNo", "line_no": "LineNo", "product_ref": "ItemCode", "description": "Description", "quantity": "Quantity",
+                "served_qty": "QtyServed", "system_qty": "SystemQty", "variance": "Variance", "unit": "Unit", "conversion": "Conversion",
+                "unit_cost": "UnitCost", "total": "TotalAmount"}
+        m = bizbox.check_map({"objects": {"stock_req": {"view": "psa.vw_stock_req", "columns": header},
+                                          "stock_req_line": {"view": "psa.vw_stock_req_line", "columns": line},
+                                          "physical_count": {"view": "psa.vw_physical_count", "columns": header},
+                                          "physical_count_line": {"view": "psa.vw_physical_count_line", "columns": line}}})
+        counts = bizbox.sync(conn, bizbox.read_csv_dir(folder, m), at=self.at, actor="t", apply=True)
+        self.assertEqual((counts["stock_req"]["new"], counts["stock_req_line"]["new"], counts["stock_req_line"]["skipped"]), (2, 2, 1))
+        self.assertIn("2 stock requisitions (2 new) · 3 stock requisition lines (2 new) · 1 physical counts (1 new)", bizbox.read_words(bizbox.status(conn)["last_result"]))
+        with self.assertRaises(bizbox.Refused):                                                          # a line names its document
+            bizbox.check_map({"objects": {"stock_req_line": {"view": "psa.vw_stock_req_line", "columns": {"ext_ref": "LineID"}}}})
+        # the list: BizBox's own beside the desk's, read-only rows that open the document
+        _, _, page = self._call("GET", "/procurement", query="tab=stock_req", cookie=self.root)
+        for words in ("In BizBox · 2</h3>", "<th>Number</th><th>Issuing Department</th><th>Requesting Department</th><th>Date</th><th class=num>Items</th>"
+                      "<th class=num>Total Amount (PHP)</th><th>Status</th>",
+                      "<tr data-href='/procurement/stock_req?ref=SR-902'><td><a href='/procurement/stock_req?ref=SR-902'>SR-902</a></td>"
+                      "<td>Central store</td><td>Ward 3 store</td><td>2026-09-21</td><td class=num>1</td><td class=num></td><td>Cancelled</td></tr>",
+                      "<td class=num>8,500.33</td><td>Posted</td>", "Raised on the desk</h3>"):
+            self.assertIn(words, page, words)
+        self.assertLess(page.index("SR-902"), page.index("SR-901"))                                      # newest first
+        _, _, page = self._call("GET", "/procurement", query="tab=stock_req&bstatus=Posted&bq=901", cookie=self.root)
+        self.assertIn("ref=SR-901'", page)
+        self.assertNotIn("ref=SR-902'", page)
+        # the document: read-only, the stored line total as BizBox stored it, never recomputed (2 × 4,250 would be 8,500.00)
+        _, _, page = self._call("GET", "/procurement/stock_req", query="ref=SR-901", cookie=self.root)
+        for words in ("<h1>Stock Requisition Details</h1>", "Stock Requisitions</a> › SR-901 › Posted</p>",
+                      "<label>Issuing Department</label><div class=ro>Central store</div>", "<label>Requesting Department</label><div class=ro>Ward 3 store</div>",
+                      "<label>Status</label><div class=ro>Posted</div>", "BizBox's own document: changed in BizBox, not here",
+                      "<th class=num>Served Quantity</th><th class=num>Unit Price</th><th class=num>Total Amount</th>",
+                      "<td>Toner black</td><td>pc</td><td class=num>2</td><td class=num>2</td><td class=num>4,250.00</td><td class=num>8,500.33</td>",
+                      "<td class=num><span class=muted>—</span></td><td class=num><span class=muted>—</span></td>",
+                      "Lines total, as BizBox stored them</b></td><td class=num><b>PHP 8,500.33</b>",
+                      "<span class=l>Total Item:</span> <b>13</b>", "<span class=l>Total Amount:</span> <b>PHP 8,500.33</b>", "Print Stock Requisition Slip"):
+            self.assertIn(words, page, words)
+        for absent in ("8,500.00", "Edit Mode</a>", "name=reason", "Remarks"):
+            self.assertNotIn(absent, page, absent)
+        # the count: counted, system and variance together, and the note when the system figure is zero or below
+        _, _, page = self._call("GET", "/procurement/physical_count", query="ref=PC-77", cookie=self.root)
+        for words in ("<th class=num>Counted</th><th class=num>System Quantity</th><th class=num>Variance</th>",
+                      "<td class=num>9</td><td class=num>-3</td><td class=num>12</td>", "A system quantity of zero or below makes the variance read differently",
+                      "<label>Warehouse</label><div class=ro>Central store</div>"):
+            self.assertIn(words, page, words)
+        # the slips: the desk's, and BizBox's by key with what each report's definition wants
+        _, _, page = self._call("GET", "/procurement/stock_req/slip", query="ref=SR-901&now=1", cookie=self.root)
+        for words in ("<article class=slip aria-label='Stock requisition SR-901 slip'>", "<dt>Issuing Department</dt><dd>Central store</dd>",
+                      "<td>IT-1</td>", "Total in BizBox: <b>PHP 8,500.33</b>", "window.print()"):
+            self.assertIn(words, page, words)
+        for name in ("MMS_ADHOC_StockReq", "MMS_ADHOC_PhysicalCount"):
+            conn.execute("INSERT INTO mms_report (path, name, title, area, shown, present, synced_at) VALUES (?, ?, ?, 'product', 1, 1, '2026-09-29 10:00')",
+                         (f"/MMS/{name}", name, name))
+        conn.commit()
+        rid = dict(conn.execute("SELECT name, report_id FROM mms_report").fetchall())
+        self.assertIn(f"href='/procurement/report/{rid['MMS_ADHOC_StockReq']}?p.PK_TRXNO=5501&amp;p.isfourdigit=false'>",
+                      self._call("GET", "/procurement/stock_req", query="ref=SR-901", cookie=self.root)[2])
+        self.assertIn(f"href='/procurement/report/{rid['MMS_ADHOC_PhysicalCount']}?p.PK_TRXNO=6601&amp;p.Department=Central+store&amp;p.isfourdigit=false'>",
+                      self._call("GET", "/procurement/physical_count", query="ref=PC-77", cookie=self.root)[2])
+        status, _, _ = self._call("GET", "/procurement/stock_req", query="ref=SR-999", cookie=self.root)
+        self.assertTrue(status.startswith("404"), status)
+        # items: the list opens on active inventory items; an inactive one keeps its page, says so, and leaves the pickers
+        conn.execute("UPDATE ext_product SET is_active = 0, conversion = 1, purc_price = 2.4 WHERE ext_ref = 'MD-1'")
+        conn.execute("UPDATE ext_product SET is_inventory = 0 WHERE ext_ref = 'IT-1'")
+        conn.commit()
+        _, _, page = self._call("GET", "/procurement", query="tab=product", cookie=self.root)
+        self.assertNotIn("ref=MD-1'", page)
+        self.assertNotIn("ref=IT-1'", page)
+        self.assertIn("Inactive and non-inventory too", page)
+        _, _, page = self._call("GET", "/procurement", query="tab=product&every=1", cookie=self.root)
+        self.assertIn("MD-1</a> <span class=pill>inactive</span>", page)
+        self.assertIn("IT-1</a> <span class=pill>not inventory</span>", page)
+        _, _, page = self._call("GET", "/procurement/product", query="ref=MD-1", cookie=self.root)
+        for words in ("<span class='chip sla-warn'>Inactive in BizBox</span>", "It cannot be picked on a new document",
+                      "<dt>Conversion</dt><dd>1</dd>", "<dt>Purchase price</dt><dd>PHP 2.40</dd>"):
+            self.assertIn(words, page, words)
+        self.assertNotIn("<option value='MD-1'>", self._call("GET", "/procurement/stock_req/new", cookie=self.root)[2])
+        # the menu: BizBox's own module numbers; none for Warehouses and Drugs, which are submodules of MM02
+        _, _, page = self._call("GET", "/procurement", cookie=self.alice)                               # on a board: the fulfiller's menu
+        for key, mm in (("purchase_req", "MM03"), ("purchase_order", "MM04"), ("invoice", "MM20"), ("stock_req", "MM06"), ("stock_issuance", "MM07"),
+                        ("expense_req", "MM08"), ("expense_issuance", "MM09"), ("physical_count", "MM12"), ("product", "MM02")):
+            self.assertRegex(page, f'href="/procurement\\?tab={key}" role=menuitem[^>]*><svg.*?</svg><b>[^<]+</b><i class=mm title="BizBox module {mm}">{mm}</i>')
+        self.assertNotRegex(page, 'tab=warehouse" role=menuitem[^>]*><svg.*?</svg><b>Warehouses</b><i class=mm')
+        self.assertNotIn(">MM05<", page)
 
     def test_movement_words_come_from_bizbox_codes_and_its_remarks_are_never_shown(self):
         """SQL01, 14 Oct 2026: the ledger's doctype codes named from BizBox's own
@@ -19577,7 +19708,7 @@ class StockAndMovementsTest(unittest.TestCase):
         self.assertEqual(pv.move_label("RECEIPT"), "Received")                                 # a view that spells it out needs no code
         self.assertEqual(pv.move_label("PP"), "PP")
         moves = ("LedgerID,ItemCode,WarehouseCode,TranDate,TranType,DocNo,QtyIn,QtyOut,Balance,UnitCost,Remarks\r\n"
-                 "L1,IT-1,W1,2026-09-27,CH,CS-1,,2,10,,Charge to patient Juan Example\r\nL2,IT-1,W2,2026-09-28,DR,RR-1,5,,8,4250,delivered\r\n")
+                 "L1,IT-1,W1,2026-09-13,CH,CS-1,,2,10,,Charge to patient Juan Example\r\nL2,IT-1,W2,2026-09-14,DR,RR-1,5,,8,4250,delivered\r\n")
         self._mirror(moves=moves)
         _, _, page = self._call("GET", "/procurement", query="tab=movement&days=90", cookie=self.alice)
         for words in ("Charged <span class='muted code'>CH</span> · 1", "Received <span class='muted code'>DR</span> · 1",
@@ -19608,43 +19739,61 @@ class StockAndMovementsTest(unittest.TestCase):
         _, _, page = self._call("GET", "/procurement", query="tab=stock_req", cookie=self.alice)
         for words in ("<h1>Stock Requisitions</h1>", "Materials › Stock Requisitions", "href='/procurement/stock_req/new'",
                       'href="/procurement?tab=stock_req" role=menuitem', 'href="/procurement?tab=expense_req" role=menuitem',
-                      'href="/procurement?tab=physical_count" role=menuitem', "None yet. Add raises one here"):
+                      'href="/procurement?tab=physical_count" role=menuitem', "None here. Add raises one",
+                      "In BizBox</h3><p class=muted>None read yet: BizBox's own stock requisitions list here once the hourly read carries them."):
             self.assertIn(words, page, words)
         self.assertNotIn("Not on the desk yet", page)
-        # the form: the draft's pickers and grid; the warehouse list is BizBox's, the department list is the desk's
+        # the form: both departments are warehouses BizBox has (SQL01 and Bizbox Chat, measured: FK_mscWarehouseSRC and
+        # FK_mscWarehouseDST); no Center (FK_psDatacenter is the patient-name table, never read); on hand at the issuing side
         _, _, page = self._call("GET", "/procurement/stock_req/new", cookie=self.alice)
-        for words in ("<h1>Stock Requisition Details</h1>", "<label>Issuing Department *</label><select name=department required>",
-                      "<option value='Nursing Station 3F'>Nursing Station 3F</option>", "<label>Warehouse (from) *</label><select name=warehouse_ref required>",
-                      "<option value='W1'>Central store</option>", "<label>Center</label><input name=center", "<input type=date name=doc_date value='2026-09-17'",
-                      "name='line1_product_ref' list=docitems", "name='line8_unit_cost'", "On hand at source <span class=better>BETTER</span>",
-                      "form[data-docform]", "/procurement/stock.json", "Stock on hand at the warehouse chosen above shows as you pick",
+        for words in ("<h1>Stock Requisition Details</h1>", "<label>Issuing Department *</label><select name=warehouse_src data-onhand required>",
+                      "<label>Requesting Department *</label><select name=warehouse_dst required>",
+                      "<option value='W1'>Central store</option>", "<option value='W2'>Ward 3 store</option>", "<input type=date name=doc_date value='2026-09-17'",
+                      "name='line1_product_ref' list=docitems", "name='line8_unit_cost'", "<th class=num>Unit Price (indicative)</th>",
+                      "On hand at source <span class=better>BETTER</span>", "var wh=f.querySelector('[data-onhand]')",
+                      "form[data-docform]", "/procurement/stock.json", "Stock on hand at the issuing department shows as you pick",
                       "action='/procurement/stock_req/add/review' class=fields data-docform", " Save</button>"):
             self.assertIn(words, page, words)
-        self.assertNotIn("<option value='W3'>", page)                                             # an inactive warehouse is not offered
+        for absent in ("<option value='W3'>", "Center", "name=center", "name=department", "Nursing Station 3F"):   # an inactive warehouse, the centre, the desk's departments
+            self.assertNotIn(absent, page, absent)
         # on hand, for the form as a person picks
         _, _, body = self._call("GET", "/procurement/stock.json", query="warehouse=W1&item=IT-1", cookie=self.alice)
         self.assertEqual(_json.loads(body), {"on_hand": 12.0})
         _, _, body = self._call("GET", "/procurement/stock.json", query="warehouse=W2&item=MD-1", cookie=self.alice)
         self.assertEqual(_json.loads(body), {"on_hand": None})
         # Save: the window shows the header, the lines with on hand at the source and the shortfall; nothing queued
-        form = {"department": "Nursing Station 3F", "warehouse_ref": "W1", "center": "3F", "doc_date": "2026-09-29",
+        form = {"warehouse_src": "W1", "warehouse_dst": "W2", "doc_date": "2026-09-29",
                 "line1_product_ref": "IT-1", "line1_quantity": "20", "line2_product_ref": "MD-1", "line2_quantity": "100", "line2_unit_cost": "2.5",
                 "reason": "ward stock for the week"}
         status, _, page = self._call("POST", "/procurement/stock_req/add/review", cookie=self.alice, form=form)
         self.assertTrue(status.startswith("200"), status)
-        for words in ("What will be created: a stock requisition with 2 lines", "<tr><td>Issuing Department</td><td><b>Nursing Station 3F</b></td></tr>",
-                      "<tr><td>Warehouse (from)</td><td><b>Central store</b></td></tr>",
+        for words in ("What will be created: a stock requisition with 2 lines", "<tr><td>Issuing Department</td><td><b>Central store</b></td></tr>",
+                      "<tr><td>Requesting Department</td><td><b>Ward 3 store</b></td></tr>",
                       "<td>IT-1</td><td>Toner</td><td></td><td>pc</td><td class=num>20</td><td class=num>4,250.00</td><td class=num>85,000.00</td>"
                       "<td class='num onhand'>12 <span class='chip sla-bad'>SHORT</span></td>",
                       "<td>MD-1</td><td>Paracetamol 500 mg tablet</td>", "<td class='num onhand'>500</td>",
                       "Short on 1 line: row 1: only <b>12</b> on hand at the source against <b>20</b> requested",
-                      "<form method=post action='/procurement/stock_req/add'>", "<input type=hidden name='warehouse_ref' value='W1'>"):
+                      "<form method=post action='/procurement/stock_req/add'>", "<input type=hidden name='warehouse_src' value='W1'>",
+                      "<input type=hidden name='warehouse_dst' value='W2'>"):
             self.assertIn(words, page, words)
         self.assertEqual(bizbox.batches(conn), [])
-        _, _, page = self._call("POST", "/procurement/stock_req/add/review", cookie=self.alice, form=form | {"department": ""})
+        _, _, page = self._call("POST", "/procurement/stock_req/add/review", cookie=self.alice, form=form | {"warehouse_src": ""})
         self.assertIn("Not sent: Issuing Department is needed.", page)
-        _, _, page = self._call("POST", "/procurement/stock_req/add/review", cookie=self.alice, form=form | {"warehouse_ref": "W9"})
+        _, _, page = self._call("POST", "/procurement/stock_req/add/review", cookie=self.alice, form=form | {"warehouse_dst": ""})
+        self.assertIn("Not sent: Requesting Department is needed.", page)
+        _, _, page = self._call("POST", "/procurement/stock_req/add/review", cookie=self.alice, form=form | {"warehouse_src": "W9"})
         self.assertIn("not a warehouse BizBox has", page)
+        _, _, page = self._call("POST", "/procurement/stock_req/add/review", cookie=self.alice, form=form | {"warehouse_dst": "W1"})
+        self.assertIn("What will be created: a stock requisition with 2 lines", page)     # the same department on both sides is a normal document
+        self.assertNotIn("Not sent", page)
+        # an item BizBox marks inactive keeps its page but cannot be picked (SQL01, Part 106)
+        conn.execute("UPDATE ext_product SET is_active = 0 WHERE ext_ref = 'MD-1'")
+        conn.commit()
+        _, _, page = self._call("POST", "/procurement/stock_req/add/review", cookie=self.alice, form=form)
+        self.assertIn("Not sent: Line 2: MD-1 is inactive in BizBox; it cannot be picked.", page)
+        self.assertNotIn("<option value='MD-1'>", self._call("GET", "/procurement/stock_req/new", cookie=self.alice)[2])
+        conn.execute("UPDATE ext_product SET is_active = 1 WHERE ext_ref = 'MD-1'")
+        conn.commit()
         _, _, page = self._call("POST", "/procurement/stock_req/add/review", cookie=self.alice, form=form | {"line1_product_ref": "IT-9"})
         self.assertIn("Not sent: Line 1: IT-9 is not an item BizBox has.", page)
         status, _, _ = self._call("GET", "/procurement/stock_req/new", cookie=self._cookie_for("carol"))
@@ -19654,24 +19803,25 @@ class StockAndMovementsTest(unittest.TestCase):
         self.assertIn("/procurement/stock_req?ref=NEW-1", dict(h)["Location"])
         b = bizbox.batch(conn, 1)
         self.assertEqual((b["kind"], b["change_kind"], b["status"]), ("STOCK_REQ", "ADD", "PENDING"))
-        self.assertEqual(bizbox.payload_of(b)["record"], {"department": "Nursing Station 3F", "warehouse_ref": "W1", "center": "3F", "doc_date": "2026-09-29"})
+        self.assertEqual(bizbox.payload_of(b)["record"], {"warehouse_src": "W1", "warehouse_dst": "W2", "doc_date": "2026-09-29"})
         self.assertEqual([(l["product_ref"], l["quantity"]) for l in bizbox.payload_of(b)["lines"]], [("IT-1", 20.0), ("MD-1", 100.0)])
         [ch] = bizbox.batch_changes(conn, 1)
-        self.assertEqual((ch["ext_ref"], ch["field"], ch["new_value"]), ("NEW-1", "NEW", "Nursing Station 3F · W1 (2 line(s))"))
+        self.assertEqual((ch["ext_ref"], ch["field"], ch["new_value"]), ("NEW-1", "NEW", "W1 → W2 (2 line(s))"))
         _, _, page = self._call("GET", "/procurement/stock_req", query="ref=NEW-1", cookie=self.alice)
         for words in ("<h1>Stock Requisition Details</h1>", "Stock Requisitions</a> › NEW-1 › waiting for approval", "raised on the desk 2026-09-17 10:00 by alice",
-                      "Edit Mode</a>", "<label>Issuing Department</label><div class=ro>Nursing Station 3F</div>",
-                      "<label>Warehouse (from)</label><div class=ro>Central store</div>", "<label>Requisition Date</label><div class=ro>2026-09-29</div>",
+                      "Edit Mode</a>", "<label>Issuing Department</label><div class=ro>Central store</div>",
+                      "<label>Requesting Department</label><div class=ro>Ward 3 store</div>", "<label>Requisition Date</label><div class=ro>2026-09-29</div>",
                       "<td class='num onhand'>12 <span class='chip sla-bad'>SHORT</span></td>", "Short on 1 line",
                       "<span class=l>Total Record(s):</span> <b>2</b>", "<span class=l>Total Item:</span> <b>120</b>",
                       "<span class=l>Total Amount:</span> <b>PHP 85,250.00</b>", "Approval: batch #1 · waiting for approval",
                       "Print Stock Requisition Slip", "<li class='now'><b>Approval</b><span>waiting for a second person</span></li>",
-                      "<td>New record</td><td>— <span class=arrow aria-hidden=true>→</span> <b>Nursing Station 3F · W1 (2 line(s))</b></td>"):
+                      "<td>New record</td><td>— <span class=arrow aria-hidden=true>→</span> <b>W1 → W2 (2 line(s))</b></td>"):
             self.assertIn(words, page, words)
         self.assertNotIn("BizBox's slip", page)                                                   # no number yet: nothing to print there
         _, _, page = self._call("GET", "/procurement", query="tab=stock_req", cookie=self.alice)
         self.assertIn("<tr data-href='/procurement/stock_req?ref=NEW-1'><td><a href='/procurement/stock_req?ref=NEW-1'>NEW-1</a></td>"
-                      "<td>Nursing Station 3F</td><td>Central store</td><td>2026-09-29</td><td class=num>2</td><td class=num>PHP 85,250.00</td>", page)
+                      "<td>Central store</td><td>Ward 3 store</td><td>2026-09-29</td><td class=num>2</td><td class=num>PHP 85,250.00</td>", page)
+        self.assertIn("<th>Issuing Department</th><th>Requesting Department</th><th>Date</th><th class=num>Lines</th><th class=num>Total Amount (indicative)</th>", page)
         # edited while it waits: the same form, prefilled; Save keeps it waiting as it now reads
         _, _, page = self._call("GET", "/procurement/stock_req", query="ref=NEW-1&edit=1", cookie=self.alice)
         for words in ("<input type=hidden name=batch value=1>", "name='line1_product_ref' list=docitems maxlength=64 placeholder='type to search existing items' value='IT-1'",
@@ -19694,7 +19844,10 @@ class StockAndMovementsTest(unittest.TestCase):
         [pending] = bizbox.pushable(conn)
         params = bizbox.ProcedureWriter.params(pending)
         self.assertEqual((params[1], params[2], params[3], params[4]), ("STOCK_REQ", "ADD", "NEW-1", "NEW"))
-        self.assertEqual(_json.loads(params[6])["record"]["warehouse_ref"], "W1")
+        self.assertEqual(_json.loads(params[6])["record"], {"warehouse_src": "W1", "warehouse_dst": "W2", "doc_date": "2026-09-29"})   # no department, no centre
+        # a document saved before the payload was corrected reads in today's shape: one warehouse as the issuing side, the rest dropped
+        self.assertEqual(bizbox.desk_record_of({"department": "X", "warehouse_ref": "W1", "center": "3F", "doc_date": "2026-09-29"}),
+                         {"warehouse_src": "W1", "doc_date": "2026-09-29"})
 
         class Fake(bizbox.Writer):
             name = "fake"
@@ -19709,17 +19862,28 @@ class StockAndMovementsTest(unittest.TestCase):
                      " ('/MMS/MMS_ADHOC_StockReq', 'MMS_ADHOC_StockReq', 'Stock requisition slip', 'product', 1, 1, '2026-09-29 10:00')")
         conn.commit()
         _, _, page = self._call("GET", "/procurement/stock_req", query="ref=NEW-1", cookie=self.alice)
-        for words in ("Stock Requisitions</a> › SR-26-00001 › applied in bizbox", "in BizBox as <b>SR-26-00001</b>", "BizBox's slip (MMS_ADHOC_StockReq)",
-                      "?doc=SR-26-00001'", "<li class='done'><b>In BizBox</b>"):
+        for words in ("Stock Requisitions</a> › SR-26-00001 › applied in bizbox", "in BizBox as <b>SR-26-00001</b>",
+                      "BizBox's slip (MMS_ADHOC_StockReq) opens once the desk has read this document's key from BizBox", "<li class='done'><b>In BizBox</b>"):
             self.assertIn(words, page, words)
         self.assertNotIn("Edit Mode</a>", page)
+        # once the hourly read carries BizBox's document, its slip opens by the identity key (SQL01, Part 103), never the number
+        conn.execute("INSERT INTO ext_stock_req (source_id, ext_ref, trx_key, doc_date, warehouse_src, warehouse_dst, status, present, synced_at)"
+                     " VALUES (?, 'SR-26-00001', '4711', '2026-09-29', 'W1', 'W2', 'Posted', 1, '2026-09-29 11:00')", (bizbox.SOURCE,))
+        conn.commit()
+        rid = conn.execute("SELECT report_id FROM mms_report WHERE name = 'MMS_ADHOC_StockReq'").fetchone()[0]
+        _, _, page = self._call("GET", "/procurement/stock_req", query="ref=NEW-1", cookie=self.alice)
+        self.assertIn(f"href='/procurement/report/{rid}?p.PK_TRXNO=4711&amp;p.isfourdigit=false'>", page)
+        self.assertNotIn("=SR-26-00001&amp;", page)                                              # the printed number is never the slip's key
         _, _, page = self._call("GET", "/procurement", query="tab=stock_req&state=all", cookie=self.alice)
         self.assertIn("<a href='/procurement/stock_req?ref=NEW-1'>SR-26-00001</a>", page)
         _, _, page = self._call("GET", "/procurement", query="tab=stock_req", cookie=self.alice)
-        self.assertNotIn("SR-26-00001", page)                                                      # open only, by default
+        desk_card, bizbox_card = page.split("In BizBox · ", 1)
+        self.assertNotIn("SR-26-00001", desk_card)                                                 # the desk's card: open only, by default
+        self.assertIn("<tr data-href='/procurement/stock_req?ref=SR-26-00001'>", bizbox_card)      # BizBox's own, read back hourly
         _, _, page = self._call("GET", "/procurement/stock_req/slip", query="ref=NEW-1", cookie=self.alice)
         for words in ("<div class=kicker>PMC · Materials Management</div><div class=kicker>Stock requisition</div><h1>SR-26-00001</h1>",
-                      "<dt>Issuing Department</dt><dd>Nursing Station 3F</dd>", "<td>IT-1</td>", "On hand at source", "Raised on the desk"):
+                      "<dt>Issuing Department</dt><dd>Central store</dd>", "<dt>Requesting Department</dt><dd>Ward 3 store</dd>", "<td>IT-1</td>",
+                      "On hand at source", "Raised on the desk"):
             self.assertIn(words, page, words)
         # the other five take the same shape; a physical count shows the variance, not a shortfall
         for kind in ("expense_req", "purchase_req", "stock_issuance", "expense_issuance", "physical_count"):
@@ -19727,7 +19891,7 @@ class StockAndMovementsTest(unittest.TestCase):
             self.assertTrue(status.startswith("200"), (kind, status))
             self.assertIn(f"action='/procurement/{kind}/add/review'", page)
         _, _, page = self._call("POST", "/procurement/physical_count/add/review", cookie=self.alice,
-                                form={"warehouse_ref": "W1", "doc_date": "2026-09-29", "line1_product_ref": "IT-1", "line1_quantity": "9", "reason": "quarterly count"})
+                                form={"warehouse_src": "W1", "doc_date": "2026-09-29", "line1_product_ref": "IT-1", "line1_quantity": "9", "reason": "quarterly count"})
         self.assertIn("<td class='num onhand'>12 <span class='muted code'>-3</span></td>", page)
         self.assertNotIn("SHORT</span>", page.split("<dialog")[1].split("</dialog>")[0])
 

@@ -260,6 +260,18 @@ BEGIN
     PRINT N'    psa.ext_batch';
     PRINT N'    psa.ext_change';
     PRINT N'    psa.member_module_grant';
+    PRINT N'    psa.ext_stock_req';
+    PRINT N'    psa.ext_stock_req_line';
+    PRINT N'    psa.ext_expense_req';
+    PRINT N'    psa.ext_expense_req_line';
+    PRINT N'    psa.ext_purchase_req';
+    PRINT N'    psa.ext_purchase_req_line';
+    PRINT N'    psa.ext_stock_issuance';
+    PRINT N'    psa.ext_stock_issuance_line';
+    PRINT N'    psa.ext_expense_issuance';
+    PRINT N'    psa.ext_expense_issuance_line';
+    PRINT N'    psa.ext_physical_count';
+    PRINT N'    psa.ext_physical_count_line';
     PRINT N'    psa.api_token';
     PRINT N'    psa.local_account';
     PRINT N'    psa.ix_fee_line_effective';
@@ -344,13 +356,19 @@ BEGIN
     PRINT N'    psa.ix_ext_movement_warehouse';
     PRINT N'    psa.ix_ext_movement_when';
     PRINT N'    psa.ix_ext_rr_line_rr';
+    PRINT N'    psa.ix_ext_stock_req_line_doc';
+    PRINT N'    psa.ix_ext_expense_req_line_doc';
+    PRINT N'    psa.ix_ext_purchase_req_line_doc';
+    PRINT N'    psa.ix_ext_stock_issuance_line_doc';
+    PRINT N'    psa.ix_ext_expense_issuance_line_doc';
+    PRINT N'    psa.ix_ext_physical_count_line_doc';
     PRINT N'    psa.ux_api_token_sha256';
     PRINT N'    psa.time_entry_requires_a_variation';
     PRINT N'    psa.ticket_close_requires_a_variation';
     PRINT N'    psa.patient_reference_needs_a_restricted_board';
     PRINT N'    psa.patient_reference_stays_on_a_restricted_board';
     PRINT N'';
-    PRINT N'  162 tables, 83 indexes, 4 triggers.';
+    PRINT N'  174 tables, 89 indexes, 4 triggers.';
     PRINT N'  Existing objects in [psa] right now: ' + CAST(@Existing AS NVARCHAR(10)) + N'.';
     PRINT N'';
     PRINT N'Re-run with @Apply = 1 to create them.';
@@ -4165,6 +4183,354 @@ CREATE TABLE psa.[member_module_grant] (
 END;
 
 -- --------------------------------------------------------------------------
+-- ext_stock_req   (from schema/087_document_mirrors.sql)
+-- Stock Requisition (iwWhreqinv / iwWhreqitem)
+IF OBJECT_ID(N'psa.[ext_stock_req]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_stock_req] (
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_stock_req_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [trx_key] NVARCHAR(32) NULL,
+    [doc_date] NVARCHAR(32) NULL,
+    [warehouse_src] NVARCHAR(400) NULL,
+    [warehouse_dst] NVARCHAR(400) NULL,
+    [status] NVARCHAR(32) NULL,
+    [total_qty] DECIMAL(19,4) NULL,
+    [total_items] INT NULL,
+    [total] DECIMAL(19,4) NULL,
+    [tstamp] NVARCHAR(32) NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_ext_stock_req_present] DEFAULT (1) CONSTRAINT [CK_ext_stock_req_01] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [doc_date_parsed] AS (CASE WHEN [doc_date] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [doc_date], 112) WHEN [doc_date] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [doc_date], 23) END),
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END)),
+    CONSTRAINT [PK_ext_stock_req] PRIMARY KEY ([source_id], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ext_stock_req_line   (from schema/087_document_mirrors.sql)
+IF OBJECT_ID(N'psa.[ext_stock_req_line]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_stock_req_line] (
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_stock_req_line_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [doc_ref] NVARCHAR(400) NOT NULL,
+    [line_no] INT NULL,
+    [product_ref] NVARCHAR(400) NULL,
+    [description] NVARCHAR(400) NULL,
+    [quantity] DECIMAL(19,4) NULL,
+    [served_qty] DECIMAL(19,4) NULL,
+    [system_qty] DECIMAL(19,4) NULL,
+    [variance] DECIMAL(19,4) NULL,
+    [unit] NVARCHAR(32) NULL,
+    [conversion] DECIMAL(19,4) NULL,
+    [unit_cost] DECIMAL(19,4) NULL,
+    [total] DECIMAL(19,4) NULL,
+    [tstamp] NVARCHAR(32) NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_ext_stock_req_line_present] DEFAULT (1) CONSTRAINT [CK_ext_stock_req_line_01] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END)),
+    CONSTRAINT [PK_ext_stock_req_line] PRIMARY KEY ([source_id], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ext_expense_req   (from schema/087_document_mirrors.sql)
+-- Expense Requisition (iwReqinv / iwReqitem)
+IF OBJECT_ID(N'psa.[ext_expense_req]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_expense_req] (
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_expense_req_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [trx_key] NVARCHAR(32) NULL,
+    [doc_date] NVARCHAR(32) NULL,
+    [warehouse_src] NVARCHAR(400) NULL,
+    [warehouse_dst] NVARCHAR(400) NULL,
+    [status] NVARCHAR(32) NULL,
+    [total_qty] DECIMAL(19,4) NULL,
+    [total_items] INT NULL,
+    [total] DECIMAL(19,4) NULL,
+    [tstamp] NVARCHAR(32) NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_ext_expense_req_present] DEFAULT (1) CONSTRAINT [CK_ext_expense_req_01] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [doc_date_parsed] AS (CASE WHEN [doc_date] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [doc_date], 112) WHEN [doc_date] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [doc_date], 23) END),
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END)),
+    CONSTRAINT [PK_ext_expense_req] PRIMARY KEY ([source_id], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ext_expense_req_line   (from schema/087_document_mirrors.sql)
+IF OBJECT_ID(N'psa.[ext_expense_req_line]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_expense_req_line] (
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_expense_req_line_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [doc_ref] NVARCHAR(400) NOT NULL,
+    [line_no] INT NULL,
+    [product_ref] NVARCHAR(400) NULL,
+    [description] NVARCHAR(400) NULL,
+    [quantity] DECIMAL(19,4) NULL,
+    [served_qty] DECIMAL(19,4) NULL,
+    [system_qty] DECIMAL(19,4) NULL,
+    [variance] DECIMAL(19,4) NULL,
+    [unit] NVARCHAR(32) NULL,
+    [conversion] DECIMAL(19,4) NULL,
+    [unit_cost] DECIMAL(19,4) NULL,
+    [total] DECIMAL(19,4) NULL,
+    [tstamp] NVARCHAR(32) NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_ext_expense_req_line_present] DEFAULT (1) CONSTRAINT [CK_ext_expense_req_line_01] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END)),
+    CONSTRAINT [PK_ext_expense_req_line] PRIMARY KEY ([source_id], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ext_purchase_req   (from schema/087_document_mirrors.sql)
+-- Purchase Requisition (iwPRinv / iwPRitem)
+IF OBJECT_ID(N'psa.[ext_purchase_req]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_purchase_req] (
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_purchase_req_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [trx_key] NVARCHAR(32) NULL,
+    [doc_date] NVARCHAR(32) NULL,
+    [warehouse_src] NVARCHAR(400) NULL,
+    [warehouse_dst] NVARCHAR(400) NULL,
+    [status] NVARCHAR(32) NULL,
+    [total_qty] DECIMAL(19,4) NULL,
+    [total_items] INT NULL,
+    [total] DECIMAL(19,4) NULL,
+    [tstamp] NVARCHAR(32) NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_ext_purchase_req_present] DEFAULT (1) CONSTRAINT [CK_ext_purchase_req_01] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [doc_date_parsed] AS (CASE WHEN [doc_date] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [doc_date], 112) WHEN [doc_date] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [doc_date], 23) END),
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END)),
+    CONSTRAINT [PK_ext_purchase_req] PRIMARY KEY ([source_id], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ext_purchase_req_line   (from schema/087_document_mirrors.sql)
+IF OBJECT_ID(N'psa.[ext_purchase_req_line]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_purchase_req_line] (
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_purchase_req_line_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [doc_ref] NVARCHAR(400) NOT NULL,
+    [line_no] INT NULL,
+    [product_ref] NVARCHAR(400) NULL,
+    [description] NVARCHAR(400) NULL,
+    [quantity] DECIMAL(19,4) NULL,
+    [served_qty] DECIMAL(19,4) NULL,
+    [system_qty] DECIMAL(19,4) NULL,
+    [variance] DECIMAL(19,4) NULL,
+    [unit] NVARCHAR(32) NULL,
+    [conversion] DECIMAL(19,4) NULL,
+    [unit_cost] DECIMAL(19,4) NULL,
+    [total] DECIMAL(19,4) NULL,
+    [tstamp] NVARCHAR(32) NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_ext_purchase_req_line_present] DEFAULT (1) CONSTRAINT [CK_ext_purchase_req_line_01] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END)),
+    CONSTRAINT [PK_ext_purchase_req_line] PRIMARY KEY ([source_id], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ext_stock_issuance   (from schema/087_document_mirrors.sql)
+-- Stock Issuance (iwWhinv / iwWhitem)
+IF OBJECT_ID(N'psa.[ext_stock_issuance]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_stock_issuance] (
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_stock_issuance_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [trx_key] NVARCHAR(32) NULL,
+    [doc_date] NVARCHAR(32) NULL,
+    [warehouse_src] NVARCHAR(400) NULL,
+    [warehouse_dst] NVARCHAR(400) NULL,
+    [status] NVARCHAR(32) NULL,
+    [total_qty] DECIMAL(19,4) NULL,
+    [total_items] INT NULL,
+    [total] DECIMAL(19,4) NULL,
+    [tstamp] NVARCHAR(32) NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_ext_stock_issuance_present] DEFAULT (1) CONSTRAINT [CK_ext_stock_issuance_01] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [doc_date_parsed] AS (CASE WHEN [doc_date] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [doc_date], 112) WHEN [doc_date] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [doc_date], 23) END),
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END)),
+    CONSTRAINT [PK_ext_stock_issuance] PRIMARY KEY ([source_id], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ext_stock_issuance_line   (from schema/087_document_mirrors.sql)
+IF OBJECT_ID(N'psa.[ext_stock_issuance_line]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_stock_issuance_line] (
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_stock_issuance_line_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [doc_ref] NVARCHAR(400) NOT NULL,
+    [line_no] INT NULL,
+    [product_ref] NVARCHAR(400) NULL,
+    [description] NVARCHAR(400) NULL,
+    [quantity] DECIMAL(19,4) NULL,
+    [served_qty] DECIMAL(19,4) NULL,
+    [system_qty] DECIMAL(19,4) NULL,
+    [variance] DECIMAL(19,4) NULL,
+    [unit] NVARCHAR(32) NULL,
+    [conversion] DECIMAL(19,4) NULL,
+    [unit_cost] DECIMAL(19,4) NULL,
+    [total] DECIMAL(19,4) NULL,
+    [tstamp] NVARCHAR(32) NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_ext_stock_issuance_line_present] DEFAULT (1) CONSTRAINT [CK_ext_stock_issuance_line_01] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END)),
+    CONSTRAINT [PK_ext_stock_issuance_line] PRIMARY KEY ([source_id], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ext_expense_issuance   (from schema/087_document_mirrors.sql)
+-- Expense Issuance (iwIssinv / iwIssitem)
+IF OBJECT_ID(N'psa.[ext_expense_issuance]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_expense_issuance] (
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_expense_issuance_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [trx_key] NVARCHAR(32) NULL,
+    [doc_date] NVARCHAR(32) NULL,
+    [warehouse_src] NVARCHAR(400) NULL,
+    [warehouse_dst] NVARCHAR(400) NULL,
+    [status] NVARCHAR(32) NULL,
+    [total_qty] DECIMAL(19,4) NULL,
+    [total_items] INT NULL,
+    [total] DECIMAL(19,4) NULL,
+    [tstamp] NVARCHAR(32) NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_ext_expense_issuance_present] DEFAULT (1) CONSTRAINT [CK_ext_expense_issuance_01] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [doc_date_parsed] AS (CASE WHEN [doc_date] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [doc_date], 112) WHEN [doc_date] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [doc_date], 23) END),
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END)),
+    CONSTRAINT [PK_ext_expense_issuance] PRIMARY KEY ([source_id], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ext_expense_issuance_line   (from schema/087_document_mirrors.sql)
+IF OBJECT_ID(N'psa.[ext_expense_issuance_line]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_expense_issuance_line] (
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_expense_issuance_line_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [doc_ref] NVARCHAR(400) NOT NULL,
+    [line_no] INT NULL,
+    [product_ref] NVARCHAR(400) NULL,
+    [description] NVARCHAR(400) NULL,
+    [quantity] DECIMAL(19,4) NULL,
+    [served_qty] DECIMAL(19,4) NULL,
+    [system_qty] DECIMAL(19,4) NULL,
+    [variance] DECIMAL(19,4) NULL,
+    [unit] NVARCHAR(32) NULL,
+    [conversion] DECIMAL(19,4) NULL,
+    [unit_cost] DECIMAL(19,4) NULL,
+    [total] DECIMAL(19,4) NULL,
+    [tstamp] NVARCHAR(32) NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_ext_expense_issuance_line_present] DEFAULT (1) CONSTRAINT [CK_ext_expense_issuance_line_01] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END)),
+    CONSTRAINT [PK_ext_expense_issuance_line] PRIMARY KEY ([source_id], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ext_physical_count   (from schema/087_document_mirrors.sql)
+-- Physical Count (iwPhentinv / iwPhentitem)
+IF OBJECT_ID(N'psa.[ext_physical_count]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_physical_count] (
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_physical_count_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [trx_key] NVARCHAR(32) NULL,
+    [doc_date] NVARCHAR(32) NULL,
+    [warehouse_src] NVARCHAR(400) NULL,
+    [warehouse_dst] NVARCHAR(400) NULL,
+    [status] NVARCHAR(32) NULL,
+    [total_qty] DECIMAL(19,4) NULL,
+    [total_items] INT NULL,
+    [total] DECIMAL(19,4) NULL,
+    [tstamp] NVARCHAR(32) NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_ext_physical_count_present] DEFAULT (1) CONSTRAINT [CK_ext_physical_count_01] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [doc_date_parsed] AS (CASE WHEN [doc_date] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATE, [doc_date], 112) WHEN [doc_date] LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN TRY_CONVERT(DATE, [doc_date], 23) END),
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END)),
+    CONSTRAINT [PK_ext_physical_count] PRIMARY KEY ([source_id], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
+-- ext_physical_count_line   (from schema/087_document_mirrors.sql)
+IF OBJECT_ID(N'psa.[ext_physical_count_line]', N'U') IS NULL
+BEGIN
+CREATE TABLE psa.[ext_physical_count_line] (
+    [source_id] NVARCHAR(64) NOT NULL CONSTRAINT [FK_ext_physical_count_line_source_id] REFERENCES psa.[ext_source]([source_id]),
+    [ext_ref] NVARCHAR(400) NOT NULL,
+    [doc_ref] NVARCHAR(400) NOT NULL,
+    [line_no] INT NULL,
+    [product_ref] NVARCHAR(400) NULL,
+    [description] NVARCHAR(400) NULL,
+    [quantity] DECIMAL(19,4) NULL,
+    [served_qty] DECIMAL(19,4) NULL,
+    [system_qty] DECIMAL(19,4) NULL,
+    [variance] DECIMAL(19,4) NULL,
+    [unit] NVARCHAR(32) NULL,
+    [conversion] DECIMAL(19,4) NULL,
+    [unit_cost] DECIMAL(19,4) NULL,
+    [total] DECIMAL(19,4) NULL,
+    [tstamp] NVARCHAR(32) NULL,
+    [present] INT NOT NULL CONSTRAINT [DF_ext_physical_count_line_present] DEFAULT (1) CONSTRAINT [CK_ext_physical_count_line_01] CHECK (present IN (0, 1)),
+    [synced_at] NVARCHAR(64) NOT NULL,
+
+    -- Dates are kept as the source wrote them. These read them,
+    -- without deciding for the reader which shape was meant.
+    [synced_at_parsed] AS (COALESCE(TRY_CONVERT(DATETIME2(0), [synced_at], 126), CASE WHEN [synced_at] LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN TRY_CONVERT(DATETIME2(0), [synced_at], 112) END)),
+    CONSTRAINT [PK_ext_physical_count_line] PRIMARY KEY ([source_id], [ext_ref])
+);
+END;
+
+-- --------------------------------------------------------------------------
 -- api_token   (from schema/local/api_token.sql)
 IF OBJECT_ID(N'psa.[api_token]', N'U') IS NULL
 BEGIN
@@ -4881,6 +5247,47 @@ ALTER TABLE psa.[ext_movement] ADD [tstamp] NVARCHAR(32) NULL;
 IF COL_LENGTH(N'psa.[ext_rr_line]', N'tstamp') IS NULL
 ALTER TABLE psa.[ext_rr_line] ADD [tstamp] NVARCHAR(32) NULL;
 
+-- 087 — what SQL01 asked the mirror for on 14 Oct 2026, in one step so it is
+-- one port (HANDOFF-sql01-cloud-WS36-20261014-slip-keys-and-conversion.md,
+-- -twelve-document-views.md, -product-404-fixed.md, -three-corrections-measured.md):
+--
+--   * trx_key on ext_purchase_order and ext_invoice: the header's identity key
+--     (PK_TRXNO), which every MMS slip filters on. The printed number is not
+--     the key; a slip opened with the number renders empty and says nothing.
+--   * is_active, is_inventory on ext_product: vw_product now carries every row
+--     of iwItems (5,484 -> 8,572), so a page resolves for any code any view can
+--     show; what a person may pick is a flag. And conversion, purc_price,
+--     last_purc_price under BizBox's own names (smallconversion is not a column
+--     anywhere; SQL01 measured it).
+--   * the twelve mirrors for BizBox's six existing documents, on the uniform
+--     contract SQL01 built the views to (vw_<kind> and vw_<kind>_line). The
+--     family map is Bizbox Chat's, read from the vendor client: the Iss tables
+--     are Expense Issuance, and Stock Issuance is Wh. No view exposes remarks or
+--     any BizBox-authored text, and these tables have no column for it.
+--
+-- Read-only mirrors like the rest: a row gone from BizBox is kept absent, never
+-- deleted. Nothing here changes an existing column; four ALTERs add columns.
+IF COL_LENGTH(N'psa.[ext_purchase_order]', N'trx_key') IS NULL
+ALTER TABLE psa.[ext_purchase_order] ADD [trx_key] NVARCHAR(32) NULL;
+
+IF COL_LENGTH(N'psa.[ext_invoice]', N'trx_key') IS NULL
+ALTER TABLE psa.[ext_invoice] ADD [trx_key] NVARCHAR(32) NULL;
+
+IF COL_LENGTH(N'psa.[ext_product]', N'is_active') IS NULL
+ALTER TABLE psa.[ext_product] ADD [is_active] INT NULL;
+
+IF COL_LENGTH(N'psa.[ext_product]', N'is_inventory') IS NULL
+ALTER TABLE psa.[ext_product] ADD [is_inventory] INT NULL;
+
+IF COL_LENGTH(N'psa.[ext_product]', N'conversion') IS NULL
+ALTER TABLE psa.[ext_product] ADD [conversion] DECIMAL(19,4) NULL;
+
+IF COL_LENGTH(N'psa.[ext_product]', N'purc_price') IS NULL
+ALTER TABLE psa.[ext_product] ADD [purc_price] DECIMAL(19,4) NULL;
+
+IF COL_LENGTH(N'psa.[ext_product]', N'last_purc_price') IS NULL
+ALTER TABLE psa.[ext_product] ADD [last_purc_price] DECIMAL(19,4) NULL;
+
 IF COL_LENGTH(N'psa.[api_token]', N'scope') IS NULL
 ALTER TABLE psa.[api_token] ADD [scope] NVARCHAR(32) NULL CONSTRAINT [DF_api_token_scope] DEFAULT ('RAISE') CONSTRAINT [CK_api_token_scope_01] CHECK (scope IN ('RAISE', 'READ', 'WRITE'));
 
@@ -5152,6 +5559,24 @@ CREATE INDEX [ix_ext_movement_when] ON psa.[ext_movement] ([source_id], [moved_o
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_rr_line_rr' AND object_id = OBJECT_ID(N'psa.[ext_rr_line]'))
 CREATE INDEX [ix_ext_rr_line_rr] ON psa.[ext_rr_line] ([source_id], [rr_ref]);
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_stock_req_line_doc' AND object_id = OBJECT_ID(N'psa.[ext_stock_req_line]'))
+CREATE INDEX [ix_ext_stock_req_line_doc] ON psa.[ext_stock_req_line] ([source_id], [doc_ref]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_expense_req_line_doc' AND object_id = OBJECT_ID(N'psa.[ext_expense_req_line]'))
+CREATE INDEX [ix_ext_expense_req_line_doc] ON psa.[ext_expense_req_line] ([source_id], [doc_ref]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_purchase_req_line_doc' AND object_id = OBJECT_ID(N'psa.[ext_purchase_req_line]'))
+CREATE INDEX [ix_ext_purchase_req_line_doc] ON psa.[ext_purchase_req_line] ([source_id], [doc_ref]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_stock_issuance_line_doc' AND object_id = OBJECT_ID(N'psa.[ext_stock_issuance_line]'))
+CREATE INDEX [ix_ext_stock_issuance_line_doc] ON psa.[ext_stock_issuance_line] ([source_id], [doc_ref]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_expense_issuance_line_doc' AND object_id = OBJECT_ID(N'psa.[ext_expense_issuance_line]'))
+CREATE INDEX [ix_ext_expense_issuance_line_doc] ON psa.[ext_expense_issuance_line] ([source_id], [doc_ref]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_ext_physical_count_line_doc' AND object_id = OBJECT_ID(N'psa.[ext_physical_count_line]'))
+CREATE INDEX [ix_ext_physical_count_line_doc] ON psa.[ext_physical_count_line] ([source_id], [doc_ref]);
+
 -- One token, one row. A table-level unique index rather than an inline UNIQUE
 -- because the port's DDL reader takes the former and refuses the latter.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ux_api_token_sha256' AND object_id = OBJECT_ID(N'psa.[api_token]'))
@@ -5287,10 +5712,10 @@ SELECT @Indexes = COUNT(*) FROM sys.indexes i
   JOIN sys.schemas s ON s.schema_id = t.schema_id
  WHERE s.name = @Schema AND i.type = 2 AND i.is_primary_key = 0 AND i.is_unique_constraint = 0;
 
-IF @Tables <> 162 OR @Triggers <> 4 OR @Indexes < 83
+IF @Tables <> 174 OR @Triggers <> 4 OR @Indexes < 89
 BEGIN
     ROLLBACK TRANSACTION;
-    RAISERROR(N'VERIFY FAILED: found %d tables (expected 162), %d triggers (expected 4), %d indexes (expected at least 83). Rolled back; nothing was created.',
+    RAISERROR(N'VERIFY FAILED: found %d tables (expected 174), %d triggers (expected 4), %d indexes (expected at least 89). Rolled back; nothing was created.',
               16, 1, @Tables, @Triggers, @Indexes);
     RETURN;
 END;
@@ -5350,6 +5775,18 @@ PRINT N'target is enforced until somebody with the authority says so.';
     ALTER TABLE psa.[ticket] DROP CONSTRAINT IF EXISTS [FK_ticket_board_status_id];
     DROP TABLE IF EXISTS psa.[local_account];
     DROP TABLE IF EXISTS psa.[api_token];
+    DROP TABLE IF EXISTS psa.[ext_physical_count_line];
+    DROP TABLE IF EXISTS psa.[ext_physical_count];
+    DROP TABLE IF EXISTS psa.[ext_expense_issuance_line];
+    DROP TABLE IF EXISTS psa.[ext_expense_issuance];
+    DROP TABLE IF EXISTS psa.[ext_stock_issuance_line];
+    DROP TABLE IF EXISTS psa.[ext_stock_issuance];
+    DROP TABLE IF EXISTS psa.[ext_purchase_req_line];
+    DROP TABLE IF EXISTS psa.[ext_purchase_req];
+    DROP TABLE IF EXISTS psa.[ext_expense_req_line];
+    DROP TABLE IF EXISTS psa.[ext_expense_req];
+    DROP TABLE IF EXISTS psa.[ext_stock_req_line];
+    DROP TABLE IF EXISTS psa.[ext_stock_req];
     DROP TABLE IF EXISTS psa.[member_module_grant];
     DROP TABLE IF EXISTS psa.[ext_change];
     DROP TABLE IF EXISTS psa.[ext_batch];

@@ -169,8 +169,12 @@ def _statuses(conn, kind) -> list[str]:
                                        f" AND {col} IS NOT NULL ORDER BY {col}", (bizbox.SOURCE,))]
 
 
-def _rows(ctx, kind, *, search, status, vendor, absent, page_no):
+def _rows(ctx, kind, *, search, status, vendor, absent, page_no, every: bool = False):
     where, params = bizbox._filter(kind, search, absent)             # " FROM <table> WHERE ..." and its params
+    if kind == "product" and not every:
+        # SQL01, Part 106: the mirror now carries every item (8,572), so the list opens on the active inventory items;
+        # a page still resolves for every code, and "Inactive and non-inventory too" shows the rest
+        where += " AND COALESCE(is_active, 1) = 1 AND COALESCE(is_inventory, 1) = 1"
     if status:
         where += f" AND {FILTER_COL[kind]} = ?"
         params.append(status)
@@ -191,8 +195,9 @@ def _list(ctx, kind, *, with_new: bool = True) -> str:
     q = ctx.request.query
     search, status, vendor = q.get("q", ""), q.get("status", ""), q.get("vendor", "")
     absent = q.get("absent") == "1"
+    every = q.get("every") == "1"
     page_no = int(q["page"]) if q.get("page", "").isdigit() and int(q["page"]) > 0 else 1
-    rows, total = _rows(ctx, kind, search=search, status=status, vendor=vendor, absent=absent, page_no=page_no)
+    rows, total = _rows(ctx, kind, search=search, status=status, vendor=vendor, absent=absent, page_no=page_no, every=every)
     # Finance's columns, in Procurement's words: the receiving report's
     # counterparty is the vendor here, never "party" (Dada, 13 Oct 2026).
     columns = [(f, "Vendor" if f == "party" else "Number" if f == "ext_ref" and kind != "product" else "Code" if f == "ext_ref" else lab)
@@ -215,7 +220,9 @@ def _list(ctx, kind, *, with_new: bool = True) -> str:
     def cell(r, f):
         if f == "ext_ref":
             return (f"<td>{finance._ref_link(kind, r['ext_ref'], AREA)}"
-                    + ("" if r["present"] else " <span class=pill>gone from BizBox</span>") + "</td>")
+                    + ("" if r["present"] else " <span class=pill>gone from BizBox</span>")
+                    + (" <span class=pill>inactive</span>" if kind == "product" and r["is_active"] == 0 else "")
+                    + (" <span class=pill>not inventory</span>" if kind == "product" and r["is_inventory"] == 0 else "") + "</td>")
         return finance._cell(r, f, AREA, labels)
     trs = []
     for r in rows:
@@ -226,7 +233,7 @@ def _list(ctx, kind, *, with_new: bool = True) -> str:
                    + (f"<td class=num>{lines.get(r['ext_ref'], 0)}</td>" if kind in LINE_OF else "")
                    + f"<td>{wait_cell}</td></tr>")
     ncol = len(columns) + 1 + (1 if kind in LINE_OF else 0)
-    keep = {"tab": kind, "q": search, "status": status, "vendor": vendor} | ({"absent": "1"} if absent else {})
+    keep = {"tab": kind, "q": search, "status": status, "vendor": vendor} | ({"absent": "1"} if absent else {}) | ({"every": "1"} if every else {})
     keep = {k: v for k, v in keep.items() if v}
     first, last = (page_no - 1) * bizbox.PAGE + 1, min(page_no * bizbox.PAGE, total)
     pager = (f"<div class='row schedbar' style='justify-content:space-between'><div class=muted>Showing {first}–{last} of {total}</div><div>"
@@ -242,7 +249,9 @@ def _list(ctx, kind, *, with_new: bool = True) -> str:
                f"<div style='flex:0 0 160px'><select name=status aria-label='{FILTER_WORD[FILTER_COL[kind]].capitalize()}'><option value=''>Any {FILTER_WORD[FILTER_COL[kind]]}</option>{sopts}</select></div>"
                + (f"<div style='flex:0 0 200px'><select name=vendor aria-label=Vendor><option value=''>Any vendor</option>{vopts}</select></div>" if vopts else "")
                + f"<div style='flex:0 0 auto'><label><input type=checkbox name=absent value=1{' checked' if absent else ''}> Gone from BizBox too</label></div>"
-               "<div style='flex:0 0 auto'><button class=ghost type=submit>Filter</button></div>"
+               + (f"<div style='flex:0 0 auto'><label><input type=checkbox name=every value=1{' checked' if every else ''}> Inactive and non-inventory too</label></div>"
+                  if kind == "product" else "")
+               + "<div style='flex:0 0 auto'><button class=ghost type=submit>Filter</button></div>"
                + (f"<div style='flex:0 0 auto'><a class=btn href='/procurement/{kind}/new'>{t.icon('plus')} {NEW_WORDS[kind]}</a></div>"
                   if can and with_new and kind in bizbox.ADDABLE else "") + "</form>")
     return ("<div class=card>" + filters + f"<div class=tablewrap><table class='compact pgrid doclist'><thead><tr>{head}</tr></thead><tbody>"
@@ -1033,6 +1042,34 @@ def _window(q) -> int:
     return int(days) if days.isdigit() and int(days) in dict(WINDOWS) else 30
 
 
+def _windows_held(cov: dict) -> list[tuple[int, str]]:
+    """The windows the mirror can answer (SQL01, Part 109): each shorter than
+    what it holds, then everything it holds, said in days. Never a longer one."""
+    held = cov["days"]
+    if held <= 0:
+        return [(7, "Last 7 days")]
+    return [(d, w) for d, w in WINDOWS if d < held] + [(held, f"All {held} days the desk holds")]
+
+
+def _kind_chips(kinds: list) -> list[tuple[str, str, int]]:
+    """One chip per word: Charged is CH and CA together (BizBox gives both the
+    same words), with the codes beside it (SQL01, Part 109)."""
+    by: dict = {}
+    for k, w, n in kinds:
+        word = w if k not in bizbox.CODE_ONLY and k in bizbox.MOVE_WORDS else k
+        codes, total = by.get(word, ([], 0))
+        by[word] = (codes + [k], total + n)
+    return [(",".join(codes), word, n) for word, (codes, n) in sorted(by.items(), key=lambda x: (-x[1][1], x[0]))]
+
+
+def _chip_label(codes: str, word: str) -> str:
+    parts = codes.split(",")
+    if word in parts:                                       # a code with no word: the code itself
+        return t.esc(word)
+    shown = " ".join(p for p in parts if len(p) <= 3)
+    return t.esc(word) + (f" <span class='muted code'>{t.esc(shown)}</span>" if shown else "")
+
+
 def _movements(ctx):
     """The item ledger inside a window of days or months: received, issued,
     transferred, adjusted, counted. Read hourly from a view SQL01 keeps to
@@ -1043,23 +1080,25 @@ def _movements(ctx):
     bucket = q.get("bucket", "")
     if bucket and bucket not in bizbox.BUCKETS and bucket != bizbox.OTHER_BUCKET:
         bucket = ""                                                        # a bucket that is not one of the stock card's: ignored
-    days = _window(q)
     page_no = int(q["page"]) if q.get("page", "").isdigit() and int(q["page"]) > 0 else 1
     if not db.table_exists(ctx.conn, "ext_movement"):
         return Response(body=t.page("Procurement · Movements", _not_mapped(ctx, "movement", "The item ledger"), user=ctx.user, active=MENU_KEY['movement']))
+    cov = bizbox.movement_coverage(ctx.conn, ctx.now)
+    held = _windows_held(cov)
+    asked = q.get("days", "")
+    days = int(asked) if asked.isdigit() and int(asked) in dict(held) else held[-1][0]    # one offered, else everything held
     rows, total = bizbox.movements(ctx.conn, item=item, warehouse=warehouse, days=days, kind=kind, bucket=bucket, now=ctx.now,
                                    limit=bizbox.PAGE, offset=(page_no - 1) * bizbox.PAGE)
     kinds = bizbox.movement_kinds(ctx.conn, days=days, now=ctx.now, bucket=bucket)
     buckets = bizbox.movement_buckets(ctx.conn, days=days, now=ctx.now)
-    oldest, newest = bizbox.movement_window(ctx.conn)
     keep = {k: v for k, v in {"tab": "movement", "item": item, "warehouse": warehouse, "kind": kind, "bucket": bucket, "days": str(days)}.items() if v}
     # the stock card's three buckets first (SQL01's doctypes document: Receipts, Issuances, Transfers), then the kinds in the one chosen
     bchips = (f"<a class='{'on' if not bucket else ''}' href='/procurement?{urllib.parse.urlencode({kk: vv for kk, vv in keep.items() if kk not in ('bucket', 'kind')})}'>"
               f"All · {sum(n for _, n in buckets)}</a>"
               + "".join(f"<a class='{'on' if bucket == b else ''}' href='/procurement?{urllib.parse.urlencode({kk: vv for kk, vv in (keep | {'bucket': b}).items() if vv and kk != 'kind'})}'>"
                         f"{t.esc(b)} · {n}</a>" for b, n in buckets))
-    chips = "".join(f"<a class='{'on' if kind.upper() == k else ''}' href='/procurement?{urllib.parse.urlencode({kk: vv for kk, vv in (keep | {'kind': k}).items() if vv})}'>{move_label(k)} · {n}</a>"
-                    for k, w, n in kinds)
+    chips = "".join(f"<a class='{'on' if kind.upper() == k else ''}' href='/procurement?{urllib.parse.urlencode({kk: vv for kk, vv in (keep | {'kind': k}).items() if vv})}'>{_chip_label(k, w)} · {n:,}</a>"
+                    for k, w, n in _kind_chips(kinds))
     allchip = f"<a class='{'on' if not kind else ''}' href='/procurement?{urllib.parse.urlencode({kk: vv for kk, vv in keep.items() if kk != 'kind'})}'>All · {sum(n for _, _, n in kinds)}</a>"
     trs = "".join(
         f"<tr><td>{t.esc(r['moved_on'] or '')}</td><td>{finance._ref_link('product', r['item_ref'], AREA)}</td><td>{t.esc(r['item_name'] or '')}</td>"
@@ -1067,7 +1106,7 @@ def _movements(ctx):
         f"<td>{t.esc(r['doc_ref'] or '')}</td>"
         f"<td class=num>{_qty(r['qty_in'])}</td><td class=num>{_qty(r['qty_out'])}</td>"
         f"<td class=num>{_bal(r['balance'])}</td></tr>" for r in rows)
-    wopts = "".join(f"<option value={d}{' selected' if d == days else ''}>{w}</option>" for d, w in WINDOWS)
+    wopts = "".join(f"<option value={d}{' selected' if d == days else ''}>{w}</option>" for d, w in held)
     body = (_head(ctx, "movement", q) + "<div class=card><form method=get action='/procurement' class='row schedbar'>"
             "<input type=hidden name=tab value=movement>"
             f"<div style='flex:0 0 170px'><select name=days aria-label=Window>{wopts}</select></div>"
@@ -1080,12 +1119,36 @@ def _movements(ctx):
             f"<div class=stabs style='margin:6px 0 0' aria-label='Movement kind'>{allchip}{chips}</div>"
             "<p class=why>Every movement of stock BizBox recorded inside the window: what came in, what went out, and the balance after, "
             "with the document that moved it. The desk holds "
-            + (f"{t.esc(oldest)} to {t.esc(newest)}" if oldest else "nothing yet") + "; older movements are in the MMS reports.</p>"
+            + (f"{t.esc(cov['oldest'])} to {t.esc(cov['today'])}, {cov['days']} day{'s' if cov['days'] != 1 else ''}" if cov["oldest"] else "nothing yet")
+            + "; older movements are in the MMS reports."
+            + (f" {cov['future']} movement{'s' if cov['future'] != 1 else ''} BizBox dated after today {'are' if cov['future'] != 1 else 'is'} not in any window."
+               if cov["future"] else "") + "</p>"
             "<div class=tablewrap><table class='compact pgrid'><thead><tr><th>Date</th><th>Item</th><th>Name</th><th>Warehouse</th>"
             "<th>Movement</th><th>Document</th><th class=num>In</th><th class=num>Out</th><th class=num>Balance</th></tr></thead><tbody>"
             + (trs or "<tr><td colspan=9 class=muted>No movement matches inside that window.</td></tr>")
             + "</tbody></table></div>" + _pager(keep, page_no, total, "movement(s)") + "</div>")
     return Response(body=t.page("Procurement · Movements", body, user=ctx.user, active=MENU_KEY['movement']))
+
+
+def item_flags(ctx, kind: str, ext_ref: str) -> str:
+    """An inactive item looks inactive, not missing (SQL01, Part 106): said on
+    its page, with BizBox's own conversion and purchase prices when read."""
+    if kind != "product":
+        return ""
+    rec = bizbox.get(ctx.conn, "product", ext_ref)
+    if rec is None:
+        return ""
+    flags = ((["<span class='chip sla-warn'>Inactive in BizBox</span>"] if rec["is_active"] == 0 else [])
+             + (["<span class=chip>Not an inventory item</span>"] if rec["is_inventory"] == 0 else []))
+    cur = bizbox.desk_currency(ctx.conn)
+    facts = [(lab, v) for lab, v in (("Conversion", None if rec["conversion"] is None else f"{float(rec['conversion']):g}"),
+                                       ("Purchase price", finance._money(rec["purc_price"], cur) if rec["purc_price"] is not None else None),
+                                       ("Last purchase price", finance._money(rec["last_purc_price"], cur) if rec["last_purc_price"] is not None else None)) if v]
+    if not flags and not facts:
+        return ""
+    return ("<div class=card><h3>" + t.icon("tag") + "In BizBox</h3>"
+            + (f"<p>{' '.join(flags)}" + (" <span class=muted>It cannot be picked on a new document; its page and history stay.</span>" if rec["is_active"] == 0 else "") + "</p>" if flags else "")
+            + ("<dl class=kv>" + "".join(f"<dt>{t.esc(lab)}</dt><dd>{t.esc(v)}</dd>" for lab, v in facts) + "</dl>" if facts else "") + "</div>")
 
 
 def stock_card(ctx, kind: str, ext_ref: str) -> str:

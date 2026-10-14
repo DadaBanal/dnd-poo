@@ -66,41 +66,54 @@ DOCS = {
     "stock_req": {
         "word": "Stock requisition", "many": "stock requisitions", "title": "Stock Requisition Details", "many_title": "Stock Requisitions",
         "icon": "note", "menu": "postockreq", "desk": True,
-        "fields": (("department", "Issuing Department"), ("warehouse_ref", "Warehouse (from)"), ("center", "Center"), ("doc_date", "Requisition Date")),
+        "fields": (("warehouse_src", "Issuing Department"), ("warehouse_dst", "Requesting Department"), ("doc_date", "Requisition Date")),
         "lines": "mms", "slip": r"StockReq", "slip_word": "Print Stock Requisition Slip",
     },
     "expense_req": {
         "word": "Expense requisition", "many": "expense requisitions", "title": "Expense Requisition Details", "many_title": "Expense Requisitions",
         "icon": "note", "menu": "poexpreq", "desk": True,
-        "fields": (("department", "Issuing Department"), ("warehouse_ref", "Warehouse (from)"), ("center", "Center"), ("doc_date", "Requisition Date")),
+        "fields": (("warehouse_src", "Issuing Department"), ("warehouse_dst", "Requesting Department"), ("doc_date", "Requisition Date")),
         "lines": "mms", "slip": r"ExpRequisition", "slip_word": "Print Expense Requisition Slip",
     },
     "purchase_req": {
         "word": "Purchase requisition", "many": "purchase requisitions", "title": "Purchase Requisition Details", "many_title": "Purchase Requisitions",
         "icon": "note", "menu": "popurchreq", "desk": True,
-        "fields": (("department", "Requesting Department"), ("warehouse_ref", "Warehouse (for)"), ("center", "Center"), ("doc_date", "Requisition Date")),
+        "fields": (("warehouse_src", "Issuing Department"), ("warehouse_dst", "Requesting Department"), ("doc_date", "Requisition Date")),
         "lines": "mms", "slip": r"PurcReq", "slip_word": "Print Purchase Requisition Slip",
     },
     "stock_issuance": {
         "word": "Stock issuance", "many": "stock issuances", "title": "Stock Issuance Details", "many_title": "Stock Issuances",
         "icon": "arrow", "menu": "poissue", "desk": True,
-        "fields": (("warehouse_ref", "Warehouse (from)"), ("department", "Issued To"), ("center", "Center"), ("doc_date", "Issuance Date")),
+        "fields": (("warehouse_src", "Issuing Department"), ("warehouse_dst", "Issued To"), ("doc_date", "Issuance Date")),
         "lines": "mms", "slip": r"StockIssuance", "slip_word": "Print Stock Issuance Slip",
     },
     "expense_issuance": {
         "word": "Expense issuance", "many": "expense issuances", "title": "Expense Issuance Details", "many_title": "Expense Issuances",
         "icon": "arrow", "menu": "poexpissue", "desk": True,
-        "fields": (("warehouse_ref", "Warehouse (from)"), ("department", "Issued To"), ("center", "Center"), ("doc_date", "Issuance Date")),
+        "fields": (("warehouse_src", "Issuing Department"), ("warehouse_dst", "Issued To"), ("doc_date", "Issuance Date")),
         "lines": "mms", "slip": r"ExpIssuance", "slip_word": "Print Expense Issuance Slip",
     },
     "physical_count": {
         "word": "Physical count", "many": "physical counts", "title": "Physical Count Details", "many_title": "Physical Counts",
         "icon": "checks", "menu": "pocount", "desk": True,
-        "fields": (("warehouse_ref", "Warehouse"), ("department", "Counted By"), ("center", "Center"), ("doc_date", "Count Date")),
+        "fields": (("warehouse_src", "Warehouse"), ("doc_date", "Count Date")),
         "lines": "mms", "slip": r"PhysicalCount", "slip_word": "Print Physical Count Sheet", "variance": True,
     },
 }
 DESK_KINDS = tuple(k for k, v in DOCS.items() if v.get("desk"))
+# What each BizBox slip is opened with, read from the reports' own definitions
+# (SQL01, 14 Oct 2026): "key" is the header's identity key (PK_TRXNO, the
+# mirror's trx_key; TranNo is that key despite its name), "ref" the printed
+# number (only DelReceiveRep's RRno wants it), "src" the issuing department's
+# name (printed on the slip, required and never blank on ExpRequisition).
+# isfourdigit is required on all eight and only pads the number: pinned.
+SLIP_PARAMS = {
+    "purchase_order": (("PK_TRXNO", "key"),), "invoice": (("RRno", "ref"), ("TranNo", "key")),
+    "stock_req": (("PK_TRXNO", "key"),), "purchase_req": (("PK_TRXNO", "key"),),
+    "expense_req": (("PK_TRXNO", "key"), ("srcdept", "src")), "physical_count": (("PK_TRXNO", "key"), ("Department", "src")),
+    "stock_issuance": (("TranNo", "key"),), "expense_issuance": (("TranNo", "key"),),
+}
+SLIP_PINNED = (("isfourdigit", "false"),)
 # A line's columns per kind of lines: (field, heading, numeric, editable in Edit Mode)
 LINE_COLUMNS = {
     "po": (("line_no", "#", False, False), ("product_ref", "Item ID", False, False), ("description", "Item Description", False, True),
@@ -113,6 +126,15 @@ LINE_COLUMNS = {
     "rr": (("line_no", "#", False, False), ("product_ref", "Item ID", False, False), ("description", "Item Description", False, False),
            ("quantity", "Quantity Received", True, False), ("unit_cost", "Unit Price", True, False), ("po_ref", "Purchase Order", False, False)),
 }
+# A BizBox document's lines as BizBox stored them (087): the line's Total Amount is BizBox's netcost, read, never
+# recomputed (recomputing disagrees with history on about 9% of lines by up to 2%, from stored rounding).
+MIRROR_COLUMNS = (("line_no", "#", False), ("product_ref", "Item ID", False), ("description", "Item Description", False),
+                  ("unit", "Unit", False), ("quantity", "Quantity", True), ("served_qty", "Served Quantity", True),
+                  ("unit_cost", "Unit Price", True), ("total", "Total Amount", True))
+# a count: the counted quantity, BizBox's system quantity and the variance always together, never the difference alone
+COUNT_COLUMNS = (("line_no", "#", False), ("product_ref", "Item ID", False), ("description", "Item Description", False),
+                 ("unit", "Unit", False), ("quantity", "Counted", True), ("system_qty", "System Quantity", True),
+                 ("variance", "Variance", True))
 
 
 def _module(kind: str) -> str:
@@ -138,7 +160,7 @@ def desk_lines(conn, kind: str, record: dict, lines: list) -> list:
     from the ledger mirror, and whether the line is short (the BETTER items of
     the draft: on hand on every row, the shortfall shown)."""
     out = []
-    src = (record or {}).get("warehouse_ref") or ""
+    src = onhand_at(kind, record)
     for i, l in enumerate(lines or [], 1):
         ref = (l.get("product_ref") or "").strip()
         p = bizbox.get(conn, "product", ref) if ref else None
@@ -150,6 +172,16 @@ def desk_lines(conn, kind: str, record: dict, lines: list) -> list:
                     "unit_cost": l.get("unit_cost") if l.get("unit_cost") not in (None, "") else (p["unit_cost"] if p else None),
                     "on_hand": have, "short": have is not None and qty > have, "variance": (qty - have) if have is not None else None})
     return out
+
+
+def onhand_side(kind: str) -> str:
+    """The warehouse whose stock the form shows: the issuing one, or a purchase
+    requisition's requesting one (it has no issuing side)."""
+    return "warehouse_src" if "warehouse_src" in bizbox.DOC_SIDES.get(kind, ("warehouse_src",)) else "warehouse_dst"
+
+
+def onhand_at(kind: str, record) -> str:
+    return (record or {}).get(onhand_side(kind)) or ""
 
 
 def desk_record(conn, kind: str, doc: dict, ref: str) -> dict:
@@ -344,7 +376,7 @@ def lines_table(ctx, kind: str, rec, lines: list, *, link_items: bool, css: str,
     trs = "".join("<tr>" + "".join(cell(l, f, num, can) for f, _, num, can in cols) + f"<td class=num>{t.esc(finance._money(_extended(l)))}</td>"
                   + (_onhand_cell(l, kind) if source else "") + "</tr>" for l in lines)
     if editing and kind in bizbox.NEW_LINE_FIELDS:
-        items = "".join(f"<option value='{t.esc(p['ext_ref'])}'>{t.esc(p['name'])}</option>" for p in bizbox.records(ctx.conn, "product", limit=2000))
+        items = "".join(f"<option value='{t.esc(p['ext_ref'])}'>{t.esc(p['name'])}</option>" for p in bizbox.pickable_items(ctx.conn))
         g = lambda k: t.esc(posted.get(k, "") or "")
         trs += "".join(
             f"<tr class=addrow><td class=muted>+</td>"
@@ -392,10 +424,13 @@ def footer(ctx, kind: str, rec, lines: list, ext_ref: str, *, editing: bool, pos
     own = f"/procurement/{kind}/slip?" + urllib.parse.urlencode({"ref": ext_ref, "now": "1"})
     acts = f"<a class='btn ghost' href='{t.esc(own)}' target=_blank rel=noopener>{t.icon('reports')} {t.esc(DOCS[kind]['slip_word'])}</a>"
     r = slip_report(ctx.conn, kind)
-    doc_no = number if DOCS[kind].get("desk") else ext_ref
-    if r is not None and doc_no:
-        href = f"/procurement/report/{r['report_id']}?" + urllib.parse.urlencode({"doc": doc_no})
-        acts += f" <a class='btn ghost' href='{t.esc(href)}'>{t.icon('arrow')} BizBox's slip ({t.esc(r['name'])})</a>"
+    if r is not None:
+        href = slip_href(ctx.conn, kind, r, rec, number if DOCS[kind].get("desk") else ext_ref)
+        if href:
+            acts += f" <a class='btn ghost' href='{t.esc(href)}'>{t.icon('arrow')} BizBox's slip ({t.esc(r['name'])})</a>"
+        else:
+            acts += (f" <span class=muted>BizBox's slip ({t.esc(r['name'])}) opens once the desk has read this document's key"
+                     " from BizBox</span>")
     if editing:
         acts += (f" <span class=why><label class=sr-only for=docwhy>Why</label><input id=docwhy name=reason maxlength=400 required"
                  f" value='{t.esc(posted.get('reason', ''))}' placeholder='Why? The approver sees this'></span>"
@@ -405,6 +440,25 @@ def footer(ctx, kind: str, rec, lines: list, ext_ref: str, *, editing: bool, pos
             "(tax, discount, or lines the desk has not read); the lines are what the desk read.</p>" if tot["differs"] else "")
     return (f"<div class=mmsfoot><div class=nums>{nums}</div><div class=appr>{t.esc(approval_sentence(ctx.conn, kind, ext_ref, batches))}</div>"
             f"<div class='acts noprint'>{acts}</div></div>" + note)
+
+
+def slip_href(conn, kind: str, report, rec, number) -> str | None:
+    """The link that opens BizBox's slip for this document with the values its
+    definition filters on: the identity key (never the printed number, which
+    renders an empty slip without an error), the number where the slip wants
+    it, the issuing department's name where it is printed, isfourdigit
+    pinned. None while the desk does not have the key."""
+    key = rec["trx_key"] if "trx_key" in rec.keys() else None
+    if not key and number and kind in bizbox.DOC_MIRRORS:
+        mirrored = bizbox.get(conn, kind, number)                  # a desk document BizBox has numbered and the desk has read
+        key = mirrored["trx_key"] if mirrored is not None else None
+    if not key:
+        return None
+    src = rec["warehouse_src"] if "warehouse_src" in rec.keys() else None
+    have = {"key": key, "ref": number, "src": bizbox.word(bizbox.labels_for(conn, kind), "warehouse_src", src) if src else None}
+    pairs = [(f"p.{name}", have[what]) for name, what in SLIP_PARAMS.get(kind, ()) if have.get(what)]
+    pairs += [(f"p.{name}", v) for name, v in SLIP_PINNED]
+    return f"/procurement/report/{report['report_id']}?" + urllib.parse.urlencode(pairs)
 
 
 def _editing(ctx, can_edit: bool, posted: dict, err: str) -> bool:
@@ -426,6 +480,77 @@ def _links_card(ctx, kind: str, ext_ref: str) -> str:
          f"<li>Project <a href='/project/{t.esc(l['subject_id'])}'>{t.esc(l['subject_id'])}</a> · {t.esc(l['linked_at'])}</li>")
         for l in linked if (l["subject_kind"], l["subject_id"]) in visible)
     return f"<div class=card><h3>{t.icon('note')}Work linked to it</h3>" + (f"<ul class=plain>{links}</ul>" if links else "<div class=muted>No ticket or project yet.</div>") + "</div>"
+
+
+def mirror_lines_table(kind: str, lines: list, cur, *, link_items: bool, css: str) -> str:
+    """A BizBox document's lines as stored: the count's three quantities
+    together; any other document's stored Total Amount, never recomputed."""
+    cols = COUNT_COLUMNS if kind == "physical_count" else MIRROR_COLUMNS
+    if kind != "physical_count" and not any(l["served_qty"] is not None for l in lines):
+        cols = tuple(c for c in cols if c[0] != "served_qty")         # a document with no served quantity (the issuances)
+
+    def cell(l, f, num):
+        v = l[f]
+        if f == "product_ref":
+            return f"<td>{finance._ref_link('product', v, AREA) if link_items else t.esc(v or '')}</td>"
+        if f in ("unit_cost", "total"):
+            return f"<td class=num>{t.esc(finance._money(v)) if v is not None else '<span class=muted>—</span>'}</td>"
+        if num:
+            return f"<td class=num>{'' if v is None else format(float(v), 'g')}</td>"
+        return f"<td>{t.esc(v if v is not None else '')}</td>"
+    head = "".join(f"<th{' class=num' if num else ''}>{t.esc(h)}</th>" for _, h, num in cols)
+    trs = "".join("<tr>" + "".join(cell(l, f, num) for f, _, num in cols) + "</tr>" for l in lines)
+    stored = [float(l["total"]) for l in lines if l["total"] is not None]
+    foot = (f"<tr class=total><td colspan={len(cols) - 1} class=num><b>Lines total, as BizBox stored them</b></td>"
+            f"<td class=num><b>{t.esc(finance._money(sum(stored), cur))}</b></td></tr>" if stored and kind != "physical_count" else "")
+    empty = f"<tr><td colspan={len(cols)} class=muted>No lines read from BizBox for this document.</td></tr>"
+    return f"<table class='{css}'><thead><tr>{head}</tr></thead><tbody>{trs or empty}{foot}</tbody></table>"
+
+
+def mirror_page(ctx, kind: str, ext_ref: str):
+    """One of BizBox's own documents of a desk kind (087): read-only, in the
+    template; the header's two warehouses by name, the lines as stored, the
+    totals BizBox keeps, the slip by key."""
+    from .. import HttpError, Response
+    from . import procurement as procurement_view
+    spec = DOCS[kind]
+    rec = bizbox.get(ctx.conn, kind, ext_ref) if kind in bizbox.DOC_MIRRORS else None
+    if rec is None:
+        raise HttpError("404 Not Found", "No such document in the BizBox mirror.")
+    q = ctx.request.query
+    labels = bizbox.labels_for(ctx.conn, kind)
+    lines = bizbox.doc_lines(ctx.conn, kind, ext_ref)
+    cur = bizbox.desk_currency(ctx.conn)
+    fields = spec["fields"] + (("status", "Status"),)
+    facts = "".join(f"<div><label>{t.esc(lab)}</label><div class=ro>{t.esc(fact_text(rec, f, labels))}</div></div>" for f, lab in fields)
+    can_add = common.allows(ctx, _module(kind), "WRITE")
+    bar = ("<div class='mmsbar noprint'>"
+           + (f"<a class=btn href='/procurement/{kind}/new'>{t.icon('plus')} Add</a> " if can_add else "")
+           + "<div class=state>" + ("" if rec["present"] else "<b>no longer in BizBox</b> · ")
+           + f"read from BizBox {t.esc(rec['synced_at'])} · BizBox's own document: changed in BizBox, not here</div></div>")
+    total_qty = rec["total_qty"] if rec["total_qty"] is not None else sum(float(l["quantity"] or 0) for l in lines)
+    cells = [("Total Record(s)", f"{len(lines)}"), ("Total Item", f"{float(total_qty):g}")]
+    if rec["total"] is not None:
+        cells.append(("Total Amount", t.esc(finance._money(rec["total"], cur))))
+    nums = "".join(f"<div class=tot><span class=l>{lab}:</span> <b>{val}</b></div>" for lab, val in cells)
+    own = f"/procurement/{kind}/slip?" + urllib.parse.urlencode({"ref": ext_ref, "now": "1"})
+    acts = f"<a class='btn ghost' href='{t.esc(own)}' target=_blank rel=noopener>{t.icon('reports')} {t.esc(spec['slip_word'])}</a>"
+    r = slip_report(ctx.conn, kind)
+    if r is not None:
+        href = slip_href(ctx.conn, kind, r, rec, ext_ref)
+        acts += (f" <a class='btn ghost' href='{t.esc(href)}'>{t.icon('arrow')} BizBox's slip ({t.esc(r['name'])})</a>" if href else
+                 f" <span class=muted>BizBox's slip ({t.esc(r['name'])}) opens once the desk has read this document's key from BizBox</span>")
+    note = ("<p class=why style='margin:8px 0 0'>Counted against BizBox's system quantity at the time of the count. A system quantity "
+            "of zero or below makes the variance read differently from what it seems, so the three stand together.</p>"
+            if kind == "physical_count" and any(l["system_qty"] is not None and float(l["system_qty"]) <= 0 for l in lines) else "")
+    sheet = (f"<div class=pickers>{facts}</div><div class=tablewrap>"
+             + mirror_lines_table(kind, lines, cur, link_items=True, css="compact doclines") + "</div>" + note
+             + f"<div class=mmsfoot><div class=nums>{nums}</div><div class=appr>In BizBox</div><div class='acts noprint'>{acts}</div></div>")
+    status_word = bizbox.word(labels, "status", rec["status"]) if rec["status"] else ""
+    crumbs = (f"<a href='/procurement?tab={kind}'>{t.esc(spec['many_title'])}</a> › {t.esc(ext_ref)}" + (f" › {t.esc(status_word)}" if status_word else ""))
+    body = (procurement_view._banners(q) + "<div class=doc>" + _dochead(kind, spec["title"], crumbs)
+            + f"<div class='card docsheet'>{bar}{sheet}</div>" + _links_card(ctx, kind, ext_ref) + "</div>")
+    return Response(body=t.page(f"{spec['word']} {ext_ref}", body, user=ctx.user, active=spec["menu"]))
 
 
 def _received_card(ctx, kind: str, ext_ref: str) -> str:
@@ -471,6 +596,8 @@ def page(ctx, kind: str, ext_ref: str, *, dialog: str = "", err: str = "", poste
     spec = DOCS[kind]
     posted = posted or {}
     q = ctx.request.query
+    if spec.get("desk") and not ext_ref.startswith("NEW-"):
+        return mirror_page(ctx, kind, ext_ref)
     if spec.get("desk"):
         doc = bizbox.desk_document(ctx.conn, kind, ext_ref)
         if doc is None:
@@ -569,7 +696,8 @@ def desk_list(ctx, kind: str) -> str:
         p = bizbox.payload_of(b)
         rec, lines = p.get("record", {}), p.get("lines", [])
         number = numbers.get(b["batch_id"]) or f"NEW-{b['batch_id']}"
-        words = " ".join(str(x) for x in (number, rec.get("department"), rec.get("warehouse_ref"), bizbox.word(labels, "warehouse_ref", rec.get("warehouse_ref")))).lower()
+        rec = bizbox.desk_record_of(rec)
+        words = " ".join(str(x) for x in (number, *(bizbox.word(labels, f, rec.get(f)) for f in bizbox.DOC_SIDES[kind]))).lower()
         if search and search not in words:
             continue
         # the same unit price rule as the document: the item's when the line has none
@@ -580,9 +708,8 @@ def desk_list(ctx, kind: str) -> str:
 
     def tr(b, number, rec, lines, total):
         url = t.esc(finance._url(kind, f"NEW-{b['batch_id']}", AREA))
-        wh = bizbox.word(labels, "warehouse_ref", rec.get("warehouse_ref")) or "—"
-        return (f"<tr data-href='{url}'><td><a href='{url}'>{t.esc(number)}</a></td>"
-                f"<td>{t.esc(rec.get('department') or '—')}</td><td>{t.esc(wh)}</td>"
+        sides = "".join(f"<td>{t.esc(bizbox.word(labels, f, rec.get(f)) or '—')}</td>" for f in bizbox.DOC_SIDES[kind])
+        return (f"<tr data-href='{url}'><td><a href='{url}'>{t.esc(number)}</a></td>{sides}"
                 f"<td>{t.esc(rec.get('doc_date') or b['requested_at'][:10])}</td><td class=num>{len(lines)}</td><td class=num>{t.esc(finance._money(total, cur))}</td>"
                 f"<td>{t.chip(bizbox.BATCH_WORDS[b['status']])}</td><td>{t.esc(b['requested_by'])}</td></tr>")
     trs = "".join(tr(*r) for r in rows)
@@ -590,14 +717,58 @@ def desk_list(ctx, kind: str) -> str:
                    (("open", "Open"), ("all", "All"), ("PENDING", "Waiting for approval"), ("APPROVED", "Approved, to send"),
                     ("APPLIED", "In BizBox"), ("REJECTED", "Refused"), ("CANCELLED", "Cancelled")))
     filters = (f"<form method=get action='/procurement' class='row schedbar'><input type=hidden name=tab value={kind}>"
-               f"<div style='flex:1 1 220px'><input name=q value='{t.esc(q.get('q', ''))}' placeholder='Search by number, department or warehouse' aria-label='Search'></div>"
+               f"<div style='flex:1 1 220px'><input name=q value='{t.esc(q.get('q', ''))}' placeholder='Search by number or department' aria-label='Search the desk&#x27;s'></div>"
                f"<div style='flex:0 0 200px'><select name=state aria-label='State'>{opts}</select></div>"
                "<div style='flex:0 0 auto'><button class=ghost type=submit>Filter</button></div></form>")
-    head = ("<th>Number</th><th>Department</th><th>Warehouse</th><th>Date</th><th class=num>Lines</th><th class=num>Total Amount</th>"
-            "<th>State</th><th>Raised by</th>")
-    return ("<div class=card>" + filters + f"<div class=tablewrap><table class='compact pgrid doclist'><thead><tr>{head}</tr></thead><tbody>"
-            + (trs or "<tr><td colspan=8 class=muted>None yet. Add raises one here; BizBox's own, once SQL01 maps a view for them, will list beside it.</td></tr>")
+    side_words = dict(DOCS[kind]["fields"])
+    head = ("<th>Number</th>" + "".join(f"<th>{t.esc(side_words[f])}</th>" for f in bizbox.DOC_SIDES[kind])
+            + "<th>Date</th><th class=num>Lines</th><th class=num>Total Amount (indicative)</th><th>State</th><th>Raised by</th>")
+    ncol = 6 + len(bizbox.DOC_SIDES[kind])
+    return ("<div class=card><h3>" + t.icon("note") + "Raised on the desk</h3>" + filters
+            + f"<div class=tablewrap><table class='compact pgrid doclist'><thead><tr>{head}</tr></thead><tbody>"
+            + (trs or f"<tr><td colspan={ncol} class=muted>None here. Add raises one; it lists here until BizBox has it, then with BizBox's own below.</td></tr>")
             + f"</tbody></table></div><div class=muted style='margin-top:8px'>{len(rows)} record(s).</div></div>")
+
+
+def bizbox_list(ctx, kind: str) -> str:
+    """BizBox's existing documents of a kind (087), newest first: read-only
+    rows that open the document."""
+    q = ctx.request.query
+    search, status = q.get("bq", "").strip(), q.get("bstatus", "")
+    page_no = int(q["page"]) if q.get("page", "").isdigit() and int(q["page"]) > 0 else 1
+    rows, total = bizbox.documents(ctx.conn, kind, q=search, status=status, limit=bizbox.PAGE, offset=(page_no - 1) * bizbox.PAGE)
+    spec = DOCS[kind]
+    two = len(bizbox.DOC_SIDES[kind]) == 2
+    labels = dict(spec["fields"])
+    cur = bizbox.desk_currency(ctx.conn)
+
+    def tr(r):
+        url = t.esc(finance._url(kind, r["ext_ref"], AREA))
+        sides = "".join(f"<td>{t.esc((r['src_name'] if f == 'warehouse_src' else r['dst_name']) or r[f] or '—')}</td>" for f in bizbox.DOC_SIDES[kind])
+        return (f"<tr data-href='{url}'><td><a href='{url}'>{t.esc(r['ext_ref'])}</a></td>{sides}<td>{t.esc(r['doc_date'] or '')}</td>"
+                f"<td class=num>{'' if r['total_items'] is None else r['total_items']}</td>"
+                f"<td class=num>{t.esc(finance._money(r['total'])) if r['total'] is not None else ''}</td><td>{t.esc(r['status'] or '')}</td></tr>")
+    head = ("<th>Number</th>" + "".join(f"<th>{t.esc(labels[f])}</th>" for f in bizbox.DOC_SIDES[kind]) + "<th>Date</th><th class=num>Items</th>"
+            f"<th class=num>Total Amount{(' (' + t.esc(cur) + ')') if cur else ''}</th><th>Status</th>")
+    ncol = 5 + len(bizbox.DOC_SIDES[kind])
+    keep = {k: v for k, v in {"tab": kind, "bq": search, "bstatus": status}.items() if v}
+    first, last = (page_no - 1) * bizbox.PAGE + 1, min(page_no * bizbox.PAGE, total)
+    pager = ((f"<div class='row schedbar' style='justify-content:space-between'><div class=muted>Showing {first}–{last} of {total}</div><div>"
+              + (f"<a class='ghost small' href='/procurement?{urllib.parse.urlencode(keep | {'page': page_no - 1})}'>‹ Previous</a> " if page_no > 1 else "")
+              + (f"<a class='ghost small' href='/procurement?{urllib.parse.urlencode(keep | {'page': page_no + 1})}'>Next ›</a>" if last < total else "")
+              + "</div></div>") if total > bizbox.PAGE else f"<div class=muted style='margin-top:8px'>{total} record(s).</div>")
+    sopts = "".join(f"<option value='{w}'{' selected' if w == status else ''}>{w}</option>" for w in ("Draft", "Posted", "Cancelled"))
+    filters = (f"<form method=get action='/procurement' class='row schedbar'><input type=hidden name=tab value={kind}>"
+               f"<div style='flex:1 1 220px'><input name=bq value='{t.esc(search)}' placeholder='Search by number or {'department' if two else 'warehouse'}' aria-label='Search BizBox&#x27;s {t.esc(spec['many'])}'></div>"
+               f"<div style='flex:0 0 180px'><select name=bstatus aria-label=Status><option value=''>Any status</option>{sopts}</select></div>"
+               "<div style='flex:0 0 auto'><button class=ghost type=submit>Filter</button></div></form>")
+    if not bizbox.documents(ctx.conn, kind, limit=1)[1] and not search and not status:
+        return ("<div class=card><h3>" + t.icon("inbox") + "In BizBox</h3><p class=muted>None read yet: BizBox's own "
+                + t.esc(spec["many"]) + " list here once the hourly read carries them.</p></div>")
+    return ("<div class=card><h3>" + t.icon("inbox") + f"In BizBox · {total:,}</h3>" + filters
+            + f"<div class=tablewrap><table class='compact pgrid doclist'><thead><tr>{head}</tr></thead><tbody>"
+            + ("".join(tr(r) for r in rows) or f"<tr><td colspan={ncol} class=muted>Nothing matches.</td></tr>")
+            + "</tbody></table></div>" + pager + "</div>")
 
 
 def list_page(ctx, kind: str):
@@ -611,14 +782,14 @@ def list_page(ctx, kind: str):
     body = (procurement_view._head(ctx, kind, q, title=False)
             + f"<div class=dochead><div><h1>{t.esc(spec['many_title'])}</h1><p class=crumbs>Materials › {t.esc(spec['many_title'])}</p></div>"
             + (f"<div class=docbar><a class=btn href='/procurement/{kind}/new'>{t.icon('plus')} Add</a></div>" if can_add else "") + "</div>"
-            + (desk_list(ctx, kind) if spec.get("desk") else procurement_view._list(ctx, kind, with_new=False)))
+            + ((desk_list(ctx, kind) + bizbox_list(ctx, kind)) if spec.get("desk") else procurement_view._list(ctx, kind, with_new=False)))
     return Response(body=t.page(spec["many_title"], body, user=ctx.user, active=spec["menu"]))
 
 
 # ------------------------------------------------- a desk document's form
 
 ONHAND_SCRIPT = ("<script>(function(){var f=document.querySelector('form[data-docform]');if(!f)return;"
-                 "var wh=f.querySelector('[name=warehouse_ref]');"
+                 "var wh=f.querySelector('[data-onhand]');"
                  "function row(inp){return inp.closest('tr')}"
                  "function look(inp){var tr=row(inp);var cell=tr&&tr.querySelector('.onhand');if(!cell)return;var item=inp.value.trim();var w=wh?wh.value:'';"
                  "if(!item||!w){cell.textContent='—';return}"
@@ -652,8 +823,10 @@ def new_page(ctx, kind: str, *, posted: dict | None = None, dialog: str = "", er
         else:
             ctl = pick(ctx, kind, f, f, g(f), empty=("Choose" if required else "(none)"), required=required,
                        fallback=f"<input name={f}{' required' if required else ''} maxlength=400 value='{t.esc(g(f))}' placeholder='{t.esc(bizbox.LIST_WORDS.get(bizbox.CHOICE_LIST.get((kind, f), ''), ''))}'>")
+            if f == onhand_side(kind):                      # the warehouse whose stock the rows show
+                ctl = ctl.replace(f"name={f}", f"name={f} data-onhand", 1)
         fields.append(f"<div><label>{t.esc(lab)}{' *' if required else ''}</label>{ctl}</div>")
-    items = "".join(f"<option value='{t.esc(p['ext_ref'])}'>{t.esc(p['name'])}</option>" for p in bizbox.records(ctx.conn, "product", limit=2000))
+    items = "".join(f"<option value='{t.esc(p['ext_ref'])}'>{t.esc(p['name'])}</option>" for p in bizbox.pickable_items(ctx.conn))
     rows = "".join(
         f"<tr><td class=muted>{i}</td>"
         f"<td><input name='line{i}_product_ref' list=docitems maxlength=64 placeholder='type to search existing items' value='{t.esc(g(f'line{i}_product_ref'))}' aria-label='Line {i}: item'></td>"
@@ -662,9 +835,10 @@ def new_page(ctx, kind: str, *, posted: dict | None = None, dialog: str = "", er
         f"<td class=num><input type=number step=any min=0 name='line{i}_unit_cost' placeholder='unit price' value='{t.esc(g(f'line{i}_unit_cost'))}' aria-label='Line {i}: unit price'></td>"
         f"<td class='num onhand'><span class=muted>—</span></td></tr>" for i in range(1, FORM_ROWS + 1))
     grid = (f"<div class=tablewrap><table class='compact doclines'><thead><tr><th>#</th><th>Item ID</th><th>Item Description</th><th class=num>Quantity</th>"
-            f"<th class=num>Unit Price</th><th class=num>{'On hand · variance' if spec.get('variance') else 'On hand at source'} <span class=better>BETTER</span></th></tr></thead>"
+            f"<th class=num>Unit Price (indicative)</th><th class=num>{'On hand · variance' if spec.get('variance') else ('On hand at source' if onhand_side(kind) == 'warehouse_src' else 'On hand there')} <span class=better>BETTER</span></th></tr></thead>"
             f"<tbody>{rows}<tr class=addnote><td colspan=6><i>Add item: type to search existing items; a new item is never created from here. "
-            f"Stock on hand at the warehouse chosen above shows as you pick.</i><datalist id=docitems>{items}</datalist></td></tr></tbody></table></div>")
+            f"Stock on hand at the {'issuing' if onhand_side(kind) == 'warehouse_src' else 'requesting'} department shows as you pick. The price is indicative: "
+            f"BizBox computes the stored amount itself when it creates the line.</i><datalist id=docitems>{items}</datalist></td></tr></tbody></table></div>")
     word = spec["word"].lower()
     crumbs = (f"<a href='/procurement?tab={kind}'>{t.esc(spec['many_title'])}</a> › " + (f"NEW-{batch} › editing" if batch else "new"))
     foot = (f"<div class=mmsfoot><div class=appr>Approval: a second person with Approve on this area, then the push to BizBox</div>"
@@ -799,6 +973,8 @@ def slip(ctx, kind: str):
     spec = DOCS[kind]
     labels = bizbox.labels_for(ctx.conn, kind)
     number = None
+    if spec.get("desk") and ext_ref and not ext_ref.startswith("NEW-"):
+        return mirror_slip(ctx, kind, ext_ref)
     if spec.get("desk"):
         doc = bizbox.desk_document(ctx.conn, kind, ext_ref) if ext_ref else None
         if doc is None:
@@ -835,3 +1011,31 @@ def slip(ctx, kind: str):
             "BizBox is the system of record; this slip shows the document as the desk last read it.</footer></article>"
             + ("<script>window.addEventListener('load',function(){window.print()})</script>" if ctx.request.query.get("now") == "1" else ""))
     return Response(body=t.page(f"{spec['word']} {number or ext_ref} · slip", body, user=ctx.user, active=spec["menu"]))
+
+
+def mirror_slip(ctx, kind: str, ext_ref: str):
+    """The desk's slip for one of BizBox's own documents of a desk kind: the
+    header, the lines as stored, BizBox's totals; no link."""
+    from .. import HttpError, Response
+    spec = DOCS[kind]
+    rec = bizbox.get(ctx.conn, kind, ext_ref) if kind in bizbox.DOC_MIRRORS else None
+    if rec is None:
+        raise HttpError("404 Not Found", "No such document in the BizBox mirror.")
+    labels = bizbox.labels_for(ctx.conn, kind)
+    lines = bizbox.doc_lines(ctx.conn, kind, ext_ref)
+    cur = bizbox.desk_currency(ctx.conn)
+    facts = "".join(f"<div><dt>{t.esc(lab)}</dt><dd>{t.esc(fact_text(rec, f, labels))}</dd></div>" for f, lab in spec["fields"] + (("status", "Status"),))
+    body = (f"<div class='row noprint' style='justify-content:space-between;align-items:center;margin-bottom:12px'>"
+            f"<a class=backbtn data-back href='{t.esc(finance._url(kind, ext_ref, AREA))}'>{t.icon('left')}<span class=lbl>Back to the document</span></a>"
+            f"<button type=button data-print>{t.icon('reports')} Print</button></div>"
+            f"<article class=slip aria-label='{t.esc(spec['word'])} {t.esc(ext_ref)} slip'>"
+            f"<header><div><div class=kicker>PMC · Materials Management</div><div class=kicker>{t.esc(spec['word'])}</div><h1>{t.esc(ext_ref)}</h1></div>"
+            f"<div class=stamp><div>Read from BizBox</div><b>{t.esc(rec['synced_at'])}</b></div></header>"
+            f"<dl class=facts>{facts}</dl>"
+            + mirror_lines_table(kind, lines, cur, link_items=False, css="doclines")
+            + (f"<p class=tot>Total in BizBox: <b>{t.esc(finance._money(rec['total'], cur))}</b></p>" if rec["total"] is not None else "")
+            + "<div class=sigs><div class=sig>Prepared by</div><div class=sig>Checked by</div><div class=sig>Approved by</div><div class=sig>Received by</div></div>"
+            f"<footer>Printed from the PSA desk by {t.esc(ctx.user.name or ctx.user.id)} on {t.esc(ctx.now.strftime('%Y-%m-%d %H:%M'))}. "
+            "BizBox is the system of record; this slip shows the document as the desk last read it.</footer></article>"
+            + ("<script>window.addEventListener('load',function(){window.print()})</script>" if ctx.request.query.get("now") == "1" else ""))
+    return Response(body=t.page(f"{spec['word']} {ext_ref} · slip", body, user=ctx.user, active=spec["menu"]))

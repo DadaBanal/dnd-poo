@@ -103,6 +103,7 @@ header.top nav .panel a .ic{width:16px;height:16px;opacity:.8;grid-column:1;grid
 header.top nav .panel a .why{grid-column:2;grid-row:2;font-size:12px;color:var(--ink-3);margin:0;font-weight:400;line-height:1.3;display:block}
 header.top nav .panel a:hover{background:var(--surface-3);text-decoration:none} header.top nav .panel a.on{background:color-mix(in srgb,var(--accent) 10%,transparent)}
 header.top nav .panel.wide{grid-template-columns:repeat(2,minmax(220px,max-content));gap:2px 10px;padding:8px}
+header.top nav .panel a i.mm{font-style:normal;font-size:10.5px;letter-spacing:.04em;font-variant-numeric:tabular-nums;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 4px;margin-left:6px}
 header.top nav .panel.wide3{grid-template-columns:repeat(3,minmax(200px,max-content));gap:2px 10px;padding:8px}
 /* The open panel stays while the mouse crosses from the heading into it, and goes only when the mouse leaves the whole menu (Dada, 14 Oct 2026). */
 header.top nav .panel::before{content:"";position:absolute;left:0;right:0;top:-12px;height:12px}
@@ -1354,6 +1355,76 @@ tr.popen td{padding-top:0;border-top:0}
   radial-gradient(1200px 700px at 8% -15%,rgb(255 110 170/.34),transparent 60%),radial-gradient(1000px 600px at 105% -5%,rgb(255 170 210/.18),transparent 62%),
   radial-gradient(1100px 800px at 55% 125%,rgb(240 90 140/.30),transparent 60%),radial-gradient(140% 100% at 50% 40%,transparent 50%,rgb(0 0 0/.55)),
   linear-gradient(180deg,#0d0409,#1c0a14 55%,#10060c);background-attachment:fixed}
+
+/* ---- PMC Vitals Console (14 Oct 2026, SQL01's brief: "build the chrome to PMC Vitals Console") ----
+   The house design system, from its project/tokens.json (px, not the Power BI points), on the Procurement
+   pages: dark chrome as the constant, white cards on canvas, one shadow, no glass or blur, Grape owns
+   selection, every numeric column in Consolas at 13px right-aligned, uppercase only on labels and column
+   headers, no icon over 16px. Scoped by body.vitals so the rest of the desk and its personal themes are
+   unchanged until Dada decides otherwise. Values are the design system's tokens, swapped per theme. */
+body.vitals{--v-canvas:#F1F4F8;--v-surface:#FFFFFF;--v-sunken:#F7F9FB;--v-ink:#16202B;--v-muted:#5A6674;--v-rule:#D7DEE7;
+  --v-accent:#6D3BD1;--v-accent2:#C24A12;--v-good:#0F7A3D;--v-warn:#A15C00;--v-bad:#C1122E;
+  --v-chrome:#0E1520;--v-chrome-up:#131C29;--v-chrome-rule:#24334A;--v-on-dark:#FFFFFF;--v-on-dark-muted:#93A3B5;--v-rail-active:#1C2839;
+  --v-accent-on-chrome:#A98BFF;--v-shadow:0 2px 6px rgba(22,32,43,.10);
+  --v-sans:"Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+  --v-mono:Consolas,"Cascadia Mono","SF Mono","Courier New",monospace;
+  --canvas:var(--v-canvas);--surface:var(--v-surface);--card:var(--v-surface);--surface-2:var(--v-sunken);--surface-3:var(--v-sunken);
+  --ink:var(--v-ink);--ink-2:var(--v-muted);--ink-3:var(--v-muted);--muted:var(--v-muted);--line:var(--v-rule);--line-2:var(--v-rule);
+  --accent:var(--v-accent);--accent-2:var(--v-accent);--on-accent:#FFFFFF;--ok:var(--v-good);--warn:var(--v-warn);--bad:var(--v-bad);
+  --shadow:var(--v-shadow);--glass:var(--v-chrome);--r:8px;--r-sm:6px;--r-lg:8px;--font:var(--v-sans);--mono:var(--v-mono);
+  background:var(--v-canvas) none!important;color:var(--v-ink);font:13px/20px var(--v-sans)}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]) body.vitals{--v-canvas:#0E1520;--v-surface:#131C29;--v-sunken:#182333;--v-ink:#FFFFFF;
+  --v-muted:#93A3B5;--v-rule:#24334A;--v-accent:#A98BFF;--v-accent2:#FF9A62;--v-good:#3FCB86;--v-warn:#FFC14D;--v-bad:#FF6B6B;--on-accent:#0E1520;color-scheme:dark}}
+:root[data-theme=dark] body.vitals{--v-canvas:#0E1520;--v-surface:#131C29;--v-sunken:#182333;--v-ink:#FFFFFF;
+  --v-muted:#93A3B5;--v-rule:#24334A;--v-accent:#A98BFF;--v-accent2:#FF9A62;--v-good:#3FCB86;--v-warn:#FFC14D;--v-bad:#FF6B6B;--on-accent:#0E1520;color-scheme:dark}
+/* the chrome: the top bar in chrome.deep in both themes, a 1px chrome.rule hairline, no frosting */
+/* !important only where the desk's own floating glass bar and glass cards set theirs that way */
+body.vitals header.top{background:var(--v-chrome)!important;border:0!important;border-bottom:1px solid var(--v-chrome-rule)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;
+  margin:0!important;border-radius:0!important;top:0!important;box-shadow:none!important;
+  --ink:var(--v-on-dark);--ink-2:var(--v-on-dark-muted);--ink-3:var(--v-on-dark-muted);--surface-3:var(--v-rail-active);--line:var(--v-chrome-rule);
+  --accent:var(--v-accent-on-chrome);color:var(--v-on-dark)}
+body.vitals header.top .brand{color:var(--v-on-dark);font-weight:600}
+body.vitals header.top .brand i{display:none}
+body.vitals header.top nav button.top.on::after{left:50%;right:auto;width:20px;margin-left:-10px;height:3px;border-radius:0;bottom:-1px;background:var(--v-accent-on-chrome)}
+body.vitals header.top .panel{--ink:var(--v-ink);--ink-2:var(--v-muted);--ink-3:var(--v-muted);--surface-3:var(--v-sunken);--line:var(--v-rule);
+  --accent:var(--v-accent);color:var(--v-ink);background:var(--v-surface)!important;border:1px solid var(--v-rule)!important;box-shadow:var(--v-shadow)!important}
+body.vitals header.top .panel a.on{box-shadow:inset 3px 0 0 var(--v-accent)}
+body.vitals .ic,body.vitals svg.ic{max-width:16px;max-height:16px}
+/* type: page-title 27/32 600; card titles and section labels; uppercase only on labels and column headers */
+body.vitals h1{font:600 27px/32px var(--v-sans);letter-spacing:0;color:var(--v-ink)}
+body.vitals h3{font:600 12px/16px var(--v-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--v-muted)}
+body.vitals .card,body.vitals .tile,body.vitals dialog,body.vitals .slabox{background:var(--v-surface)!important;border:1px solid var(--v-rule)!important;
+  border-radius:8px;box-shadow:var(--v-shadow)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+body.vitals .card:hover{box-shadow:var(--v-shadow)!important}
+body.vitals .card,body.vitals .tile{transition:none!important}
+body.vitals tr.total td:first-child b{font-family:var(--v-sans);font-weight:600}
+body.vitals .card{padding:16px}
+body.vitals table th{font:600 12px/16px var(--v-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--v-muted)}
+body.vitals table td{padding-top:6px;padding-bottom:6px}
+body.vitals table tbody tr:nth-child(even){background:var(--v-sunken)}
+/* every number a reader compares: Consolas, table-numeric 13/20, right-aligned, digits aligned */
+body.vitals td.num,body.vitals th.num,body.vitals .num{font-family:var(--v-mono);font-size:13px;line-height:20px;text-align:right;font-variant-numeric:tabular-nums}
+body.vitals th.num{font-family:var(--v-sans);font-size:12px}
+body.vitals td.num b,body.vitals .tot b,body.vitals .tile .n{font-family:var(--v-mono);font-variant-numeric:tabular-nums}
+body.vitals .tile .n{font-weight:700}
+body.vitals .tile .l,body.vitals .tot .l,body.vitals label{font:600 12px/16px var(--v-sans);color:var(--v-muted)}
+body.vitals .better{text-transform:uppercase;letter-spacing:.06em}
+body.vitals .stabs a.on,body.vitals .chip.on{background:var(--v-accent);color:var(--on-accent)}
+body.vitals main h1:not(.sumline){background:none!important;-webkit-background-clip:initial!important;background-clip:initial!important;
+  color:var(--v-ink)!important;-webkit-text-fill-color:currentColor}
+body.vitals header.top nav button.top.on,body.vitals header.top nav a.top.on{background:none!important;box-shadow:none!important;color:var(--v-on-dark)!important;font-weight:600}
+body.vitals header.top nav a.top.on::after{content:"";position:absolute;left:50%;width:20px;margin-left:-10px;height:3px;bottom:-1px;background:var(--v-accent-on-chrome)}
+body.vitals header.top nav a.top{position:relative}
+body.vitals main button[type=submit]:not(.ghost):not(.iconbtn):not(.tab):not(.small):not(.danger),body.vitals main .btn:not(.ghost):not(.top),
+body.vitals header.top .btn:not(.ghost){background:var(--v-accent)!important;background-image:none!important;color:var(--on-accent)!important;border:0!important;box-shadow:none!important;border-radius:6px}
+body.vitals main button.ghost,body.vitals main .btn.ghost,body.vitals .backbtn{background:var(--v-surface)!important;background-image:none!important;
+  border:1px solid var(--v-rule)!important;box-shadow:none!important;color:var(--v-ink)!important;border-radius:6px}
+body.vitals .ticker{background:var(--v-chrome-up)!important;border:1px solid var(--v-chrome-rule)!important;box-shadow:none!important;border-radius:8px;
+  color:var(--v-on-dark);min-height:44px;padding:6px 12px;--ink:var(--v-on-dark);--ink-2:var(--v-on-dark-muted);-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+body.vitals .ticker .tlabel{font:600 13px/20px var(--v-sans);color:var(--v-on-dark)}
+body.vitals .ticker .btn{font-size:13px;padding:4px 10px}
+body.vitals .ticker .iconbtn{color:var(--v-on-dark-muted)}
+body.vitals main::before,body.vitals::before,body.vitals::after{display:none!important}
 """.replace("DARKTOKENS", """
   --canvas:#080b14; --surface:#0f1320; --surface-2:#141a29; --surface-3:#1b2234;
   --ink:#eef1f8; --ink-2:#b0b8c9; --ink-3:#7f889b; --line:#1e2638; --line-2:#2b3551;
@@ -2301,7 +2372,8 @@ setInterval(tick,10000);tick();document.addEventListener('visibilitychange',func
 var track=tk.querySelector('.ttrack'),word=tk.querySelector('.tlabel'),snd=tk.querySelector('.tsound'),btn=tk.querySelector('.tlive'),
  tn=tk.querySelector('.tn'),panel=document.getElementById('chatlive'),KEY='psa-chat-chime',SEEN='psa-chat-seen',ac=null;
 function on(){try{return localStorage.getItem(KEY)!=='off'}catch(e){return true}}
-function paint(){snd.classList.toggle('off',!on());snd.textContent=on()?'🔔':'🔕'}
+var VIT=document.body.classList.contains('vitals');
+function paint(){snd.classList.toggle('off',!on());if(VIT){snd.innerHTML='<svg class=ic aria-hidden=true><use href="#i-bell"/></svg>';snd.setAttribute('aria-pressed',on()?'true':'false')}else snd.textContent=on()?'🔔':'🔕'}
 snd.addEventListener('click',function(){try{localStorage.setItem(KEY,on()?'off':'on')}catch(e){}paint();if(on())chime()});
 function ctx(){if(!ac){var A=window.AudioContext||window.webkitAudioContext;if(!A)return null;ac=new A()}if(ac.state==='suspended')ac.resume();return ac}
 document.addEventListener('pointerdown',function(){if(on())ctx()},{once:true});
@@ -2333,7 +2405,7 @@ function tip(c){return c.total+' chat'+(c.total!==1?'s':'')+' from '+c.name+' so
 function state(c){return c.status==='WAITING'?(c.waited?'waiting '+c.waited:'since '+c.since):'with '+c['with']}
 function link(c){var a=el('a');a.href='/chat/'+c.id;a.title=tip(c);return a}
 function drawTicker(lv,cs){var shown=cs.length?cs:lv;track.textContent='';
- shown.forEach(function(c){var a=link(c);a.dataset.id=c.id;a.appendChild(document.createTextNode('💬 '));a.appendChild(el('b',null,c.label));
+ shown.forEach(function(c){var a=link(c);a.dataset.id=c.id;if(!VIT)a.appendChild(document.createTextNode('💬 '));a.appendChild(el('b',null,c.label));
   a.appendChild(document.createTextNode(' — '+c.subject+' · '+c.board+' · '+state(c)));track.appendChild(a)});
  if(cs.length>1){var n=el('a',null,cs.length+' chats waiting');n.href='/chat';track.appendChild(n)}}
 function row(c){var r=el('div','trow'),g=el('div','grow'),a=link(c);r.dataset.id=c.id;a.appendChild(el('b',null,c.label));g.appendChild(a);
@@ -2366,7 +2438,7 @@ tk.querySelector('.tclose').addEventListener('click',function(){open(false);tk.h
 function look(){fetch('/chat/waiting.json',{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null}).then(function(j){
  if(!j)return;var lv=j.live||[],cs=j.chats||[];
  var key=JSON.stringify([lv,j.operators,j.me]);if(key!==lastL){drawTicker(lv,cs);drawPanel(lv,j);lastL=key}
- word.textContent='💬 '+(j.word||'');tn.textContent=lv.length;
+ word.textContent=(VIT?'':'💬 ')+(j.word||'');tn.textContent=lv.length;
  if(!lv.length){open(false);tk.hidden=true;first=false;return}
  var old=seen(),fresh=cs.filter(function(c){return old.indexOf(c.id)<0});
  var hid=hidden();if(lv.every(function(c){return hid.indexOf(c.id)>=0})){tk.hidden=true;remember(old.concat(fresh.map(function(c){return c.id})));first=false;return}
@@ -3035,11 +3107,20 @@ def chat_panel(live) -> str:
             + "<p class=tfoot><a href='/chat'>Open the Chat queue</a></p>")
 
 
-def _chat_banner(user) -> str:
+def _chat_banner(user, *, vitals: bool = False) -> str:
     """Drawn by the server already filled, so it is there from the first paint
-    and nothing below it moves when the page loads."""
+    and nothing below it moves when the page loads. On a PMC Vitals Console
+    page the glyphs are the desk's 16px stroke icons, never emoji (the design
+    system forbids them; its script keeps to that on body.vitals too)."""
     live = getattr(user, "live_chats", None) or []
     word, items = chat_ticker(live)
+    out = _chat_banner_html(live, word, items)
+    if vitals:
+        out = out.replace("💬 ", "").replace(">🔔<", ">" + icon("bell") + "<")
+    return out
+
+
+def _chat_banner_html(live, word, items) -> str:
     return ("<div id=chatticker class=ticker" + ("" if live else " hidden") + " role=status aria-live=polite>"
             f"<b class=tlabel>💬 {esc(word)}</b><div class=tview><div class=ttrack>{items}</div></div>"
             f"<button type=button class='btn tlive' aria-expanded=false aria-controls=chatlive><span>Live chats (<span class=tn>{len(live)}</span>) ▾</span></button>"
@@ -3047,6 +3128,22 @@ def _chat_banner(user) -> str:
             "<button type=button class='iconbtn tsound' title='Chime on or off' aria-label='Chime on or off'>🔔</button>"
             "<button type=button class='iconbtn tclose' title='Hide until the next new chat' aria-label='Hide'>✕</button>"
             f"<div id=chatlive class=tpanel role=dialog aria-label='Live chats' hidden>{chat_panel(live)}</div></div>")
+
+
+def _vitals(active: str) -> bool:
+    """The pages built to the PMC Vitals Console design system: Procurement's
+    (every page whose menu key is the area's or one of its modules)."""
+    return active in VITALS_KEYS
+
+
+VITALS_KEYS = frozenset({"procurement", "popurchreq", "popo", "porr", "postockreq", "poexpreq", "poissue", "poexpissue", "pocount",
+                         "poitems", "postock", "pomoves", "powh", "podrugs", "poreports", "pochanges"})
+
+
+# BizBox's own module numbers beside its modules in the menu, measured from appsysModules (SQL01, Part 104).
+# Warehouses and Drugs are submodules of MM02, so they carry none: showing one would be inventing it.
+MM_BADGE = {"poitems": "MM02", "popurchreq": "MM03", "popo": "MM04", "postockreq": "MM06", "poissue": "MM07",
+            "poexpreq": "MM08", "poexpissue": "MM09", "pocount": "MM12", "porr": "MM20"}
 
 
 def page(title: str, body: str, *, user=None, active: str = "", requester: bool | None = None,
@@ -3162,7 +3259,8 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
     def panel(g, label, pages):
         links = "".join(
             f'<a href="{esc(href)}" role=menuitem{" class=on aria-current=page" if key == active else ""}>'
-            f'{icon(icons.get(key, key))}<b>{esc(name)}</b>' + (f'<span class=why>{esc(blurb)}</span>' if blurb else "") + '</a>'
+            f'{icon(icons.get(key, key))}<b>{esc(name)}</b>' + (f'<i class=mm title="BizBox module {MM_BADGE[key]}">{MM_BADGE[key]}</i>' if key in MM_BADGE else "")
+            + (f'<span class=why>{esc(blurb)}</span>' if blurb else "") + '</a>'
             for key, href, name, blurb in pages)
         on = any(pg[0] == active for pg in pages)
         return (f'<div class="grp{" on" if on else ""}"><button type=button class="top{" on" if on else ""}" title="{esc(label)}" aria-haspopup=true'
@@ -3226,7 +3324,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         '<meta name=theme-color media="(prefers-color-scheme: dark)" content="#0f1115">'
         f'<link rel=icon href="{FAVICON}">'
         f"<title>{esc(title)} · {'PMC Requests' if requester else 'Dada PSA'}</title>{THEME_BOOT}"
-        f"<style>{STYLE}</style></head><body{' data-requester' if requester else ''}>"
+        f"<style>{STYLE}</style></head><body{' data-requester' if requester else ''}{' class=vitals' if _vitals(active) else ''}>"
         f'<div id="nprog" aria-hidden="true"></div>{SPRITE}'
         '<a class=skip href="#main">Skip to content</a>'
         f'<header class="top"><a class="brand" href="{"/my" if requester else "/"}"><i></i>'
@@ -3234,7 +3332,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
         f"<nav class=mega aria-label='Main'>{nav}</nav>{who}</header>"
         # 072: waiting chats run across the top of every desk page, right to left,
         # with a chime (Dada, 7 Oct 2026). Filled by the script from /chat/waiting.json.
-        + (_chat_banner(user)
+        + (_chat_banner(user, vitals=_vitals(active))
            if user is not None and not requester else "")
         + (f"<main id=main tabindex=-1 data-live='{esc(live)}'>" if live else "<main id=main tabindex=-1>") + f"{body}</main>"
         + (quick if quick is not None else (_quick_default(nav_items) if user is not None and not requester else ""))

@@ -44,13 +44,17 @@ SOURCE = "BIZBOX"
 KINDS = {
     "agreement": ("ext_agreement", {"ext_ref": "text", "name": "text", "party": "text", "starts_on": "date",
                                     "ends_on": "date", "status": "text", "amount": "money", "currency": "text"}),
+    # 087: is_active / is_inventory (vw_product carries every item since SQL01's Part 106; what a person may pick is
+    # a flag), and BizBox's own conversion and purchase prices; trx_key is a header's identity key, the slips' filter
     "product": ("ext_product", {"ext_ref": "text", "name": "text", "category": "text", "unit": "text",
-                                "unit_cost": "money", "tstamp": "text"}),
+                                "unit_cost": "money", "tstamp": "text", "is_active": "int", "is_inventory": "int",
+                                "conversion": "money", "purc_price": "money", "last_purc_price": "money"}),
     "purchase_order": ("ext_purchase_order", {"ext_ref": "text", "vendor": "text", "ordered_on": "date",
-                                              "status": "text", "total": "money", "currency": "text", "tstamp": "text"}),
+                                              "status": "text", "total": "money", "currency": "text", "tstamp": "text",
+                                              "trx_key": "text"}),
     "invoice": ("ext_invoice", {"ext_ref": "text", "party": "text", "invoiced_on": "date", "due_on": "date",
                                 "status": "text", "total": "money", "currency": "text", "agreement_ref": "text",
-                                "supplier_ref": "text", "tstamp": "text"}),
+                                "supplier_ref": "text", "tstamp": "text", "trx_key": "text"}),
     "po_line": ("ext_po_line", {"ext_ref": "text", "po_ref": "text", "line_no": "int", "product_ref": "text",
                                 "description": "text", "quantity": "money", "received_qty": "money",
                                 "unit_cost": "money", "tstamp": "text"}),
@@ -71,6 +75,20 @@ KINDS = {
     "rr_line": ("ext_rr_line", {"ext_ref": "text", "rr_ref": "text", "line_no": "int", "product_ref": "text",
                                 "description": "text", "quantity": "money", "unit_cost": "money", "po_ref": "text", "tstamp": "text"}),
 }
+# 087: BizBox's six existing documents, header and lines, on the one contract
+# SQL01 built the twelve views to (vw_<kind>, vw_<kind>_line). A line names its
+# document by doc_ref (the view's DocNo). No column for remarks or any
+# BizBox-authored text: the views select none.
+DOC_MIRRORS = ("stock_req", "expense_req", "purchase_req", "stock_issuance", "expense_issuance", "physical_count")
+DOC_HEADER = {"ext_ref": "text", "trx_key": "text", "doc_date": "date", "warehouse_src": "text", "warehouse_dst": "text",
+              "status": "text", "total_qty": "money", "total_items": "int", "total": "money", "tstamp": "text"}
+DOC_LINE = {"ext_ref": "text", "doc_ref": "text", "line_no": "int", "product_ref": "text", "description": "text",
+            "quantity": "money", "served_qty": "money", "system_qty": "money", "variance": "money", "unit": "text",
+            "conversion": "money", "unit_cost": "money", "total": "money", "tstamp": "text"}
+for _k in DOC_MIRRORS:
+    KINDS[_k] = (f"ext_{_k}", dict(DOC_HEADER))
+    KINDS[f"{_k}_line"] = (f"ext_{_k}_line", dict(DOC_LINE))
+LINE_PARENT = {f"{k}_line": k for k in DOC_MIRRORS}
 # Kinds whose view is a window in time (Dada, 13 Oct 2026: "views based on
 # time or days or months"): a row the view no longer returns is deleted on
 # the next read, not kept absent. Nothing was lost in BizBox; the window moved.
@@ -111,7 +129,7 @@ MAX_TEXT = 400
 # status, currency and unit are CODE, NVARCHAR(32)). SQLite has no widths, so
 # without this a 37-character BizBox status would pass every test and fail the
 # host's insert with "string or binary data would be truncated".
-WIDTH = {"status": 32, "currency": 32, "unit": 32, "list": 32, "kind": 32}
+WIDTH = {"status": 32, "currency": 32, "unit": 32, "list": 32, "kind": 32, "trx_key": 32}
 PAGE = 100
 # The longest key the mirror accepts. SQL Server caps an index key at 900 bytes
 # and warned on the first apply (29 Sep 2026) that ext_link's and ext_po_line's
@@ -174,6 +192,8 @@ def check_map(data: dict) -> dict:
             raise Refused("po_line: the map must name the column for po_ref")
         if kind == "rr_line" and "rr_ref" not in cols:
             raise Refused("rr_line: the map must name the column for rr_ref")
+        if kind in LINE_PARENT and "doc_ref" not in cols:
+            raise Refused(f"{kind}: the map must name the column for doc_ref")
         if kind == "movement" and not {"item_ref", "moved_on"} <= set(cols):
             raise Refused("movement: the map must name the columns for item_ref and moved_on")
     return data
@@ -309,10 +329,12 @@ def sync(conn: sqlite3.Connection, rows_by_kind: dict[str, list[dict]], *, at: d
             if not ref or ("name" in fields and not rec.get("name")) or ref in seen \
                     or (kind == "po_line" and not rec.get("po_ref")) \
                     or (kind == "rr_line" and not rec.get("rr_ref")) \
+                    or (kind in LINE_PARENT and not rec.get("doc_ref")) \
                     or (kind == "lookup" and not (rec.get("list") and rec.get("code"))) \
                     or (kind == "stock" and not (rec.get("warehouse_ref") and rec.get("item_ref") and rec.get("quantity") is not None)) \
                     or (kind == "movement" and not (rec.get("item_ref") and rec.get("moved_on"))) \
-                    or len(ref) > MAX_KEY or len(rec.get("po_ref") or "") > MAX_KEY or len(rec.get("rr_ref") or "") > MAX_KEY:
+                    or len(ref) > MAX_KEY or len(rec.get("po_ref") or "") > MAX_KEY or len(rec.get("rr_ref") or "") > MAX_KEY \
+                    or len(rec.get("doc_ref") or "") > MAX_KEY:
                 c["skipped"] += 1
                 continue
             seen.add(ref)
@@ -357,7 +379,8 @@ def sync(conn: sqlite3.Connection, rows_by_kind: dict[str, list[dict]], *, at: d
 READ_WORDS = {"purchase_order": "purchase orders", "po_line": "order lines", "product": "items",
               "invoice": "receiving reports", "agreement": "agreements", "lookup": "list entries",
               "warehouse": "warehouses", "medicine": "medicines", "stock": "stock lines", "movement": "movements",
-              "rr_line": "receiving lines"}
+              "rr_line": "receiving lines"} | {k: f"{MMS_WORDS[k].lower()}s" for k in DOC_MIRRORS} | {
+              f"{k}_line": f"{MMS_WORDS[k].lower()} lines" for k in DOC_MIRRORS}
 
 
 def read_words(result: str | None) -> str:
@@ -523,8 +546,8 @@ FIELD_WORDS = {"status": "Status", "ends_on": "End date", "due_on": "Due date", 
                "vendor": "Vendor", "ordered_on": "Order date", "supplier_ref": "Supplier's invoice no.",
                "category": "Category", "unit": "Unit", "currency": "Currency", "total": "Total", "amount": "Amount",
                "party": "Vendor", "invoiced_on": "Invoice date", "starts_on": "Start date", "description": "Description",
-               "quantity": "Quantity", "NEW": "New record", "department": "Issuing Department", "warehouse_ref": "Warehouse (from)",
-               "center": "Center", "doc_date": "Date", "product_ref": "Item ID"}
+               "quantity": "Quantity", "NEW": "New record", "warehouse_src": "Issuing Department", "warehouse_dst": "Requesting Department",
+               "doc_date": "Date", "product_ref": "Item ID"}
 # What a person may ADD (13 Oct 2026, Dada: "edits and adds on the bizbox
 # system"): the fields a new record carries, which of them BizBox needs
 # before it will take the record, and, for a purchase order, its lines.
@@ -538,15 +561,24 @@ ADDABLE = {
 # The MMS documents the desk raises and tracks itself (Dada, 14 Oct 2026:
 # "everything not on the desk yet, add on the desk"): a header of the fields
 # BizBox's forms carry in common and the lines, each an item BizBox has. They
-# go to BizBox as an ADD through psa.sp_apply_change under their own kind; the
-# desk has no mirror of BizBox's existing ones until SQL01 maps a view per kind.
-MMS_DOC_FIELDS = {"department": "text", "warehouse_ref": "text", "center": "text", "doc_date": "date"}
+# go to BizBox as an ADD through psa.sp_apply_change under their own kind.
+# 14 Oct 2026, measured (SQL01 and Bizbox Chat): the "department" on these
+# headers is the warehouse in two roles, FK_mscWarehouseSRC (issuing) and
+# FK_mscWarehouseDST (requesting); PMC has one branch, so every branch column
+# is a constant; and Center (FK_psDatacenter) is not a dimension and is never
+# read: psDatacenter is the patient-name table behind the stock card.
+MMS_DOC_FIELDS = {"warehouse_src": "text", "warehouse_dst": "text", "doc_date": "date"}
 MMS_DOC_LINES = {"product_ref": "text", "description": "text", "quantity": "money", "unit_cost": "money"}
-MMS_DOC_REQUIRED = {"stock_req": ("department", "warehouse_ref"), "expense_req": ("department", "warehouse_ref"),
-                    "purchase_req": ("department",), "stock_issuance": ("warehouse_ref", "department"),
-                    "expense_issuance": ("warehouse_ref", "department"), "physical_count": ("warehouse_ref",)}
+# which warehouses each document carries: issuing and requesting, uniformly (SQL01, Part 107: a purchase
+# requisition's issuing office is Procurement, a constant and not an absence); a count happens at one place.
+# The two may be the same warehouse: Procurement requisitions its own stock on 205 of 639 purchase requisitions.
+DOC_SIDES = {"stock_req": ("warehouse_src", "warehouse_dst"), "expense_req": ("warehouse_src", "warehouse_dst"),
+             "purchase_req": ("warehouse_src", "warehouse_dst"), "stock_issuance": ("warehouse_src", "warehouse_dst"),
+             "expense_issuance": ("warehouse_src", "warehouse_dst"), "physical_count": ("warehouse_src",)}
+MMS_DOC_REQUIRED = dict(DOC_SIDES)
 for _k, _req in MMS_DOC_REQUIRED.items():
-    ADDABLE[_k] = {"fields": dict(MMS_DOC_FIELDS), "required": _req, "lines": dict(MMS_DOC_LINES)}
+    ADDABLE[_k] = {"fields": {f: h for f, h in MMS_DOC_FIELDS.items() if f in DOC_SIDES[_k] or f == "doc_date"},
+                   "required": _req, "lines": dict(MMS_DOC_LINES)}
 DESK_KINDS = tuple(MMS_DOC_REQUIRED)
 
 
@@ -560,19 +592,16 @@ DESK_KINDS = tuple(MMS_DOC_REQUIRED)
 CHOICE_LIST = {("purchase_order", "status"): "po_status", ("purchase_order", "currency"): "currency",
                ("purchase_order", "vendor"): "vendor", ("invoice", "status"): "rr_status",
                ("product", "unit"): "unit", ("product", "category"): "category"}
-# the desk's documents: a warehouse BizBox has, a department the desk knows, a
-# centre from BizBox's list once SQL01 maps it (free text until then)
+# the desk's documents: both sides are a warehouse BizBox has (vw_warehouse, all 73)
 for _k in MMS_DOC_REQUIRED:
-    CHOICE_LIST[(_k, "warehouse_ref")] = "warehouse"
-    CHOICE_LIST[(_k, "department")] = "department"
-    CHOICE_LIST[(_k, "center")] = "center"
+    CHOICE_LIST[(_k, "warehouse_src")] = "warehouse"
+    CHOICE_LIST[(_k, "warehouse_dst")] = "warehouse"
 SEEN_IN = {"po_status": ("ext_purchase_order", "status"), "rr_status": ("ext_invoice", "status"),
            "currency": ("ext_purchase_order", "currency"), "unit": ("ext_product", "unit"),
            "category": ("ext_product", "category")}
 LIST_WORDS = {"po_status": "a status BizBox uses on purchase orders", "rr_status": "a status BizBox uses on receiving reports",
               "currency": "a currency BizBox uses", "unit": "a unit BizBox uses", "category": "a category BizBox uses",
-              "vendor": "a vendor BizBox has", "warehouse": "a warehouse BizBox has", "department": "a department the desk knows",
-              "center": "a centre BizBox uses"}
+              "vendor": "a vendor BizBox has", "warehouse": "a warehouse BizBox has", "department": "a department the desk knows"}
 
 
 def choices(conn, kind: str, field: str) -> list[tuple[str, str]]:
@@ -1100,8 +1129,11 @@ def check_add(conn, kind: str, record: dict, lines=None, *, reason: str) -> dict
                 continue                                   # a blank row on the form
             if not row.get("quantity") or float(row["quantity"]) <= 0:
                 raise Refused(f"Line {n}: a quantity above zero is needed.")
-            if row.get("product_ref") and get(conn, "product", row["product_ref"]) is None:
+            item = get(conn, "product", row["product_ref"]) if row.get("product_ref") else None
+            if row.get("product_ref") and item is None:
                 raise Refused(f"Line {n}: {row['product_ref']} is not an item BizBox has.")
+            if item is not None and item["is_active"] == 0:
+                raise Refused(f"Line {n}: {row['product_ref']} is inactive in BizBox; it cannot be picked.")
             kept_lines.append(row)
         if not kept_lines:
             raise Refused(f"A {KIND_WORDS.get(kind, kind.replace('_', ' '))} needs at least one line.")
@@ -1143,7 +1175,21 @@ def desk_document(conn, kind: str, ref: str):
     if b is None or b["change_kind"] != "ADD" or b["kind"] != LINK_KIND.get(kind):
         return None
     p = payload_of(b)
-    return {"batch": b, "record": p.get("record", {}), "lines": p.get("lines", []), "number": desk_numbers(conn, kind, b["batch_id"]).get(b["batch_id"])}
+    return {"batch": b, "record": desk_record_of(p.get("record", {})), "lines": p.get("lines", []),
+            "number": desk_numbers(conn, kind, b["batch_id"]).get(b["batch_id"])}
+
+
+def desk_record_of(rec: dict) -> dict:
+    """A desk document's header in today's shape. One saved before the payload
+    was corrected (14 Oct 2026) named one warehouse_ref and a department and a
+    centre: the warehouse is the issuing side, and the other two are dropped,
+    never shown and never sent."""
+    rec = dict(rec or {})
+    if "warehouse_src" not in rec and rec.get("warehouse_ref"):
+        rec["warehouse_src"] = rec["warehouse_ref"]
+    for gone in ("warehouse_ref", "department", "center"):
+        rec.pop(gone, None)
+    return rec
 
 
 def _number_in(answer) -> str | None:
@@ -1179,9 +1225,9 @@ def desk_numbers(conn, kind: str, batch_id: int | None = None) -> dict:
 def add_summary(rec: dict) -> str:
     """A new record in a few words: its name, its vendor, or the department
     and warehouse of a desk document."""
-    rec = rec or {}
+    rec = desk_record_of(rec) if not (rec or {}).get("name") and not (rec or {}).get("vendor") else (rec or {})
     return (rec.get("name") or rec.get("vendor")
-            or " · ".join(str(x) for x in (rec.get("department"), rec.get("warehouse_ref")) if x) or "new record")
+            or " → ".join(str(x) for x in (rec.get("warehouse_src"), rec.get("warehouse_dst")) if x) or "new record")
 
 
 def replace_add(conn, kind: str, batch_id: int, record: dict, lines=None, *, reason: str, at: datetime, actor: str) -> None:
@@ -1203,6 +1249,13 @@ def replace_add(conn, kind: str, batch_id: int, record: dict, lines=None, *, rea
                  ((f"{summary} ({len(kept_lines)} line(s))" if kept_lines else summary)[:MAX_TEXT], reason, batch_id))
     db.audit(conn, at=_stamp(at), actor=actor, action="BIZBOX_BATCH", subject_kind="ext_batch", subject_id=str(batch_id),
              detail=f"edited while waiting: new {LINK_KIND[kind].lower()}, {len(kept_lines)} line(s)")
+
+
+def pickable_items(conn, limit: int = 2000) -> list:
+    """The items a person may pick on a form: present, and not inactive in
+    BizBox (a page still resolves for every item; picking is the flag)."""
+    return conn.execute("SELECT ext_ref, name FROM ext_product WHERE source_id = ? AND present = 1 AND COALESCE(is_active, 1) = 1"
+                        " ORDER BY name, ext_ref LIMIT ?", (SOURCE, limit)).fetchall()
 
 
 def on_hand(conn, warehouse_ref: str, item_ref: str):
@@ -1598,11 +1651,14 @@ def movements(conn, *, item: str = "", warehouse: str = "", days: int = 30, kind
     """The item ledger inside a window of days, newest first, for one item,
     one warehouse, or every one; one kind, or one of the stock card's buckets;
     with the names. (rows, total)."""
-    since = ((now or datetime.now()).date() - timedelta(days=max(1, int(days)))).isoformat()
+    today = (now or datetime.now()).date()
+    since = (today - timedelta(days=max(1, int(days)))).isoformat()
+    # a window ends today, as psa.fn_item_ledger(@from, @to = today) does: BizBox holds a few future-dated rows
+    # (SQL01, Part 109) that would otherwise make "the last 7 days" reach into December
     sql = [" FROM ext_movement m LEFT JOIN ext_product p ON p.source_id = m.source_id AND p.ext_ref = m.item_ref"
            " LEFT JOIN ext_warehouse w ON w.source_id = m.source_id AND w.ext_ref = m.warehouse_ref"
-           " WHERE m.source_id = ? AND m.present = 1 AND m.moved_on >= ?"]
-    args: list = [SOURCE, since]
+           " WHERE m.source_id = ? AND m.present = 1 AND m.moved_on >= ? AND m.moved_on <= ?"]
+    args: list = [SOURCE, since, today.isoformat()]
     if item:
         sql.append(" AND m.item_ref = ?")
         args.append(item)
@@ -1610,8 +1666,9 @@ def movements(conn, *, item: str = "", warehouse: str = "", days: int = 30, kind
         sql.append(" AND m.warehouse_ref = ?")
         args.append(warehouse)
     if kind:
-        sql.append(" AND UPPER(COALESCE(m.kind, '')) = ?")
-        args.append(kind.upper())
+        codes = [k.strip().upper() for k in kind.split(",") if k.strip()]
+        sql.append(f" AND UPPER(COALESCE(m.kind, '')) IN ({','.join('?' * len(codes))})")
+        args.extend(codes)
     if bucket:
         clause, more = _bucket_clause(bucket)
         sql.append(clause)
@@ -1626,10 +1683,12 @@ def movements(conn, *, item: str = "", warehouse: str = "", days: int = 30, kind
 
 def movement_kinds(conn, *, days: int = 30, now: datetime | None = None, bucket: str = "") -> list:
     """(kind, word, count) inside the window, most common first; one bucket's when asked."""
-    since = ((now or datetime.now()).date() - timedelta(days=max(1, int(days)))).isoformat()
+    today = (now or datetime.now()).date()
+    since = (today - timedelta(days=max(1, int(days)))).isoformat()
     clause, more = _bucket_clause(bucket, alias="") if bucket else ("", [])
     out = conn.execute("SELECT UPPER(COALESCE(kind, '')) AS k, COUNT(*) AS n FROM ext_movement WHERE source_id = ? AND present = 1"
-                       f" AND moved_on >= ?{clause} GROUP BY UPPER(COALESCE(kind, '')) ORDER BY n DESC, k", (SOURCE, since, *more)).fetchall()
+                       f" AND moved_on >= ? AND moved_on <= ?{clause} GROUP BY UPPER(COALESCE(kind, '')) ORDER BY n DESC, k",
+                       (SOURCE, since, today.isoformat(), *more)).fetchall()
     return [(r["k"], move_word(r["k"]), r["n"]) for r in out]
 
 
@@ -1641,6 +1700,24 @@ def movement_buckets(conn, *, days: int = 30, now: datetime | None = None) -> li
     for k, _, n in movement_kinds(conn, days=days, now=now):
         counts[bucket_of(k)] += n
     return [(b, n) for b, n in counts.items() if b != OTHER_BUCKET or n]
+
+
+def movement_coverage(conn, now: datetime | None = None) -> dict:
+    """What the ledger mirror actually holds, so a window picker offers only
+    what the data supports (SQL01, Part 109: a year offered over ten days is
+    confidently wrong): the oldest day up to today, the days that spans, and
+    how many rows BizBox dated after today."""
+    today = (now or datetime.now()).date()
+    r = conn.execute("SELECT MIN(moved_on) AS a FROM ext_movement WHERE source_id = ? AND present = 1 AND moved_on <= ?",
+                     (SOURCE, today.isoformat())).fetchone()
+    future = conn.execute("SELECT COUNT(*) FROM ext_movement WHERE source_id = ? AND present = 1 AND moved_on > ?",
+                          (SOURCE, today.isoformat())).fetchone()[0]
+    oldest = r["a"] if r else None
+    try:
+        days = (today - date.fromisoformat(oldest[:10])).days + 1 if oldest else 0
+    except ValueError:
+        days = 0
+    return {"oldest": oldest, "today": today.isoformat(), "days": max(0, days), "future": future}
 
 
 def movement_window(conn) -> tuple[str | None, str | None]:
@@ -1655,6 +1732,38 @@ def rr_lines(conn, rr_ref: str) -> list:
         return []
     return conn.execute("SELECT * FROM ext_rr_line WHERE source_id = ? AND rr_ref = ? AND present = 1 ORDER BY line_no, ext_ref",
                         (SOURCE, rr_ref)).fetchall()
+
+
+def doc_lines(conn, kind: str, doc_ref: str) -> list:
+    """A mirrored BizBox document's lines, in order (087)."""
+    table = f"ext_{kind}_line"
+    if kind not in DOC_MIRRORS or not db.table_exists(conn, table):
+        return []
+    return conn.execute(f"SELECT * FROM {table} WHERE source_id = ? AND doc_ref = ? AND present = 1 ORDER BY line_no, ext_ref",
+                        (SOURCE, doc_ref)).fetchall()
+
+
+def documents(conn, kind: str, *, q: str = "", status: str = "", limit: int = PAGE, offset: int = 0) -> tuple[list, int]:
+    """BizBox's existing documents of a kind, newest first, with the two
+    warehouses' names; (rows, total). Empty until the twelve views are mapped."""
+    table = f"ext_{kind}"
+    if kind not in DOC_MIRRORS or not db.table_exists(conn, table):
+        return [], 0
+    where = [f" FROM {table} d LEFT JOIN ext_warehouse ws ON ws.source_id = d.source_id AND ws.ext_ref = d.warehouse_src"
+             " LEFT JOIN ext_warehouse wd ON wd.source_id = d.source_id AND wd.ext_ref = d.warehouse_dst"
+             " WHERE d.source_id = ? AND d.present = 1"]
+    args: list = [SOURCE]
+    if q:
+        where.append(" AND (LOWER(d.ext_ref) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(ws.name, '')) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(wd.name, '')) LIKE ? ESCAPE '\\')")
+        args += [_like(q.lower())] * 3
+    if status:
+        where.append(" AND d.status = ?")
+        args.append(status)
+    sql = "".join(where)
+    total = conn.execute("SELECT COUNT(*)" + sql, args).fetchone()[0]
+    rows = conn.execute("SELECT d.*, ws.name AS src_name, wd.name AS dst_name" + sql
+                        + " ORDER BY d.doc_date DESC, d.ext_ref DESC LIMIT ? OFFSET ?", [*args, limit, offset]).fetchall()
+    return rows, total
 
 
 def received_against(conn, po_ref: str) -> list:
