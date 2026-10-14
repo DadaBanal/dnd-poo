@@ -17,7 +17,7 @@
 | Job | Card name | Status |
 |---|---|---|
 | `01-login-screen.md` + `02-design-review-fixes.md` | Job 01 · Login screen (Vitals v7) | **live** 15 Oct 2026 on Dada's "restart" — `D:\dnd-poo` at `765351c`, code `336a4f1` (runbook Parts 121–122). Dada's word, same day: `Bash(sqlcmd *)` deny removed; the 15 test-run files moved (not deleted) to `D:\psa\files-testrun-20261015`. Open finding: `psa.attachment` 400 hashed rows, `psa.chat_file` 22, but `D:\psa\files` held no files before the run |
-| `03-waiting-rule.md` | Job 03 · Waiting rule | open |
+| `03-waiting-rule.md` | Job 03 · Waiting rule | **running** — started 15 Oct 2026 on Dada's "start job 03", from `352fd76` |
 
 A new job: add a one-page brief here as `NN-<name>.md` (Status line first, then *First: read platform/psa-spine/CLAUDE.md*),
 and a row above.
