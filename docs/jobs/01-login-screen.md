@@ -1,4 +1,4 @@
-Status: open
+Status: done 15 Oct 2026 336a4f1
 
 # Job 01 — the login screen, to PMC Vitals Console v7
 

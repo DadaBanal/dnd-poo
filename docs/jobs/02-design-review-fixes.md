@@ -1,4 +1,4 @@
-Status: open
+Status: done 15 Oct 2026 336a4f1
 
 # Job 02 — the rest of the 7d037f5 design review
 

@@ -16,7 +16,7 @@
 
 | Job | Card name | Status |
 |---|---|---|
-| `01-login-screen.md` + `02-design-review-fixes.md` | Job 01 · Login screen (Vitals v7) | **running — finishing and verifying WS36's WIP `84bcb47`, which did most of both jobs**; left: suite, error page, breadcrumb hit area, review, README |
+| `01-login-screen.md` + `02-design-review-fixes.md` | Job 01 · Login screen (Vitals v7) | done 15 Oct 2026, `336a4f1` (runbook Part 121) — waits on Dada's "restart" |
 | `03-waiting-rule.md` | Job 03 · Waiting rule | open |
 
 A new job: add a one-page brief here as `NN-<name>.md` (Status line first, then *First: read platform/psa-spine/CLAUDE.md*),
