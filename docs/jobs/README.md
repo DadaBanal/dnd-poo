@@ -1,16 +1,15 @@
-# Jobs — one page each, one session each
+# Jobs — the work list for the main SQL01 chat
 
 ## How this runs
 
-- **Home:** one session named **PSA desk — control**, pinned at the top of the *PMC — PSA Ticketing* group. It never
-  builds. It starts jobs, says what is running and done (from this board), and carries Dada's decisions. When it grows
-  long, archive it and open a new one with the same name: this board and the runbook are its memory.
-- **A job:** Dada tells control *"start job NN"*; control puts up a card (spawn task) titled
-  **"Job NN · <short name>"** — e.g. *Job 02 · Design review fixes* — whose prompt is *do docs/jobs/NN-<name>.md* plus
-  the worktree push rule in `platform/psa-spine/CLAUDE.md` §4. One click starts it; it reads `platform/psa-spine/CLAUDE.md`
-  and the brief, builds, tests, reviews, pushes, adds one runbook paragraph, marks its brief done, and closes.
-- **Going live** is Dada's word (*"restart"*), said in the job's session.
-- **One job builds at a time**, so two sessions never push to the branch at once.
+- **The main SQL01 chat builds** (Dada, 15 Oct 2026). Per-job sessions and the control chat were tried on 15 Oct and
+  dropped: each new session re-learned the codebase (one reached 587K tokens in two hours) and carried ~95K of fixed
+  overhead. Job 03 was already running when this changed and finishes in its own session; no new job sessions after it.
+- Each file here is still the brief for one piece of work: the main chat works it, commits, adds one runbook
+  paragraph, and marks the brief `Status: done <date> <commit>`.
+- **Going live** is Dada's word (*"restart"*).
+- Before running the test suite or anything that writes files: the attachment-store rule in
+  `platform/psa-spine/CLAUDE.md` §2.
 
 ## The board
 

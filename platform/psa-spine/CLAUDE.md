@@ -23,24 +23,33 @@ The `pmc-*` skills live in the record (`Documents/Claude/.claude/skills`) and ar
 | A library, framework or API question | `find-docs` (ctx7) |
 | Web search or fetch | `web-research-tools` (TinyFish first) |
 
-## 2. One job, one session — the token rule
+## 2. Build in the main chat — the token rule
 
-- **A session does one job and closes.** Start from a brief in `docs/jobs/` (one page). End with a commit and a
-  runbook entry of **one paragraph**. The repo and the runbook are the memory, not the chat.
-- **Never fork a long session** — a fork carries its whole context. Never keep one chat running all week: an idle
-  gap past the cache TTL re-caches everything at once.
-- **Subagents only to keep a big dump out of context** (a codebase sweep, a long SQL survey), and on a light model
-  (`model: haiku`) for simple ones. They cost more tokens in total, not fewer (Anthropic: agents ~4×, multi-agent
-  ~15× a chat).
-- `/clear` between unrelated tasks. Lower `/effort` for routine measurement and record-keeping.
+**Dada, 15 Oct 2026: build in the main SQL01 chat; do not spin up a session per job.** Measured the same day: a
+fresh job session reached **587K tokens in two hours** re-learning the codebase this chat already knew, every
+session carries **~95K of fixed overhead**, and the 5-hour plan window went 11% → 26% while three ran. A long chat
+compacts and carries on; it does not need closing. The one-session-per-job advice was wrong for this desk.
+
+- **One builder: the main SQL01 chat.** No job cards, no forks, no extra standing agents (Anthropic: agents ~4×,
+  multi-agent ~15× the tokens of a chat).
+- **Subagents only to keep a big dump out of context** (a codebase sweep, a long SQL survey), on a light model.
 - Preprocess big outputs in the command (grep, `head`, a Python filter) — never pipe a whole file or table into the
-  conversation.
+  conversation. Grep the runbook; never read it whole.
+- Records stay short: one paragraph per runbook Part.
+
+### Before any test, seed, reset or tool that writes — the live attachment store
+
+`PSA_ATTACHMENT_DIR` is set **machine-wide to `D:\psa\files`, the live desk's attachment store, which has no backup.**
+On 15 Oct 2026 a test run inherited it and its retention tests emptied the store (285 of 400 attachments). So:
+**read the variable at Machine, User and Process scope, state the resolved path out loud, and override it
+explicitly to a scratch folder** before running anything that writes files. `os.environ.setdefault` does nothing
+when the machine value is set — assign it. Never assume an inherited environment is safe.
 
 ## 3. Who holds what
 
 | | |
 |---|---|
-| **Building** | **SQL01 sessions on this machine, one fresh session per job** (from 15 Oct 2026; Dada moved the build here from the cloud session WS36, which stops). |
+| **Building** | **The main SQL01 chat on this machine** (Dada, 15 Oct 2026: the build moved here from the cloud session WS36, which has stopped; per-job sessions were tried the same day and dropped as costlier). |
 | **This repo / desk code** | `platform/psa-spine` (Python, SQLite tests, T-SQL port in `sqlserver/`, schema steps `schema/NNN_*.sql`, now at 088) |
 | **BizBox measurement** | the **Bizbox Chat** session — every question about what BizBox stores or how its client behaves goes there, never probed here. Findings and asks only; "nothing needed back" means no reply. |
 | **Decisions** | Dada. He decides fast on one recommendation and badly on a menu. |
