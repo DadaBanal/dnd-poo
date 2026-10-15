@@ -1524,24 +1524,20 @@ class BoardEngineTest(unittest.TestCase):
         self._move("IT_HELP.PARTS", datetime(2026, 11, 16, 9, 0))
         again = self._move("IT_HELP.PARTS", datetime(2026, 11, 16, 10, 0))
         self.assertEqual(again["paused"], [])
-        # One: the RESOLVE clock. RESPOND never pauses (see the next test).
+        # One: the RESOLVE clock. RESPOND was met by the move out of New.
         self.assertEqual(self.conn.execute(
             "SELECT COUNT(*) c FROM ticket_clock_pause").fetchone()["c"], 1)
 
-    def test_a_waiting_status_never_pauses_the_respond_clock(self):
-        """Parking a ticket before anyone answered is not a response.
-
-        Otherwise a New ticket moved straight to 'waiting for parts' would stop
-        accruing response time and a missed response would never show. The
-        record's §5.5 pauses the RESOLVE clock in a waiting status, not RESPOND.
-        """
+    def test_moving_a_new_ticket_to_a_waiting_status_is_the_response(self):
+        """Job 03 (Dada, 15 Oct 2026), replacing "a waiting status never
+        pauses the respond clock": ConnectWise's rule, which the desk's
+        escalation vocabulary copies, meets respond by the move out of a
+        not-responded status. Parking a New ticket in a waiting status stops
+        RESPOND at the move and pauses RESOLVE; nothing runs on to breach."""
         result = self._move("IT_HELP.PARTS", datetime(2026, 11, 16, 9, 0))
+        self.assertEqual(result["stopped"], ["RESPOND"])
         self.assertEqual(result["paused"], ["RESOLVE"])
-        respond = self.conn.execute(
-            "SELECT clock_id FROM ticket_clock WHERE clock = 'RESPOND'").fetchone()
-        self.assertEqual(self.conn.execute(
-            "SELECT COUNT(*) c FROM ticket_clock_pause WHERE clock_id = ?",
-            (respond["clock_id"],)).fetchone()["c"], 0)
+        self.assertEqual(self._clock("RESPOND")["stopped_by_status"], "IT_HELP.PARTS")
 
     def test_closing_from_a_pause_closes_the_pause_first(self):
         """Otherwise the paused interval runs on past the moment it stopped."""
@@ -1618,6 +1614,279 @@ class BoardEngineTest(unittest.TestCase):
         self._move("IT_HELP.WORKING", datetime(2026, 11, 16, 8, 30))
         allowed, why = board.may_book_effort(self.conn, "ITO-4001")
         self.assertTrue(allowed, why)
+
+
+class WaitingRuleTest(unittest.TestCase):
+    """Job 03 — Dada's rule for a ticket waiting on someone outside the desk
+    (15 Oct 2026; HANDOFF-sql01-cloud-WS36-20261015-waiting-rule.md). Both
+    clocks stop; respond is met by the move; at 3 days a reminder goes out; 3
+    days later the ticket closes to >Closed with the reopen sentence; a reply
+    by email or portal reopens it."""
+
+    WID = "ITO-5001"
+    REQUESTER = "nurse.ward3@pmcne.ph"
+    T0 = datetime(2026, 11, 16, 8, 0)
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = _fresh(self.tmp)
+        self.conn.execute(
+            "INSERT INTO calendar (calendar_id, name, monday_start, monday_end,"
+            " tuesday_start, tuesday_end, wednesday_start, wednesday_end,"
+            " thursday_start, thursday_end, friday_start, friday_end,"
+            " saturday_start, saturday_end, sunday_start, sunday_end)"
+            " VALUES ('CLINICAL','Clinical 24x7','00:00','24:00','00:00','24:00',"
+            "'00:00','24:00','00:00','24:00','00:00','24:00','00:00','24:00','00:00','24:00')")
+        for sid, name, esc, closed, desc in (
+                ("IT_HELP.NEW", "New", "NOT_RESPONDED", 0, None),
+                ("IT_HELP.TRIAGE", "Triage", "NOT_RESPONDED", 0, None),
+                ("IT_HELP.WORKING", "In progress", "RESPONDED", 0, None),
+                ("IT_HELP.PARTS", "Waiting on Parts", "NO_ESCALATION", 0, "We are waiting for a part to arrive"),
+                ("IT_HELP.REQ", "Waiting on Requester", "NO_ESCALATION", 0, "We need something from you"),
+                ("IT_HELP.APPROVAL", "Awaiting approval", "NO_ESCALATION", 0, "Waiting for an approval"),
+                ("IT_HELP.RESOLVED", "Resolved", "RESOLVED", 0, None),
+                ("IT_HELP.CLOSED", ">Closed", "RESOLVED", 1, None)):
+            self.conn.execute(
+                "INSERT INTO board_status (board_status_id, board_id, name, escalation_status, is_closed,"
+                " customer_description, is_default) VALUES (?,'IT_HELP',?,?,?,?,?)",
+                (sid, name, esc, closed, desc, 1 if sid == "IT_HELP.NEW" else 0))
+        for clock, minutes in (("RESPOND", 60), ("RESOLVE", 240)):
+            self.conn.execute(
+                "INSERT INTO sla_target (board_id, priority, clock, target_minutes,"
+                " calendar, enforced) VALUES ('IT_HELP','P1',?,?, 'CLINICAL_24x7', 0)",
+                (clock, minutes))
+        self.conn.execute("UPDATE board SET notify_requester = 1, reopen_status_id = 'IT_HELP.WORKING'"
+                          " WHERE board_id = 'IT_HELP'")
+        self._ticket(self.WID)
+        self.conn.commit()
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _ticket(self, wid, status="IT_HELP.NEW", state="NEW"):
+        self.conn.execute(
+            "INSERT INTO work_item (work_item_id, source, name, entity_id, contract_basis)"
+            " VALUES (?,'desk','Ward printer','PMC','BASELINE')", (wid,))
+        self.conn.execute(
+            "INSERT INTO ticket (work_item_id, board_id, path, impact, urgency, priority,"
+            " priority_source, requested_by, requested_at, opened_at, state, board_status_id, intake_source)"
+            " VALUES (?,'IT_HELP','INCIDENT','I1','U1','P1','MATRIX',?,?,?,?,?,'PORTAL')",
+            (wid, self.REQUESTER, "2026-11-16 08:00", "2026-11-16 08:00", state, status))
+        board.open_clocks(self.conn, wid, at=self.T0, calendar_id="CLINICAL")
+
+    def _move(self, status_id, at, wid=None):
+        return board.change_status(self.conn, wid or self.WID, status_id, at=at, actor="Cadano")
+
+    def _clock(self, clock, wid=None):
+        return self.conn.execute("SELECT * FROM ticket_clock WHERE work_item_id = ? AND clock = ?",
+                                 (wid or self.WID, clock)).fetchone()
+
+    def _sweep(self, at):
+        from psaspine import waiting
+        return waiting.sweep(self.conn, at=at)
+
+    def _mail(self, role="REQUESTER"):
+        return self.conn.execute("SELECT * FROM notification WHERE work_item_id = ? AND recipient_role = ?"
+                                 " ORDER BY notification_id", (self.WID, role)).fetchall()
+
+    def _sent(self):
+        self.conn.execute("UPDATE notification SET status = 'SENT' WHERE status = 'PENDING'")
+
+    def _ticket_row(self):
+        return self.conn.execute("SELECT t.*, s.name AS status_name, s.is_closed FROM ticket t"
+                                 " JOIN board_status s ON s.board_status_id = t.board_status_id"
+                                 " WHERE t.work_item_id = ?", (self.WID,)).fetchone()
+
+    # ------------------------------------------------- 1. both clocks stop
+
+    def test_a_waiting_status_pauses_the_respond_clock_too(self):
+        """The "Breached by 28h" defect: PMC-001527 sat in Awaiting approval
+        with its respond clock running. A ticket already waiting with respond
+        unmet (it got there before this rule) has respond paused, not run."""
+        self.assertTrue(clocks.is_pause("NO_ESCALATION", "RESPOND"))
+        self.assertTrue(clocks.is_pause("NO_ESCALATION", "RESOLVE"))
+        self.conn.execute("UPDATE ticket SET board_status_id = 'IT_HELP.PARTS', state = 'WAITING_CLIENT'"
+                          " WHERE work_item_id = ?", (self.WID,))
+        moved = self._move("IT_HELP.APPROVAL", datetime(2026, 11, 16, 8, 30))
+        self.assertEqual(sorted(moved["paused"]), ["RESOLVE", "RESPOND"])
+        st = clocks.state_of(self.conn, self._clock("RESPOND")["clock_id"], as_of=datetime(2026, 11, 17, 8, 30))
+        self.assertEqual(st["elapsed_minutes"], 30)              # a day waiting counts nothing
+        self.assertFalse(st["breached"])
+        self.assertTrue(st["paused"])
+
+    def test_a_ticket_parked_before_the_rule_has_its_clocks_paused_by_the_sweep(self):
+        """PMC-001527's shape: in Awaiting approval since before job 03, the
+        respond clock running and no pause. The sweep pauses it from when the
+        ticket entered the status, so the false breach ends without a move."""
+        self.conn.execute("UPDATE ticket SET board_status_id = 'IT_HELP.APPROVAL', state = 'WAITING_CLIENT'"
+                          " WHERE work_item_id = ?", (self.WID,))
+        self.conn.execute("INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail) VALUES"
+                          " (?, '2026-11-16 08:20', 'STATUS_CHANGE', 'Cadano', 'IT_HELP.NEW -> IT_HELP.APPROVAL')",
+                          (self.WID,))
+        self.assertEqual(self._sweep(datetime(2026, 11, 17, 9, 0))["paused"], 2)
+        st = clocks.state_of(self.conn, self._clock("RESPOND")["clock_id"], as_of=datetime(2026, 11, 18, 9, 0))
+        self.assertEqual(st["elapsed_minutes"], 20)
+        self.assertFalse(st["breached"])
+        self.assertEqual(self._sweep(datetime(2026, 11, 17, 9, 1))["paused"], 0)          # once
+        back = self._move("IT_HELP.WORKING", datetime(2026, 11, 18, 9, 0))
+        self.assertIn("RESOLVE", back["resumed"])
+
+    def test_the_clocks_resume_where_they_stopped_not_from_zero(self):
+        self._move("IT_HELP.WORKING", datetime(2026, 11, 16, 8, 30))
+        self._move("IT_HELP.REQ", datetime(2026, 11, 16, 9, 0))
+        back = self._move("IT_HELP.WORKING", datetime(2026, 11, 20, 9, 0))
+        self.assertEqual(back["resumed"], ["RESOLVE"])
+        used = clocks.elapsed_minutes(self.conn, self._clock("RESOLVE")["clock_id"],
+                                      as_of=datetime(2026, 11, 20, 10, 0))
+        self.assertEqual(used, 120)                              # 08:00-09:00, then 09:00-10:00 four days on
+
+    # --------------------------------------------- 2. respond met by the move
+
+    def test_respond_is_met_by_the_move_out_of_a_not_responded_status(self):
+        moved = self._move("IT_HELP.APPROVAL", datetime(2026, 11, 16, 8, 45))
+        self.assertEqual(moved["stopped"], ["RESPOND"])
+        self.assertEqual(moved["paused"], ["RESOLVE"])
+        st = clocks.state_of(self.conn, self._clock("RESPOND")["clock_id"], as_of=datetime(2026, 11, 19, 9, 0))
+        self.assertEqual(st["elapsed_minutes"], 45)
+        self.assertFalse(st["breached"])                         # three days on, never "Breached by 28h"
+
+    def test_a_move_between_two_not_responded_statuses_is_not_a_response(self):
+        moved = self._move("IT_HELP.TRIAGE", datetime(2026, 11, 16, 8, 45))
+        self.assertEqual(moved["stopped"], [])
+        self.assertIsNone(self._clock("RESPOND")["stopped_at"])
+        self.assertFalse(clocks.stops_clock("NOT_RESPONDED", "RESPOND", "NOT_RESPONDED"))
+        self.assertTrue(clocks.stops_clock("NO_ESCALATION", "RESPOND", "NOT_RESPONDED"))
+        self.assertFalse(clocks.stops_clock("NO_ESCALATION", "RESOLVE", "NOT_RESPONDED"))
+
+    # --------------------------------------------------- 3. time in status
+
+    def test_minutes_in_this_status_is_a_field_a_rule_can_test(self):
+        from psaspine import workflow
+        self._move("IT_HELP.REQ", datetime(2026, 11, 16, 10, 0))
+        row = workflow.ticket_row(self.conn, self.WID, now=datetime(2026, 11, 16, 12, 30))
+        self.assertEqual(row["status_minutes"], 150)
+        self.assertEqual(row["age_minutes"], 270)                # since opened: a different question
+        workflow.ensure_vocabulary(self.conn)
+        self.assertEqual(self.conn.execute("SELECT field FROM workflow_trigger WHERE trigger_id ="
+                                           " 'TICKET.STATUS_MINUTES'").fetchone()[0], "status_minutes")
+
+    # ------------------------------------- the reminder and the close
+
+    def test_the_reminder_goes_to_the_requester_at_three_days_and_once(self):
+        self._move("IT_HELP.REQ", datetime(2026, 11, 16, 10, 0))
+        self._sent()
+        self.assertEqual(self._sweep(datetime(2026, 11, 19, 9, 59))["reminded"], 0)
+        self.assertEqual(self._sweep(datetime(2026, 11, 19, 10, 0))["reminded"], 1)
+        mail = self._mail()
+        self.assertEqual(len(mail), 1)
+        self.assertIn("still waiting to hear from you", mail[0]["subject"])
+        self.assertIn("[ITO-5001]", mail[0]["subject"])
+        self.assertIn("we still need a response from you", mail[0]["body"])
+        self.assertEqual(mail[0]["recipient"], self.REQUESTER)
+        self.assertEqual(self._sweep(datetime(2026, 11, 19, 10, 5))["reminded"], 0)      # once
+        self.assertEqual(self._ticket_row()["board_status_id"], "IT_HELP.REQ")             # still open
+
+    def test_three_days_after_the_reminder_it_closes_to_closed_never_resolved(self):
+        self._move("IT_HELP.REQ", datetime(2026, 11, 16, 10, 0))
+        self._sweep(datetime(2026, 11, 19, 10, 0))
+        self._sent()
+        self.assertEqual(self._sweep(datetime(2026, 11, 22, 9, 59))["closed"], 0)
+        self.assertEqual(self._sweep(datetime(2026, 11, 22, 10, 0))["closed"], 1)
+        t = self._ticket_row()
+        self.assertEqual(t["board_status_id"], "IT_HELP.CLOSED")
+        self.assertEqual(t["state"], "CLOSED")
+        self.assertIsNotNone(t["closed_at"])
+        why = self.conn.execute("SELECT detail FROM ticket_event WHERE work_item_id = ? AND kind = 'WAITING_CLOSED'",
+                                (self.WID,)).fetchone()[0]
+        self.assertIn("no response after 6 days", why)
+        last = self._mail()[-1]
+        self.assertEqual(last["status"], "PENDING")
+        self.assertIn("We tried to contact you but didn't get a response", last["body"])
+        self.assertIn("If you feel this is a mistake, please reply to this email", last["body"])
+        self.assertIn("reply on the PMC Requests portal", last["body"])
+        # The ordinary close email is not sent as well: one email, saying why.
+        self.assertEqual(len([m for m in self._mail() if m["status"] == "PENDING"]), 1)
+        self.assertNotIn("We've closed your request", last["body"])
+
+    def test_awaiting_approval_reminds_both_and_closes_as_not_approved(self):
+        from psaspine import approvals
+        approvals.request(self.conn, self.WID, approver="head.nursing@pmcne.ph",
+                          at=datetime(2026, 11, 16, 10, 0), actor="Cadano")
+        self.assertEqual(self._ticket_row()["board_status_id"], "IT_HELP.APPROVAL")
+        self._sent()
+        self.assertEqual(self._sweep(datetime(2026, 11, 19, 10, 0))["reminded"], 1)
+        approver = [m for m in self._mail("APPROVER") if m["status"] == "PENDING"]
+        self.assertEqual(len(approver), 1)
+        self.assertEqual(approver[0]["recipient"], "head.nursing@pmcne.ph")
+        self.assertIn("still waiting for your approval", approver[0]["subject"])
+        requester = [m for m in self._mail() if m["status"] == "PENDING"]
+        self.assertEqual(len(requester), 1)
+        self.assertIn("still waiting for an approval", requester[0]["subject"])
+        self._sent()
+        self.assertEqual(self._sweep(datetime(2026, 11, 22, 10, 0))["closed"], 1)
+        self.assertEqual(self._ticket_row()["board_status_id"], "IT_HELP.CLOSED")
+        self.assertEqual(approvals.for_ticket(self.conn, self.WID)[-1]["status"], "WITHDRAWN")
+        self.assertIn("not approved in time", self._mail()[-1]["body"])
+        why = self.conn.execute("SELECT detail FROM ticket_event WHERE work_item_id = ? AND kind = 'WAITING_CLOSED'",
+                                (self.WID,)).fetchone()[0]
+        self.assertIn("no approval after 6 days", why)
+
+    def test_a_reply_restarts_the_count_and_stops_a_close(self):
+        self._move("IT_HELP.REQ", datetime(2026, 11, 16, 10, 0))
+        self.conn.execute("INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail, note_flag)"
+                          " VALUES (?, '2026-11-18 10:00', 'PORTAL_REPLY', ?, 'Room 4, the second printer.',"
+                          " 'DISCUSSION')", (self.WID, self.REQUESTER))
+        self.assertEqual(self._sweep(datetime(2026, 11, 19, 10, 0))["reminded"], 0)
+        self.assertEqual(self._sweep(datetime(2026, 11, 21, 10, 0))["reminded"], 1)       # 3 days from the reply
+        self.conn.execute("INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail, note_flag)"
+                          " VALUES (?, '2026-11-22 09:00', 'INTAKE_REPLY', ?, 'It is the HP one.', 'DISCUSSION')",
+                          (self.WID, self.REQUESTER))
+        self.assertEqual(self._sweep(datetime(2026, 11, 24, 10, 0))["closed"], 0)          # answered after the reminder
+        self.assertEqual(self._ticket_row()["board_status_id"], "IT_HELP.REQ")
+
+    def test_other_waiting_statuses_stop_the_clocks_but_are_not_chased(self):
+        self._move("IT_HELP.PARTS", datetime(2026, 11, 16, 10, 0))
+        counts = self._sweep(datetime(2026, 11, 30, 10, 0))
+        self.assertEqual((counts["waiting"], counts["reminded"], counts["closed"]), (0, 0, 0))
+        self.assertEqual(self._ticket_row()["board_status_id"], "IT_HELP.PARTS")
+        from psaspine import waiting
+        self.assertIsNone(waiting.waits_on(board.status(self.conn, "IT_HELP.PARTS")))
+        self.assertEqual(waiting.waits_on(board.status(self.conn, "IT_HELP.REQ")), "RESPONSE")
+        self.assertEqual(waiting.waits_on(board.status(self.conn, "IT_HELP.APPROVAL")), "APPROVAL")
+
+    def test_with_the_boards_requester_email_off_the_reminder_is_still_on_the_ticket(self):
+        """Nothing can be sent, so the ticket says so; the close still counts
+        from it, so a ticket never waits for ever."""
+        self.conn.execute("UPDATE board SET notify_requester = 0 WHERE board_id = 'IT_HELP'")
+        self._move("IT_HELP.REQ", datetime(2026, 11, 16, 10, 0))
+        self._sweep(datetime(2026, 11, 19, 10, 0))
+        said = self.conn.execute("SELECT detail FROM ticket_event WHERE work_item_id = ? AND kind ="
+                                 " 'WAITING_REMINDER'", (self.WID,)).fetchone()[0]
+        self.assertIn("no email could be queued", said)
+        self.assertEqual(self._mail(), [])
+        self.assertEqual(self._sweep(datetime(2026, 11, 22, 10, 0))["closed"], 1)
+
+    # ------------------------------------------- a reply reopens it
+
+    def test_a_reply_by_email_reopens_a_ticket_closed_for_no_response(self):
+        self._move("IT_HELP.REQ", datetime(2026, 11, 16, 10, 0))
+        self._sweep(datetime(2026, 11, 19, 10, 0))
+        self._sweep(datetime(2026, 11, 22, 10, 0))
+        self.assertEqual(self._ticket_row()["state"], "CLOSED")
+        self.assertTrue(intake.reopen_on_reply(self.conn, self.WID, at=datetime(2026, 11, 23, 9, 0), actor="intake"))
+        t = self._ticket_row()
+        self.assertEqual(t["board_status_id"], "IT_HELP.WORKING")
+        self.assertIsNone(t["closed_at"])
+        self.assertNotEqual(t["state"], "CLOSED")
+
+    def test_the_waiting_words_are_ones_a_board_could_save(self):
+        from psaspine import outbox
+        for kind, variants in outbox.WAITING_WORDS.items():
+            self.assertIn(kind, outbox.WAITING_KINDS)
+            self.assertEqual(set(variants) - {"APPROVER"}, {"APPROVAL", "RESPONSE"})
+            for subject, body in variants.values():
+                outbox._checked(subject, body)                   # only the known placeholders
 
 
 class WalkthroughTest(unittest.TestCase):
@@ -5080,6 +5349,28 @@ class PortalTest(unittest.TestCase):
                           " AND kind='PORTAL_REPLY'").fetchone()
         conn.close()
         self.assertTrue(ok)
+
+    def test_a_portal_reply_reopens_a_closed_request_as_an_email_reply_does(self):
+        """Job 03: a ticket closed for no response says "reply ... through the
+        portal ... to reopen". Until now only an email reply reopened one."""
+        conn = self._conn()
+        conn.execute("INSERT INTO board_status (board_status_id, board_id, name, escalation_status, is_closed)"
+                     " VALUES ('UNROUTED.CLOSED','UNROUTED','>Closed','RESOLVED',1)")
+        conn.execute("UPDATE board SET reopen_status_id = 'UNROUTED.PARTS' WHERE board_id = 'UNROUTED'")
+        conn.execute("UPDATE ticket SET board_status_id = 'UNROUTED.CLOSED', state = 'CLOSED',"
+                     " closed_at = '2026-09-22 09:00' WHERE work_item_id = 'PMC-000901'")
+        conn.commit()
+        conn.close()
+        status, _, _ = self._call("POST", "/my/PMC-000901/reply", cookie=self.nurse_a,
+                                  form={"body": "Here is the room number: ward 3, bay 2."})
+        self.assertTrue(status.startswith("303"), status)
+        conn = self._conn()
+        t = conn.execute("SELECT board_status_id, closed_at, state FROM ticket WHERE work_item_id = 'PMC-000901'"
+                         ).fetchone()
+        conn.close()
+        self.assertEqual(t["board_status_id"], "UNROUTED.PARTS")
+        self.assertIsNone(t["closed_at"])
+        self.assertNotEqual(t["state"], "CLOSED")
 
     def test_a_requester_cannot_reply_on_somebody_elses(self):
         status, _, _ = self._call("POST", "/my/PMC-000902/reply", cookie=self.nurse_a,

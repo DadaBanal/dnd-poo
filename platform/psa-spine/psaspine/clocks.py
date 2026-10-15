@@ -40,12 +40,20 @@ STOPS = {
 
 PAUSES = "NO_ESCALATION"
 
-# Clocks a waiting status never pauses. Parking a ticket "waiting on the
-# requester" before anybody has answered them is not a response, and pausing the
-# respond clock there would let a missed response vanish from the numbers. The
-# record's own §5.5 pauses the RESOLVE clock in a waiting status; ITFlow documents
-# the same rule ("On Hold pauses the resolution clock, not the response clock").
-NEVER_PAUSED = {"RESPOND", "ACKNOWLEDGE"}
+# Clocks a waiting status never pauses: none, since Dada's ruling of 15 Oct 2026
+# (job 03; HANDOFF-sql01-cloud-WS36-20261015-waiting-rule.md): "the sla clock or
+# resolution clock should stop" while the ticket waits on someone outside the
+# desk. Until then RESPOND and ACKNOWLEDGE ran on in a waiting status, and
+# PMC-001527 read "Breached by 28h" while it sat in Awaiting approval with
+# nobody asked anything. A missed response no longer hides there, because
+# leaving a not-responded status IS the response (RESPONDED_BY_MOVE, below).
+NEVER_PAUSED: set[str] = set()
+
+# ConnectWise's rule, which the desk's escalation_status vocabulary already
+# copies: respond is met by the move from a "We have NOT responded" status to
+# any other. These clocks stop on that move, whatever the new status declares.
+RESPONDED_BY_MOVE = {"RESPOND", "ACKNOWLEDGE"}
+NOT_RESPONDED = "NOT_RESPONDED"
 
 
 def parse_clock_time(text: str | None) -> int | None:
@@ -310,9 +318,14 @@ def breached(conn: sqlite3.Connection, clock_id: int, *,
     return elapsed_minutes(conn, clock_id, as_of=as_of) > row["target_minutes"]
 
 
-def stops_clock(escalation_status: str, clock: str) -> bool:
-    """Does a ticket entering this status satisfy this clock?"""
-    return escalation_status in STOPS.get(clock, set())
+def stops_clock(escalation_status: str, clock: str, from_escalation: str | None = None) -> bool:
+    """Does a ticket entering this status satisfy this clock? With
+    `from_escalation`, the move itself counts too: leaving a not-responded
+    status for any other meets respond (RESPONDED_BY_MOVE)."""
+    if escalation_status in STOPS.get(clock, set()):
+        return True
+    return (clock in RESPONDED_BY_MOVE and from_escalation == NOT_RESPONDED
+            and escalation_status != NOT_RESPONDED)
 
 
 def is_pause(escalation_status: str, clock: str | None = None) -> bool:

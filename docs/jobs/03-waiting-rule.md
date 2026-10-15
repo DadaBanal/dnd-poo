@@ -1,4 +1,4 @@
-Status: open
+Status: done 15 Oct 2026, built, not live — the pull and restart are Dada's word (runbook Part 124)
 
 # Job 03 — Dada's rule for tickets waiting on someone outside the desk
 

@@ -785,6 +785,12 @@ def reply(ctx, work_item_id):
             (work_item_id, stamp, requester, body))
         ctx.conn.execute("UPDATE ticket SET updated_at = ?, customer_updated = 1"
                          " WHERE work_item_id = ?", (stamp, work_item_id))
+        # A reply to a closed request reopens it, as a reply by email does
+        # (job 03); the board's policy decides, in one place for both.
+        from ... import intake as _intake
+        if not ctx.conn.execute("SELECT merged_into FROM ticket WHERE work_item_id = ?",
+                                (work_item_id,)).fetchone()[0]:      # a merged request lives on in the other
+            _intake.reopen_on_reply(ctx.conn, work_item_id, at=ctx.now, actor=requester or "portal")
         for code, severity, detail in phi.scan_fields({"reply": body}):
             ctx.conn.execute(
                 "INSERT INTO data_quality (run_id, subject_kind, subject_id, code,"

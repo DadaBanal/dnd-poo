@@ -46,6 +46,9 @@ TICKET_FIELDS = (
     ("TICKET.SOURCE", "intake_source", "Source", "CODE"),
     ("TICKET.CUSTOMER_UPDATED", "customer_updated", "Customer updated", "BOOLEAN"),
     ("TICKET.AGE_MINUTES", "age_minutes", "Minutes since opened", "NUMBER"),
+    # Job 03: time in the status the ticket is in now, which "since opened"
+    # cannot say (a ticket three weeks old may have entered Waiting an hour ago).
+    ("TICKET.STATUS_MINUTES", "status_minutes", "Minutes in this status", "NUMBER"),
     ("TICKET.IDLE_MINUTES", "idle_minutes", "Minutes since last update", "NUMBER"),
     ("TICKET.SLA_PERCENT", "sla_percent_used", "SLA used (%)", "NUMBER"),
     ("TICKET.CHANGE_TYPE", "change_type", "Change type", "CODE"),
@@ -92,6 +95,9 @@ def ticket_row(conn: sqlite3.Connection, work_item_id: str, *, now: datetime) ->
     row = {k: t[k] for k in t.keys()}
     row["customer_updated"] = int(t["customer_updated"] or 0)
     row["age_minutes"] = _minutes(t["opened_at"], now)
+    from .waiting import status_since
+    since = status_since(conn, work_item_id)
+    row["status_minutes"] = max(0, int((now - since).total_seconds() // 60)) if since else None
     row["idle_minutes"] = _minutes(t["updated_at"] or t["opened_at"], now)
     used = 0.0
     for c in conn.execute("SELECT clock_id FROM ticket_clock WHERE work_item_id = ?"

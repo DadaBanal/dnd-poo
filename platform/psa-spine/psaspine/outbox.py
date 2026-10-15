@@ -96,6 +96,52 @@ DEFAULTS = {
 }
 REQUESTER_WORDS = {k: DEFAULTS[k] for k in ("OPENED", "UPDATED", "CLOSED")}   # kept for readers of 03x
 
+# Job 03, Dada's waiting rule (waiting.py): two more kinds, each worded for a
+# ticket waiting on an approval and for one waiting on the requester's
+# response. The close is his sentence, 15 Oct 2026: "ur ticket has been closed
+# we tried to contact you but failed to get a response on this ticket, if you
+# feel this is a mistake pls reply back to this ticket or reply through the
+# portal or help portal to reopen the ticket with the awaited response".
+# The desk's words only for now: a board's own words for these need
+# mail_template.kind widened, which is a schema step (057's CHECK).
+WAITING_REMINDER = "WAITING_REMINDER"
+CLOSED_NO_RESPONSE = "CLOSED_NO_RESPONSE"
+WAITING_KINDS = {
+    WAITING_REMINDER: "Still waiting after 3 days: a reminder",
+    CLOSED_NO_RESPONSE: "Closed after 3 more days with no answer",
+}
+WAITING_WORDS = {
+    WAITING_REMINDER: {
+        "RESPONSE": ("We're still waiting to hear from you",
+                     "Hi {requester},\n\nWe tried to get in touch with you about your request, and we still need a "
+                     "response from you before we can carry on.\n\nCould you reply to this email, or answer on the "
+                     "PMC Requests portal? If we don't hear from you in the next 3 days, we'll close the request. "
+                     "You can reopen it any time by replying." + _SIGN),
+        "APPROVAL": ("Your request is still waiting for an approval",
+                     "Hi {requester},\n\nWe tried to get an approval for your request, and it hasn't come through "
+                     "yet. We've sent the approver a reminder today.\n\nIf you can, please remind them too, or reply "
+                     "to this email if anything has changed. If the approval doesn't come in the next 3 days, we'll "
+                     "close the request; you can reopen it by replying with the approval." + _SIGN),
+        # to the approver, who is staff: the same shape as the first APPROVAL email
+        "APPROVER": ("A request is still waiting for your approval",
+                     "Hi,\n\nA reminder: a request has been waiting 3 days for your approval before the work can go "
+                     "ahead. Please sign in to the PMC Requests portal and open Approvals to read it and decide, with "
+                     "a short reason.\n\nIf no decision comes in the next 3 days, the request will be closed."),
+    },
+    CLOSED_NO_RESPONSE: {
+        "RESPONSE": ("Your request has been closed",
+                     "Hi {requester},\n\nYour request has been closed. We tried to contact you but didn't get a "
+                     "response on this request.\n\nIf you feel this is a mistake, please reply to this email, or "
+                     "reply on the PMC Requests portal, with the response we were waiting for, and the request "
+                     "will reopen." + _SIGN),
+        "APPROVAL": ("Your request has been closed",
+                     "Hi {requester},\n\nYour request has been closed because it was not approved in time. We asked "
+                     "for an approval and sent a reminder, but no decision came back.\n\nIf you feel this is a "
+                     "mistake, please reply to this email, or reply on the PMC Requests portal, with the approval, "
+                     "and the request will reopen." + _SIGN),
+    },
+}
+
 
 class _Fill(dict):
     def __missing__(self, key):
@@ -355,9 +401,12 @@ NOTE_SLOT = "NOTEWRITTENHERE"      # where the note's own formatting goes, in th
 
 
 def queue_requester(conn: sqlite3.Connection, work_item_id: str, reason: str, *,
-                    at: datetime, note: str | None = None, note_html: str | None = None) -> bool:
+                    at: datetime, note: str | None = None, note_html: str | None = None,
+                    variant: str | None = None) -> bool:
     """Queue the one email a requester gets. Returns whether one was queued.
-    An UPDATED email carries the technician's reply (note) when it is clean."""
+    An UPDATED email carries the technician's reply (note) when it is clean.
+    A waiting-rule reason (WAITING_WORDS) takes `variant`, APPROVAL or
+    RESPONSE."""
     from .board import _event
     from .intake import subject_token
     row = conn.execute(
@@ -373,7 +422,12 @@ def queue_requester(conn: sqlite3.Connection, work_item_id: str, reason: str, *,
     values = _values(conn, work_item_id, at=at)
     plain = note_for_email(note) if reason == "UPDATED" else ""
     values["note"] = plain
-    headline, said = words(conn, row["board_id"], reason, **values)
+    if reason in WAITING_WORDS:
+        subject, body = WAITING_WORDS[reason][variant or "RESPONSE"]
+        fill = _Fill(values)
+        headline, said = subject.format_map(fill), body.format_map(fill)
+    else:
+        headline, said = words(conn, row["board_id"], reason, **values)
     # 064: the same email with the note's own formatting in it. Built here,
     # once, so the sender has nothing to decide; the text above is always sent
     # as well, and a note the PHI gate held back carries no formatting either.
@@ -392,7 +446,7 @@ def queue_requester(conn: sqlite3.Connection, work_item_id: str, reason: str, *,
                            " recipient = ? AND recipient_role = ? AND status = 'PENDING'",
                            (work_item_id, row["requested_by"], REQUESTER)).fetchone()
     if pending:
-        if reason not in ("CLOSED", "UPDATED"):
+        if reason not in ("CLOSED", "UPDATED") and reason not in WAITING_WORDS:
             return False                      # one unsent email already says so
         # A close outranks an unsent "we have it": the one email says the newer thing.
         conn.execute("UPDATE notification SET subject = ?, body = ?, body_html = ?, created_at = ?"
@@ -663,6 +717,11 @@ def describe_board(conn: sqlite3.Connection, board_id: str) -> str:
         t = template(conn, board_id, kind)
         one(TEMPLATE_KINDS[kind], "on" if b["notify_requester"] else "off", t["subject"], t["body"],
             "the board's words" if t["custom"] else "the desk's words")
+    for kind, label in WAITING_KINDS.items():
+        for variant, (subject, body) in WAITING_WORDS[kind].items():
+            to = "the approver" if variant == "APPROVER" else "the requester"
+            one(f"{label}, waiting on {'an approval' if variant != 'RESPONSE' else 'a response'}, to {to}",
+                "on" if b["notify_requester"] or variant == "APPROVER" else "off", subject, body, "the desk's words")
     for m in [pickup_mail(conn, board_id)] + status_mails(conn, board_id):
         one("Picked up" if m["shape"] == "PICKUP" else f"Status: {m['name']}", "on" if m["enabled"] else "off",
             m["subject"], m["body"], "the board's words" if m["custom"] else "the desk's words")
@@ -742,10 +801,12 @@ def queue_resource(conn: sqlite3.Connection, work_item_id: str, member: str, *, 
 APPROVER = "APPROVER"
 
 
-def queue_approver(conn: sqlite3.Connection, work_item_id: str, approver: str, *, at: datetime) -> bool:
+def queue_approver(conn: sqlite3.Connection, work_item_id: str, approver: str, *, at: datetime,
+                   reminder: bool = False) -> bool:
     """049: one email to the person asked to approve a request, with the
     portal's Approvals page as the place to decide. No summary, no note:
-    the words stay behind the sign-in."""
+    the words stay behind the sign-in. `reminder`: the waiting rule's day-3
+    reminder (job 03) instead of the first ask."""
     from .board import _event
     from .intake import subject_token
     if not address_for(conn, approver):
@@ -756,12 +817,18 @@ def queue_approver(conn: sqlite3.Connection, work_item_id: str, approver: str, *
     stamp = at.isoformat(sep=" ", timespec="minutes")
     b = conn.execute("SELECT t.board_id, b.display_name FROM ticket t JOIN board b ON b.board_id = t.board_id"
                      " WHERE t.work_item_id = ?", (work_item_id,)).fetchone()
-    headline, said = words(conn, b["board_id"] if b else "", "APPROVAL", **_values(conn, work_item_id, at=at))
+    if reminder:
+        fill = _Fill(_values(conn, work_item_id, at=at))
+        subject, body = WAITING_WORDS[WAITING_REMINDER]["APPROVER"]
+        headline, said = subject.format_map(fill), body.format_map(fill)
+    else:
+        headline, said = words(conn, b["board_id"] if b else "", "APPROVAL", **_values(conn, work_item_id, at=at))
     conn.execute(
         "INSERT INTO notification (work_item_id, recipient, recipient_role, subject, body, created_at, status)"
         " VALUES (?,?,?,?,?,?,'PENDING')",
         (work_item_id, approver, APPROVER, f"{subject_token(work_item_id)} {headline}", said, stamp))
-    _event(conn, work_item_id, stamp, "NOTIFY", "desk", f"email to the approver queued: {approver}")
+    _event(conn, work_item_id, stamp, "NOTIFY", "desk",
+           f"email to the approver queued: {'a reminder, ' if reminder else ''}{approver}")
     return True
 
 

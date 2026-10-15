@@ -90,11 +90,13 @@ def running_clocks(conn: sqlite3.Connection, work_item_id: str) -> list[sqlite3.
 
 
 def change_status(conn: sqlite3.Connection, work_item_id: str, to_status_id: str, *,
-                  at: datetime, actor: str) -> dict:
+                  at: datetime, actor: str, quiet: bool = False) -> dict:
     """Move a ticket to a status, and settle everything that follows.
 
     Returns what changed, so a caller can report it and a test can assert it
-    rather than inspecting five tables.
+    rather than inspecting five tables. `quiet` queues no email to the
+    requester: the caller sends its own (the waiting rule's close says why
+    the ticket closed, which the ordinary close email cannot).
     """
     ticket = conn.execute("SELECT * FROM ticket WHERE work_item_id = ?",
                           (work_item_id,)).fetchone()
@@ -115,6 +117,12 @@ def change_status(conn: sqlite3.Connection, work_item_id: str, to_status_id: str
 
     stamp = at.isoformat(sep=" ", timespec="minutes")
     escalation = new["escalation_status"]
+    # Where the ticket is coming from, for the move that is itself the
+    # response (clocks.RESPONDED_BY_MOVE). A ticket with no status yet is New.
+    was_row = conn.execute("SELECT escalation_status FROM board_status WHERE board_status_id = ?",
+                           (ticket["board_status_id"],)).fetchone() if ticket["board_status_id"] else None
+    was = (was_row["escalation_status"] if was_row
+           else (clocks.NOT_RESPONDED if ticket["state"] == "NEW" else None))
     stopped, paused, resumed = [], [], []
 
     def not_before(mark: str, floor: str | None) -> str:
@@ -140,7 +148,7 @@ def change_status(conn: sqlite3.Connection, work_item_id: str, to_status_id: str
             "SELECT pause_id FROM ticket_clock_pause WHERE clock_id = ?"
             "   AND resumed_at IS NULL", (clock["clock_id"],)).fetchone()
 
-        if clocks.stops_clock(escalation, clock["clock"]):
+        if clocks.stops_clock(escalation, clock["clock"], was):
             # Close any pause first, or the paused interval runs past the stop.
             if open_pause:
                 conn.execute("UPDATE ticket_clock_pause SET resumed_at = ? WHERE pause_id = ?",
@@ -189,14 +197,14 @@ def change_status(conn: sqlite3.Connection, work_item_id: str, to_status_id: str
                           (work_item_id,)).fetchone()[0]
     # 058: the status's own email, when the board has turned it on. A merge
     # says nothing; a status the ticket was already in is no change.
-    told = (not merged and to_status_id != ticket["board_status_id"]
+    told = (not merged and not quiet and to_status_id != ticket["board_status_id"]
             and outbox.queue_status(conn, work_item_id, to_status_id, at=at, actor=actor))
     if new["is_closed"]:
         # Children close with their parent (030). A child has no children, so
         # this goes one level and stops.
         from . import family
         family.close_with_parent(conn, work_item_id, at=at, actor=actor)
-        if not merged and not told:
+        if not merged and not told and not quiet:
             outbox.queue_requester(conn, work_item_id, "CLOSED", at=at)   # a merge says nothing
     return {"work_item_id": work_item_id, "board_status_id": to_status_id,
             "state": state, "escalation_status": escalation,

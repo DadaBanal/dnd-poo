@@ -908,8 +908,9 @@ def _run(conn, a) -> int:
         return 0
 
     if a.cmd == "run-rules":
-        from . import paging, recurring, workflow
+        from . import paging, recurring, waiting, workflow
         c = workflow.sweep(conn, at=datetime.now())
+        w = waiting.sweep(conn, at=datetime.now())       # job 03: remind at 3 days, close 3 days later
         raised = recurring.raise_due(conn, at=datetime.now())
         failed = [r for r in raised if "error" in r]
         p = paging.tick(conn, at=datetime.now())
@@ -917,8 +918,9 @@ def _run(conn, a) -> int:
         print(f"{c['tickets']} tickets with timed rules: {c['acted']} actions taken, "
               f"{c['errors']} errors (see workflow_run); recurring: {len(raised) - len(failed)} raised, "
               f"{len(failed)} failed (see audit_event); pages: {p['open']} open, {p['sent']} repeated, "
-              f"{p['ended']} ended, {p['escalated']} escalated")
-        return 1 if c["errors"] or failed else 0
+              f"{p['ended']} ended, {p['escalated']} escalated; waiting rule: {w['paused']} clocks paused, {w['waiting']} waiting, "
+              f"{w['reminded']} reminded, {w['closed']} closed, {w['errors']} errors (see audit_event)")
+        return 1 if c["errors"] or failed or w["errors"] else 0
 
     if a.cmd == "outbox-pending":
         from . import channels, outbox

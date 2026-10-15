@@ -492,6 +492,20 @@ def _closed_policy(conn: sqlite3.Connection, work_item_id: str, at: datetime):
     return "REOPEN", t["reopen_status_id"] or default_status(conn, t["board_id"])
 
 
+def reopen_on_reply(conn: sqlite3.Connection, work_item_id: str, *, at: datetime, actor: str) -> bool:
+    """A reply to a closed ticket reopens it where the board's policy says
+    REOPEN. One place for both ways in, email and the portal, so they land
+    the same (job 03: a ticket the waiting rule closed is reopened by a reply
+    "to this ticket or through the portal"). Returns whether it reopened."""
+    action, reopen_to = _closed_policy(conn, work_item_id, at)
+    if action != "REOPEN" or not reopen_to:
+        return False
+    from .board import change_status
+    change_status(conn, work_item_id, reopen_to, at=at, actor=actor)
+    conn.execute("UPDATE ticket SET closed_at = NULL WHERE work_item_id = ?", (work_item_id,))
+    return True
+
+
 def _seen(conn: sqlite3.Connection, message_id: str):
     return conn.execute("SELECT * FROM intake_message WHERE message_id = ?",
                         (message_id,)).fetchone()
@@ -728,11 +742,7 @@ def _import_one(conn: sqlite3.Connection, path: Path, *, run_id: str, channel: s
         _keep_files(conn, message, parent_ticket, sender=sender, at=when, run_id=run_id,
                     counts=counts)
         cc.add_from_message(conn, parent_ticket, message, sender=sender, own_addresses=own_addresses, at=when)
-        if action == "REOPEN" and reopen_to:
-            from .board import change_status
-            change_status(conn, parent_ticket, reopen_to, at=when, actor="intake")
-            conn.execute("UPDATE ticket SET closed_at = NULL WHERE work_item_id = ?",
-                         (parent_ticket,))
+        if action == "REOPEN" and reopen_on_reply(conn, parent_ticket, at=when, actor="intake"):
             counts["reopened"] += 1
         _record(conn, mid, stamp, sender, subject, channel, "APPENDED",
                 parent_ticket, parent_id, run_id, body_hash=bh)
