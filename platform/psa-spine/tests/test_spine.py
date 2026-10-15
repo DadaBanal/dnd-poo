@@ -7351,6 +7351,70 @@ class ModulesTest(unittest.TestCase):
             chat.set_operator(conn, m, True, at=self.at, actor="root")
         conn.commit()
 
+    def test_chat_history_is_a_tab_with_a_search_and_a_period(self):
+        """Dada, 15 Oct 2026: "how do you see previous chats its not there anymore"; "or another tab for older
+        chats or chat history or a picker". Live keeps the queue (and two days of ended chats); History lists
+        every ended chat on the person's boards, newest first, by period and search, fifty to a page."""
+        from psaspine import chat
+        self._chat_desk()
+        c = self._conn()
+        ended = {}
+        for subject, when in (("Printer jam yesterday", datetime(2026, 9, 16, 9)),
+                              ("Mouse gone twelve days", datetime(2026, 9, 5, 9)),
+                              ("Teams silent in July", datetime(2026, 7, 1, 9)),
+                              ("New year login", datetime(2026, 1, 1, 9))):
+            cid, _ = chat.start(c, requester="nurse", board_id="IT_HELP", subject=subject, first=subject + ".", at=when)
+            chat.pick_up(c, cid, member="alice", at=when)
+            chat.close(c, cid, by="alice", at=when, ask=False)
+            ended[subject] = cid
+        open_cid, _ = chat.start(c, requester="jun.reyes", board_id="IT_HELP", subject="Still waiting", first="Hi.",
+                                 at=datetime(2026, 9, 17, 9, 50))
+        c.commit()
+        live = self._call("GET", "/chat", cookie=self.alice)[2]
+        self.assertIn("<a href='/chat' class=on aria-current=page>Live</a>", live)
+        self.assertIn("Still waiting", live)
+        self.assertIn("Printer jam yesterday", live)                               # two days of ended ones, as before
+        self.assertNotIn("Mouse gone twelve days", live)
+        self.assertIn("all of them are under <a href='/chat?view=history'>History</a>", live)
+
+        def hist(**q):
+            return self._call("GET", "/chat", query=urllib.parse.urlencode({"view": "history", **q}), cookie=self.alice)[2]
+        page = hist()                                                               # 30 days by default
+        self.assertIn("<a href='/chat?view=history' class=on aria-current=page>History</a>", page)
+        self.assertIn("<label for=histq>Search</label>", page)
+        self.assertIn("<label for=histp>Period</label>", page)
+        self.assertIn("<option value='30' selected>Last 30 days</option>", page)
+        self.assertNotIn("Still waiting", page[page.index("id=chathistory"):])     # history is ended chats only
+        self.assertLess(page.index("Printer jam yesterday"), page.index("Mouse gone twelve days"))  # newest first
+        self.assertNotIn("Teams silent in July", page)
+        self.assertIn("1–2 of 2 ended chats", page)
+        self.assertNotIn("Mouse gone", hist(period="7"))
+        self.assertIn("Teams silent in July", hist(period="90"))
+        everything = hist(period="all")
+        self.assertIn("New year login", everything)
+        self.assertIn("1–4 of 4 ended chats", everything)
+        self.assertIn(f"href='/chat/{ended['New year login']}'", everything)      # each opens the chat itself
+        found = hist(period="all", q="TEAMS")                                       # search ignores case
+        self.assertIn("Teams silent in July", found)
+        self.assertNotIn("Printer jam", found)
+        self.assertIn("No ended chats match.", hist(period="all", q="zz-no-such-chat"))
+        self.assertIn("<option value='30' selected>", hist(period="bogus"))       # an unknown period falls back
+        # paging: fifty to a page, Older and Newer between them
+        for n in range(50):
+            cid, _ = chat.start(c, requester="nurse", board_id="IT_HELP", subject=f"Bulk {n}", first="x.",
+                                at=datetime(2026, 9, 10, 8, n))
+            chat.close(c, cid, by="alice", at=datetime(2026, 9, 10, 8, n), ask=False)
+        c.commit()
+        one = hist(period="all")
+        self.assertIn("1–50 of 54 ended chats", one)
+        self.assertIn("page=2", one)
+        two = hist(period="all", page="2")
+        self.assertIn("51–54 of 54 ended chats", two)
+        self.assertIn("New year login", two)
+        self.assertIn("Newer</a>", two)
+        # someone on no chat board sees no history, as they see no queue
+        self.assertTrue(self._call("GET", "/chat", query="view=history", cookie=self._cookie_for("carol"))[0].startswith(("403", "302", "303")))
+
     def test_chat_a_requester_and_the_desk_live(self):
         """071. Dada, 7 Oct 2026: "can we do something to connectwise chat?".
         Confirmed: requester <-> desk, offered on the portal at any time,

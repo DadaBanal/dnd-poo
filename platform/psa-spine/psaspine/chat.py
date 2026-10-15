@@ -272,6 +272,38 @@ def queue(conn: sqlite3.Connection, boards, *, now: datetime) -> list:
         [*boards, _stamp(now - timedelta(days=2))]).fetchall()
 
 
+HISTORY_PERIODS = (("7", "Last 7 days"), ("30", "Last 30 days"), ("90", "Last 90 days"), ("all", "All time"))
+
+
+def history(conn: sqlite3.Connection, boards, *, now: datetime, period: str = "30", search: str = "",
+            limit: int = 50, offset: int = 0) -> tuple[list, int]:
+    """Every ended chat on the person's boards, newest first (Dada, 15 Oct 2026:
+    "how do you see previous chats its not there anymore" -- the queue keeps only
+    two days of them). `period` is days back, or 'all'; `search` matches the
+    requester, the subject or the ticket. Returns (a page of rows, how many)."""
+    boards = sorted(boards)
+    if not boards:
+        return [], 0
+    where = [f"c.board_id IN ({','.join('?' * len(boards))})", "c.status = 'CLOSED'"]
+    args: list = [*boards]
+    if period != "all":
+        days = int(period) if str(period).isdigit() else 30
+        where.append("c.closed_at >= ?")
+        args.append(_stamp(now - timedelta(days=days)))
+    s = " ".join((search or "").split()).lower()
+    if s:
+        where.append("(LOWER(c.requester) LIKE ? OR LOWER(c.subject) LIKE ? OR LOWER(COALESCE(c.work_item_id, '')) LIKE ?)")
+        args += [f"%{s}%"] * 3
+    cond = " WHERE " + " AND ".join(where)
+    total = conn.execute("SELECT COUNT(*) FROM chat_session c" + cond, args).fetchone()[0]
+    rows = conn.execute(
+        f"SELECT c.*, b.display_name AS board_name, {_COUNTS},"
+        " (SELECT COUNT(*) FROM chat_message m WHERE m.chat_id = c.chat_id) AS lines"
+        " FROM chat_session c JOIN board b ON b.board_id = c.board_id" + cond +
+        " ORDER BY c.closed_at DESC, c.chat_id DESC LIMIT ? OFFSET ?", [*args, limit, offset]).fetchall()
+    return rows, total
+
+
 def of_requester(conn: sqlite3.Connection, identities) -> list:
     ids = [i.lower() for i in identities if i]
     if not ids:

@@ -260,16 +260,58 @@ def index(ctx):
                 f"<td>{t.esc(r['subject'])}</td><td>{t.esc(r['board_name'])}</td>"
                 f"<td>{state}</td><td>{t.esc(r['started_at'][:16])}</td><td class=center>{r['lines']}</td><td>{tk}</td></tr>")
     waiting = sum(1 for r in rows if r["status"] == "WAITING")
+    history = q.get("view") == "history"
+    # Dada, 15 Oct 2026: "another tab for older chats or chat history or a picker" -- Live is the queue as it
+    # was; History is every ended chat on the person's boards, with a search and a period picker.
+    tabs = ("<nav class=tabs aria-label='Chat views'>"
+            f"<a href='/chat'{' class=on aria-current=page' if not history else ''}>Live</a>"
+            f"<a href='/chat?view=history'{' class=on aria-current=page' if history else ''}>History</a></nav>")
+    head = ("<tr><th>Who · their chat</th><th>About</th><th>Board</th><th>State</th><th>Started</th>"
+            "<th>Lines</th><th>Ticket · rating</th></tr>")
+    if history:
+        period = q.get("period") or "30"
+        period = period if period in dict(chat.HISTORY_PERIODS) else "30"
+        search = (q.get("q") or "").strip()[:100]
+        try:
+            page_no = max(1, int(q.get("page") or 1))
+        except ValueError:
+            page_no = 1
+        per = 50
+        found, total = chat.history(ctx.conn, seen, now=ctx.now, period=period, search=search,
+                                    limit=per, offset=(page_no - 1) * per)
+        opts = "".join(f"<option value='{k}'{' selected' if k == period else ''}>{t.esc(w)}</option>"
+                       for k, w in chat.HISTORY_PERIODS)
+        picker = ("<form method=get action='/chat' class=histbar role=search>"
+                  "<input type=hidden name=view value=history>"
+                  "<label for=histq>Search</label>"
+                  f"<input id=histq name=q value='{t.esc(search)}' placeholder='name, subject or ticket'>"
+                  f"<label for=histp>Period</label><select id=histp name=period>{opts}</select>"
+                  "<button type=submit>Show</button></form>")
+
+        def link(p):
+            return "/chat?" + urllib.parse.urlencode({"view": "history", "period": period, "q": search, "page": p})
+        first, last = (page_no - 1) * per + 1, min(total, page_no * per)
+        paging = (f"<p class=muted>{first}–{last} of {total} ended chat{'s' if total != 1 else ''}"
+                  + (f" · <a href='{t.esc(link(page_no - 1))}'>Newer</a>" if page_no > 1 else "")
+                  + (f" · <a href='{t.esc(link(page_no + 1))}'>Older</a>" if last < total else "") + "</p>"
+                  if total else "")
+        content = (picker + "<div class=card id=chathistory><div class=tablewrap><table><thead>" + head + "</thead><tbody>"
+                   + ("".join(row(r) for r in found)
+                      or "<tr><td colspan=7 class=muted>No ended chats match.</td></tr>")
+                   + "</tbody></table></div></div>" + paging)
+    else:
+        content = (_presence_card(ctx)
+                   + "<div class=card id=chatqueue><div class=tablewrap><table><thead>" + head + "</thead><tbody>"
+                   + ("".join(row(r) for r in rows) or "<tr><td colspan=7 class=muted>No chats.</td></tr>")
+                   + "</tbody></table></div></div>"
+                   + "<p class=muted>Ended chats stay here for two days; all of them are under "
+                     "<a href='/chat?view=history'>History</a>.</p>")
     body = ((f"<div class='banner ok'>{t.esc(q.get('msg', ''))}</div>" if q.get("msg") else "")
             + (f"<div class='banner err'>{t.esc(q.get('err', ''))}</div>" if q.get("err") else "")
             + f"<h1>Chat</h1><p class=sub>Ward staff start a chat from the portal. Pick one up to answer it; make it a "
               f"ticket, or add it to one, when it needs work. {waiting} waiting.</p>"
-            + _presence_card(ctx)
-            + "<div class=card id=chatqueue><div class=tablewrap><table><thead><tr><th>Who · their chat</th><th>About</th>"
-              "<th>Board</th><th>State</th><th>Started</th><th>Lines</th><th>Ticket · rating</th></tr></thead><tbody>"
-            + ("".join(row(r) for r in rows) or "<tr><td colspan=7 class=muted>No chats.</td></tr>")
-            + "</tbody></table></div></div>")
-    return Response(body=t.page("Chat", body, user=ctx.user, active="chat", live="chats"))
+            + tabs + content)
+    return Response(body=t.page("Chat", body, user=ctx.user, active="chat", live=None if history else "chats"))
 
 
 def detail(ctx, chat_id):

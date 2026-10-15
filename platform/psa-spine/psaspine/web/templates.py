@@ -615,6 +615,8 @@ h1.sumline .sumform{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margi
   transition:color var(--fast) var(--ease),background var(--fast) var(--ease)}
 .tabs a:hover{color:var(--ink);background:var(--surface-2);text-decoration:none}
 .tabs a.on{color:var(--ink);border-color:var(--accent);font-weight:600}
+.histbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin:0 0 12px} .histbar label{font-weight:600}
+.histbar input[name=q]{flex:1 1 220px;max-width:360px} .histbar select{width:auto;flex:0 0 auto;min-width:10rem}
 .tabs{flex-wrap:wrap}.tabs a.order{margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:12.5px;white-space:nowrap}
 .tabs a.order .ic{width:14px;height:14px}
 .rptlist li{padding:8px 0;border-top:1px solid var(--line)}.rptlist li:first-child{border-top:0}.rptlist a.rpt{display:block;color:inherit;text-decoration:none}.rptlist a.rpt:hover b{color:var(--accent);text-decoration:underline}
