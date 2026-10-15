@@ -3,6 +3,16 @@
 Every file is the original MP3 as served, unedited; the name here is shortened. Downloaded on Dada's yes,
 15 Oct 2026, in two rounds.
 
+## Dada's own recordings
+
+Dada, 15 Oct 2026: *"can you please add this 2 audio as notifications and label them as suman 1 and suman 2"*.
+His files from his OneDrive, copied unedited (AAC in M4A, mono; served as `audio/mp4`).
+
+| File | His file | Length (as decoded) |
+|---|---|---|
+| `suman-1.m4a` | `New Recording 4_3514.m4a` | 4.5 s |
+| `suman-2.m4a` | `Premier Gen Hospital 2_5008.m4a` | 3.5 s |
+
 ## From myinstants.com — the trending ones (second round)
 
 Dada: *"these arent the OHhh my gaawwwd that im looking for and also you didnt add the ones that have been

@@ -7813,13 +7813,21 @@ class ModulesTest(unittest.TestCase):
         self.assertIsNone(_json.loads(self._call("GET", "/chat/waiting.json",
                                                  cookie=self._cookie_for("nobody"))[2])["newest_ticket"])
         from psaspine.web import sounds
-        self.assertEqual(len(sounds.FILES), 28)
-        self.assertEqual(sorted(p.name for p in sounds.DIR.glob("*.mp3")), sorted(sounds.FILES.values()))  # none unlisted
-        for key, name in sounds.FILES.items():                                    # every listed file is there, and is an MP3
+        self.assertEqual(len(sounds.FILES), 30)
+        on_disk = [p.name for p in sounds.DIR.iterdir() if p.suffix in (".mp3", ".m4a")]
+        self.assertEqual(sorted(on_disk), sorted(sounds.FILES.values()))                    # none unlisted
+        for key, name in sounds.FILES.items():                                    # every listed file is there, and is audio
             data = (sounds.DIR / name).read_bytes()
-            self.assertTrue(data[:3] == b"ID3" or (data[0] == 0xFF and data[1] & 0xE0 == 0xE0), key)
+            if name.endswith(".m4a"):
+                self.assertEqual(data[4:11], b"ftypM4A", key)
+            else:
+                self.assertTrue(data[:3] == b"ID3" or (data[0] == 0xFF and data[1] & 0xE0 == 0xE0), key)
         served = sounds.serve(None, "fah")
         self.assertEqual((served.content_type, served.body), ("audio/mpeg", (sounds.DIR / "fah.mp3").read_bytes()))
+        # Dada's own two (15 Oct 2026: "label them as suman 1 and suman 2"), served as what they are
+        self.assertIn("<option value='suman-1'>Suman 1</option>", board_page)
+        self.assertIn("<option value='suman-2'>Suman 2</option>", board_page)
+        self.assertEqual(sounds.serve(None, "suman-1").content_type, "audio/mp4")
         status, headers, _ = self._call("GET", "/sounds/zz-no-such-sound", cookie=self.alice)
         self.assertTrue(status.startswith("404"), status)
         status, headers, _ = self._call("GET", "/sounds/..%2F__init__.py", cookie=self.alice)

@@ -16,6 +16,8 @@ DIR = Path(__file__).resolve().parent
 # (key, what the picker says, file). The phone ring needs no file.
 SOUNDS = (
     ("phone", "Desk phone ring", None),
+    ("suman-1", "Suman 1", "suman-1.m4a"),
+    ("suman-2", "Suman 2", "suman-2.m4a"),
     ("oh-my-god", "Oh my gaaawd (the meme)", "oh-my-god.mp3"),
     ("fah", "FAHHHHHH", "fah.mp3"),
     ("faaah", "FAAAH", "faaah.mp3"),
@@ -77,5 +79,5 @@ def serve(ctx, name):
     f = FILES.get(str(name))
     if f is None:
         raise HttpError("404 Not Found", "No such sound.")
-    return Response(body=(DIR / f).read_bytes(), content_type="audio/mpeg",
+    return Response(body=(DIR / f).read_bytes(), content_type="audio/mp4" if f.endswith(".m4a") else "audio/mpeg",
                     headers=[("Cache-Control", "private, max-age=604800")])
