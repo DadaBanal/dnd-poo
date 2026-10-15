@@ -1,6 +1,7 @@
 """The sounds a new chat or a new ticket can make (Dada, 15 Oct 2026: "add the oh my god and all the other
 notification bells on to choose from for the new chat notification", "also add fwahhh", "all the other catchy
-ones", "dont repeat just do it once", and "for new tickets and newchats add a picker beside the theme picker").
+ones", "dont repeat just do it once", "for new tickets and newchats add a picker beside the theme picker"; then
+the real "OHhh my gaawwwd" and "the ones that have been trending").
 
 Each person picks one for each, from the bell beside the theme button; the choice lives in their browser. The
 desk phone ring is made by the page itself (Web Audio, no file); the rest are MP3s kept here and served by the
@@ -15,12 +16,27 @@ DIR = Path(__file__).resolve().parent
 # (key, what the picker says, file). The phone ring needs no file.
 SOUNDS = (
     ("phone", "Desk phone ring", None),
-    ("oh-my-god", "Oh my god", "oh-my-god.mp3"),
-    ("oh-my-god-loud", "OH MY GOD (loud)", "oh-my-god-loud.mp3"),
-    ("fah", "Fahhh", "fah.mp3"),
+    ("oh-my-god", "Oh my gaaawd (the meme)", "oh-my-god.mp3"),
+    ("fah", "FAHHHHHH", "fah.mp3"),
+    ("faaah", "FAAAH", "faaah.mp3"),
     ("vine-boom", "Vine boom", "vine-boom.mp3"),
-    ("bruh", "Bruh", "bruh.mp3"),
+    ("rizz", "Rizz", "rizz.mp3"),
+    ("among-us", "Among Us role reveal", "among-us.mp3"),
     ("anime-wow", "Anime wow", "anime-wow.mp3"),
+    ("aray-ko", "Aray ko!! (Malupiton)", "aray-ko.mp3"),
+    ("tobol", "Tobol", "tobol.mp3"),
+    ("enrique", "Enrique!", "enrique.mp3"),
+    ("hee-hee", "Hee hee", "hee-hee.mp3"),
+    ("shocked", "Shocked", "shocked.mp3"),
+    ("correct", "Correct answer", "correct.mp3"),
+    ("ding", "Ding", "ding.mp3"),
+    ("spongebob-fail", "SpongeBob fail", "spongebob-fail.mp3"),
+    ("dun-dun", "Dun dun dunnn", "dun-dun.mp3"),
+    ("cat-laugh", "Cat laugh", "cat-laugh.mp3"),
+    ("chicken", "Chicken screaming", "chicken.mp3"),
+    ("romance", "Romanceeee", "romance.mp3"),
+    ("baby-laugh", "Baby laughing", "baby-laugh.mp3"),
+    ("bruh", "Bruh", "bruh.mp3"),
     ("metal-pipe", "Metal pipe", "metal-pipe.mp3"),
     ("ka-ching", "Ka-ching", "ka-ching.mp3"),
     ("ding-dong", "Ding dong", "ding-dong.mp3"),

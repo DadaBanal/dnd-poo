@@ -7749,12 +7749,13 @@ class ModulesTest(unittest.TestCase):
         self.assertIsNone(_json.loads(self._call("GET", "/chat/waiting.json",
                                                  cookie=self._cookie_for("nobody"))[2])["newest_ticket"])
         from psaspine.web import sounds
-        self.assertEqual(len(sounds.FILES), 13)
+        self.assertEqual(len(sounds.FILES), 28)
+        self.assertEqual(sorted(p.name for p in sounds.DIR.glob("*.mp3")), sorted(sounds.FILES.values()))  # none unlisted
         for key, name in sounds.FILES.items():                                    # every listed file is there, and is an MP3
             data = (sounds.DIR / name).read_bytes()
             self.assertTrue(data[:3] == b"ID3" or (data[0] == 0xFF and data[1] & 0xE0 == 0xE0), key)
         served = sounds.serve(None, "fah")
-        self.assertEqual((served.content_type, served.body[:2]), ("audio/mpeg", b"\xff\xfb"))
+        self.assertEqual((served.content_type, served.body), ("audio/mpeg", (sounds.DIR / "fah.mp3").read_bytes()))
         status, headers, _ = self._call("GET", "/sounds/zz-no-such-sound", cookie=self.alice)
         self.assertTrue(status.startswith("404"), status)
         status, headers, _ = self._call("GET", "/sounds/..%2F__init__.py", cookie=self.alice)
