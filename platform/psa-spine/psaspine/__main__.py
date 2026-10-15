@@ -372,6 +372,10 @@ def main(argv: list[str] | None = None) -> int:
                      help="also read every live file and check it against its name (slow)")
     pav.add_argument("--mark-missing", action="store_true",
                      help="record rows whose file is gone as removed (reason MISSING), audited")
+    pcs = sub.add_parser("attachments-claim-store",
+                         help="mark the attachment store as this database's, once; purge deletes "
+                              "nothing from a store that is not marked as its own")
+    pcs.add_argument("database", help=DB_HELP)
     pap = sub.add_parser("attachments-purge",
                          help="remove files under the retention rule; PREVIEW unless --apply")
     pap.add_argument("database", help=DB_HELP)
@@ -1158,6 +1162,16 @@ def _run(conn, a) -> int:
             print("  (contents not checked; add --hashes to read every file)")
         print("OK: the store is whole" if not problems else f"PROBLEMS: {problems}")
         return 0 if not problems else 1
+
+    if a.cmd == "attachments-claim-store":
+        from . import attachments
+        try:
+            me = attachments.claim_store(conn)
+        except RuntimeError as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        print(f"store {attachments.store_dir(conn)} belongs to {me}")
+        return 0
 
     if a.cmd == "attachments-purge":
         from . import attachments

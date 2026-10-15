@@ -10059,10 +10059,11 @@ class AttachmentRetentionTest(unittest.TestCase):
                       else Path(str(self.db_path) + ".attachments"))
         self.at = datetime(2026, 9, 23, 9, 0)
         setup.apply_starter(self.conn, "IT_HELP", actor="t", at=self.at)
+        self.att.claim_store(self.conn)          # this test's own store, marked as its database's
+        self.addCleanup(self.tmp.cleanup)        # registered first, so it runs after every other cleanup
 
     def tearDown(self) -> None:
         self.conn.close()
-        self.tmp.cleanup()
 
     def _ticket(self, *, at=None):
         return tickets.open_ticket(self.conn, board_id="IT_HELP", summary="Printer", impact="I3",
@@ -10080,7 +10081,62 @@ class AttachmentRetentionTest(unittest.TestCase):
         return self.att.purge(self.conn, at=at, **kw)
 
     def _files(self):
-        return sorted(p.name for p in self.store.rglob("*") if p.is_file())
+        return sorted(p.name for p in self.store.rglob("*")
+                      if p.is_file() and p.name != self.att.OWNER_MARK)
+
+    def _old(self, sha):
+        """Age a stored file past the orphan grace period."""
+        import time as _time
+        path = self.store / sha[:2] / sha[2:4] / sha
+        then = _time.time() - self.att.ORPHAN_GRACE_SECONDS - 60
+        os.utime(path, (then, then))
+
+    def test_purge_deletes_nothing_from_a_store_another_database_owns(self):
+        """15 Oct 2026: a test database pointed at the live store purged every live file as its
+        own orphan -- 289 files. A store says whose it is; nothing else deletes from it."""
+        wid = self._ticket()
+        info = self._add(wid, _png(), "keep.png")
+        self.conn.commit()
+        self._old(info["sha256"])
+        other = db.init(Path(self.tmp.name) / "other.db")
+        self.addCleanup(other.close)
+        os.environ["PSA_ATTACHMENT_DIR"] = str(self.store)      # the other database aimed at this store
+        self.addCleanup(os.environ.pop, "PSA_ATTACHMENT_DIR", None)
+        self.assertEqual(self.att.verify(other)["orphans"], [info["sha256"]])   # to it, an orphan
+        with self.assertRaisesRegex(RuntimeError, "belongs to"):
+            self.att.purge(other, at=self.at, withheld_days=30, closed_days=730, apply=True)
+        self.assertEqual(self._files(), [info["sha256"]])                # still there
+        with self.assertRaisesRegex(RuntimeError, "belongs to"):
+            self.att.claim_store(other)                                      # and it cannot take it over
+
+    def test_purge_deletes_nothing_from_a_store_with_no_owner_mark(self):
+        wid = self._ticket()
+        info = self._add(wid, _png(), "keep.png")
+        self.conn.commit()
+        (self.store / self.att.OWNER_MARK).unlink()
+        self._old(info["sha256"])
+        other = db.init(Path(self.tmp.name) / "other.db")
+        self.addCleanup(other.close)
+        os.environ["PSA_ATTACHMENT_DIR"] = str(self.store)
+        self.addCleanup(os.environ.pop, "PSA_ATTACHMENT_DIR", None)
+        with self.assertRaisesRegex(RuntimeError, "no owner mark"):
+            self.att.purge(other, at=self.at, withheld_days=30, closed_days=730, apply=True)
+        self.assertEqual(self._files(), [info["sha256"]])
+
+    def test_the_owner_mark_and_stray_files_are_never_orphans(self):
+        stray = self.store / "notes.txt"
+        stray.write_text("not a store file", encoding="utf-8")
+        v = self.att.verify(self.conn, now=10 ** 12)
+        self.assertEqual(v["orphans"], [])
+        self.att.purge(self.conn, at=self.at, withheld_days=30, closed_days=730, apply=True)
+        self.assertTrue((self.store / self.att.OWNER_MARK).is_file())
+        self.assertTrue(stray.is_file())
+
+    def test_the_suite_never_sees_the_hosts_attachment_store(self):
+        """The module unsets PSA_ATTACHMENT_DIR at import; a test that needs one sets its own."""
+        if TEST_DB:
+            self.skipTest("the SQL Server mode sets a temporary store per test")
+        self.assertNotIn("PSA_ATTACHMENT_DIR", os.environ)
 
     def test_usage_counts_rows_by_month_and_board_and_files_once_on_disk(self):
         a, b = self._ticket(), self._ticket(at=datetime(2026, 10, 2, 9, 0))
@@ -10103,7 +10159,7 @@ class AttachmentRetentionTest(unittest.TestCase):
         self.assertEqual(self.att.verify(self.conn, check_hashes=True)["mismatched"], [info["sha256"]])
         stored.unlink()
         self.assertEqual(self.att.verify(self.conn)["missing"], [info["sha256"]])
-        orphan = self.store / "ab" / "cd" / ("ab" + "c" * 62)
+        orphan = self.store / "ab" / "cc" / ("ab" + "c" * 62)       # where the store would put it
         orphan.parent.mkdir(parents=True)
         orphan.write_bytes(b"nobody points here")
         v = self.att.verify(self.conn)
@@ -11269,6 +11325,7 @@ class AttachmentsWebTest(unittest.TestCase):
                               at=at)["attachment_id"]
         attachments.review(conn, aid, "WITHHELD", actor="alice", at=at)
         conn.commit()
+        attachments.claim_store(conn)
         done = attachments.purge(conn, at=datetime(2026, 12, 1), withheld_days=30,
                                  closed_days=730, apply=True)
         conn.close()

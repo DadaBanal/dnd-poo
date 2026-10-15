@@ -93,6 +93,12 @@ port by their own guard text and run **unretyped**.
   not what it is called.
 - Windows: Python `write_text` turns LF into CRLF — write bytes. Bash heredocs mangle quotes — write files with the
   Write tool. The 8.3 short path (`DADA~1.BAN`) is refused by the Artifact publish — use the long path.
+- **`PSA_ATTACHMENT_DIR` is set machine-wide to the live store `D:\psa\files`.** Anything run on this host inherits
+  it. On 15 Oct a suite run did, and its purge deleted all 289 live attachment files as "orphans" of the test
+  database (runbook Parts 121–123). Now: the tests unset it at import; purge deletes nothing from a store whose
+  `.psa-store-owner` mark is missing or names another database; only sha-named files at their own path are ever
+  candidates. **Never point a test, a throwaway desk or a script at `D:\psa\files`** — set your own folder, and
+  set it with assignment, not `setdefault` (which loses to the machine variable). `D:\psa\files` has no backup.
 
 ## 8. Open with Dada (do not decide them)
 

@@ -250,6 +250,59 @@ def _path(root: Path, sha: str) -> Path:
     return root / sha[:2] / sha[2:4] / sha
 
 
+# A store says which database it belongs to, and nothing deletes from a store that is not its own.
+# 15 Oct 2026: a test suite run on DND-SQL01 inherited PSA_ATTACHMENT_DIR (set machine-wide to the live
+# desk's folder) and its purge removed every live file as an "orphan" of the test database -- 289 files.
+# A file is an orphan only relative to ONE database, so deleting orphans is safe only in that database's
+# own store. The mark is written once, deliberately (`attachments-claim-store`), never by an upload, so a
+# stray process cannot claim a store by using it.
+OWNER_MARK = ".psa-store-owner"
+
+
+def owner_identity(conn) -> str:
+    """Which database this is: the SQLite file, or the SQL Server and database it connects to."""
+    if getattr(conn, "backend", "sqlite") == "sqlite":
+        main = next((r[2] for r in conn.execute("PRAGMA database_list") if r[1] == "main"), "")
+        return "sqlite:" + os.path.normcase(os.path.realpath(main)) if main else "sqlite:(memory)"
+    target = getattr(conn, "target", "") or ""
+
+    def key(*names):
+        for n in names:
+            m = re.search(r"(?i)(?:^|;)\s*" + n + r"\s*=\s*([^;]*)", target)
+            if m:
+                return m.group(1).strip().strip("{}").lower()
+        return "?"
+    return "mssql:" + key("server", "data source", "address") + "/" + key("database", "initial catalog")
+
+
+def store_owner(root: Path) -> str | None:
+    mark = Path(root) / OWNER_MARK
+    return mark.read_text(encoding="utf-8").strip() if mark.is_file() else None
+
+
+def claim_store(conn) -> str:
+    """Mark the store as this database's. Refuses a store another database has claimed."""
+    root = store_dir(conn)
+    me = owner_identity(conn)
+    have = store_owner(root)
+    if have is not None and have != me:
+        raise RuntimeError(f"the attachment store {root} belongs to {have}, not {me}")
+    if have is None:
+        root.mkdir(parents=True, exist_ok=True)
+        (root / OWNER_MARK).write_text(me + "\n", encoding="utf-8")
+    return me
+
+
+def _require_own_store(conn, root: Path) -> None:
+    me, have = owner_identity(conn), store_owner(root)
+    if have is None:
+        raise RuntimeError(f"the attachment store {root} carries no owner mark; nothing is deleted. "
+                           "If it is this database's store, run attachments-claim-store once")
+    if have != me:
+        raise RuntimeError(f"the attachment store {root} belongs to {have}, not to this database "
+                           f"({me}); nothing is deleted")
+
+
 def safe_name(filename: str) -> str:
     name = Path((filename or "").replace("\\", "/")).name
     name = re.sub(r"[^\w.\- ()]+", "_", name).strip(" .") or "attachment"
@@ -347,10 +400,16 @@ def _kb(n: int) -> str:
 # ------------------------------------------------------------ keeping it whole
 
 def _files_on_disk(root: Path) -> dict[str, Path]:
-    """Every stored file by its name (the sha), .part leftovers excluded."""
+    """Every stored file by its name (the sha), .part leftovers excluded. Only a file named by a sha256
+    and sitting where the store puts it counts: anything else in the folder (the owner mark, a stray
+    file) is never a store file, so it is never an orphan and never deleted."""
     if not root.is_dir():
         return {}
-    return {p.name: p for p in root.rglob("*") if p.is_file() and not p.name.endswith(".part")}
+    return {p.name: p for p in root.rglob("*")
+            if p.is_file() and _SHA.fullmatch(p.name) and p == _path(root, p.name)}
+
+
+_SHA = re.compile(r"[0-9a-f]{64}")
 
 
 def usage(conn: sqlite3.Connection) -> dict:
@@ -510,6 +569,7 @@ def purge(conn: sqlite3.Connection, *, at: datetime, withheld_days: int, closed_
             "withheld_before": withheld_before, "closed_before": closed_before}
     if not apply:
         return plan
+    _require_own_store(conn, root)       # before any row changes and any byte goes
 
     from .board import _event
     for r in due:
