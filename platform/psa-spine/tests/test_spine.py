@@ -7722,9 +7722,43 @@ class ModulesTest(unittest.TestCase):
         board_page = self._call("GET", "/", cookie=self.alice)[2]
         self.assertIn('href="/chat"', board_page)
         self.assertIn("Live chats (<span class=tn>1</span>)", board_page)
-        # the ring: louder, a phone's two trilled tones, again every 30 s while a chat waits, one tab at a time
-        for piece in ("createDynamicsCompressor", "o.type='square'", "REPEAT=30000", "psa-chat-rang", "ring(true)"):
+        # the ring: louder, a phone's two trilled tones, one tab at a time -- and once per new chat
+        # (Dada, 15 Oct 2026: "dont repeat just do it once"; the 30 s repeat is gone)
+        for piece in ("createDynamicsCompressor", "o.type='square'", "psa-chat-rang", "if(fresh.length)ring();"):
             self.assertIn(piece, templates.SCRIPT, piece)
+        for gone in ("REPEAT", "ring(false)"):
+            self.assertNotIn(gone, templates.SCRIPT, gone)
+        # a sound to choose, for a new chat and a new ticket, beside the theme button (Dada, 15 Oct 2026);
+        # the desk's own files, nothing else served
+        self.assertIn("popovertarget=soundpick", board_page)
+        self.assertLess(board_page.index("popovertarget=soundpick"), board_page.index('id="theme"'))
+        for kind in ("chat", "ticket"):
+            self.assertIn(f"<label for=snd-{kind}>", board_page)
+            self.assertIn(f"<select id=snd-{kind} class=tpick data-for={kind}>", board_page)
+        for key in ("phone", "oh-my-god", "fah", "vine-boom", "soft-bell", "off"):
+            self.assertIn(f"<option value='{key}'>", board_page)
+        self.assertIn("tickets(j.newest_ticket)", templates.SCRIPT)
+        from psaspine import tickets as _tk
+        tc = self._conn()
+        her_board = tc.execute("SELECT MIN(board_id) FROM board_member WHERE member = 'alice'").fetchone()[0]
+        fresh_wid = _tk.open_ticket(tc, board_id=her_board, summary="Ward printer jam", impact="I3", urgency="U3",
+                                    requested_by="ward@pmcne.ph", at=datetime(2030, 1, 1, 8, 0), entity_id="PMC")
+        tc.commit()
+        newest = _json.loads(self._call("GET", "/chat/waiting.json", cookie=self.alice)[2])["newest_ticket"]
+        self.assertTrue(newest.endswith(f"|{fresh_wid}"), newest)                 # the newest on her boards
+        self.assertIsNone(_json.loads(self._call("GET", "/chat/waiting.json",
+                                                 cookie=self._cookie_for("nobody"))[2])["newest_ticket"])
+        from psaspine.web import sounds
+        self.assertEqual(len(sounds.FILES), 13)
+        for key, name in sounds.FILES.items():                                    # every listed file is there, and is an MP3
+            data = (sounds.DIR / name).read_bytes()
+            self.assertTrue(data[:3] == b"ID3" or (data[0] == 0xFF and data[1] & 0xE0 == 0xE0), key)
+        served = sounds.serve(None, "fah")
+        self.assertEqual((served.content_type, served.body[:2]), ("audio/mpeg", b"\xff\xfb"))
+        status, headers, _ = self._call("GET", "/sounds/zz-no-such-sound", cookie=self.alice)
+        self.assertTrue(status.startswith("404"), status)
+        status, headers, _ = self._call("GET", "/sounds/..%2F__init__.py", cookie=self.alice)
+        self.assertTrue(status.startswith("404"), status)
         # she picks it up at 09:40; making it a ticket at 10:00 opens the ticket on her time, ready to confirm
         chat.pick_up(c, cid, member="alice", at=datetime(2026, 9, 17, 9, 40))
         c.commit()

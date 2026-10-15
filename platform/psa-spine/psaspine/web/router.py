@@ -12,6 +12,7 @@ from .views import schedule as schedule_view
 from .views import timesheets as timesheets_view
 from .views import recurring as recurring_view
 from .views import approvals as approvals_view
+from . import sounds as sounds_view
 from .views import paging as paging_view
 from .views import agreements as agreements_view
 from .views import finance as finance_view, procurement as procurement_view
@@ -300,6 +301,7 @@ ROUTES = [
     ("GET", "/my/approvals", approvals_view.portal_index),
     ("POST", "/my/approvals/<approval_id>/decide", approvals_view.portal_decide),
     ("GET", "/my/approvals/<approval_id>/file/<attachment_id>", approvals_view.portal_file),
+    ("GET", "/sounds/<name>", sounds_view.serve),
     ("GET", "/my/new", portal.new_form),
     ("POST", "/my/new", portal.create),
     ("GET", "/my/<work_item_id>", portal.detail),

@@ -1186,6 +1186,7 @@ tr.chatwait td:first-child{border-left:3px solid var(--accent)}
 .ticker .btn,.ticker .iconbtn{flex:0 0 auto;white-space:nowrap}
 .ticker .iconbtn{font-size:22px;width:40px;height:40px}
 .ticker .tsound.off{opacity:.45}
+.soundpop{margin:0;inset:auto;position:fixed;top:56px;right:16px;width:min(320px,calc(100vw - 32px));padding:12px 14px;background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:var(--r);box-shadow:0 10px 28px rgba(0,0,0,.25)} .soundpop h4{margin:0 0 8px} .soundpop label{display:block;font-weight:600;margin:8px 0 4px} .soundpop select{width:100%} .soundpop .why{margin:10px 0 0}
 /* the quick view: the live chats, opened from the banner, over the page rather than pushing it */
 .ticker .tpanel{position:absolute;right:10px;top:calc(100% + 6px);z-index:60;width:min(560px,calc(100vw - 32px));max-height:min(60vh,520px);
   overflow:auto;padding:6px 12px 10px;border-radius:14px;font-size:14px;background:var(--surface);border:1px solid var(--line);
@@ -2489,17 +2490,38 @@ document.addEventListener('pointerdown',function(){if(on())ctx()},{once:true});
 /* 073 (Dada, 7 Oct 2026: "a more audible one a different beep or alert"; confirmed: a louder phone-style ring,
    again every 30 s while a chat waits). A desk phone's ring: two tones trilled fast, in two bursts, played twice,
    through a compressor so it is loud without clipping. Made here, no sound file. */
-function chime(){var a=ctx();if(!a)return;var t=a.currentTime,cmp=a.createDynamicsCompressor(),out=a.createGain();
+function phone(){var a=ctx();if(!a)return;var t=a.currentTime,cmp=a.createDynamicsCompressor(),out=a.createGain();
  cmp.threshold.value=-12;cmp.ratio.value=4;out.gain.value=0.9;cmp.connect(out);out.connect(a.destination);
  [0,.55,1.4,1.95].forEach(function(b){var o=a.createOscillator(),g=a.createGain(),s=t+b,i;o.type='square';
   for(i=0;i<9;i++)o.frequency.setValueAtTime(i%2?1400:1100,s+i*.05);
   g.gain.setValueAtTime(0.0001,s);g.gain.exponentialRampToValueAtTime(0.55,s+.015);g.gain.setValueAtTime(0.55,s+.42);
   g.gain.exponentialRampToValueAtTime(0.0001,s+.45);o.connect(g);g.connect(cmp);o.start(s);o.stop(s+.46)})}
-/* one ring across the person's open tabs: whichever tab rings first says so, and the others keep quiet */
-var RANG='psa-chat-rang',REPEAT=30000;
+/* Dada, 15 Oct 2026: a sound to choose (the oh my god, the fahhh, the bells, the catchy ones), one for a new
+   chat and one for a new ticket, picked beside the theme button. The phone ring is made above; the rest are the
+   desk's own files (/sounds/<key>), fetched once, decoded and played through the same audio as the ring. A file
+   that will not play falls back to the ring, so a chat is never silent. 'off' is no sound. */
+var SKEY={chat:'psa-chat-sound',ticket:'psa-ticket-sound'},SDEF={chat:'phone',ticket:'soft-bell'},bufs={};
+function pick(kind){try{return localStorage.getItem(SKEY[kind])||SDEF[kind]}catch(e){return SDEF[kind]}}
+function clip(k,a){if(bufs[k])return Promise.resolve(bufs[k]);
+ return fetch('/sounds/'+encodeURIComponent(k),{credentials:'same-origin'}).then(function(r){if(!r.ok)throw r.status;return r.arrayBuffer()})
+ .then(function(b){return new Promise(function(ok,no){a.decodeAudioData(b,ok,no)})}).then(function(d){bufs[k]=d;return d})}
+function play(k){var a=ctx();if(k==='off')return;if(k==='phone'||!a){phone();return}
+ clip(k,a).then(function(d){var s=a.createBufferSource();s.buffer=d;s.connect(a.destination);s.start()}).catch(function(){phone()})}
+function chime(kind){play(pick(kind||'chat'))}
+Array.prototype.forEach.call(document.querySelectorAll('select.tpick'),function(s){var kind=s.dataset.for||'chat';s.value=pick(kind);
+ if(!s.value)s.value=SDEF[kind];
+ s.addEventListener('change',function(){try{localStorage.setItem(SKEY[kind],s.value)}catch(e){}play(s.value)})});
+/* one ring across the person's open tabs: whichever tab rings first says so, and the others keep quiet.
+   Once per new chat (Dada, 15 Oct 2026: "dont repeat just do it once"); the 30-second repeat is gone. */
+var RANG='psa-chat-rang';
 function rangAgo(){try{return Date.now()-(+localStorage.getItem(RANG)||0)}catch(e){return 1e9}}
-function ring(fresh){if(!on()||tk.hidden)return;if(rangAgo()<(fresh?3000:REPEAT-2000))return;
- try{localStorage.setItem(RANG,String(Date.now()))}catch(e){}chime()}
+function ring(){if(!on()||tk.hidden)return;if(rangAgo()<3000)return;
+ try{localStorage.setItem(RANG,String(Date.now()))}catch(e){}chime('chat')}
+/* a new ticket on the person's boards: once, in one tab. The newest one seen is kept in this browser; the first
+   look only learns it, so opening the desk is not a ring. */
+var TSEEN='psa-ticket-newest';
+function tickets(n){if(!n)return;var was;try{was=localStorage.getItem(TSEEN)}catch(e){return}
+ if(was===n)return;try{localStorage.setItem(TSEEN,n)}catch(e){}if(was!==null&&n>was)chime('ticket')}
 function seen(){try{return JSON.parse(sessionStorage.getItem(SEEN)||'[]')}catch(e){return[]}}
 function remember(ids){try{sessionStorage.setItem(SEEN,JSON.stringify(ids.slice(-200)))}catch(e){}}
 /* the quick view (Dada, 7 Oct 2026: "a quick view of the live chats"): opens over the page, Escape or a click away closes it */
@@ -2545,14 +2567,14 @@ tk.querySelector('.tclose').addEventListener('click',function(){open(false);tk.h
  try{sessionStorage.setItem(HID,JSON.stringify(ids()))}catch(e){}});
 /* polled in a background tab too: the ring matters most when the desk page is not the one in front */
 function look(){fetch('/chat/waiting.json',{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null}).then(function(j){
- if(!j)return;var lv=j.live||[],cs=j.chats||[];
+ if(!j)return;tickets(j.newest_ticket);var lv=j.live||[],cs=j.chats||[];
  var key=JSON.stringify([lv,j.operators,j.me]);if(key!==lastL){drawTicker(lv,cs);drawPanel(lv,j);lastL=key}
  word.textContent=(VIT?'':'💬 ')+(j.word||'');tn.textContent=lv.length;
  if(!lv.length){open(false);tk.hidden=true;first=false;return}
  var old=seen(),fresh=cs.filter(function(c){return old.indexOf(c.id)<0});
  var hid=hidden();if(lv.every(function(c){return hid.indexOf(c.id)>=0})){tk.hidden=true;remember(old.concat(fresh.map(function(c){return c.id})));first=false;return}
  track.style.setProperty('--tdur',Math.max(12,8+(cs.length||lv.length)*6)+'s');tk.hidden=false;
- if(fresh.length)ring(true);else if(cs.length)ring(false);remember(old.concat(fresh.map(function(c){return c.id})));first=false}).catch(function(){})}
+ if(fresh.length)ring();remember(old.concat(fresh.map(function(c){return c.id})));first=false}).catch(function(){})}
 paint();look();setInterval(look,8000);document.addEventListener('visibilitychange',function(){if(!document.hidden)look()})})();
 """
 
@@ -3229,6 +3251,11 @@ def _chat_banner(user, *, vitals: bool = False) -> str:
     return out
 
 
+def _sounds_button() -> str:
+    from .sounds import header_button
+    return header_button()
+
+
 def _chat_banner_html(live, word, items) -> str:
     return ("<div id=chatticker class=ticker" + ("" if live else " hidden") + " role=status aria-live=polite>"
             f"<b class=tlabel>💬 {esc(word)}</b><div class=tview><div class=ttrack>{items}</div></div>"
@@ -3422,6 +3449,7 @@ def page(title: str, body: str, *, user=None, active: str = "", requester: bool 
                f'<span class=sep> · </span><a href="/logout">sign out</a>' + tools +
                f'<button class="iconbtn" id="textsize" type="button" title="Text size"'
                f' aria-label="Text size"><b style="font-size:13px;letter-spacing:-.5px">Aa</b></button>'
+               + ('' if requester else _sounds_button()) +
                f'<button class="iconbtn" id="theme" type="button" title="Theme: dark or light, and classic, peach, purple or pink (t flips dark and light)"'
                f' aria-label="Theme" aria-haspopup="menu" aria-expanded="false">{icon("sun")}</button></div>')
     palette = ""

@@ -552,7 +552,24 @@ def waiting_json(ctx):
     return _json({"chats": [{k: r[k] for k in keep} for r in rows if r["status"] == chat.WAITING],
                   "live": [{k: r[k] for k in keep} for r in rows], "word": t.chat_ticker(rows)[0],
                   "operators": ops, "me": {"state": live.state_of(ctx.user.id), "manual": live.manual_of(ctx.user.id)}
-                  if chat.is_operator(ctx.conn, ctx.user.id) else None})
+                  if chat.is_operator(ctx.conn, ctx.user.id) else None,
+                  "newest_ticket": _newest_ticket(ctx)})
+
+
+def _newest_ticket(ctx) -> str | None:
+    """The newest ticket on the boards the person's Service Board shows, as
+    'opened_at|ticket' (Dada, 15 Oct 2026: a sound for new tickets too). The
+    page keeps the last one it saw and rings once when a newer one comes."""
+    boards = sorted(common.service_board_ids(ctx))
+    if not boards:
+        return None
+    marks = ",".join("?" * len(boards))
+    at = ctx.conn.execute(f"SELECT MAX(opened_at) FROM ticket WHERE board_id IN ({marks})", boards).fetchone()[0]
+    if not at:
+        return None
+    wid = ctx.conn.execute(f"SELECT MAX(work_item_id) FROM ticket WHERE board_id IN ({marks}) AND opened_at = ?",
+                           boards + [at]).fetchone()[0]
+    return f"{at}|{wid}"
 
 
 def pick(ctx, chat_id):
