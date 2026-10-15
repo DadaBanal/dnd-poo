@@ -299,6 +299,7 @@ ROUTES = [
     ("GET", "/my", portal.index),
     ("GET", "/my/approvals", approvals_view.portal_index),
     ("POST", "/my/approvals/<approval_id>/decide", approvals_view.portal_decide),
+    ("GET", "/my/approvals/<approval_id>/file/<attachment_id>", approvals_view.portal_file),
     ("GET", "/my/new", portal.new_form),
     ("POST", "/my/new", portal.create),
     ("GET", "/my/<work_item_id>", portal.detail),

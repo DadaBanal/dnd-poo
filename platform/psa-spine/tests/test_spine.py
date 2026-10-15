@@ -13551,6 +13551,78 @@ class ApprovalsTest(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_the_approver_reads_the_whole_request_and_may_send_a_file_with_the_decision(self):
+        """PMO, 15 Oct 2026 (PMC-001668): the approval card carries the original
+        request, the thread the requester can read, the approval history and the
+        cleared files, then the decision -- and nothing the approver could not
+        already see. Request 2: a file can go with the decision."""
+        from psaspine import approvals, attachments
+        conn = db.connect(self.db_path)
+        try:
+            wid = tickets.open_ticket(conn, board_id="IT_HELP", summary="Access to the ward printer", impact="I3",
+                                      urgency="U3", requested_by="msantos@pmcne.ph", at=self.at, entity_id="PMC",
+                                      description="Please add me to the Ward 3 printer; the old one was moved to Ward 5.")
+            board.add_note(conn, wid, body="Which printer name is on the sticker?", flag="DISCUSSION", actor="bob", at=self.at)
+            board.add_note(conn, wid, body="Owner says the cost centre is wrong", flag="INTERNAL", actor="bob", at=self.at)
+            conn.execute("INSERT INTO ticket_event (work_item_id, occurred_at, kind, actor, detail, note_flag)"
+                         " VALUES (?, '2026-09-30 09:05', 'PORTAL_REPLY', 'msantos@pmcne.ph', 'It says W3-HP-02.', 'DISCUSSION')", (wid,))
+            ok = attachments.add(conn, wid, _png(text=b"cleared"), "sticker.png", actor="msantos@pmcne.ph", at=self.at, source="PORTAL")
+            attachments.review(conn, ok["attachment_id"], "CLEARED", actor="bob", at=self.at)
+            held = attachments.add(conn, wid, _png(text=b"withheld"), "chart.png", actor="msantos@pmcne.ph", at=self.at, source="PORTAL")
+            attachments.review(conn, held["attachment_id"], "WITHHELD", actor="bob", at=self.at)
+            unchecked = attachments.add(conn, wid, _png(text=b"pending"), "later.png", actor="msantos@pmcne.ph", at=self.at, source="PORTAL")
+            approvals.request(conn, wid, approver=self.APPROVER, reason="Printer access for the ward", at=self.at, actor="bob")
+            conn.commit()
+        finally:
+            conn.close()
+        head = self._cookie_for("head.nursing", email="Head.Nursing@pmcne.ph")
+        someone = self._cookie_for("someone", email="someone@pmcne.ph")
+        status, _, body = self._call("GET", "/my/approvals", cookie=head)
+        self.assertEqual(status, "200 OK")
+        card = body[body.index(f"{wid} · Access to the ward printer"):]
+        card = card[:card.index("</form>")]
+        self.assertIn("the old one was moved to Ward 5.", card)                  # the original request, whole
+        self.assertIn("Which printer name is on the sticker?", card)              # the desk's discussion
+        self.assertIn("It says W3-HP-02.", card)                                  # the requester's reply
+        self.assertIn(f"Approval asked of {self.APPROVER}: Printer access for the ward", card)
+        self.assertNotIn("cost centre", card)                                     # never an Internal note
+        self.assertIn("msantos@pmcne.ph &middot;", card)                          # who wrote it, and when
+        self.assertLess(card.index("the old one was moved"), card.index("It says W3-HP-02."))  # in time order
+        self.assertLess(card.index("athread"), card.index("name=decision"))      # the context, then the decision
+        aid = int(re.search(rf"/my/approvals/(\d+)/decide", card).group(1))
+        self.assertIn(f"/my/approvals/{aid}/file/{ok['attachment_id']}", card)
+        self.assertNotIn("chart.png", card)                                       # withheld stays out
+        self.assertNotIn("later.png", card)                                       # unchecked stays out
+        self.assertIn("type=file name=file", card)
+        self.assertIn("enctype='multipart/form-data'", card)
+        send = AttachmentsWebTest._send.__get__(self)
+        status, _, payload = send("GET", f"/my/approvals/{aid}/file/{ok['attachment_id']}", cookie=head)
+        self.assertEqual(status, "200 OK")
+        self.assertEqual(payload[1:4], b"PNG")
+        for fid in (held["attachment_id"], unchecked["attachment_id"]):
+            status, _, _ = send("GET", f"/my/approvals/{aid}/file/{fid}", cookie=head)
+            self.assertEqual(status, "404 Not Found")
+        status, _, _ = send("GET", f"/my/approvals/{aid}/file/{ok['attachment_id']}", cookie=someone)
+        self.assertEqual(status, "404 Not Found")                                 # not theirs to learn exists
+        # a refused decision keeps no file; an accepted one keeps it, as the approver's, for review
+        status, headers, _ = send("POST", f"/my/approvals/{aid}/decide", cookie=head,
+                                  fields={"decision": "DECLINE", "note": ""}, files=[("signed.png", _png(text=b"signed"))])
+        self.assertIn("A+decline+says+why", headers["Location"])
+        status, headers, _ = send("POST", f"/my/approvals/{aid}/decide", cookie=head,
+                                  fields={"decision": "APPROVE", "note": "Signed form attached"},
+                                  files=[("signed.png", _png(text=b"signed")), ("tool.exe", b"MZ\x90\x00" + b"\x00" * 60)])
+        self.assertEqual(status, "303 See Other")
+        self.assertIn("msg=Approved.", headers["Location"])
+        self.assertIn("tool.exe+was+not+kept", headers["Location"])
+        conn = db.connect(self.db_path)
+        try:
+            rows = conn.execute("SELECT filename, uploaded_by, review_status FROM attachment WHERE work_item_id = ?"
+                                " AND filename = 'signed.png'", (wid,)).fetchall()
+            self.assertEqual([tuple(r) for r in rows], [("signed.png", self.APPROVER, "PENDING")])
+            self.assertEqual(approvals.get(conn, aid)["status"], "APPROVED")
+        finally:
+            conn.close()
+
     def test_the_ticket_card_asks_and_withdraws_and_the_portal_lists_and_decides(self):
         bob, carol, nurse = self._cookie_for("bob"), self._cookie_for("carol"), self._cookie_for("msantos", email="msantos@pmcne.ph")
         head = self._cookie_for("head.nursing", email="Head.Nursing@pmcne.ph")

@@ -690,6 +690,7 @@ tr[data-href]{cursor:pointer}tr[data-href]:hover td{background:var(--surface-2)}
   .slip,.slip *{color:#000!important}.slip dt,.slip th,.slip .kicker,.slip .stamp,.slip .sig,.slip footer{color:#444!important}
   .slip{max-width:none;border:0;padding:0;background:#fff}.slip th,.slip td{border-bottom-color:#bbb}.slip header{border-bottom-color:#000}.slip .sig{border-top-color:#000}}
 .stream{list-style:none;padding:0;margin:0} .stream li{padding:8px 0;border-bottom:1px solid var(--line)} .stream li:last-child{border-bottom:none}
+.athread{max-height:28rem;overflow:auto;margin:8px 0 12px;padding:0 12px;border:1px solid var(--line);border-radius:var(--r-sm)} h4.afiles{margin:12px 0 4px;display:flex;align-items:center;gap:6px} details.acontext{margin-top:10px} details.acontext>summary{cursor:pointer;font-weight:600;color:var(--ink-2)} details.acontext>summary::marker{color:var(--ink-3)}
 .stream .meta{color:var(--ink-3);font-size:12px}
 .stream li.by-req,.stream li.by-staff{border:0;border-left:4px solid var(--accent);border-radius:var(--r-md,8px);padding:8px 12px;margin:0 0 8px;background:var(--accent-bg)} .stream li.by-req{border-left-color:var(--req);background:var(--req-bg)}
 .note{position:relative;border:1px solid var(--line);border-radius:var(--r-lg);padding:10px 12px 10px 16px;margin-bottom:10px;background:var(--surface);overflow:hidden}
