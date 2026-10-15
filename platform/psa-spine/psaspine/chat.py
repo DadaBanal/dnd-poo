@@ -388,6 +388,7 @@ def add_file(conn: sqlite3.Connection, chat_id: int, data: bytes, filename: str,
         tmp = path.with_suffix(".part")
         tmp.write_bytes(stored)
         os.replace(tmp, path)
+        attachments.seal(path)
     name = attachments.safe_name(filename)
     words = (caption or "").strip()[:MAX_LINE] or f"sent {name}"
     mid = _line(conn, chat_id, sender, kind, words, at)

@@ -76,6 +76,7 @@ def add(conn: sqlite3.Connection, article_id: str, data: bytes, filename: str, *
         tmp = path.with_suffix(".part")
         tmp.write_bytes(stored)
         os.replace(tmp, path)
+        attachments.seal(path)
     stamp = _stamp(at)
     name = safe_name(filename)
     caption = " ".join((caption or "").split())[:200] or None
@@ -132,7 +133,7 @@ def remove(conn: sqlite3.Connection, file_id: int, *, actor: str, at: datetime) 
     if still is None:
         path = _path(kb_dir(conn), row["sha256"])
         if path.exists():
-            path.unlink()
+            attachments.remove_sealed(path)
     return True
 
 

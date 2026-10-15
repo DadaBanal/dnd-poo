@@ -48,6 +48,7 @@ import hashlib
 import os
 import re
 import sqlite3
+import stat
 import struct
 import zlib
 from datetime import datetime, timedelta
@@ -259,6 +260,21 @@ def _path(root: Path, sha: str) -> Path:
 OWNER_MARK = ".psa-store-owner"
 
 
+def seal(path: Path) -> None:
+    """Mark a stored file read-only. 15 Oct 2026: a test run emptied the live store (285 attachments, no backup);
+    the processes on DND-SQL01 hold the backup and restore privileges, which walk through a deny-delete permission,
+    but not through this flag - an accidental delete fails with WinError 5 and only a deliberate force clears it.
+    Every stored file is sealed the moment it lands; only `remove_sealed` takes one away."""
+    os.chmod(path, stat.S_IREAD)
+
+
+def remove_sealed(path: Path) -> None:
+    """The one way the desk deletes a stored file: clear its read-only flag, then remove it. Used only by the
+    retention purge and the knowledge base's own removal, which have already decided the file is unreferenced."""
+    os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+    path.unlink()
+
+
 def owner_identity(conn) -> str:
     """Which database this is: the SQLite file, or the SQL Server and database it connects to."""
     if getattr(conn, "backend", "sqlite") == "sqlite":
@@ -331,6 +347,7 @@ def add(conn: sqlite3.Connection, work_item_id: str, data: bytes, filename: str,
         tmp = path.with_suffix(".part")
         tmp.write_bytes(stored)
         os.replace(tmp, path)
+        seal(path)
     stamp = at.isoformat(sep=" ", timespec="minutes")
     name = safe_name(filename)
     cid = (content_id or "").strip().strip("<>").strip()[:400] or None
@@ -591,7 +608,7 @@ def purge(conn: sqlite3.Connection, *, at: datetime, withheld_days: int, closed_
         if not path.exists():
             continue
         size = path.stat().st_size
-        path.unlink()
+        remove_sealed(path)
         plan["bytes_freed"] += size
         if sha in check["orphans"]:
             plan["orphans_removed"] += 1

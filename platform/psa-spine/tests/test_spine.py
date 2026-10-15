@@ -9918,6 +9918,14 @@ def _jpeg():
             + b"\xff\xd9")
 
 
+def _unseal(path):
+    """A test that damages a stored file on purpose clears its read-only seal first (15 Oct 2026: the desk seals
+    every stored file so an accidental delete or overwrite fails)."""
+    import stat as _stat
+    os.chmod(path, _stat.S_IREAD | _stat.S_IWRITE)
+    return path
+
+
 class AttachmentsTest(unittest.TestCase):
     """027 and psaspine.attachments: kept outside the database, compressed by
     kind and losslessly, and every file waits for a patient-information review."""
@@ -9999,7 +10007,7 @@ class AttachmentsTest(unittest.TestCase):
         self.assertEqual(a["sha256"], b["sha256"])
         stored = [p for p in self.att.store_dir(self.conn).rglob("*") if p.is_file()]
         self.assertEqual(len(stored), 1)
-        stored[0].write_bytes(b"not the file")
+        _unseal(stored[0]).write_bytes(b"not the file")
         with self.assertRaises(IOError):
             self.att.read(self.conn, a["attachment_id"])
 
@@ -10091,6 +10099,22 @@ class AttachmentRetentionTest(unittest.TestCase):
         then = _time.time() - self.att.ORPHAN_GRACE_SECONDS - 60
         os.utime(path, (then, then))
 
+    def test_a_stored_file_is_sealed_and_an_accidental_delete_fails(self):
+        """15 Oct 2026: a test run emptied the live store; the processes on DND-SQL01 hold the backup and restore
+        privileges, which walk through a deny-delete permission but not through the read-only flag. Every stored
+        file is sealed when it lands; only the desk's own removal clears it."""
+        import stat as _stat
+        wid = self._ticket()
+        row = self._add(wid, b"%PDF-1.4 sealed", "sealed.pdf")
+        path = self.store / row["sha256"][:2] / row["sha256"][2:4] / row["sha256"]
+        self.assertFalse(path.stat().st_mode & _stat.S_IWRITE, "a stored file must be read-only")
+        if os.name == "nt":                        # POSIX may unlink a read-only file in a writable folder
+            with self.assertRaises(PermissionError):
+                path.unlink()
+            self.assertTrue(path.exists(), "an accidental delete must leave the file where it is")
+        self.att.remove_sealed(path)
+        self.assertFalse(path.exists(), "the desk's own removal still works")
+
     def test_purge_deletes_nothing_from_a_store_another_database_owns(self):
         """15 Oct 2026: a test database pointed at the live store purged every live file as its
         own orphan -- 289 files. A store says whose it is; nothing else deletes from it."""
@@ -10155,7 +10179,7 @@ class AttachmentRetentionTest(unittest.TestCase):
         info = self._add(wid, b"trace\n" * 200, "t.log")
         self.assertEqual(self.att.verify(self.conn)["missing"], [])
         stored = self.store / info["sha256"][:2] / info["sha256"][2:4] / info["sha256"]
-        stored.write_bytes(b"garbage")
+        _unseal(stored).write_bytes(b"garbage")
         self.assertEqual(self.att.verify(self.conn, check_hashes=True)["mismatched"], [info["sha256"]])
         stored.unlink()
         self.assertEqual(self.att.verify(self.conn)["missing"], [info["sha256"]])
@@ -10170,7 +10194,7 @@ class AttachmentRetentionTest(unittest.TestCase):
     def test_a_missing_file_is_recorded_as_gone_by_a_person_not_by_the_purge(self):
         wid = self._ticket()
         info = self._add(wid, b"trace\n" * 200, "t.log")
-        (self.store / info["sha256"][:2] / info["sha256"][2:4] / info["sha256"]).unlink()
+        _unseal(self.store / info["sha256"][:2] / info["sha256"][2:4] / info["sha256"]).unlink()
         with self.assertRaises(RuntimeError):
             self._purge(datetime(2030, 1, 1))
         n = self.att.record_missing(self.conn, self.att.verify(self.conn)["missing"],
@@ -10267,7 +10291,7 @@ class AttachmentRetentionTest(unittest.TestCase):
             self.assertEqual(cli_main(["attachments-usage", str(self.db_path)]), 0)
         self.assertIn("OK: the store is whole", out.getvalue())
         self.assertIn("1 files (1 live, 1 distinct)", out.getvalue())
-        (self.store / info["sha256"][:2] / info["sha256"][2:4] / info["sha256"]).unlink()
+        _unseal(self.store / info["sha256"][:2] / info["sha256"][2:4] / info["sha256"]).unlink()
         with contextlib.redirect_stdout(_io.StringIO()):
             self.assertEqual(cli_main(["attachments-verify", str(self.db_path)]), 1)
         self.conn = db.connect(self.db_path)
