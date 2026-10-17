@@ -63,9 +63,14 @@ when the machine value is set — assign it. Never assume an inherited environme
 - Throwaway desk for reviews: `.claude/launch.json` `psa-review`, port 8086, SQLite in the scratchpad, seeded by
   `seed_desk.py`. Build it with `psaspine init` on a fresh file; an old file does not migrate.
 - BizBox side: schema `psa` on LiveDB_PMC **and** TrainingDB_HIS8 — 22 views, `fn_item_ledger`, `sp_apply_change`.
-- A spawned job session starts in a **git worktree**, not the live checkout: rebase on
-  `origin/claude/psa-ticketing-build`, push with `git push origin HEAD:claude/psa-ticketing-build`; deploy = pull in
-  `D:\dnd-poo` then restart, on Dada's word.
+- **Build in the worktree `D:\dnd-poo\.claude\worktrees\sql01-build`, never in `D:\dnd-poo`.** The mail, notify,
+  Teams, rules and calendar tasks load `psaspine` from `D:\dnd-poo\platform\psa-spine` on every run, so an edit
+  there is live before any restart (15 Oct, runbook Part 123). Rebase on `origin/claude/psa-ticketing-build`, push
+  with `git push origin HEAD:claude/psa-ticketing-build`; deploy = `git pull --ff-only` in `D:\dnd-poo`, then
+  restart PSA-Desk, then check `/login` 200 locally and on `desk.pmcne.ph` and no traceback in `D:\psa\logs\PSA-Desk.log`.
+- **"restart" is Dada's go-live word.** Run the full suite first (about 15–25 minutes) and go live when it is green;
+  if he says "restart" **again** while it runs, he means now — go on the targeted tests and report the suite after
+  (Parts 129, 131).
 - Python: `C:/PMC/Python312/python.exe -I`. Push: `claude/psa-ticketing-build`; verify local == remote after every push.
 
 ## 5. The gate — every write to a database
@@ -102,6 +107,9 @@ port by their own guard text and run **unretyped**.
   not what it is called.
 - Windows: Python `write_text` turns LF into CRLF — write bytes. Bash heredocs mangle quotes — write files with the
   Write tool. The 8.3 short path (`DADA~1.BAN`) is refused by the Artifact publish — use the long path.
+- **The worktree checks out CRLF** (git autocrlf). A script that finds-and-replaces text with `"\n"` in it finds
+  nothing and its count-assert fails; match the file's own line ends, or use the Edit tool. Binary files (the MP3s in
+  `psaspine/web/sounds`) are stored byte-for-byte — check with `git show HEAD:<path> | sha256sum`.
 - **`PSA_ATTACHMENT_DIR` is set machine-wide to the live store `D:\psa\files`.** Anything run on this host inherits
   it. On 15 Oct a suite run did, and its purge deleted all 289 live attachment files as "orphans" of the test
   database (runbook Parts 121–123). Now: the tests unset it at import; purge deletes nothing from a store whose
