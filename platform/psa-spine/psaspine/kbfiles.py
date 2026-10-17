@@ -14,6 +14,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import os
+import re
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -135,6 +136,20 @@ def remove(conn: sqlite3.Connection, file_id: int, *, actor: str, at: datetime) 
         if path.exists():
             attachments.remove_sealed(path)
     return True
+
+
+_PLACED = re.compile(r"\]\(file:(\d+)\)")
+
+
+def unplaced(conn: sqlite3.Connection, article_id: str, body: str, *, portal: bool) -> list[sqlite3.Row]:
+    """The article's pictures this reader may see that the text never places
+    (Dada, 16 Oct 2026: images added to an article were on it but shown to
+    nobody, because only a ![caption](file:N) in the text drew them). They
+    are shown after the text, so a picture added is a picture seen."""
+    placed = {int(n) for n in _PLACED.findall(body or "")}
+    return [r for r in of_article(conn, article_id)
+            if str(r["media_type"] or "").startswith("image/") and r["file_id"] not in placed
+            and visible(r, portal=portal)]
 
 
 def resolver(conn: sqlite3.Connection, article_id: str, *, portal: bool, base: str):

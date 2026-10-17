@@ -11539,7 +11539,7 @@ class AttachmentsWebTest(unittest.TestCase):
     tearDown = WebWSGITest.tearDown
     _cookie_for = WebWSGITest._cookie_for
 
-    def _send(self, method, path, *, cookie, fields=None, files=(), query=""):
+    def _send(self, method, path, *, cookie, fields=None, files=(), query="", file_field="file"):
         import io as _io_
         import wsgiref.validate as _v
         body, ctype = b"", None
@@ -11550,7 +11550,7 @@ class AttachmentsWebTest(unittest.TestCase):
                 parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"'
                              f"\r\n\r\n{v}\r\n".encode())
             for fname, data in files:
-                parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="file";'
+                parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{file_field}";'
                              f' filename="{fname}"\r\nContent-Type: application/octet-stream'
                              "\r\n\r\n".encode() + data + b"\r\n")
             body = b"".join(parts) + f"--{boundary}--\r\n".encode()
@@ -14238,6 +14238,98 @@ class KnowledgeFilesTest(unittest.TestCase):
                               f"removed from {aid}: switch.png"])
         finally:
             conn.close()
+
+    def test_pictures_show_without_a_placing_code_and_can_be_pasted_into_the_text(self):
+        """Dada, 16 Oct 2026: images added to an article showed to nobody (KB-0002: two cleared pictures, no
+        ![..](file:N) in the text), and "it should work like how itglue field works". A picture the text does
+        not place is shown after it -- the desk at once, a requester once cleared -- and a picture pasted into
+        the text is kept on Save, in place, the text rewritten to its number."""
+        from psaspine import kbfiles, knowledge
+        aid = self._article(body="Steps to fix the error.\n\n1. Go to PIS.")
+        alice, nurse = self._cookie_for("alice"), self._cookie_for("nurse", email="nurse@pmcne.ph")
+        conn = db.connect(self.db_path)
+        try:
+            one = kbfiles.add(conn, aid, _png(text=b"one"), "step1.png", actor="alice", at=self.at)["file_id"]
+            two = kbfiles.add(conn, aid, _png(text=b"two"), "step2.png", actor="alice", at=self.at)["file_id"]
+            kbfiles.review(conn, one, "CLEAR", actor="alice", at=self.at)
+            knowledge.set_status(conn, aid, "PUBLISHED", at=self.at, actor="alice")
+            conn.commit()
+        finally:
+            conn.close()
+        desk = self._send("GET", f"/kb/{aid}", cookie=alice)[2].decode()
+        self.assertIn(f"<img src='/kb/{aid}/file/{one}'", desk)                       # the desk: both, at once
+        self.assertIn(f"<img src='/kb/{aid}/file/{two}'", desk)
+        self.assertIn("awaiting review: requesters see it once it is cleared", desk)
+        portal = self._send("GET", f"/my/help/{aid}", cookie=nurse)[2].decode()
+        self.assertIn(f"<img src='/my/help/{aid}/file/{one}'", portal)                # the portal: the cleared one
+        self.assertNotIn(f"/file/{two}'", portal)
+        self.assertNotIn("awaiting review", portal)
+        # a picture the text places is not shown twice
+        conn = db.connect(self.db_path)
+        try:
+            knowledge.save(conn, aid, title="Label printer prints blank", body=f"Steps.\n\n![First](file:{one})",
+                           audience="REQUESTER", board_id=None, catalogue_item_id=None, at=self.at, actor="alice")
+            conn.commit()
+        finally:
+            conn.close()
+        portal = self._send("GET", f"/my/help/{aid}", cookie=nurse)[2].decode()
+        self.assertEqual(portal.count(f"/my/help/{aid}/file/{one}"), 1)
+        # the editor: a paste box, a preview, multipart
+        page = self._send("GET", f"/kb/{aid}/edit", cookie=alice)[2].decode()
+        for bit in ("enctype='multipart/form-data'", "data-kbpaste", f"data-article='{aid}'", "name=pic_tokens",
+                    "id=kbpreview", "<label for=kbbody>", "Paste or drag a picture"):
+            self.assertIn(bit, page)
+        # pasting on an existing article: kept, numbered, in place; one taken back out is not kept
+        body = f"Steps.\n\n![First](file:{one})\n\n![Picture 1](paste:abc123def)\n\nThen save.\n"
+        status, headers, _ = self._send("POST", f"/kb/{aid}/save", cookie=alice, file_field="pics",
+                                        fields={"title": "Label printer prints blank", "body": body, "audience": "REQUESTER",
+                                                "pic_tokens": "abc123def,zzz999yyy"},
+                                        files=[("pasted.png", _png(text=b"pasted")), ("dropped.png", _png(text=b"dropped"))])
+        self.assertEqual(status, "303 See Other", headers)
+        conn = db.connect(self.db_path)
+        try:
+            row = knowledge.get(conn, aid)
+            kept = [r["filename"] for r in kbfiles.of_article(conn, aid)]
+            self.assertIn("pasted.png", kept)
+            self.assertNotIn("dropped.png", kept)                                       # not in the text: not kept
+            new_id = [r["file_id"] for r in kbfiles.of_article(conn, aid) if r["filename"] == "pasted.png"][0]
+            self.assertIn(f"![Picture 1](file:{new_id})\n\nThen save.", row["body"])
+            self.assertNotIn("paste:", row["body"])
+        finally:
+            conn.close()
+        # pasting on a new article: one version, text already numbered
+        status, headers, _ = self._send("POST", "/kb/new", cookie=alice, file_field="pics",
+                                        fields={"title": "eClaims tracking number", "audience": "REQUESTER",
+                                                "body": "Do this:\n\n![Picture 1](paste:newpic01)\n\n![Picture 2](paste:gone0001)",
+                                                "pic_tokens": "newpic01"},
+                                        files=[("shot.png", _png(text=b"shot"))])
+        self.assertEqual(status, "303 See Other", headers)
+        new_aid = headers["Location"].split("/kb/")[1].split("?")[0]
+        conn = db.connect(self.db_path)
+        try:
+            row = knowledge.get(conn, new_aid)
+            fid = kbfiles.of_article(conn, new_aid)[0]["file_id"]
+            self.assertEqual(row["version"], 1)
+            self.assertEqual(row["body"].strip(), f"Do this:\n\n![Picture 1](file:{fid})")  # a ref with no picture is dropped
+            self.assertEqual(conn.execute("SELECT body FROM kb_revision WHERE article_id = ? AND version = 1",
+                                          (new_aid,)).fetchone()[0], row["body"])
+        finally:
+            conn.close()
+        # a refused file says so and keeps nothing
+        status, _, page = self._send("POST", f"/kb/{aid}/save", cookie=alice, file_field="pics",
+                                     fields={"title": "x", "body": "![P](paste:badbad01)", "audience": "REQUESTER",
+                                             "pic_tokens": "badbad01"}, files=[("run.png", b"MZ\x90\x00 program")])
+        self.assertEqual(status, "400 Bad Request")
+        # the preview: the real renderer, saved pictures by address, pasted ones left for the page
+        status, _, frag = self._send("POST", "/kb/preview", cookie=alice,
+                                     fields={"article_id": aid, "body": f"**Step** one\n\n![First](file:{one})\n\n![P](paste:abc123def)"})
+        frag = frag.decode()
+        self.assertEqual(status, "200 OK")
+        self.assertIn("<strong>Step</strong>", frag)
+        self.assertIn(f'<img src="/kb/{aid}/file/{one}"', frag)
+        self.assertIn('src="about:blank#paste-abc123def"', frag)
+        reader = self._cookie_for("reader")
+        self.assertTrue(self._send("POST", "/kb/preview", cookie=reader, fields={"body": "x"})[0].startswith("403"))
 
     def test_the_article_shows_its_pictures_to_the_desk_at_once_and_to_requesters_once_cleared(self):
         from psaspine import knowledge

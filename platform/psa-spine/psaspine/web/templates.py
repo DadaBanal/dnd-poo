@@ -1273,7 +1273,10 @@ tr.popen td{padding-top:0;border-top:0}
 /* a technician's phone (gap 5, 29 Sep): one column, thumb-sized controls, the board as a list of cards, and a
    quick bar on the ticket. Nothing is a separate app; the same page reads its width and its pointer. */
 .sm-only{display:none} .quick{display:none} header.top #pal-open .ic{display:none}
-.md img.kbimg{display:block;max-width:100%;height:auto;margin:8px 0;border:1px solid var(--line);border-radius:var(--r)} .kbthumb{width:56px;height:42px;object-fit:cover;border-radius:6px;border:1px solid var(--line);vertical-align:middle;margin-right:6px}
+.md img.kbimg{display:block;max-width:100%;height:auto;margin:8px 0;border:1px solid var(--line);border-radius:var(--r)}
+.kbpics{margin-top:14px} figure.kbfig{margin:12px 0} figure.kbfig figcaption{font-size:12.5px;margin-top:2px}
+.kbpreviewwrap h4{margin:6px 0 4px} .kbpreview{border:1px dashed var(--line-2);border-radius:var(--r);padding:12px 14px;max-height:560px;overflow:auto}
+textarea[data-kbpaste].drop{outline:2px dashed var(--accent);outline-offset:2px} .kbthumb{width:56px;height:42px;object-fit:cover;border-radius:6px;border:1px solid var(--line);vertical-align:middle;margin-right:6px}
 @media (pointer:coarse){button,.btn,.iconbtn,select,input:not([type=checkbox]):not([type=radio]){min-height:40px}
   input[type=checkbox],input[type=radio]{width:20px;height:20px}.iconbtn{width:40px}header.top nav a{min-height:40px}}
 @media (max-width:640px){
@@ -2477,6 +2480,38 @@ function tick(){if(document.hidden)return;fetch('/live?scope='+encodeURIComponen
 .then(function(r){return r.ok?r.text():null}).then(function(s){if(s===null)return;if(last===null){last=s;return}
 if(s!==last){last=s;if(busy())tell();else location.reload()}}).catch(function(){})}
 setInterval(tick,10000);tick();document.addEventListener('visibilitychange',function(){if(!document.hidden)tick()})})();
+/* Knowledge articles (Dada, 16 Oct 2026: "it should work like how itglue field works"): a picture pasted or
+   dropped into the text goes where the cursor is, as ![Picture n](paste:token), carried in the form's own
+   file field until Save keeps it as the article's file; the preview under the box is the server's own
+   rendering, with the pictures not yet saved filled in from this browser. */
+(function(){var ta=document.querySelector('textarea[data-kbpaste]');if(!ta||!window.fetch||!window.DataTransfer)return;
+var f=ta.form,inp=f.querySelector('input.kbpicsin'),tok=f.querySelector('input[name=pic_tokens]'),pv=document.getElementById('kbpreview');
+var blobs={},list=[],dt=new DataTransfer(),timer=null,n=0,MAXPIC=10*1024*1024;
+function token(){return (Math.random().toString(36).slice(2,10)+Date.now().toString(36)).replace(/[^a-z0-9]/g,'').slice(0,20)}
+function put(text){var s=ta.selectionStart,e=ta.selectionEnd,v=ta.value;ta.value=v.slice(0,s)+text+v.slice(e);
+ ta.selectionStart=ta.selectionEnd=s+text.length;ta.dispatchEvent(new Event('input'))}
+function add(files){var refused=[];Array.prototype.forEach.call(files,function(file){
+  if(!/^image\//.test(file.type))return;if(file.size>MAXPIC){refused.push(file.name||'a picture');return}
+  var k=token();n++;blobs[k]=URL.createObjectURL(file);list.push(k);dt.items.add(file);
+  put('\n![Picture '+n+'](paste:'+k+')\n')});
+ inp.files=dt.files;tok.value=list.join(',');
+ if(refused.length)alert(refused.join(', ')+': over 10 MB, not added.')}
+ta.addEventListener('paste',function(e){var d=e.clipboardData;if(!d)return;
+ var pics=Array.prototype.filter.call(d.files||[],function(x){return /^image\//.test(x.type)});
+ if(pics.length){e.preventDefault();add(pics)}});
+ta.addEventListener('dragover',function(e){if(e.dataTransfer&&Array.prototype.indexOf.call(e.dataTransfer.types||[],'Files')>=0){e.preventDefault();ta.classList.add('drop')}});
+ta.addEventListener('dragleave',function(){ta.classList.remove('drop')});
+ta.addEventListener('drop',function(e){ta.classList.remove('drop');var fl=e.dataTransfer&&e.dataTransfer.files;
+ if(fl&&fl.length){e.preventDefault();ta.focus();add(fl)}});
+function preview(){if(!pv)return;var fd=new FormData();fd.append('body',ta.value);fd.append('article_id',ta.dataset.article||'');
+ fetch('/kb/preview',{method:'POST',body:fd,credentials:'same-origin'}).then(function(r){return r.ok?r.text():null}).then(function(h){
+  if(h===null)return;var doc=new DOMParser().parseFromString(h,'text/html');   /* inert: nothing loads or runs here */
+  Array.prototype.forEach.call(doc.body.querySelectorAll('img'),function(i){var m=(i.getAttribute('src')||'').match(/^about:blank#paste-([a-z0-9]+)$/);
+   if(m){if(blobs[m[1]])i.setAttribute('src',blobs[m[1]]);else i.parentNode.removeChild(i)}});
+  pv.textContent='';while(doc.body.firstChild)pv.appendChild(document.adoptNode(doc.body.firstChild));
+  /* an image made in a parsed document does not start loading when moved, lazy or not: set it here */
+  Array.prototype.forEach.call(pv.querySelectorAll('img'),function(i){i.removeAttribute('loading');i.setAttribute('src',i.getAttribute('src'))})}).catch(function(){})}
+ta.addEventListener('input',function(){clearTimeout(timer);timer=setTimeout(preview,500)});preview()})();
 /* 072: the banner of waiting chats on every desk page, and a chime when a new one comes
    (Dada, 7 Oct 2026: "a moving banner like moving from right to left ... and a sound or a chime").
    The chime is made here (Web Audio), no sound file; it is on unless the person turns it off. */

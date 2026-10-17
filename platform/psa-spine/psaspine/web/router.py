@@ -246,6 +246,7 @@ ROUTES = [
     ("GET", "/kb", kb_view.index),
     ("GET", "/kb/new", kb_view.new_form),
     ("POST", "/kb/new", kb_view.create),
+    ("POST", "/kb/preview", kb_view.preview),
     ("GET", "/kb/<article_id>", kb_view.detail),
     ("GET", "/kb/<article_id>/edit", kb_view.edit_form),
     ("POST", "/kb/<article_id>/save", kb_view.save),

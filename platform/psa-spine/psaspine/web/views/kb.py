@@ -7,6 +7,7 @@ are PUBLISHED, on the portal's Help page, and nothing else.
 """
 from __future__ import annotations
 
+import re
 import urllib.parse
 
 from ... import kbfiles, knowledge, phi, setup
@@ -92,7 +93,10 @@ def _form(ctx, row=None, *, error: str = "", values: dict | None = None) -> str:
         for c in cats) + "</select></div>") if cats else ""
     action = f"/kb/{t.esc(row['article_id'])}/save" if row is not None else "/kb/new"
     return ((f"<div class='banner err'>{t.esc(error)}</div>" if error else "")
-            + f"<div class=card><form method=post action='{action}' class=stack style='max-width:none'>"
+            + f"<div class=card><form method=post action='{action}' class=stack style='max-width:none'"
+              " enctype='multipart/form-data'>"
+              "<input type=file name=pics multiple accept='image/*' hidden class=kbpicsin>"
+              "<input type=hidden name=pic_tokens value=''>"
               f"<label>Title<input name=title required maxlength=200 value='{t.esc(v.get('title') or '')}'"
               " placeholder='Label printer in a ward prints blank labels'></label>"
               "<div class=grid2>"
@@ -100,11 +104,16 @@ def _form(ctx, row=None, *, error: str = "", values: dict | None = None) -> str:
               f"<div><label>Board</label><select name=board_id>{board_opts}</select></div>"
               f"<div{'' if cat_field else ' style=grid-column:1/-1'}><label>Subtype › Item</label><select name=catalogue_item_id>{pairs}</select></div>"
               f"{cat_field}</div>"
-              "<label>The fix, step by step (Markdown: # heading, - list, **bold**, `code`; a picture from Files as "
-              "![caption](file:3), a link as [words](https://…))"
-              f"<textarea name=body required style='min-height:320px'>{t.esc(v.get('body') or '')}</textarea></label>"
-              "<p class=why style='margin:0'>Write what someone needs to fix it again: the symptom, the cause, the steps, "
-              "how to check it worked. A ward, a room or a machine says it best; a patient never needs naming.</p>"
+              "<label for=kbbody>The fix, step by step (Markdown: # heading, - list, **bold**, `code`; a picture from Files as "
+              "![caption](file:3), a link as [words](https://…))</label>"
+              f"<textarea id=kbbody name=body required data-kbpaste data-article='{t.esc(row['article_id']) if row is not None else ''}'"
+              f" aria-describedby=kbpastehelp style='min-height:320px'>{t.esc(v.get('body') or '')}</textarea>"
+              "<p id=kbpastehelp class=why style='margin:0'><b>Paste or drag a picture straight into the text</b> "
+              "and it goes where the cursor is; it is kept when you save. Write what someone needs to fix it again: "
+              "the symptom, the cause, the steps, how to check it worked. A ward, a room or a machine says it best; "
+              "a patient never needs naming.</p>"
+              "<div class=kbpreviewwrap><h4 id=kbpreviewh>Preview</h4><div id=kbpreview class='md kbpreview' role=region"
+              " aria-labelledby=kbpreviewh></div></div>"
               "<div><button type=submit>Save</button> <a class='btn ghost' href='/kb'>Cancel</a></div></form></div>")
 
 
@@ -121,12 +130,19 @@ def create(ctx):
     if f.get("board_id") and f["board_id"] not in common.board_ids_for(ctx):
         return _back("/kb")
     try:
-        aid = knowledge.create(ctx.conn, title=f.get("title", ""), body=f.get("body", ""),
+        raw = f.get("body", "")
+        aid = knowledge.create(ctx.conn, title=f.get("title", ""), body=raw,
                                audience=f.get("audience", "INTERNAL"), board_id=f.get("board_id") or None,
                                catalogue_item_id=f.get("catalogue_item_id") or None, category_id=f.get("category_id") or None,
                                at=ctx.now, actor=ctx.user.id)
+        # pictures pasted into the text: kept as the article's files, and the text
+        # names them by number -- on version 1 itself, so creating is one version
+        final = _paste_pictures(ctx, aid, f, raw)
+        if final != raw:
+            ctx.conn.execute("UPDATE kb_article SET body = ? WHERE article_id = ? AND version = 1", (final, aid))
+            ctx.conn.execute("UPDATE kb_revision SET body = ? WHERE article_id = ? AND version = 1", (final, aid))
         ctx.conn.commit()
-    except knowledge.Refused as exc:
+    except (knowledge.Refused, kbfiles.Refused) as exc:
         ctx.conn.rollback()
         return Response("400 Bad Request", t.page("Write an article", "<h1>Write an article</h1>" + _form(
             ctx, error=str(exc), values=dict(f)), user=ctx.user, active="kb"))
@@ -173,6 +189,8 @@ def detail(ctx, article_id):
             + f"version {row['version']} · used on {row['uses']} ticket(s) · <a href='/kb'>Knowledge</a></p>"
             + actions + "<div class=card><div class=md>"
             + t.md_to_html(row["body"], file_url=kbfiles.resolver(ctx.conn, row["article_id"], portal=False, base=f"/kb/{aid}/file/"))
+            + _pictures(kbfiles.unplaced(ctx.conn, row["article_id"], row["body"], portal=False), base=f"/kb/{aid}/file/",
+                        desk=True)
             + "</div></div>" + _files_card(ctx, row, can_write=can_write)
             + "<div class=grid2><div class=card><h3>" + t.icon("note") + "Used on</h3>"
             + ("<ul class=plain>" + "".join(f"<li><a href='/ticket/{t.esc(w)}'>{t.esc(w)}</a></li>" for w in used[:50]) + "</ul>"
@@ -197,12 +215,13 @@ def save(ctx, article_id):
     if f.get("board_id") and f["board_id"] not in common.board_ids_for(ctx):
         return _back(f"/kb/{article_id}", err="You are not on that board.")
     try:
-        what = knowledge.save(ctx.conn, article_id, title=f.get("title", ""), body=f.get("body", ""),
+        body = _paste_pictures(ctx, article_id, f, f.get("body", ""))
+        what = knowledge.save(ctx.conn, article_id, title=f.get("title", ""), body=body,
                               audience=f.get("audience", "INTERNAL"), board_id=f.get("board_id") or None,
                               catalogue_item_id=f.get("catalogue_item_id") or None, category_id=f.get("category_id") or None,
                               at=ctx.now, actor=ctx.user.id)
         ctx.conn.commit()
-    except knowledge.Refused as exc:
+    except (knowledge.Refused, kbfiles.Refused) as exc:
         ctx.conn.rollback()
         return Response("400 Bad Request", t.page("Edit article", "<h1>Edit</h1>" + _form(
             ctx, row, error=str(exc), values=dict(f)), user=ctx.user, active="kb"))
@@ -283,6 +302,8 @@ def portal_detail(ctx, article_id):
         raise HttpError("404 Not Found", "No such help page.")
     shown = t.md_to_html(row["body"], file_url=kbfiles.resolver(ctx.conn, row["article_id"], portal=True,
                                                                  base=f"/my/help/{t.esc(row['article_id'])}/file/"))
+    shown += _pictures(kbfiles.unplaced(ctx.conn, row["article_id"], row["body"], portal=True),
+                       base=f"/my/help/{t.esc(row['article_id'])}/file/")
     files = [f for f in kbfiles.of_article(ctx.conn, row["article_id"]) if kbfiles.visible(f, portal=True)
              and not f["media_type"].startswith("image/")]
     downloads = ("<div class=card><h3>" + t.icon("paperclip") + "Files</h3><ul class=plain>" + "".join(
@@ -291,6 +312,76 @@ def portal_detail(ctx, article_id):
     body = (f"<h1>{t.esc(row['title'])}</h1><div class=card><div class=md>{shown}</div></div>" + downloads
             + "<p><a href='/my/help'>All help</a> · <a href='/my'>Raise a request</a></p>")
     return Response(body=t.page(row["title"], body, user=ctx.user, active="help"))
+
+
+_PASTE_TOKEN = re.compile(r"[a-z0-9]{6,32}")
+_PASTE_REF = re.compile(r"!\[[^\]]*\]\(paste:[a-z0-9]{6,32}\)")
+
+
+def _paste_pictures(ctx, article_id: str, f, body: str) -> str:
+    """Pictures pasted or dropped into the article's text (Dada, 16 Oct 2026:
+    like IT Glue). The page carries each as a `pics` file named by a token in
+    `pic_tokens`, and the text calls it ![caption](paste:token). Each one the
+    text still calls is kept as the article's file -- through the same review
+    as any other -- and the text is rewritten to its number. A pasted picture
+    taken back out of the text before saving is not kept."""
+    files = ctx.request.files("pics") if ctx.request.is_multipart() else []
+    tokens = [x for x in (f.get("pic_tokens") or "").split(",") if x]
+    for (name, data), tok in zip(files, tokens):
+        if not _PASTE_TOKEN.fullmatch(tok) or f"(paste:{tok})" not in body or not data:
+            continue
+        kept = kbfiles.add(ctx.conn, article_id, data, name or "picture.png", actor=ctx.user.id, at=ctx.now)
+        body = body.replace(f"(paste:{tok})", f"(file:{kept['file_id']})")
+    return _PASTE_REF.sub("", body)                    # a reference whose picture never arrived
+
+
+def preview(ctx):
+    """The text as it will read, for the editor's preview: the same renderer as
+    the article itself, the saved pictures by their address and the pasted ones
+    left for the page to fill in from what is still in the browser."""
+    from .. import Response
+    common.require_module(ctx, "KNOWLEDGE", "WRITE")
+    f = ctx.request.form()
+    body = (f.get("body") or "")[:200_000]
+    aid = (f.get("article_id") or "").strip()
+    known = None
+    if aid:
+        row = _load(ctx, aid)
+        known = kbfiles.resolver(ctx.conn, row["article_id"], portal=False, base=f"/kb/{t.esc(row['article_id'])}/file/")
+    pasted: dict[int, str] = {}
+
+    def to_number(m):
+        n = 2_000_000_000 + len(pasted)
+        pasted[n] = m.group(1)
+        return f"(file:{n})"
+    body = re.sub(r"\(paste:([a-z0-9]{6,32})\)", to_number, body)
+
+    def url(n: int):
+        if n in pasted:
+            return "about:blank#paste-" + pasted[n]
+        return known(n) if known else None
+    html_ = t.md_to_html(body, file_url=url)
+    if aid:
+        html_ += _pictures(kbfiles.unplaced(ctx.conn, row["article_id"], body, portal=False),
+                           base=f"/kb/{t.esc(row['article_id'])}/file/", desk=True)
+    return Response(body=html_ or "<p class=muted>Nothing written yet.</p>",
+                    headers=[("Cache-Control", "no-store")])
+
+
+def _pictures(rows, *, base: str, desk: bool = False) -> str:
+    """The pictures on an article that its text does not place, shown after the
+    text so a picture added is a picture seen (Dada, 16 Oct 2026: "it should
+    work like how itglue field works"). The desk says when one still awaits
+    its patient-information review, which the portal never shows."""
+    if not rows:
+        return ""
+    figs = "".join(
+        f"<figure class=kbfig><img src='{base}{r['file_id']}' alt='{t.esc(r['caption'] or r['filename'])}' class=kbimg loading=lazy>"
+        + (f"<figcaption>{t.esc(r['caption'])}</figcaption>" if r["caption"] else "")
+        + ("<figcaption class=muted>awaiting review: requesters see it once it is cleared</figcaption>"
+           if desk and r["review_status"] == "PENDING" else "")
+        + "</figure>" for r in rows)
+    return f"<div class=kbpics>{figs}</div>"
 
 
 # ------------------------------------------------------------ files (051)
