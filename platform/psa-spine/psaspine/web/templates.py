@@ -882,6 +882,11 @@ main button.ghost,main .btn.ghost{background:transparent;border:1px solid var(--
 main button.ghost:hover,main .btn.ghost:hover{border-color:var(--neon1);box-shadow:0 0 0 3px rgb(var(--c1)/.12)}
 header.top nav button.top.on,header.top nav a.top.on{color:#fff;background:var(--neon)!important;box-shadow:0 6px 20px -8px var(--glow)}
 :root[data-theme=light] header.top nav button.top.on,:root[data-theme=light] header.top nav a.top.on{color:#fff}
+/* peach's neon is a light peach (Dada, 18 Oct 2026: "the peach is more peachy"), so what sits on it is dark ink:
+   #4a2418 on #ffc3a0 8.71:1 and on #f8907a 5.95:1, where white was 1.55 and 2.27 (and 1.74 / 2.93 before) */
+:root[data-tint=peach] main button[type=submit]:not(.ghost):not(.iconbtn):not(.tab):not(.small):not(.danger),
+:root[data-tint=peach] main .btn:not(.ghost):not(.top),:root[data-tint=peach] .btn.clockbtn.on,
+:root[data-tint=peach] header.top nav button.top.on,:root[data-tint=peach] header.top nav a.top.on{color:#4a2418!important}
 header.top nav button.top.on .ic{opacity:1}
 /* fields of glass */
 input,select,textarea{background-color:color-mix(in srgb,var(--glass-bg) 60%,transparent)!important;border-color:var(--glass-line)}
@@ -1005,7 +1010,7 @@ main button.ghost,main .btn.ghost,.backbtn{
 .thememenu button:hover{background:var(--surface-2)}.thememenu button.on{background:var(--accent-bg);font-weight:600}
 .thememenu .sw{width:18px;height:18px;border-radius:50%;border:1px solid rgb(0 0 0/.15);flex:0 0 auto}
 .thememenu h5{margin:6px 10px 2px;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3)}.thememenu .sw.dark{background:linear-gradient(135deg,#0a1022,#3b4a8a)}.thememenu .sw.light{background:linear-gradient(135deg,#ffffff,#c9d4ee)}.thememenu .sw.classic{background:linear-gradient(135deg,#3d63dd,#22d3ee)}
-.thememenu .sw.peach{background:linear-gradient(135deg,#ffd9c2,#e8734a)}.thememenu .sw.purple{background:linear-gradient(135deg,#e2d4ff,#7c4ddb)}
+.thememenu .sw.peach{background:linear-gradient(135deg,#ffe6d6,#ffab85)}.thememenu .sw.purple{background:linear-gradient(135deg,#e2d4ff,#7c4ddb)}
 .thememenu .sw.pink{background:linear-gradient(135deg,#ffd6e8,#d8408a)}
 :root[data-theme=light] header.top{box-shadow:var(--l2-shadow)!important}
 :root[data-theme=light] header.top::after{opacity:1}
@@ -1317,9 +1322,9 @@ textarea[data-kbpaste].drop{outline:2px dashed var(--accent);outline-offset:2px}
    light edges, --lc1 --lc2 the light accents, --neon1 --neon2 the titles and the active module, --accent the
    buttons and links) change; the ink and the status colours do not. Without a tint every token holds its
    old value, so the two classic themes are untouched. */
-:root[data-tint=peach]{--c2b:230 120 70;--ck0:255 190 160;--ck1:255 190 160;--ck2:255 205 180;--ck3:255 170 130;--ck4:255 170 130;--ck5:255 150 100;--ckl1:150 80 50;--lc3:#c8552c;--lc3r:200 85 44;--c1:255 150 100;--c2:240 110 80;--c3:230 120 70;--neon1:#ffb38a;--neon2:#f0705a;--teal:#f0a070;--violet:#e07a4f;
-  --accent:#d9663a;--accent-2:#bf5330;--dk-accent:#ffab80;--s1:#d9663a;--s2:#f0a070;
-  --ckl:150 80 50;--ckl2:230 120 70;--lc1:#c8552c;--lc1r:200 85 44;--lc2:#d9663a;--ck:255 190 160}
+:root[data-tint=peach]{--c2b:230 120 70;--ck0:255 200 175;--ck1:255 200 175;--ck2:255 214 192;--ck3:255 182 145;--ck4:255 182 145;--ck5:255 165 125;--ckl1:150 80 50;--lc3:#c8552c;--lc3r:200 85 44;--c1:255 170 130;--c2:245 140 110;--c3:240 145 105;--neon1:#ffc3a0;--neon2:#f8907a;--teal:#f6b08a;--violet:#ee9070;
+  --accent:#a04a36;--accent-2:#86382a;--dk-accent:#ffbe9e;--s1:#a04a36;--s2:#f4b08f;
+  --ckl:150 80 50;--ckl2:230 120 70;--lc1:#9c4733;--lc1r:156 71 51;--lc2:#a04a36;--ck:255 190 160}
 :root[data-tint=purple]{--c2b:124 77 219;--ck0:200 180 255;--ck1:200 180 255;--ck2:215 200 255;--ck3:180 150 255;--ck4:180 150 255;--ck5:170 120 255;--ckl1:90 60 160;--lc3:#7c4ddb;--lc3r:124 77 219;--c1:170 120 255;--c2:139 92 246;--c3:124 77 219;--neon1:#c9a2ff;--neon2:#8b5cf6;--teal:#b07ff5;--violet:#7c4ddb;
   --accent:#7c4ddb;--accent-2:#6539bf;--dk-accent:#c3a4ff;--s1:#7c4ddb;--s2:#b07ff5;
   --ckl:90 60 160;--ckl2:124 77 219;--lc1:#7c4ddb;--lc1r:124 77 219;--lc2:#6539bf;--ck:200 180 255}
@@ -1327,13 +1332,13 @@ textarea[data-kbpaste].drop{outline:2px dashed var(--accent);outline-offset:2px}
   --accent:#d8408a;--accent-2:#bb2f74;--dk-accent:#ff9ccc;--s1:#d8408a;--s2:#f58ab8;
   --ckl:160 60 110;--ckl2:216 64 138;--lc1:#c7357a;--lc1r:199 53 122;--lc2:#d8408a;--ck:255 180 215}
 /* light, tinted: the frost takes the colour */
-:root[data-theme=light][data-tint=peach]{--thead:linear-gradient(180deg,#fbeee6,#f6e1d4);--thead-ink:#7a4a36;--canvas:#f6e6dc;--surface:#fff6f0;--surface-2:#fbeae0;--surface-3:#f3d9c9;--line:#ebcfbf;--line-2:#dbb49e;
-  --glass-bg:rgb(255 246 240/.80);--glass-line:rgb(200 110 70/.18);--glow:rgb(230 120 70/.32);
-  --l1:linear-gradient(180deg,#fffaf6,#fdf0e8);--l1-edge:linear-gradient(180deg,#fff,rgb(200 110 70/.22) 40%,rgb(200 110 70/.32));
-  --l2-bg:rgb(255 248 243/.88);--well:#fdf1ea;--well-shadow:inset 0 1px 2px rgb(120 60 30/.10),inset 0 0 0 1px rgb(200 110 70/.20)}
+:root[data-theme=light][data-tint=peach]{--thead:linear-gradient(180deg,#fff3ec,#ffe6d8);--thead-ink:#7a4433;--canvas:#ffe9dc;--surface:#fff7f1;--surface-2:#ffede2;--surface-3:#ffdcc8;--line:#f5cdb8;--line-2:#eab398;
+  --glass-bg:rgb(255 247 241/.80);--glass-line:rgb(240 150 110/.22);--glow:rgb(255 170 130/.40);
+  --l1:linear-gradient(180deg,#fffaf6,#fff0e6);--l1-edge:linear-gradient(180deg,#fff,rgb(240 150 110/.25) 40%,rgb(240 150 110/.35));
+  --l2-bg:rgb(255 248 243/.88);--well:#fff1e8;--well-shadow:inset 0 1px 2px rgb(120 60 30/.10),inset 0 0 0 1px rgb(240 150 110/.25)}
 :root[data-theme=light][data-tint=peach] body{background:
-  radial-gradient(1100px 650px at 6% -12%,rgb(255 150 100/.40),transparent 60%),radial-gradient(900px 560px at 100% 0%,rgb(255 200 140/.36),transparent 62%),
-  radial-gradient(900px 700px at 60% 120%,rgb(240 120 90/.22),transparent 60%),linear-gradient(180deg,#f9e9df,#f3dccd);background-attachment:fixed}
+  radial-gradient(1100px 650px at 6% -12%,rgb(255 180 140/.45),transparent 60%),radial-gradient(900px 560px at 100% 0%,rgb(255 214 180/.42),transparent 62%),
+  radial-gradient(900px 700px at 60% 120%,rgb(255 160 130/.26),transparent 60%),linear-gradient(180deg,#fff0e6,#ffe2d2);background-attachment:fixed}
 :root[data-theme=light][data-tint=purple]{--thead:linear-gradient(180deg,#f1ebfb,#e8def6);--thead-ink:#5a4280;--canvas:#ebe4f7;--surface:#f8f5fe;--surface-2:#efe8fa;--surface-3:#e2d8f3;--line:#d8cbee;--line-2:#c2aee3;
   --glass-bg:rgb(248 245 254/.80);--glass-line:rgb(120 80 200/.18);--glow:rgb(130 90 220/.34);
   --l1:linear-gradient(180deg,#fdfbff,#f3eefc);--l1-edge:linear-gradient(180deg,#fff,rgb(120 80 200/.22) 40%,rgb(120 80 200/.32));
@@ -1349,11 +1354,11 @@ textarea[data-kbpaste].drop{outline:2px dashed var(--accent);outline-offset:2px}
   radial-gradient(1100px 650px at 6% -12%,rgb(255 110 170/.40),transparent 60%),radial-gradient(900px 560px at 100% 0%,rgb(255 170 210/.36),transparent 62%),
   radial-gradient(900px 700px at 60% 120%,rgb(240 90 140/.22),transparent 60%),linear-gradient(180deg,#f9e4ee,#f3d6e3);background-attachment:fixed}
 /* dark, tinted: the night takes the colour; cards a shade warmer or cooler than the canvas, edges lit in the tint */
-:root[data-theme=dark][data-tint=peach]{--thead:linear-gradient(180deg,rgb(110 62 46/.60),rgb(70 40 30/.60));--thead-ink:#e8c3b0;--accent:var(--dk-accent);--glass-bg:rgb(44 26 20/.70);--glass-line:rgb(255 190 160/.16);--glow:rgb(255 150 100/.42);
+:root[data-theme=dark][data-tint=peach]{--thead:linear-gradient(180deg,rgb(110 62 46/.60),rgb(70 40 30/.60));--thead-ink:#f0cdbb;--accent:var(--dk-accent);--glass-bg:rgb(44 26 20/.70);--glass-line:rgb(255 200 175/.18);--glow:rgb(255 175 135/.40);
   --l1:linear-gradient(180deg,rgb(78 46 36/.96),rgb(46 26 20/.96));--l2-bg:rgb(42 24 18/.88);--well:rgb(18 8 5/.70);
   --chip:#3a2420;--surface-2:#3b2520;--surface-3:#4a2f28;--line:#4e322a;--line-2:#6a4538}
 :root[data-theme=dark][data-tint=peach] body{background:
-  radial-gradient(1200px 700px at 8% -15%,rgb(255 140 90/.34),transparent 60%),radial-gradient(1000px 600px at 105% -5%,rgb(255 200 140/.18),transparent 62%),
+  radial-gradient(1200px 700px at 8% -15%,rgb(255 165 120/.32),transparent 60%),radial-gradient(1000px 600px at 105% -5%,rgb(255 210 175/.18),transparent 62%),
   radial-gradient(1100px 800px at 55% 125%,rgb(230 100 70/.30),transparent 60%),radial-gradient(140% 100% at 50% 40%,transparent 50%,rgb(0 0 0/.55)),
   linear-gradient(180deg,#0c0604,#1a0d08 55%,#0e0705);background-attachment:fixed}
 :root[data-theme=dark][data-tint=purple]{--thead:linear-gradient(180deg,rgb(80 56 130/.60),rgb(50 34 86/.60));--thead-ink:#cdbbee;--accent:var(--dk-accent);--glass-bg:rgb(30 20 50/.70);--glass-line:rgb(200 180 255/.16);--glow:rgb(170 120 255/.42);
